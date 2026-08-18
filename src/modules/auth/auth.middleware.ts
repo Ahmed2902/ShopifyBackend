@@ -1,6 +1,6 @@
 import type { RequestHandler, Response } from 'express';
 import { AppError } from '../../errors/app-error.js';
-import { verifyAccessToken } from './tokens.js';
+import { verifyAccessToken } from './auth.utils.js';
 
 interface AuthLocals {
   auth?: { userId: string };
@@ -15,8 +15,7 @@ export const requireAuth: RequestHandler = async (req, res, next) => {
   const token = authorization.slice('Bearer '.length).trim();
   if (!token) throw new AppError('Authentication required', 401, 'UNAUTHORIZED');
 
-  const userId = await verifyAccessToken(token);
-  (res.locals as AuthLocals).auth = { userId };
+  (res.locals as AuthLocals).auth = { userId: await verifyAccessToken(token) };
   next();
 };
 
