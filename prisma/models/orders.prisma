@@ -1,0 +1,161 @@
+enum RestockSource {
+  MANUAL
+  IMPORTED
+}
+
+enum RestockStatus {
+  PLANNED
+  ORDERED
+  IN_TRANSIT
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+model Order {
+  id                               String    @id @default(uuid()) @db.Uuid
+  storeId                          String    @db.Uuid
+  shopifyOrderId                   String
+  name                             String
+  shopifyCreatedAt                 DateTime
+  processedAt                      DateTime?
+  shopifyUpdatedAt                 DateTime?
+  cancelledAt                      DateTime?
+  cancelReason                     String?
+  currencyCode                     String
+  presentmentCurrencyCode          String?
+  displayFinancialStatus           String?
+  displayFulfillmentStatus         String?
+  currentSubtotalLineItemsQuantity Int?
+  currentSubtotalAmount            Decimal?  @db.Decimal(20, 6)
+  currentShippingAmount            Decimal?  @db.Decimal(20, 6)
+  currentTotalDiscountsAmount      Decimal?  @db.Decimal(20, 6)
+  currentTotalTaxAmount            Decimal?  @db.Decimal(20, 6)
+  currentTotalAmount               Decimal?  @db.Decimal(20, 6)
+  discountCodes                    String[]   @default([])
+  rawJson                          Json?
+  createdAt                        DateTime   @default(now())
+  updatedAt                        DateTime   @updatedAt
+
+  store     Store           @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  lineItems OrderLineItem[]
+  refunds   Refund[]
+
+  @@unique([storeId, shopifyOrderId])
+  @@index([storeId, shopifyCreatedAt])
+  @@index([storeId, cancelledAt])
+}
+
+model OrderLineItem {
+  id                                   String   @id @default(uuid()) @db.Uuid
+  orderId                              String   @db.Uuid
+  productId                            String?  @db.Uuid
+  variantId                            String?  @db.Uuid
+  shopifyLineItemId                    String
+  shopifyProductId                     String?
+  shopifyVariantId                     String?
+  sku                                  String?
+  title                                String
+  variantTitle                         String?
+  quantity                             Int
+  currentQuantity                      Int
+  refundableQuantity                   Int?
+  originalUnitPrice                    Decimal? @db.Decimal(20, 6)
+  originalTotal                        Decimal? @db.Decimal(20, 6)
+  discountedTotal                      Decimal? @db.Decimal(20, 6)
+  discountedUnitPriceAfterAllDiscounts Decimal? @db.Decimal(20, 6)
+  totalDiscount                        Decimal? @db.Decimal(20, 6)
+  discountAllocations                  Json?
+  requiresShipping                     Boolean  @default(true)
+  restockable                          Boolean  @default(false)
+  rawJson                              Json?
+  createdAt                            DateTime @default(now())
+  updatedAt                            DateTime @updatedAt
+
+  order       Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  product     Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variant     ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  refundLines RefundLineItem[]
+
+  @@unique([orderId, shopifyLineItemId])
+  @@index([variantId, orderId])
+  @@index([shopifyVariantId])
+}
+
+model Refund {
+  id               String   @id @default(uuid()) @db.Uuid
+  orderId          String   @db.Uuid
+  shopifyRefundId  String
+  shopifyCreatedAt DateTime
+  processedAt      DateTime?
+  shopifyUpdatedAt DateTime?
+  totalRefunded    Decimal? @db.Decimal(20, 6)
+  currencyCode     String?
+  rawJson          Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  order     Order            @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  lineItems RefundLineItem[]
+
+  @@unique([orderId, shopifyRefundId])
+  @@index([orderId, shopifyCreatedAt])
+}
+
+model RefundLineItem {
+  id                  String   @id @default(uuid()) @db.Uuid
+  refundId            String   @db.Uuid
+  orderLineItemId     String   @db.Uuid
+  locationId          String?  @db.Uuid
+  shopifyRefundLineId String?
+  quantity            Int
+  restocked           Boolean  @default(false)
+  restockType         String?
+  price               Decimal? @db.Decimal(20, 6)
+  subtotal            Decimal? @db.Decimal(20, 6)
+  tax                 Decimal? @db.Decimal(20, 6)
+  rawJson             Json?
+  createdAt           DateTime @default(now())
+
+  refund        Refund        @relation(fields: [refundId], references: [id], onDelete: Restrict)
+  orderLineItem OrderLineItem @relation(fields: [orderLineItemId], references: [id], onDelete: Restrict)
+  location      Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  @@index([refundId])
+  @@index([orderLineItemId])
+  @@index([locationId])
+}
+
+model Restock {
+  id                String        @id @default(uuid()) @db.Uuid
+  storeId           String        @db.Uuid
+  source            RestockSource @default(MANUAL)
+  status            RestockStatus @default(PLANNED)
+  externalReference String?
+  supplierName      String?
+  orderedAt         DateTime?
+  expectedAt        DateTime?
+  receivedAt        DateTime?
+  notes             String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  store Store         @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  lines RestockLine[]
+
+  @@index([storeId, status, expectedAt])
+}
+
+model RestockLine {
+  id               String @id @default(uuid()) @db.Uuid
+  restockId        String @db.Uuid
+  variantId        String @db.Uuid
+  quantityExpected Int
+  quantityReceived Int    @default(0)
+
+  restock Restock        @relation(fields: [restockId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  @@unique([restockId, variantId])
+  @@index([variantId])
+}
