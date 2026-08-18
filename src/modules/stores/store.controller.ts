@@ -1,19 +1,19 @@
 import type { Request, Response } from 'express';
-import { z } from 'zod';
-import { getAuthUserId } from '../auth/auth.middleware.js';
-import { getStoreForUser, listStoresForUser } from './store.service.js';
+import { getAuthUserId } from '../../middleware/auth.middleware.js';
+import { storeParamsSchema } from './store.schema.js';
+import { StoreService } from './store.service.js';
 
-const storeIdSchema = z.string().uuid();
+export class StoreController {
+  constructor(private readonly service: StoreService) {}
 
-export const storeController = {
-  async list(_req: Request, res: Response) {
-    const stores = await listStoresForUser(getAuthUserId(res));
+  list = async (_req: Request, res: Response) => {
+    const stores = await this.service.listForUser(getAuthUserId(res));
     res.status(200).json({ stores });
-  },
+  };
 
-  async getById(req: Request, res: Response) {
-    const storeId = storeIdSchema.parse(req.params.storeId);
-    const store = await getStoreForUser(getAuthUserId(res), storeId);
+  getById = async (req: Request, res: Response) => {
+    const { storeId } = storeParamsSchema.parse(req.params);
+    const store = await this.service.getForUser(getAuthUserId(res), storeId);
     res.status(200).json({ store });
-  },
-};
+  };
+}
