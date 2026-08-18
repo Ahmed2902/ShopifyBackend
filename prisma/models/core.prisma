@@ -14,8 +14,26 @@ model User {
   updatedAt       DateTime @updatedAt
 
   memberships StoreMembership[]
+  sessions    RefreshSession[]
 
   @@index([createdAt])
+}
+
+model RefreshSession {
+  id                  String    @id @default(uuid()) @db.Uuid
+  userId              String    @db.Uuid
+  tokenHash           String    @unique
+  expiresAt           DateTime
+  revokedAt           DateTime?
+  replacedByTokenHash String?
+  userAgent           String?
+  createdAt           DateTime  @default(now())
+  lastUsedAt          DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([revokedAt])
 }
 
 model StoreMembership {
