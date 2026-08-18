@@ -8,12 +8,9 @@ export async function listStoresForUser(userId: string) {
 }
 
 export async function getStoreForUser(userId: string, storeId: string) {
-  const membership = await storeRepository.findMembership(userId, storeId);
-  if (!membership) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
-
+  const membership = await requireStoreRole(userId, storeId);
   const store = await storeRepository.findById(storeId);
   if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
-
   return { ...store, role: membership.role };
 }
 
