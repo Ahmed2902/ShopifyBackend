@@ -1,0 +1,380 @@
+enum AdProductMappingSource {
+  CATALOG_ITEM
+  PRODUCT_SET
+  CREATIVE_PRODUCT_DATA
+  URL
+  UTM
+  LANDING_PAGE
+  MANUAL
+  INFERRED
+}
+
+enum CatalogVariantMappingSource {
+  RETAILER_ID_SKU
+  PRODUCT_GROUP
+  URL
+  MANUAL
+  INFERRED
+}
+
+enum MetaInsightLevel {
+  ACCOUNT
+  CAMPAIGN
+  ADSET
+  AD
+}
+
+enum MetaInsightActionKind {
+  ACTION
+  ACTION_VALUE
+  COST_PER_ACTION
+  PURCHASE_ROAS
+  WEBSITE_PURCHASE_ROAS
+}
+
+model MetaAdAccount {
+  id                  String   @id @default(uuid()) @db.Uuid
+  storeId             String   @db.Uuid
+  metaConnectionId    String   @db.Uuid
+  metaAccountId       String
+  name                String
+  status              String?
+  currency            String
+  timezoneName        String?
+  timezoneId          Int?
+  timezoneOffsetHours Decimal? @db.Decimal(5, 2)
+  amountSpentMinor    BigInt?
+  balanceMinor        BigInt?
+  spendCapMinor       BigInt?
+  lastSyncedAt        DateTime?
+  rawJson             Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  store      Store          @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  connection MetaConnection @relation(fields: [metaConnectionId], references: [id], onDelete: Restrict)
+  campaigns  MetaCampaign[]
+  adSets     MetaAdSet[]
+  ads        MetaAd[]
+  creatives  MetaCreative[]
+  insights   MetaInsightDaily[]
+
+  @@unique([storeId, metaAccountId])
+  @@index([metaConnectionId])
+}
+
+model MetaCampaign {
+  id                   String   @id @default(uuid()) @db.Uuid
+  adAccountId          String   @db.Uuid
+  metaCampaignId       String
+  name                 String
+  status               String?
+  configuredStatus     String?
+  effectiveStatus      String?
+  objective            String?
+  buyingType           String?
+  bidStrategy          String?
+  dailyBudgetMinor     BigInt?
+  lifetimeBudgetMinor  BigInt?
+  budgetRemainingMinor BigInt?
+  spendCapMinor        BigInt?
+  startTime            DateTime?
+  stopTime             DateTime?
+  promotedObject       Json?
+  metaCreatedAt        DateTime?
+  metaUpdatedAt        DateTime?
+  deletedAt            DateTime?
+  rawJson              Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  adAccount MetaAdAccount      @relation(fields: [adAccountId], references: [id], onDelete: Restrict)
+  adSets    MetaAdSet[]
+  ads       MetaAd[]
+  insights  MetaInsightDaily[]
+
+  @@unique([adAccountId, metaCampaignId])
+  @@index([adAccountId, effectiveStatus])
+  @@index([deletedAt])
+}
+
+model MetaAdSet {
+  id                    String   @id @default(uuid()) @db.Uuid
+  adAccountId           String   @db.Uuid
+  campaignId            String   @db.Uuid
+  metaAdSetId           String
+  name                  String
+  status                String?
+  configuredStatus      String?
+  effectiveStatus       String?
+  dailyBudgetMinor      BigInt?
+  lifetimeBudgetMinor   BigInt?
+  budgetRemainingMinor  BigInt?
+  dailySpendCapMinor    BigInt?
+  lifetimeSpendCapMinor BigInt?
+  bidStrategy           String?
+  bidAmountMinor        BigInt?
+  bidConstraints        Json?
+  billingEvent          String?
+  optimizationGoal      String?
+  targeting             Json?
+  promotedObject        Json?
+  attributionSpec       Json?
+  startTime             DateTime?
+  endTime               DateTime?
+  learningStageInfo     Json?
+  metaCreatedAt         DateTime?
+  metaUpdatedAt         DateTime?
+  deletedAt             DateTime?
+  rawJson               Json?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  adAccount MetaAdAccount      @relation(fields: [adAccountId], references: [id], onDelete: Restrict)
+  campaign  MetaCampaign       @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  ads       MetaAd[]
+  insights  MetaInsightDaily[]
+
+  @@unique([adAccountId, metaAdSetId])
+  @@index([campaignId, effectiveStatus])
+  @@index([deletedAt])
+}
+
+model MetaCreative {
+  id                    String   @id @default(uuid()) @db.Uuid
+  adAccountId           String   @db.Uuid
+  metaCreativeId        String
+  name                  String?
+  title                 String?
+  body                  String?
+  callToAction          Json?
+  callToActionType      String?
+  imageUrl              String?
+  thumbnailUrl          String?
+  videoId               String?
+  linkUrl               String?
+  linkDeepLinkUrl       String?
+  objectUrl             String?
+  objectStoryId         String?
+  objectStorySpec       Json?
+  productSetId          String?
+  productData           Json?
+  assetFeedSpec         Json?
+  templateUrl           String?
+  templateUrlSpec       Json?
+  urlTags               String?
+  instagramPermalinkUrl String?
+  metaCreatedAt         DateTime?
+  metaUpdatedAt         DateTime?
+  deletedAt             DateTime?
+  rawJson               Json?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  adAccount MetaAdAccount @relation(fields: [adAccountId], references: [id], onDelete: Restrict)
+  ads       MetaAd[]
+
+  @@unique([adAccountId, metaCreativeId])
+  @@index([productSetId])
+  @@index([deletedAt])
+}
+
+model MetaAd {
+  id               String   @id @default(uuid()) @db.Uuid
+  adAccountId      String   @db.Uuid
+  campaignId       String   @db.Uuid
+  adSetId          String   @db.Uuid
+  creativeId       String?  @db.Uuid
+  metaAdId         String
+  name             String
+  configuredStatus String?
+  effectiveStatus  String?
+  conversionDomain String?
+  placement        Json?
+  trackingSpec     Json?
+  conversionSpec   Json?
+  metaCreatedAt    DateTime?
+  metaUpdatedAt    DateTime?
+  deletedAt        DateTime?
+  rawJson          Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  adAccount       MetaAdAccount       @relation(fields: [adAccountId], references: [id], onDelete: Restrict)
+  campaign        MetaCampaign        @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  adSet           MetaAdSet           @relation(fields: [adSetId], references: [id], onDelete: Restrict)
+  creative        MetaCreative?       @relation(fields: [creativeId], references: [id], onDelete: SetNull)
+  insights        MetaInsightDaily[]
+  productMappings AdProductMapping[]
+
+  @@unique([adAccountId, metaAdId])
+  @@index([adSetId, effectiveStatus])
+  @@index([creativeId])
+  @@index([deletedAt])
+}
+
+model MetaProductCatalog {
+  id               String   @id @default(uuid()) @db.Uuid
+  storeId          String   @db.Uuid
+  metaConnectionId String   @db.Uuid
+  metaCatalogId    String
+  name             String
+  businessId       String?
+  ownerBusinessId  String?
+  vertical         String?
+  productCount     Int?
+  feedCount        Int?
+  lastSyncedAt     DateTime?
+  rawJson          Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  store      Store             @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  connection MetaConnection    @relation(fields: [metaConnectionId], references: [id], onDelete: Restrict)
+  items      MetaCatalogItem[]
+
+  @@unique([storeId, metaCatalogId])
+  @@index([metaConnectionId])
+}
+
+model MetaCatalogItem {
+  id                       String   @id @default(uuid()) @db.Uuid
+  catalogId                String   @db.Uuid
+  metaProductItemId        String
+  retailerId               String?
+  retailerProductGroupId   String?
+  parentProductId          String?
+  name                     String?
+  brand                    String?
+  availability             String?
+  priceMinor               BigInt?
+  salePriceMinor           BigInt?
+  currency                 String?
+  size                     String?
+  color                    String?
+  pattern                  String?
+  url                      String?
+  productType              String?
+  customLabels             Json?
+  productFeedId            String?
+  quantityToSellOnFacebook Int?
+  status                   String?
+  visibility               String?
+  deletedAt                DateTime?
+  rawJson                  Json?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  catalog         MetaProductCatalog          @relation(fields: [catalogId], references: [id], onDelete: Restrict)
+  variantMappings CatalogItemVariantMapping[]
+
+  @@unique([catalogId, metaProductItemId])
+  @@index([catalogId, retailerId])
+  @@index([retailerProductGroupId])
+  @@index([deletedAt])
+}
+
+model CatalogItemVariantMapping {
+  id                  String                      @id @default(uuid()) @db.Uuid
+  catalogItemId       String                      @db.Uuid
+  variantId           String                      @db.Uuid
+  source              CatalogVariantMappingSource
+  confidence          Decimal                     @db.Decimal(5, 4)
+  isMerchantConfirmed Boolean                     @default(false)
+  validFrom           DateTime                    @default(now())
+  validUntil          DateTime?
+  createdAt           DateTime                    @default(now())
+  updatedAt           DateTime                    @updatedAt
+
+  catalogItem MetaCatalogItem @relation(fields: [catalogItemId], references: [id], onDelete: Restrict)
+  variant     ProductVariant  @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  @@index([catalogItemId, validUntil])
+  @@index([variantId, validUntil])
+}
+
+model AdProductMapping {
+  id                  String                 @id @default(uuid()) @db.Uuid
+  metaAdId            String                 @db.Uuid
+  productId           String                 @db.Uuid
+  variantId           String?                @db.Uuid
+  source              AdProductMappingSource
+  confidence          Decimal                @db.Decimal(5, 4)
+  isMerchantConfirmed Boolean                @default(false)
+  validFrom           DateTime               @default(now())
+  validUntil          DateTime?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  ad      MetaAd          @relation(fields: [metaAdId], references: [id], onDelete: Restrict)
+  product Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  @@index([metaAdId, validUntil])
+  @@index([productId, validUntil])
+  @@index([variantId, validUntil])
+  @@index([source, confidence])
+}
+
+model MetaInsightDaily {
+  id                    String           @id @default(uuid()) @db.Uuid
+  insightKey            String           @unique
+  adAccountId           String           @db.Uuid
+  campaignId            String?          @db.Uuid
+  adSetId               String?          @db.Uuid
+  adId                  String?          @db.Uuid
+  level                 MetaInsightLevel
+  date                  DateTime         @db.Date
+  accountCurrency       String
+  spend                 Decimal          @default(0) @db.Decimal(20, 6)
+  impressions           BigInt           @default(0)
+  reach                 BigInt           @default(0)
+  clicks                BigInt           @default(0)
+  uniqueClicks          BigInt           @default(0)
+  outboundClicks        BigInt           @default(0)
+  cpc                   Decimal?         @db.Decimal(20, 8)
+  cpm                   Decimal?         @db.Decimal(20, 8)
+  cpp                   Decimal?         @db.Decimal(20, 8)
+  ctr                   Decimal?         @db.Decimal(20, 8)
+  frequency             Decimal?         @db.Decimal(20, 8)
+  objective             String?
+  optimizationGoal      String?
+  attributionSetting    String?
+  productRetailerId     String?
+  productGroupRetailerId String?
+  breakdownHash         String?
+  breakdownJson         Json?
+  rawJson               Json?
+  syncedAt              DateTime         @default(now())
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  adAccount MetaAdAccount @relation(fields: [adAccountId], references: [id], onDelete: Restrict)
+  campaign  MetaCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  adSet     MetaAdSet?     @relation(fields: [adSetId], references: [id], onDelete: SetNull)
+  ad        MetaAd?        @relation(fields: [adId], references: [id], onDelete: SetNull)
+  actions   MetaInsightAction[]
+
+  @@index([adAccountId, date, level])
+  @@index([campaignId, date])
+  @@index([adSetId, date])
+  @@index([adId, date])
+  @@index([productRetailerId, date])
+}
+
+model MetaInsightAction {
+  id                String                @id @default(uuid()) @db.Uuid
+  actionKey         String                @unique
+  insightId         String                @db.Uuid
+  kind              MetaInsightActionKind
+  actionType        String
+  value             Decimal               @db.Decimal(30, 10)
+  attributionWindow String?
+  metadata          Json?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  insight MetaInsightDaily @relation(fields: [insightId], references: [id], onDelete: Cascade)
+
+  @@index([insightId, kind, actionType])
+}
