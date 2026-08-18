@@ -1,0 +1,136 @@
+enum IntegrationProvider {
+  SHOPIFY
+  META
+}
+
+enum ConnectionStatus {
+  ACTIVE
+  REAUTH_REQUIRED
+  DISCONNECTED
+  UNINSTALLED
+}
+
+enum SyncStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  PARTIAL
+}
+
+enum WebhookStatus {
+  RECEIVED
+  QUEUED
+  PROCESSING
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+model ShopifyConnection {
+  id                    String           @id @default(uuid()) @db.Uuid
+  storeId               String           @unique @db.Uuid
+  status                ConnectionStatus @default(ACTIVE)
+  accessTokenCiphertext String
+  scopes                String[]         @default([])
+  apiVersion            String
+  installedAt           DateTime         @default(now())
+  uninstalledAt         DateTime?
+  lastSyncedAt          DateTime?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  store             Store             @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  syncRuns          SyncRun[]
+  webhookDeliveries WebhookDelivery[]
+}
+
+model MetaConnection {
+  id                    String           @id @default(uuid()) @db.Uuid
+  storeId               String           @unique @db.Uuid
+  status                ConnectionStatus @default(ACTIVE)
+  metaUserId            String?
+  metaBusinessId        String?
+  accessTokenCiphertext String
+  tokenExpiresAt        DateTime?
+  scopes                String[]         @default([])
+  apiVersion            String
+  lastSyncedAt          DateTime?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  store             Store               @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  adAccounts        MetaAdAccount[]
+  catalogs          MetaProductCatalog[]
+  syncRuns          SyncRun[]
+  webhookDeliveries WebhookDelivery[]
+}
+
+model SyncRun {
+  id                  String              @id @default(uuid()) @db.Uuid
+  provider            IntegrationProvider
+  shopifyConnectionId String?             @db.Uuid
+  metaConnectionId    String?             @db.Uuid
+  resourceType        String
+  mode                String?
+  apiVersion          String
+  status              SyncStatus          @default(PENDING)
+  cursor              String?
+  recordsRead         Int                 @default(0)
+  recordsWritten      Int                 @default(0)
+  startedAt           DateTime?
+  finishedAt          DateTime?
+  lastError           String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  shopifyConnection ShopifyConnection? @relation(fields: [shopifyConnectionId], references: [id], onDelete: SetNull)
+  metaConnection    MetaConnection?    @relation(fields: [metaConnectionId], references: [id], onDelete: SetNull)
+  payloads          ExternalPayload[]
+
+  @@index([provider, resourceType, createdAt])
+  @@index([shopifyConnectionId, createdAt])
+  @@index([metaConnectionId, createdAt])
+}
+
+model WebhookDelivery {
+  id                  String              @id @default(uuid()) @db.Uuid
+  provider            IntegrationProvider
+  externalDeliveryId  String
+  shopifyConnectionId String?             @db.Uuid
+  metaConnectionId    String?             @db.Uuid
+  topic               String
+  apiVersion          String?
+  triggeredAt         DateTime?
+  receivedAt          DateTime            @default(now())
+  processedAt         DateTime?
+  status              WebhookStatus       @default(RECEIVED)
+  attempts            Int                 @default(0)
+  lastError           String?
+  payload             Json
+
+  shopifyConnection ShopifyConnection? @relation(fields: [shopifyConnectionId], references: [id], onDelete: SetNull)
+  metaConnection    MetaConnection?    @relation(fields: [metaConnectionId], references: [id], onDelete: SetNull)
+  payloads          ExternalPayload[]
+
+  @@unique([provider, externalDeliveryId])
+  @@index([provider, topic, receivedAt])
+}
+
+model ExternalPayload {
+  id                String              @id @default(uuid()) @db.Uuid
+  provider          IntegrationProvider
+  resourceType      String
+  externalId        String?
+  apiVersion        String
+  payload           Json
+  receivedAt        DateTime            @default(now())
+  syncRunId         String?             @db.Uuid
+  webhookDeliveryId String?             @db.Uuid
+
+  syncRun         SyncRun?         @relation(fields: [syncRunId], references: [id], onDelete: SetNull)
+  webhookDelivery WebhookDelivery? @relation(fields: [webhookDeliveryId], references: [id], onDelete: SetNull)
+
+  @@index([provider, resourceType, receivedAt])
+  @@index([externalId])
+}
