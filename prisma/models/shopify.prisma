@@ -1,0 +1,212 @@
+enum VariantCostSource {
+  SHOPIFY
+  MANUAL
+  IMPORTED
+}
+
+enum InventorySnapshotSource {
+  INITIAL_SYNC
+  WEBHOOK_RECONCILIATION
+  PERIODIC_RECONCILIATION
+  MANUAL_RECONCILIATION
+}
+
+model Product {
+  id               String   @id @default(uuid()) @db.Uuid
+  storeId          String   @db.Uuid
+  shopifyProductId String
+  title            String
+  handle           String?
+  productType      String?
+  vendor           String?
+  tags             String[] @default([])
+  status           String
+  totalInventory   Int?
+  tracksInventory  Boolean  @default(false)
+  publishedAt      DateTime?
+  shopifyCreatedAt DateTime?
+  shopifyUpdatedAt DateTime?
+  deletedAt        DateTime?
+  rawJson          Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  store          Store              @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  variants       ProductVariant[]
+  orderLineItems OrderLineItem[]
+  adMappings     AdProductMapping[]
+
+  @@unique([storeId, shopifyProductId])
+  @@index([storeId, status])
+  @@index([storeId, handle])
+  @@index([deletedAt])
+}
+
+model ProductVariant {
+  id                String   @id @default(uuid()) @db.Uuid
+  storeId           String   @db.Uuid
+  productId         String   @db.Uuid
+  shopifyVariantId  String
+  title             String
+  displayName       String?
+  sku               String?
+  barcode           String?
+  price              Decimal? @db.Decimal(20, 6)
+  compareAtPrice     Decimal? @db.Decimal(20, 6)
+  position           Int?
+  availableForSale  Boolean  @default(false)
+  inventoryQuantity Int?
+  inventoryPolicy   String?
+  shopifyCreatedAt  DateTime?
+  shopifyUpdatedAt  DateTime?
+  deletedAt         DateTime?
+  rawJson           Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  store           Store                       @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  product         Product                     @relation(fields: [productId], references: [id], onDelete: Restrict)
+  options         VariantOption[]
+  inventoryItem   InventoryItem?
+  costs           VariantCost[]
+  orderLineItems  OrderLineItem[]
+  restockLines    RestockLine[]
+  adMappings      AdProductMapping[]
+  catalogMappings CatalogItemVariantMapping[]
+
+  @@unique([storeId, shopifyVariantId])
+  @@index([productId, position])
+  @@index([storeId, sku])
+  @@index([storeId, barcode])
+  @@index([deletedAt])
+}
+
+model VariantOption {
+  id        String @id @default(uuid()) @db.Uuid
+  variantId String @db.Uuid
+  name      String
+  value     String
+  position  Int?
+
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([variantId, name])
+  @@index([name, value])
+}
+
+model InventoryItem {
+  id                     String   @id @default(uuid()) @db.Uuid
+  storeId                String   @db.Uuid
+  variantId              String   @unique @db.Uuid
+  shopifyInventoryItemId String
+  sku                    String?
+  tracked                Boolean  @default(false)
+  requiresShipping       Boolean  @default(true)
+  shopifyCreatedAt       DateTime?
+  shopifyUpdatedAt       DateTime?
+  deletedAt              DateTime?
+  rawJson                Json?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  store         Store                   @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  variant       ProductVariant          @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  currentLevels InventoryLevelCurrent[]
+  snapshots     InventorySnapshot[]
+
+  @@unique([storeId, shopifyInventoryItemId])
+  @@index([storeId, sku])
+  @@index([deletedAt])
+}
+
+model VariantCost {
+  id             String            @id @default(uuid()) @db.Uuid
+  variantId      String            @db.Uuid
+  amount         Decimal           @db.Decimal(20, 6)
+  currency       String
+  source         VariantCostSource
+  effectiveFrom  DateTime
+  effectiveUntil DateTime?
+  createdAt      DateTime          @default(now())
+
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  @@index([variantId, effectiveFrom])
+  @@index([source])
+}
+
+model Location {
+  id                   String   @id @default(uuid()) @db.Uuid
+  storeId              String   @db.Uuid
+  shopifyLocationId    String
+  name                 String
+  isActive             Boolean  @default(true)
+  fulfillsOnlineOrders Boolean?
+  shipsInventory       Boolean?
+  hasActiveInventory   Boolean?
+  deactivatedAt        DateTime?
+  addressJson          Json?
+  shopifyCreatedAt     DateTime?
+  shopifyUpdatedAt     DateTime?
+  deletedAt            DateTime?
+  rawJson              Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  store           Store                   @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  currentLevels   InventoryLevelCurrent[]
+  snapshots       InventorySnapshot[]
+  refundLineItems RefundLineItem[]
+
+  @@unique([storeId, shopifyLocationId])
+  @@index([storeId, isActive])
+  @@index([deletedAt])
+}
+
+model InventoryLevelCurrent {
+  id               String   @id @default(uuid()) @db.Uuid
+  inventoryItemId  String   @db.Uuid
+  locationId       String   @db.Uuid
+  available        Int      @default(0)
+  incoming         Int      @default(0)
+  committed        Int      @default(0)
+  onHand           Int      @default(0)
+  reserved         Int      @default(0)
+  damaged          Int      @default(0)
+  safetyStock      Int      @default(0)
+  qualityControl   Int      @default(0)
+  sourceUpdatedAt  DateTime?
+  lastReconciledAt DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+  location      Location      @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@unique([inventoryItemId, locationId])
+  @@index([locationId])
+  @@index([lastReconciledAt])
+}
+
+model InventorySnapshot {
+  id              String                  @id @default(uuid()) @db.Uuid
+  inventoryItemId String                  @db.Uuid
+  locationId      String                  @db.Uuid
+  available       Int
+  incoming        Int
+  committed       Int
+  onHand          Int
+  reserved        Int
+  damaged         Int
+  safetyStock     Int
+  qualityControl  Int
+  observedAt      DateTime
+  source          InventorySnapshotSource
+  createdAt       DateTime                @default(now())
+
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+  location      Location      @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@index([inventoryItemId, locationId, observedAt])
+  @@index([observedAt])
+}
