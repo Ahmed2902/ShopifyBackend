@@ -1,8 +1,14 @@
-import { env } from '../../config/env.js';
 import { AppError } from '../../errors/app-error.js';
-import { prisma } from '../../lib/prisma.js';
-import { hashPassword, verifyPassword } from './password.js';
-import { createRefreshToken, hashRefreshToken, issueAccessToken } from './tokens.js';
+import { authRepository } from './auth.repository.js';
+import {
+  createRefreshToken,
+  hashPassword,
+  hashRefreshToken,
+  issueAccessToken,
+  normalizeEmail,
+  refreshSessionExpiry,
+  verifyPassword,
+} from './auth.utils.js';
 
 interface SessionMetadata {
   userAgent?: string;
@@ -20,29 +26,18 @@ export interface AuthResult {
   refreshToken: string;
 }
 
-function publicUser(user: PublicUser): PublicUser {
-  return { id: user.id, email: user.email, name: user.name };
-}
-
-function sessionExpiry(): Date {
-  return new Date(Date.now() + env.REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
-}
-
 async function createSession(user: PublicUser, metadata: SessionMetadata): Promise<AuthResult> {
   const refreshToken = createRefreshToken();
-  const tokenHash = hashRefreshToken(refreshToken);
 
-  await prisma.refreshSession.create({
-    data: {
-      userId: user.id,
-      tokenHash,
-      expiresAt: sessionExpiry(),
-      userAgent: metadata.userAgent ?? null,
-    },
+  await authRepository.createRefreshSession({
+    userId: user.id,
+    tokenHash: hashRefreshToken(refreshToken),
+    expiresAt: refreshSessionExpiry(),
+    userAgent: metadata.userAgent ?? null,
   });
 
   return {
-    user: publicUser(user),
+    user,
     accessToken: await issueAccessToken(user.id),
     refreshToken,
   };
@@ -52,17 +47,14 @@ export async function registerUser(
   input: { email: string; password: string; name?: string },
   metadata: SessionMetadata,
 ): Promise<AuthResult> {
-  const email = input.email.trim().toLowerCase();
-  const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+  const email = normalizeEmail(input.email);
+  const existing = await authRepository.findUserByEmail(email);
   if (existing) throw new AppError('An account with this email already exists', 409, 'EMAIL_IN_USE');
 
-  const user = await prisma.user.create({
-    data: {
-      email,
-      name: input.name?.trim() || null,
-      passwordHash: await hashPassword(input.password),
-    },
-    select: { id: true, email: true, name: true },
+  const user = await authRepository.createUser({
+    email,
+    name: input.name?.trim() || null,
+    passwordHash: await hashPassword(input.password),
   });
 
   return createSession(user, metadata);
@@ -72,77 +64,48 @@ export async function loginUser(
   input: { email: string; password: string },
   metadata: SessionMetadata,
 ): Promise<AuthResult> {
-  const email = input.email.trim().toLowerCase();
-  const user = await prisma.user.findUnique({
-    where: { email },
-    select: { id: true, email: true, name: true, passwordHash: true },
-  });
+  const user = await authRepository.findUserByEmail(normalizeEmail(input.email));
 
   if (!user?.passwordHash || !(await verifyPassword(input.password, user.passwordHash))) {
     throw new AppError('Invalid email or password', 401, 'INVALID_CREDENTIALS');
   }
 
-  return createSession(user, metadata);
+  return createSession({ id: user.id, email: user.email, name: user.name }, metadata);
 }
 
 export async function rotateRefreshSession(
   refreshToken: string,
   metadata: SessionMetadata,
 ): Promise<AuthResult> {
-  const tokenHash = hashRefreshToken(refreshToken);
-  const session = await prisma.refreshSession.findUnique({
-    where: { tokenHash },
-    include: { user: { select: { id: true, email: true, name: true } } },
-  });
-
+  const session = await authRepository.findRefreshSession(hashRefreshToken(refreshToken));
   if (!session) throw new AppError('Invalid refresh session', 401, 'INVALID_SESSION');
 
   if (session.revokedAt) {
-    await prisma.refreshSession.updateMany({
-      where: { userId: session.userId, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
+    await authRepository.revokeAllActiveSessions(session.userId);
     throw new AppError('Refresh token reuse detected', 401, 'SESSION_REUSED');
   }
 
   if (session.expiresAt <= new Date()) {
-    await prisma.refreshSession.update({
-      where: { id: session.id },
-      data: { revokedAt: new Date() },
-    });
+    await authRepository.revokeSession(session.id);
     throw new AppError('Refresh session expired', 401, 'SESSION_EXPIRED');
   }
 
   const nextRefreshToken = createRefreshToken();
   const nextTokenHash = hashRefreshToken(nextRefreshToken);
-  const now = new Date();
-
-  await prisma.$transaction(async (tx) => {
-    const claimed = await tx.refreshSession.updateMany({
-      where: { id: session.id, revokedAt: null },
-      data: {
-        revokedAt: now,
-        lastUsedAt: now,
-        replacedByTokenHash: nextTokenHash,
-      },
-    });
-
-    if (claimed.count !== 1) {
-      throw new AppError('Refresh session was already rotated', 401, 'SESSION_REUSED');
-    }
-
-    await tx.refreshSession.create({
-      data: {
-        userId: session.userId,
-        tokenHash: nextTokenHash,
-        expiresAt: sessionExpiry(),
-        userAgent: metadata.userAgent ?? null,
-      },
-    });
+  const rotated = await authRepository.rotateSession({
+    sessionId: session.id,
+    userId: session.userId,
+    nextTokenHash,
+    expiresAt: refreshSessionExpiry(),
+    userAgent: metadata.userAgent ?? null,
   });
 
+  if (!rotated) {
+    throw new AppError('Refresh session was already rotated', 401, 'SESSION_REUSED');
+  }
+
   return {
-    user: publicUser(session.user),
+    user: session.user,
     accessToken: await issueAccessToken(session.userId),
     refreshToken: nextRefreshToken,
   };
@@ -150,9 +113,11 @@ export async function rotateRefreshSession(
 
 export async function revokeRefreshSession(refreshToken: string | undefined): Promise<void> {
   if (!refreshToken) return;
+  await authRepository.revokeSessionByTokenHash(hashRefreshToken(refreshToken));
+}
 
-  await prisma.refreshSession.updateMany({
-    where: { tokenHash: hashRefreshToken(refreshToken), revokedAt: null },
-    data: { revokedAt: new Date() },
-  });
+export async function getCurrentUser(userId: string) {
+  const user = await authRepository.findUserById(userId);
+  if (!user) throw new AppError('User not found', 401, 'UNAUTHORIZED');
+  return user;
 }
