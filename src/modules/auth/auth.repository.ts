@@ -1,26 +1,26 @@
 import { prisma } from '../../lib/prisma.js';
 
-export const authRepository = {
+export class AuthRepository {
   findUserByEmail(email: string) {
     return prisma.user.findUnique({
       where: { email },
       select: { id: true, email: true, name: true, passwordHash: true },
     });
-  },
+  }
 
   findUserById(userId: string) {
     return prisma.user.findUnique({
       where: { id: userId },
       select: { id: true, email: true, name: true, emailVerifiedAt: true, createdAt: true },
     });
-  },
+  }
 
   createUser(input: { email: string; name: string | null; passwordHash: string }) {
     return prisma.user.create({
       data: input,
       select: { id: true, email: true, name: true },
     });
-  },
+  }
 
   createRefreshSession(input: {
     userId: string;
@@ -29,28 +29,28 @@ export const authRepository = {
     userAgent: string | null;
   }) {
     return prisma.refreshSession.create({ data: input });
-  },
+  }
 
   findRefreshSession(tokenHash: string) {
     return prisma.refreshSession.findUnique({
       where: { tokenHash },
       include: { user: { select: { id: true, email: true, name: true } } },
     });
-  },
+  }
 
   revokeAllActiveSessions(userId: string, revokedAt = new Date()) {
     return prisma.refreshSession.updateMany({
       where: { userId, revokedAt: null },
       data: { revokedAt },
     });
-  },
+  }
 
   revokeSession(sessionId: string, revokedAt = new Date()) {
     return prisma.refreshSession.update({
       where: { id: sessionId },
       data: { revokedAt },
     });
-  },
+  }
 
   async rotateSession(input: {
     sessionId: string;
@@ -84,12 +84,12 @@ export const authRepository = {
 
       return true;
     });
-  },
+  }
 
   revokeSessionByTokenHash(tokenHash: string, revokedAt = new Date()) {
     return prisma.refreshSession.updateMany({
       where: { tokenHash, revokedAt: null },
       data: { revokedAt },
     });
-  },
-};
+  }
+}
