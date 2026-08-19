@@ -1,7 +1,7 @@
 import { env } from '../../config/env.js';
 import { AppError } from '../../errors/app-error.js';
 import { encryptSecret } from '../integrations/integration.utils.js';
-import { ShopifyRepository } from './shopify.repository.js';
+import type { ShopifyRepository } from './shopify.repository.js';
 import {
   shopifyAccessTokenSchema,
   shopifyProfileResponseSchema,
