@@ -1,20 +1,13 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { AppError } from '../../errors/app-error.js';
-import type { StoreService } from '../stores/store.service.js';
 import type { IntegrationRepository } from './integration.repository.js';
 import type { IntegrationProviderName } from './integration.schema.js';
 import { toErrorMessage } from './integration.utils.js';
 
-const READ_ROLES = ['OWNER', 'ADMIN', 'MEMBER'];
-
 export class IntegrationService {
-  constructor(
-    private readonly repository: IntegrationRepository,
-    private readonly storeService: StoreService,
-  ) {}
+  constructor(private readonly repository: IntegrationRepository) {}
 
-  async getSummary(userId: string, storeId: string) {
-    await this.storeService.requireRole(userId, storeId, READ_ROLES);
+  async getSummary(storeId: string) {
     const store = await this.repository.findSummary(storeId);
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
 
@@ -70,12 +63,10 @@ export class IntegrationService {
   }
 
   async listRecentSyncRuns(
-    userId: string,
     storeId: string,
     provider: IntegrationProviderName | undefined,
     limit: number,
   ) {
-    await this.storeService.requireRole(userId, storeId, READ_ROLES);
     const connections = await this.repository.findConnectionIds(storeId);
     if (!connections) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
 
