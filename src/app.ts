@@ -8,6 +8,7 @@ import { env } from './config/env.js';
 import { logger } from './lib/logger.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import { authRouter } from './modules/auth/auth.routes.js';
+import { integrationRouter } from './modules/integrations/integration.routes.js';
 import { storeRouter } from './modules/stores/store.routes.js';
 import { healthRouter } from './routes/health.routes.js';
 
@@ -33,6 +34,7 @@ export function createApp() {
 
   app.use('/health', healthRouter);
   app.use('/v1/auth', authRouter);
+  app.use('/v1/stores/:storeId/integrations', integrationRouter);
   app.use('/v1/stores', storeRouter);
 
   app.use(notFoundHandler);
