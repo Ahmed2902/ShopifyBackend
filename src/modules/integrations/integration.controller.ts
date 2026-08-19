@@ -4,7 +4,7 @@ import {
   integrationStoreParamsSchema,
   syncRunQuerySchema,
 } from './integration.schema.js';
-import { IntegrationService } from './integration.service.js';
+import type { IntegrationService } from './integration.service.js';
 
 export class IntegrationController {
   constructor(private readonly service: IntegrationService) {}
