@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import { AppError } from '../../errors/app-error.js';
 import { getAuthUserId } from '../../middleware/auth.middleware.js';
 import { loginSchema, registerSchema } from './auth.schema.js';
-import { AuthService } from './auth.service.js';
+import type { AuthService } from './auth.service.js';
 import {
   clearRefreshCookie,
   REFRESH_COOKIE_NAME,
