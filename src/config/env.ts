@@ -11,6 +11,7 @@ const envSchema = z.object({
   JWT_ISSUER: z.string().min(1).default('shopify-intelligence-api'),
   ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(900),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
+  TOKEN_ENCRYPTION_KEY: z.string().min(1),
 });
 
 export const env = envSchema.parse(process.env);
