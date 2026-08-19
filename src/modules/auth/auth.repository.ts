@@ -1,10 +1,21 @@
 import { prisma } from '../../lib/prisma.js';
 
+const membershipSelect = {
+  storeId: true,
+  role: true,
+} as const;
+
 export class AuthRepository {
   findUserByEmail(email: string) {
     return prisma.user.findUnique({
       where: { email },
-      select: { id: true, email: true, name: true, passwordHash: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        passwordHash: true,
+        memberships: { select: membershipSelect },
+      },
     });
   }
 
@@ -34,7 +45,16 @@ export class AuthRepository {
   findRefreshSession(tokenHash: string) {
     return prisma.refreshSession.findUnique({
       where: { tokenHash },
-      include: { user: { select: { id: true, email: true, name: true } } },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            memberships: { select: membershipSelect },
+          },
+        },
+      },
     });
   }
 

@@ -1,6 +1,5 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../../errors/app-error.js';
-import { getAuthUserId } from '../../middleware/auth.middleware.js';
 import { loginSchema, registerSchema } from './auth.schema.js';
 import type { AuthService } from './auth.service.js';
 import {
@@ -47,8 +46,8 @@ export class AuthController {
     res.status(204).send();
   };
 
-  me = async (_req: Request, res: Response) => {
-    const user = await this.service.getCurrentUser(getAuthUserId(res));
+  me = async (req: Request, res: Response) => {
+    const user = await this.service.getCurrentUser(req.context.userId!);
     res.status(200).json({ user });
   };
 }

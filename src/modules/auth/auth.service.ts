@@ -8,6 +8,7 @@ import {
   issueAccessToken,
   normalizeEmail,
   refreshSessionExpiry,
+  type StoreAccessClaim,
   verifyPassword,
 } from './auth.utils.js';
 
@@ -21,6 +22,10 @@ interface PublicUser {
   name: string | null;
 }
 
+interface SessionUser extends PublicUser {
+  memberships: StoreAccessClaim[];
+}
+
 export interface AuthResult {
   user: PublicUser;
   accessToken: string;
@@ -30,7 +35,7 @@ export interface AuthResult {
 export class AuthService {
   constructor(private readonly repository: AuthRepository) {}
 
-  private async createSession(user: PublicUser, metadata: SessionMetadata): Promise<AuthResult> {
+  private async createSession(user: SessionUser, metadata: SessionMetadata): Promise<AuthResult> {
     const refreshToken = createRefreshToken();
 
     await this.repository.createRefreshSession({
@@ -41,8 +46,8 @@ export class AuthService {
     });
 
     return {
-      user,
-      accessToken: await issueAccessToken(user.id),
+      user: { id: user.id, email: user.email, name: user.name },
+      accessToken: await issueAccessToken(user.id, user.memberships),
       refreshToken,
     };
   }
@@ -60,7 +65,7 @@ export class AuthService {
       passwordHash: await hashPassword(input.password),
     });
 
-    return this.createSession(user, metadata);
+    return this.createSession({ ...user, memberships: [] }, metadata);
   }
 
   async login(input: LoginInput, metadata: SessionMetadata): Promise<AuthResult> {
@@ -70,7 +75,15 @@ export class AuthService {
       throw new AppError('Invalid email or password', 401, 'INVALID_CREDENTIALS');
     }
 
-    return this.createSession({ id: user.id, email: user.email, name: user.name }, metadata);
+    return this.createSession(
+      {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        memberships: user.memberships,
+      },
+      metadata,
+    );
   }
 
   async rotateRefreshSession(
@@ -105,8 +118,8 @@ export class AuthService {
     }
 
     return {
-      user: session.user,
-      accessToken: await issueAccessToken(session.userId),
+      user: { id: session.user.id, email: session.user.email, name: session.user.name },
+      accessToken: await issueAccessToken(session.userId, session.user.memberships),
       refreshToken: nextRefreshToken,
     };
   }

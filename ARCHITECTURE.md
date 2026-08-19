@@ -1,123 +1,109 @@
 # Backend Architecture
 
-This file defines the default structure for backend modules in this repository. Keep the structure consistent, but do not create files that have no real responsibility.
-
 ## Module convention
 
-A normal feature module should look like this:
+A normal business module should stay compact:
 
-```text
-src/modules/<module>/
-  <module>.controller.ts
-  <module>.routes.ts
-  <module>.service.ts
-  <module>.repository.ts
-  <module>.schema.ts
-  <module>.utils.ts
+- `*.routes.ts` — route wiring and route-level middleware only
+- `*.controller.ts` — HTTP request/response handling and endpoint-specific Zod parsing
+- `*.service.ts` — business logic only
+- `*.repository.ts` — Prisma/database access
+- `*.schema.ts` — module-specific Zod schemas and inferred types
+- `*.utils.ts` — small module-specific helpers
+
+Controllers, services, and repositories are classes. Routes explicitly compose them without a DI framework.
+
+Do not create extra `client`, `manager`, `handler`, `adapter`, or helper files unless a responsibility becomes large enough to justify the split. Small related logic can stay grouped in regions.
+
+## Request context and authorization
+
+Trusted request identity is built by middleware before controllers run.
+
+### Authentication
+
+Login and refresh load the user's current `StoreMembership` rows once and encode the Store access claims in the short-lived access token:
+
+```ts
+{
+  sub: userId,
+  stores: [
+    { storeId, role }
+  ]
+}
 ```
 
-Tests live beside the code they test when that keeps the module easier to navigate.
+`requireAuth` verifies the bearer token and writes the trusted token context to:
 
-## Responsibilities
+```ts
+req.context.userId
+req.context.storeAccess
+```
 
-### Controller
+This avoids a StoreMembership database query on every Store-scoped request. Membership/role changes become visible when a new access token is issued (login or refresh); the access-token TTL therefore bounds how long an old authorization claim can remain valid.
 
-Controllers are classes.
+### Store membership
 
-Controllers own HTTP concerns:
-- read request params/query/body/cookies
-- validate request input with the module's Zod schemas
-- call the service
-- shape the HTTP response
+For Store-scoped routes, `requireStoreMembership` runs after `requireAuth`:
 
-Controllers should not contain Prisma queries or business rules.
+1. validate `:storeId`
+2. find that Store in the verified token's `storeAccess` claims
+3. reject when the token has no matching membership
+4. attach the selected trusted Store context:
 
-### Routes
+```ts
+req.context.storeId
+req.context.role
+```
 
-Route files should stay small and declarative:
-- instantiate/wire repository -> service -> controller
-- attach shared or module-local middleware
-- map URLs to controller methods
+`requireStoreMembership` must not query Prisma.
 
-Do not put validation, database access, or business logic in route files.
+### Roles
 
-A separate DI framework/container is not needed unless the project becomes complex enough to justify one.
+`requireRole(...roles)` runs only after `requireStoreMembership` and checks the already-selected `req.context.role`. It must not issue another membership query.
 
-### Service
+Example:
 
-Services are classes.
+```ts
+router.post(
+  '/settings',
+  requireAuth,
+  requireStoreMembership,
+  requireRole('OWNER', 'ADMIN'),
+  controller.update,
+);
+```
 
-Services own business/application logic:
-- authorization decisions that are part of the use case
-- orchestration between repositories/providers
-- state transitions
-- provider workflow logic
+Generic access prerequisites belong in middleware:
 
-Services do not parse Express requests.
+- authenticated user
+- Store membership
+- coarse Store role
 
-### Repository
+Resource-specific/business authorization belongs in the service when it is part of the business rule rather than generic route access.
 
-Repositories are classes and are the domain module's Prisma/database layer.
+## Service rule
 
-Put normal database reads/writes here instead of scattering Prisma calls through controllers and services. Transactions that implement one database operation can also live here.
+Services must not repeat generic authentication, Store-membership, or Store-role checks for HTTP routes. Route middleware establishes those prerequisites before the controller executes.
 
-Infrastructure-only code such as application health checks may access infrastructure directly when a repository would add no value.
+Services receive trusted IDs and implement business behavior.
 
-### Schema
+## Repository rule
 
-Each module has a schema file when it accepts or parses structured input.
+Repositories remain tenant-scoped even after route authorization. Queries for tenant-owned resources must include the trusted `storeId` where applicable.
 
-Use Zod for:
-- request body validation
-- route params
-- query params
-- important external/provider response shapes
+Token-backed route authorization prevents unauthorized route access; Store-scoped queries provide a second isolation boundary at the database layer.
 
-Controllers perform request validation using these schemas. Provider response validation may happen in the service where the provider call is handled.
+## Validation rule
 
-### Utils
+Middleware validates data that the middleware itself needs, such as the standard `:storeId` parameter.
 
-Keep small related helpers in one module utility file rather than creating many tiny files.
-
-Use regions/comments inside a larger cohesive file when that improves navigation. Split a utility into another file only when it becomes a genuinely separate responsibility.
+Controllers validate endpoint-specific body/query/parameter inputs with the module's Zod schemas before calling services.
 
 ## Middleware placement
 
-Middleware that is reused across modules belongs in:
+Middleware reused across modules belongs in `src/middleware/`.
 
-```text
-src/middleware/
-```
-
-Examples:
-- authentication (`requireAuth`)
-- request-wide authorization/context middleware
-- error handling
-- rate limiting when added
-
-Middleware that is truly specific to one module may stay inside that module.
-
-Do not keep a middleware inside Auth merely because it authenticates a user if the rest of the application depends on it.
-
-## Keep modules compact
-
-Do not create separate `client`, `manager`, `handler`, `helper`, `validator`, and `adapter` files by default.
-
-Prefer the six core module files above. If a service or utility grows into multiple genuinely independent responsibilities, split it then.
-
-For example, a small provider HTTP client can stay in a clearly marked region of the provider service. Extract it only when it becomes large, independently testable, reused, or difficult to navigate.
-
-## Dependency direction
-
-The normal request path is:
-
-```text
-Route -> Controller -> Service -> Repository -> Prisma/PostgreSQL
-```
-
-Utilities and schemas support those layers without owning business state.
-
-Cross-module use should normally happen through the other module's service rather than reaching directly into its repository.
+Authentication stays in `auth.middleware.ts`. Store membership and Store-role middleware stays in `store.middleware.ts`.
 
 ## Tenancy rule
 
@@ -125,4 +111,4 @@ Cross-module use should normally happen through the other module's service rathe
 
 There is no Organization layer in the current architecture.
 
-All merchant-owned data and future ML features must remain explicitly store-scoped unless a later product requirement deliberately introduces a broader aggregation level.
+All merchant-owned data and future ML features must remain explicitly Store-scoped unless a later product requirement deliberately introduces a broader aggregation level.

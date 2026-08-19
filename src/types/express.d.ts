@@ -4,6 +4,10 @@ declare module 'express-serve-static-core' {
       userId?: string;
       storeId?: string;
       role?: 'OWNER' | 'ADMIN' | 'MEMBER';
+      storeAccess?: Array<{
+        storeId: string;
+        role: 'OWNER' | 'ADMIN' | 'MEMBER';
+      }>;
     };
   }
 }
