@@ -1,5 +1,5 @@
 import { AppError } from '../../errors/app-error.js';
-import { AuthRepository } from './auth.repository.js';
+import type { AuthRepository } from './auth.repository.js';
 import type { LoginInput, RegisterInput } from './auth.schema.js';
 import {
   createRefreshToken,
