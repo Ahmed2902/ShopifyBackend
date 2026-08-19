@@ -9,6 +9,7 @@ import { logger } from './lib/logger.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import { authRouter } from './modules/auth/auth.routes.js';
 import { integrationRouter } from './modules/integrations/integration.routes.js';
+import { shopifyRouter } from './modules/shopify/shopify.routes.js';
 import { storeRouter } from './modules/stores/store.routes.js';
 import { healthRouter } from './routes/health.routes.js';
 
@@ -31,9 +32,14 @@ export function createApp() {
   app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
+  app.use((req, _res, next) => {
+    req.context = {};
+    next();
+  });
 
   app.use('/health', healthRouter);
   app.use('/v1/auth', authRouter);
+  app.use('/v1/integrations/shopify', shopifyRouter);
   app.use('/v1/stores/:storeId/integrations', integrationRouter);
   app.use('/v1/stores', storeRouter);
 

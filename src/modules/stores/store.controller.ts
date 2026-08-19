@@ -1,19 +1,21 @@
 import type { Request, Response } from 'express';
-import { getAuthUserId } from '../../middleware/auth.middleware.js';
-import { storeParamsSchema } from './store.schema.js';
 import type { StoreService } from './store.service.js';
 
 export class StoreController {
   constructor(private readonly service: StoreService) {}
 
-  list = async (_req: Request, res: Response) => {
-    const stores = await this.service.listForUser(getAuthUserId(res));
+  list = async (req: Request, res: Response) => {
+    const stores = await this.service.listForUser(req.context.userId!);
     res.status(200).json({ stores });
   };
 
   getById = async (req: Request, res: Response) => {
-    const { storeId } = storeParamsSchema.parse(req.params);
-    const store = await this.service.getForUser(getAuthUserId(res), storeId);
-    res.status(200).json({ store });
+    const store = await this.service.getById(req.context.storeId!);
+    res.status(200).json({
+      store: {
+        ...store,
+        role: req.context.role,
+      },
+    });
   };
 }
