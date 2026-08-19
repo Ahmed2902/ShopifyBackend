@@ -7,11 +7,7 @@ import { pinoHttp } from 'pino-http';
 import { env } from './config/env.js';
 import { logger } from './lib/logger.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
-import { authRouter } from './modules/auth/auth.routes.js';
-import { integrationRouter } from './modules/integrations/integration.routes.js';
-import { shopifyRouter } from './modules/shopify/shopify.routes.js';
-import { storeRouter } from './modules/stores/store.routes.js';
-import { healthRouter } from './routes/health.routes.js';
+import { router } from './routes.js';
 
 export function createApp() {
   const app = express();
@@ -37,11 +33,7 @@ export function createApp() {
     next();
   });
 
-  app.use('/health', healthRouter);
-  app.use('/v1/auth', authRouter);
-  app.use('/v1/integrations/shopify', shopifyRouter);
-  app.use('/v1/stores/:storeId/integrations', integrationRouter);
-  app.use('/v1/stores', storeRouter);
+  app.use(router);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
