@@ -32,6 +32,10 @@ export function createApp() {
   app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
+  app.use((req, _res, next) => {
+    req.context = {};
+    next();
+  });
 
   app.use('/health', healthRouter);
   app.use('/v1/auth', authRouter);
