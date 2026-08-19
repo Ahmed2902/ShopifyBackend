@@ -1,7 +1,7 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { AppError } from '../../errors/app-error.js';
-import { StoreService } from '../stores/store.service.js';
-import { IntegrationRepository } from './integration.repository.js';
+import type { StoreService } from '../stores/store.service.js';
+import type { IntegrationRepository } from './integration.repository.js';
 import type { IntegrationProviderName } from './integration.schema.js';
 import { toErrorMessage } from './integration.utils.js';
 
