@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decryptSecret, encryptSecret } from './integration.utils.js';
+import { decryptSecret, encryptSecret } from '../../../src/modules/integrations/integration.utils.js';
 
 describe('integration utilities', () => {
   it('round-trips provider credentials', () => {

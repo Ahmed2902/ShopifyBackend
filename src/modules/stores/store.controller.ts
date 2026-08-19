@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { getAuthUserId } from '../../middleware/auth.middleware.js';
+import { getAuthUserId, getStoreRole } from '../../middleware/auth.middleware.js';
 import { storeParamsSchema } from './store.schema.js';
 import type { StoreService } from './store.service.js';
 
@@ -13,7 +13,7 @@ export class StoreController {
 
   getById = async (req: Request, res: Response) => {
     const { storeId } = storeParamsSchema.parse(req.params);
-    const store = await this.service.getForUser(getAuthUserId(res), storeId);
-    res.status(200).json({ store });
+    const store = await this.service.getForUser(storeId);
+    res.status(200).json({ store: { ...store, role: getStoreRole(res) } });
   };
 }

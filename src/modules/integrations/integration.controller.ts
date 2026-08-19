@@ -1,5 +1,4 @@
 import type { Request, Response } from 'express';
-import { getAuthUserId } from '../../middleware/auth.middleware.js';
 import {
   integrationStoreParamsSchema,
   syncRunQuerySchema,
@@ -11,7 +10,7 @@ export class IntegrationController {
 
   summary = async (req: Request, res: Response) => {
     const { storeId } = integrationStoreParamsSchema.parse(req.params);
-    const integrations = await this.service.getSummary(getAuthUserId(res), storeId);
+    const integrations = await this.service.getSummary(storeId);
     res.status(200).json({ integrations });
   };
 
@@ -19,7 +18,6 @@ export class IntegrationController {
     const { storeId } = integrationStoreParamsSchema.parse(req.params);
     const query = syncRunQuerySchema.parse(req.query);
     const syncRuns = await this.service.listRecentSyncRuns(
-      getAuthUserId(res),
       storeId,
       query.provider,
       query.limit,

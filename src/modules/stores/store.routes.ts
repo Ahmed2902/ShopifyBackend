@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requireAuth } from '../../middleware/auth.middleware.js';
+import { requireAuth, requireRole } from '../../middleware/auth.middleware.js';
 import { StoreController } from './store.controller.js';
 import { StoreRepository } from './store.repository.js';
 import { StoreService } from './store.service.js';
@@ -12,4 +12,4 @@ export const storeRouter = Router();
 
 storeRouter.use(requireAuth);
 storeRouter.get('/', controller.list);
-storeRouter.get('/:storeId', controller.getById);
+storeRouter.get('/:storeId', requireRole(), controller.getById);

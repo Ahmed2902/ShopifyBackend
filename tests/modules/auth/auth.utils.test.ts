@@ -6,7 +6,7 @@ import {
   issueAccessToken,
   verifyAccessToken,
   verifyPassword,
-} from './auth.utils.js';
+} from '../../../src/modules/auth/auth.utils.js';
 
 describe('auth utilities', () => {
   it('hashes and verifies passwords with unique salts', async () => {
