@@ -35,11 +35,47 @@ export async function verifyPassword(password: string, encoded: string): Promise
 // endregion
 
 // region Tokens
+export type StoreRoleClaim = 'OWNER' | 'ADMIN' | 'MEMBER';
+
+export interface StoreAccessClaim {
+  storeId: string;
+  role: StoreRoleClaim;
+}
+
+export interface AccessTokenContext {
+  userId: string;
+  stores: StoreAccessClaim[];
+}
+
 const accessSecret = new TextEncoder().encode(env.JWT_ACCESS_SECRET);
 const accessAudience = 'shopify-intelligence-web';
+const storeRoles: StoreRoleClaim[] = ['OWNER', 'ADMIN', 'MEMBER'];
 
-export async function issueAccessToken(userId: string): Promise<string> {
-  return new SignJWT({ kind: 'access' })
+function parseStoreAccessClaims(value: unknown): StoreAccessClaim[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error('Unexpected store access payload');
+
+  return value.map((item) => {
+    if (!item || typeof item !== 'object') throw new Error('Unexpected store access payload');
+
+    const { storeId, role } = item as { storeId?: unknown; role?: unknown };
+    if (
+      typeof storeId !== 'string' ||
+      typeof role !== 'string' ||
+      !storeRoles.includes(role as StoreRoleClaim)
+    ) {
+      throw new Error('Unexpected store access payload');
+    }
+
+    return { storeId, role: role as StoreRoleClaim };
+  });
+}
+
+export async function issueAccessToken(
+  userId: string,
+  stores: StoreAccessClaim[] = [],
+): Promise<string> {
+  return new SignJWT({ kind: 'access', stores })
     .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
     .setSubject(userId)
     .setIssuer(env.JWT_ISSUER)
@@ -49,7 +85,7 @@ export async function issueAccessToken(userId: string): Promise<string> {
     .sign(accessSecret);
 }
 
-export async function verifyAccessToken(token: string): Promise<string> {
+export async function verifyAccessToken(token: string): Promise<AccessTokenContext> {
   try {
     const { payload } = await jwtVerify(token, accessSecret, {
       issuer: env.JWT_ISSUER,
@@ -58,7 +94,11 @@ export async function verifyAccessToken(token: string): Promise<string> {
     });
 
     if (payload.kind !== 'access' || !payload.sub) throw new Error('Unexpected token payload');
-    return payload.sub;
+
+    return {
+      userId: payload.sub,
+      stores: parseStoreAccessClaims(payload.stores),
+    };
   } catch {
     throw new AppError('Invalid or expired access token', 401, 'UNAUTHORIZED');
   }

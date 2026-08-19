@@ -12,6 +12,12 @@ const envSchema = z.object({
   ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(900),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
   TOKEN_ENCRYPTION_KEY: z.string().min(1),
+  SHOPIFY_CLIENT_ID: z.string().min(1),
+  SHOPIFY_CLIENT_SECRET: z.string().min(1),
+  SHOPIFY_SCOPES: z.string().min(1),
+  SHOPIFY_REDIRECT_URI: z.string().url(),
+  SHOPIFY_API_VERSION: z.string().regex(/^\d{4}-\d{2}$/).default('2026-07'),
+  SHOPIFY_STATE_SECRET: z.string().min(32),
 });
 
 export const env = envSchema.parse(process.env);

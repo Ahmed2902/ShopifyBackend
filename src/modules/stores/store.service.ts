@@ -10,7 +10,7 @@ export class StoreService {
     return stores.map(withMembershipRole);
   }
 
-  async getForUser(storeId: string) {
+  async getById(storeId: string) {
     const store = await this.repository.findById(storeId);
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
     return store;
