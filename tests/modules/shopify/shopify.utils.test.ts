@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AppError } from '../../errors/app-error.js';
+import { AppError } from '../../../src/errors/app-error.js';
 import {
   buildShopifyAuthorizationUrl,
   computeShopifyOAuthHmac,
@@ -7,7 +7,7 @@ import {
   normalizeShopDomain,
   verifyShopifyOAuthContext,
   verifyShopifyOAuthHmac,
-} from './shopify.utils.js';
+} from '../../../src/modules/shopify/shopify.utils.js';
 
 describe('Shopify OAuth utilities', () => {
   it('accepts only canonical myshopify domains', () => {
