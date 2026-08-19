@@ -1,5 +1,4 @@
 import type { Request, Response } from 'express';
-import { getAuthUserId } from '../../middleware/auth.middleware.js';
 import { shopifyCallbackSchema, shopifyInstallSchema } from './shopify.schema.js';
 import type { ShopifyService } from './shopify.service.js';
 import {
@@ -16,7 +15,7 @@ export class ShopifyController {
 
   install = async (req: Request, res: Response) => {
     const { shop } = shopifyInstallSchema.parse(req.body);
-    const oauth = this.service.beginOAuth(getAuthUserId(res), shop);
+    const oauth = this.service.beginOAuth(req.context.userId!, shop);
 
     setShopifyOAuthCookie(res, oauth.cookieValue);
     res.status(200).json({
