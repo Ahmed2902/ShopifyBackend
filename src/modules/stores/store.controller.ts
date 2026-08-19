@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { getAuthUserId } from '../../middleware/auth.middleware.js';
 import { storeParamsSchema } from './store.schema.js';
-import { StoreService } from './store.service.js';
+import type { StoreService } from './store.service.js';
 
 export class StoreController {
   constructor(private readonly service: StoreService) {}
