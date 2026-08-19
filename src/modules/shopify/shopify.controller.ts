@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { getAuthUserId } from '../../middleware/auth.middleware.js';
 import { shopifyCallbackSchema, shopifyInstallSchema } from './shopify.schema.js';
-import { ShopifyService } from './shopify.service.js';
+import type { ShopifyService } from './shopify.service.js';
 import {
   buildShopifySuccessRedirect,
   clearShopifyOAuthCookie,
