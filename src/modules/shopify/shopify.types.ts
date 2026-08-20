@@ -52,9 +52,11 @@ export interface ShopifySyncStats {
   written: number;
 }
 
-export interface ShopifyLocationSyncStats extends ShopifySyncStats {
+export interface ShopifyResourceSyncStats extends ShopifySyncStats {
   ids: string[];
 }
+
+export interface ShopifyLocationSyncStats extends ShopifyResourceSyncStats {}
 
 export type ShopifyInventorySnapshotSource =
   | 'INITIAL_SYNC'
