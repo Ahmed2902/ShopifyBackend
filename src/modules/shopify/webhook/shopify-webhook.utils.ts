@@ -32,7 +32,3 @@ export function shopifyGid(resource: string, value: string | number): string {
   const text = String(value);
   return text.startsWith('gid://shopify/') ? text : `gid://shopify/${resource}/${text}`;
 }
-
-export function shopifyWebhookUri(): string {
-  return new URL('/v1/integrations/shopify/webhooks', env.SHOPIFY_REDIRECT_URI).toString();
-}
