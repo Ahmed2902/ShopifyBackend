@@ -114,12 +114,36 @@ Provider modules keep the same controller/service/repository architecture as the
 - Repositories contain only Store-scoped database reads/writes.
 - Shared integration infrastructure owns `SyncRun` and raw `ExternalPayload` persistence.
 - Small provider transport helpers such as cursor pagination and throttle-delay calculation stay in the provider `*.utils.ts` file.
-- When one provider service grows into several real responsibilities, that module may use a `service/` folder with focused service classes behind one module-level facade. This is an exception for complex modules, not the default layout for every module.
-- Provider GraphQL documents belong in a dedicated `*.queries.ts` file once they are large enough to obscure service behavior. Internal cross-service contracts belong in a module-local `*.types.ts` file.
-- Large provider resource families may use focused resource files such as `shopify-order.schema.ts`, `shopify-order.queries.ts`, and `shopify-order.repository.ts` rather than growing the shared module files indefinitely.
+- Once a provider module has several substantial resource families, feature-specific code is co-located by feature rather than collected in one giant `service/` directory.
+- Shared cross-feature Shopify infrastructure belongs under `shopify/shared/`; today that includes the Admin GraphQL transport and OAuth/token lifecycle services.
+- Resource folders such as `shopify/order/` and `shopify/bulk/` keep their service, repository, schema, types, and query documents together when those files are specific to that resource family.
+- Lightweight resources that currently need only one focused service, such as catalog and inventory, still get their own feature folder without creating empty repository/schema sublayers.
+- Provider GraphQL documents belong in dedicated `*.queries.ts` files once they are large enough to obscure service behavior. Internal cross-service contracts belong in module-local `*.types.ts` files.
 - A dedicated provider API service is justified once transport behavior such as authentication failures, retries, throttling, response validation, and GraphQL envelopes is shared across multiple resource syncs.
 
-For Shopify, `ShopifyService` remains the public facade. OAuth/token lifecycle, Admin GraphQL transport, bulk-operation transport, catalog sync, inventory sync, and order/refund sync are separate focused services under `src/modules/shopify/service/`.
+For Shopify, the root `ShopifyService` remains the public facade and orchestration boundary. Feature code is organized as:
+
+```text
+shopify/
+  shopify.service.ts
+  shared/
+    shopify-api.service.ts
+    shopify-auth.service.ts
+  catalog/
+    shopify-catalog.service.ts
+  inventory/
+    shopify-inventory.service.ts
+  bulk/
+    shopify-bulk.service.ts
+    shopify-bulk.queries.ts
+    shopify-bulk.schema.ts
+  order/
+    shopify-order.service.ts
+    shopify-order.repository.ts
+    shopify-order.queries.ts
+    shopify-order.schema.ts
+    shopify-order.types.ts
+```
 
 Historical datasets that are naturally large should use Shopify Bulk Operations rather than manual top-level pagination. Order history is started as one asynchronous bulk workflow, the returned provider operation ID is stored on the `SyncRun`, and JSONL results are streamed instead of loaded into memory. Bulk order results contain order rows and nested line-item rows linked through Shopify's `__parentId` field.
 
