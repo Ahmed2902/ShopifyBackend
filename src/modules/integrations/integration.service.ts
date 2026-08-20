@@ -27,6 +27,17 @@ export class IntegrationService {
     return this.repository.createSyncRun({ ...input, mode: input.mode ?? null });
   }
 
+  updateSyncRunProgress(
+    syncRunId: string,
+    input: {
+      cursor: string | null;
+      recordsRead: number;
+      recordsWritten: number;
+    },
+  ) {
+    return this.repository.updateSyncRunProgress(syncRunId, input);
+  }
+
   completeSyncRun(
     syncRunId: string,
     stats: { recordsRead?: number; recordsWritten?: number; partial?: boolean } = {},

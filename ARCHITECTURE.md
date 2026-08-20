@@ -116,9 +116,12 @@ Provider modules keep the same controller/service/repository architecture as the
 - Small provider transport helpers such as cursor pagination and throttle-delay calculation stay in the provider `*.utils.ts` file.
 - When one provider service grows into several real responsibilities, that module may use a `service/` folder with focused service classes behind one module-level facade. This is an exception for complex modules, not the default layout for every module.
 - Provider GraphQL documents belong in a dedicated `*.queries.ts` file once they are large enough to obscure service behavior. Internal cross-service contracts belong in a module-local `*.types.ts` file.
+- Large provider resource families may use focused resource files such as `shopify-order.schema.ts`, `shopify-order.queries.ts`, and `shopify-order.repository.ts` rather than growing the shared module files indefinitely.
 - A dedicated provider API service is justified once transport behavior such as authentication failures, retries, throttling, response validation, and GraphQL envelopes is shared across multiple resource syncs.
 
-For Shopify, `ShopifyService` remains the public facade. OAuth/token lifecycle, Admin GraphQL transport, catalog sync, and inventory sync are separate focused services under `src/modules/shopify/service/`.
+For Shopify, `ShopifyService` remains the public facade. OAuth/token lifecycle, Admin GraphQL transport, catalog sync, inventory sync, and order/refund sync are separate focused services under `src/modules/shopify/service/`.
+
+Order/refund ingestion intentionally excludes direct customer PII. Historical order sync normalizes money in shop currency, preserves presentment currency metadata, checkpoints each completed top-level page in `SyncRun.cursor`, and preserves raw provider payloads for traceability.
 
 Every provider sync must be idempotent at the resource persistence layer, use the Store as its tenant boundary, record failure state in its SyncRun, and preserve relevant raw provider payloads where the data architecture calls for them.
 

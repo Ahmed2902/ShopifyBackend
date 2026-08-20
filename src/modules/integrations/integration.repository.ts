@@ -56,6 +56,24 @@ export class IntegrationRepository {
     });
   }
 
+  updateSyncRunProgress(
+    syncRunId: string,
+    input: {
+      cursor: string | null;
+      recordsRead: number;
+      recordsWritten: number;
+    },
+  ) {
+    return prisma.syncRun.update({
+      where: { id: syncRunId },
+      data: {
+        cursor: input.cursor,
+        recordsRead: input.recordsRead,
+        recordsWritten: input.recordsWritten,
+      },
+    });
+  }
+
   completeSyncRun(
     syncRunId: string,
     input: { recordsRead: number; recordsWritten: number; partial: boolean },
