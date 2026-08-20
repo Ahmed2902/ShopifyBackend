@@ -1,5 +1,10 @@
 export const ORDERS_QUERY = `#graphql
-  query OrderHistory($first: Int!, $after: String) {
+  query OrderHistory(
+    $first: Int!
+    $after: String
+    $lineItemFirst: Int!
+    $refundLineItemFirst: Int!
+  ) {
     orders(first: $first, after: $after, sortKey: CREATED_AT) {
       nodes {
         id
@@ -21,7 +26,7 @@ export const ORDERS_QUERY = `#graphql
         currentTotalPriceSet { ...MoneyBagFields }
         discountCodes
 
-        lineItems(first: 50) {
+        lineItems(first: $lineItemFirst) {
           nodes { ...OrderLineItemFields }
           pageInfo { hasNextPage endCursor }
         }
@@ -32,7 +37,7 @@ export const ORDERS_QUERY = `#graphql
           processedAt
           updatedAt
           totalRefundedSet { ...MoneyBagFields }
-          refundLineItems(first: 50) {
+          refundLineItems(first: $refundLineItemFirst) {
             nodes { ...RefundLineItemFields }
             pageInfo { hasNextPage endCursor }
           }
