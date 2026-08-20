@@ -7,7 +7,6 @@ import { ShopifyService } from '../../../src/modules/shopify/shopify.service.js'
 const storeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const connectionId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const syncRunId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
-const webhookUri = 'http://localhost:3001/v1/integrations/shopify/webhooks';
 
 const shopResponse = {
   data: {
@@ -133,35 +132,6 @@ const inventoryResponse = {
   },
 };
 
-const managedTopics = [
-  'APP_UNINSTALLED',
-  'BULK_OPERATIONS_FINISH',
-  'PRODUCTS_CREATE',
-  'PRODUCTS_UPDATE',
-  'PRODUCTS_DELETE',
-  'INVENTORY_LEVELS_CONNECT',
-  'INVENTORY_LEVELS_UPDATE',
-  'INVENTORY_LEVELS_DISCONNECT',
-  'LOCATIONS_CREATE',
-  'LOCATIONS_UPDATE',
-  'LOCATIONS_DELETE',
-  'LOCATIONS_ACTIVATE',
-  'LOCATIONS_DEACTIVATE',
-];
-
-const webhookSubscriptionsResponse = {
-  data: {
-    webhookSubscriptions: {
-      nodes: managedTopics.map((topic, index) => ({
-        id: `gid://shopify/WebhookSubscription/${index + 1}`,
-        topic,
-        uri: webhookUri,
-      })),
-      pageInfo: { hasNextPage: false, endCursor: null },
-    },
-  },
-};
-
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -220,7 +190,6 @@ describe('Shopify catalog and inventory sync', () => {
     const { repository, integrationService, service } = buildService();
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse(webhookSubscriptionsResponse))
       .mockResolvedValueOnce(jsonResponse(shopResponse))
       .mockResolvedValueOnce(jsonResponse(productResponse))
       .mockResolvedValueOnce(jsonResponse(variantResponse))
@@ -244,7 +213,7 @@ describe('Shopify catalog and inventory sync', () => {
         inventoryLevels: 1,
       },
     });
-    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
     expect(repository.upsertProduct).toHaveBeenCalledTimes(1);
     expect(repository.upsertVariant).toHaveBeenCalledTimes(1);
     expect(repository.upsertLocation).toHaveBeenCalledTimes(1);
@@ -267,7 +236,7 @@ describe('Shopify catalog and inventory sync', () => {
     });
   });
 
-  it('marks the connection for reauthorization when Shopify rejects the credential during webhook setup', async () => {
+  it('marks the connection for reauthorization and fails the sync when Shopify rejects the credential', async () => {
     const { repository, integrationService, service } = buildService();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
 
@@ -276,11 +245,11 @@ describe('Shopify catalog and inventory sync', () => {
     });
 
     expect(repository.markConnectionReauthRequired).toHaveBeenCalledWith(connectionId);
-    expect(integrationService.startSyncRun).not.toHaveBeenCalled();
-    expect(integrationService.failSyncRun).not.toHaveBeenCalled();
+    expect(integrationService.startSyncRun).toHaveBeenCalledTimes(1);
+    expect(integrationService.failSyncRun).toHaveBeenCalledWith(syncRunId, expect.anything());
   });
 
-  it('rotates an expiring offline token before webhook setup and the sync', async () => {
+  it('rotates an expiring offline token before running the sync', async () => {
     const { repository, service } = buildService({
       accessTokenExpiresAt: new Date(Date.now() + 60_000),
       refreshTokenCiphertext: encryptSecret('shopify-refresh-token'),
@@ -299,7 +268,6 @@ describe('Shopify catalog and inventory sync', () => {
           scope: 'read_products,read_inventory,read_locations',
         }),
       )
-      .mockResolvedValueOnce(jsonResponse(webhookSubscriptionsResponse))
       .mockResolvedValueOnce(jsonResponse(shopResponse))
       .mockResolvedValueOnce(jsonResponse({ data: { products: emptyConnection } }))
       .mockResolvedValueOnce(jsonResponse({ data: { productVariants: emptyConnection } }))
@@ -323,15 +291,10 @@ describe('Shopify catalog and inventory sync', () => {
       }),
     );
 
-    const webhookGraphqlHeaders = (fetchMock.mock.calls[1]?.[1] as RequestInit).headers as Record<
+    const firstGraphqlHeaders = (fetchMock.mock.calls[1]?.[1] as RequestInit).headers as Record<
       string,
       string
     >;
-    const firstSyncGraphqlHeaders = (fetchMock.mock.calls[2]?.[1] as RequestInit).headers as Record<
-      string,
-      string
-    >;
-    expect(webhookGraphqlHeaders['X-Shopify-Access-Token']).toBe('rotated-access-token');
-    expect(firstSyncGraphqlHeaders['X-Shopify-Access-Token']).toBe('rotated-access-token');
+    expect(firstGraphqlHeaders['X-Shopify-Access-Token']).toBe('rotated-access-token');
   });
 });
