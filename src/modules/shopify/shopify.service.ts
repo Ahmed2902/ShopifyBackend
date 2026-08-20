@@ -1,21 +1,36 @@
 import { env } from '../../config/env.js';
 import { AppError } from '../../errors/app-error.js';
-import { encryptSecret } from '../integrations/integration.utils.js';
+import { decryptSecret, encryptSecret } from '../integrations/integration.utils.js';
+import type { IntegrationService } from '../integrations/integration.service.js';
 import type { ShopifyRepository } from './shopify.repository.js';
 import {
   shopifyAccessTokenSchema,
-  shopifyProfileResponseSchema,
+  shopifyGraphqlResponseSchema,
+  shopifyProfileSchema,
   type ShopifyShopProfile,
 } from './shopify.schema.js';
 import {
   buildShopifyAuthorizationUrl,
+  calculateShopifyThrottleDelayMs,
   createShopifyOAuthContext,
   normalizeShopDomain,
+  parseRetryAfterMs,
+  sleep,
   verifyShopifyOAuthContext,
 } from './shopify.utils.js';
 
+const SHOPIFY_REQUEST_TIMEOUT_MS = 10_000;
+const SHOPIFY_REQUEST_ATTEMPTS = 3;
+
+interface ShopifyShopQueryData {
+  shop: unknown;
+}
+
 export class ShopifyService {
-  constructor(private readonly repository: ShopifyRepository) {}
+  constructor(
+    private readonly repository: ShopifyRepository,
+    private readonly integrationService: IntegrationService,
+  ) {}
 
   beginOAuth(userId: string, requestedShop: string) {
     const shop = normalizeShopDomain(requestedShop);
@@ -42,7 +57,7 @@ export class ShopifyService {
     }
 
     const token = await this.exchangeAuthorizationCode(shop, input.code);
-    const profile = await this.fetchShopProfile(shop, token.accessToken);
+    const profile = await this.fetchShopProfile(shop, token.accessToken, env.SHOPIFY_API_VERSION);
     const canonicalDomain = normalizeShopDomain(profile.myshopifyDomain);
 
     if (canonicalDomain !== shop) {
@@ -67,6 +82,84 @@ export class ShopifyService {
     }
 
     return { storeId: store.id, shop: canonicalDomain };
+  }
+
+  async syncShopProfile(storeId: string) {
+    const store = await this.repository.findConnectionForSync(storeId);
+    if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
+
+    const connection = store.shopifyConnection;
+    if (!connection) {
+      throw new AppError('Shopify is not connected for this store', 409, 'SHOPIFY_NOT_CONNECTED');
+    }
+    if (connection.status !== 'ACTIVE') {
+      throw new AppError(
+        'Shopify connection requires merchant attention',
+        409,
+        'SHOPIFY_CONNECTION_INACTIVE',
+      );
+    }
+
+    let accessToken: string;
+    try {
+      accessToken = decryptSecret(connection.accessTokenCiphertext);
+    } catch {
+      throw new AppError('Stored Shopify credential could not be decrypted', 500, 'SHOPIFY_CREDENTIAL_ERROR');
+    }
+
+    const syncRun = await this.integrationService.startSyncRun({
+      provider: 'SHOPIFY',
+      connectionId: connection.id,
+      resourceType: 'Shop',
+      mode: 'MANUAL',
+      apiVersion: connection.apiVersion,
+    });
+
+    try {
+      const profile = await this.fetchShopProfile(
+        store.myshopifyDomain,
+        accessToken,
+        connection.apiVersion,
+        connection.id,
+      );
+      const canonicalDomain = normalizeShopDomain(profile.myshopifyDomain);
+
+      if (canonicalDomain !== store.myshopifyDomain) {
+        throw new AppError('Shopify returned a different shop identity', 401, 'SHOP_IDENTITY_MISMATCH');
+      }
+
+      const normalizedProfile: ShopifyShopProfile = {
+        ...profile,
+        myshopifyDomain: canonicalDomain,
+      };
+
+      await this.repository.updateStoreProfile(storeId, normalizedProfile);
+      await this.integrationService.recordExternalPayload({
+        provider: 'SHOPIFY',
+        resourceType: 'Shop',
+        externalId: normalizedProfile.id,
+        apiVersion: connection.apiVersion,
+        payload: normalizedProfile,
+        syncRunId: syncRun.id,
+      });
+      await this.repository.markConnectionSynced(connection.id);
+      await this.integrationService.completeSyncRun(syncRun.id, {
+        recordsRead: 1,
+        recordsWritten: 1,
+      });
+
+      return {
+        syncRunId: syncRun.id,
+        status: 'SUCCEEDED' as const,
+        resourceType: 'Shop' as const,
+        recordsRead: 1,
+        recordsWritten: 1,
+        shop: normalizedProfile,
+      };
+    } catch (error) {
+      await this.integrationService.failSyncRun(syncRun.id, error).catch(() => undefined);
+      throw error;
+    }
   }
 
   // region Shopify HTTP calls
@@ -95,7 +188,7 @@ export class ShopifyService {
           client_secret: env.SHOPIFY_CLIENT_SECRET,
           code,
         }),
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(SHOPIFY_REQUEST_TIMEOUT_MS),
       });
     } catch {
       throw new AppError('Could not reach Shopify during token exchange', 502, 'SHOPIFY_UNAVAILABLE');
@@ -112,11 +205,19 @@ export class ShopifyService {
 
     return {
       accessToken: parsed.data.access_token,
-      scopes: parsed.data.scope.split(',').map((scope) => scope.trim()).filter(Boolean),
+      scopes: parsed.data.scope
+        .split(',')
+        .map((scope) => scope.trim())
+        .filter(Boolean),
     };
   }
 
-  private async fetchShopProfile(shop: string, accessToken: string): Promise<ShopifyShopProfile> {
+  private async fetchShopProfile(
+    shop: string,
+    accessToken: string,
+    apiVersion: string,
+    connectionId?: string,
+  ): Promise<ShopifyShopProfile> {
     const query = `#graphql
       query AppInstallationShop {
         shop {
@@ -132,32 +233,112 @@ export class ShopifyService {
       }
     `;
 
-    let response: Response;
-    try {
-      response = await fetch(`https://${shop}/admin/api/${env.SHOPIFY_API_VERSION}/graphql.json`, {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-          'X-Shopify-Access-Token': accessToken,
-        },
-        body: JSON.stringify({ query }),
-        signal: AbortSignal.timeout(10_000),
-      });
-    } catch {
-      throw new AppError('Could not reach Shopify Admin API', 502, 'SHOPIFY_UNAVAILABLE');
+    const data = await this.requestAdminGraphql<ShopifyShopQueryData>({
+      shop,
+      accessToken,
+      apiVersion,
+      query,
+      connectionId,
+    });
+    const parsed = shopifyProfileSchema.safeParse(data.shop);
+    if (!parsed.success) {
+      throw new AppError('Shopify shop query returned an unexpected shape', 502, 'SHOPIFY_BAD_RESPONSE');
     }
 
-    if (!response.ok) {
-      throw new AppError('Shopify Admin API request failed', 502, 'SHOPIFY_API_FAILED');
+    return parsed.data;
+  }
+
+  private async requestAdminGraphql<TData>(input: {
+    shop: string;
+    accessToken: string;
+    apiVersion: string;
+    query: string;
+    variables?: Record<string, unknown>;
+    connectionId?: string;
+  }): Promise<TData> {
+    const url = `https://${input.shop}/admin/api/${input.apiVersion}/graphql.json`;
+
+    for (let attempt = 0; attempt < SHOPIFY_REQUEST_ATTEMPTS; attempt += 1) {
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            'X-Shopify-Access-Token': input.accessToken,
+          },
+          body: JSON.stringify({ query: input.query, variables: input.variables ?? {} }),
+          signal: AbortSignal.timeout(SHOPIFY_REQUEST_TIMEOUT_MS),
+        });
+      } catch {
+        if (attempt < SHOPIFY_REQUEST_ATTEMPTS - 1) {
+          await sleep(500 * 2 ** attempt);
+          continue;
+        }
+        throw new AppError('Could not reach Shopify Admin API', 502, 'SHOPIFY_UNAVAILABLE');
+      }
+
+      if (response.status === 401 || response.status === 403) {
+        if (input.connectionId) {
+          await this.repository.markConnectionReauthRequired(input.connectionId).catch(() => undefined);
+        }
+        throw new AppError(
+          'Shopify rejected the stored credential',
+          409,
+          'SHOPIFY_REAUTH_REQUIRED',
+        );
+      }
+
+      if (response.status === 429) {
+        if (attempt < SHOPIFY_REQUEST_ATTEMPTS - 1) {
+          await sleep(parseRetryAfterMs(response.headers.get('retry-after')) ?? 1_000);
+          continue;
+        }
+        throw new AppError('Shopify rate limit was exceeded', 503, 'SHOPIFY_THROTTLED');
+      }
+
+      if (response.status >= 500) {
+        if (attempt < SHOPIFY_REQUEST_ATTEMPTS - 1) {
+          await sleep(500 * 2 ** attempt);
+          continue;
+        }
+        throw new AppError('Shopify Admin API is unavailable', 502, 'SHOPIFY_UNAVAILABLE');
+      }
+
+      if (!response.ok) {
+        throw new AppError('Shopify Admin API request failed', 502, 'SHOPIFY_API_FAILED');
+      }
+
+      const envelope = shopifyGraphqlResponseSchema.safeParse(await this.parseJsonResponse(response));
+      if (!envelope.success) {
+        throw new AppError('Shopify GraphQL response had an unexpected shape', 502, 'SHOPIFY_BAD_RESPONSE');
+      }
+
+      if (envelope.data.errors?.length) {
+        const throttled = envelope.data.errors.some(
+          (error) => error.extensions?.code === 'THROTTLED',
+        );
+        if (throttled && attempt < SHOPIFY_REQUEST_ATTEMPTS - 1) {
+          await sleep(calculateShopifyThrottleDelayMs(envelope.data.extensions?.cost));
+          continue;
+        }
+
+        throw new AppError(
+          throttled ? 'Shopify rate limit was exceeded' : 'Shopify GraphQL request failed',
+          throttled ? 503 : 502,
+          throttled ? 'SHOPIFY_THROTTLED' : 'SHOPIFY_GRAPHQL_FAILED',
+        );
+      }
+
+      if (envelope.data.data === undefined) {
+        throw new AppError('Shopify GraphQL response did not include data', 502, 'SHOPIFY_BAD_RESPONSE');
+      }
+
+      return envelope.data.data as TData;
     }
 
-    const parsed = shopifyProfileResponseSchema.safeParse(await this.parseJsonResponse(response));
-    if (!parsed.success || parsed.data.errors?.length || !parsed.data.data?.shop) {
-      throw new AppError('Shopify shop query failed', 502, 'SHOPIFY_API_FAILED');
-    }
-
-    return parsed.data.data.shop;
+    throw new AppError('Shopify Admin API request failed', 502, 'SHOPIFY_API_FAILED');
   }
   // endregion
 }

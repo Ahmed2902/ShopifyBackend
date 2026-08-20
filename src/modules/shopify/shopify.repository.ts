@@ -90,4 +90,53 @@ export class ShopifyRepository {
       return store;
     });
   }
+
+  findConnectionForSync(storeId: string) {
+    return prisma.store.findUnique({
+      where: { id: storeId },
+      select: {
+        id: true,
+        myshopifyDomain: true,
+        shopifyConnection: {
+          select: {
+            id: true,
+            status: true,
+            accessTokenCiphertext: true,
+            apiVersion: true,
+          },
+        },
+      },
+    });
+  }
+
+  updateStoreProfile(storeId: string, profile: ShopifyShopProfile) {
+    return prisma.store.update({
+      where: { id: storeId },
+      data: {
+        shopifyShopId: profile.id,
+        name: profile.name,
+        myshopifyDomain: profile.myshopifyDomain,
+        currencyCode: profile.currencyCode,
+        ianaTimezone: profile.ianaTimezone,
+        primaryDomainHost: profile.primaryDomain?.host ?? null,
+        primaryDomainUrl: profile.primaryDomain?.url ?? null,
+        enabledPresentmentCurrencies: profile.enabledPresentmentCurrencies,
+        shopifyCreatedAt: new Date(profile.createdAt),
+      },
+    });
+  }
+
+  markConnectionSynced(connectionId: string) {
+    return prisma.shopifyConnection.update({
+      where: { id: connectionId },
+      data: { status: 'ACTIVE', lastSyncedAt: new Date() },
+    });
+  }
+
+  markConnectionReauthRequired(connectionId: string) {
+    return prisma.shopifyConnection.update({
+      where: { id: connectionId },
+      data: { status: 'REAUTH_REQUIRED' },
+    });
+  }
 }

@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { AppError } from '../../../src/errors/app-error.js';
 import {
   buildShopifyAuthorizationUrl,
+  calculateShopifyThrottleDelayMs,
   computeShopifyOAuthHmac,
   createShopifyOAuthContext,
   normalizeShopDomain,
+  paginateShopifyConnection,
+  parseRetryAfterMs,
   verifyShopifyOAuthContext,
   verifyShopifyOAuthHmac,
 } from '../../../src/modules/shopify/shopify.utils.js';
@@ -56,5 +59,52 @@ describe('Shopify OAuth utilities', () => {
     expect(() => verifyShopifyOAuthHmac(params)).not.toThrow();
     params.set('shop', 'another-store.myshopify.com');
     expect(() => verifyShopifyOAuthHmac(params)).toThrow(AppError);
+  });
+});
+
+describe('Shopify Admin API utilities', () => {
+  it('converts retry-after seconds and calculates throttle recovery delay', () => {
+    expect(parseRetryAfterMs('1.5')).toBe(1500);
+    expect(parseRetryAfterMs('invalid')).toBeNull();
+
+    expect(
+      calculateShopifyThrottleDelayMs({
+        requestedQueryCost: 100,
+        actualQueryCost: 90,
+        throttleStatus: {
+          maximumAvailable: 1000,
+          currentlyAvailable: 50,
+          restoreRate: 50,
+        },
+      }),
+    ).toBe(1100);
+  });
+
+  it('paginates forward with Shopify end cursors', async () => {
+    const requestedCursors: Array<string | null> = [];
+    const pages: number[][] = [];
+
+    for await (const nodes of paginateShopifyConnection(async (cursor) => {
+      requestedCursors.push(cursor);
+      return cursor === null
+        ? { nodes: [1, 2], pageInfo: { hasNextPage: true, endCursor: 'cursor-1' } }
+        : { nodes: [3], pageInfo: { hasNextPage: false, endCursor: 'cursor-2' } };
+    })) {
+      pages.push(nodes);
+    }
+
+    expect(requestedCursors).toEqual([null, 'cursor-1']);
+    expect(pages).toEqual([[1, 2], [3]]);
+  });
+
+  it('rejects a pagination loop instead of requesting forever', async () => {
+    const iterator = paginateShopifyConnection(async (cursor) => ({
+      nodes: [1],
+      pageInfo: { hasNextPage: true, endCursor: cursor ?? 'cursor-1' },
+    }));
+
+    await iterator.next();
+    await iterator.next();
+    await expect(iterator.next()).rejects.toThrow(AppError);
   });
 });

@@ -2,6 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { CookieOptions, Response } from 'express';
 import { env } from '../../config/env.js';
 import { AppError } from '../../errors/app-error.js';
+import type { ShopifyGraphqlCost } from './shopify.schema.js';
 
 const OAUTH_CONTEXT_TTL_MS = 10 * 60 * 1000;
 export const SHOPIFY_OAUTH_COOKIE_NAME = 'shopify_oauth_context';
@@ -11,6 +12,14 @@ export interface ShopifyOAuthContext {
   userId: string;
   shop: string;
   expiresAt: number;
+}
+
+export interface ShopifyConnectionPage<TNode> {
+  nodes: TNode[];
+  pageInfo: {
+    hasNextPage: boolean;
+    endCursor: string | null;
+  };
 }
 
 function safeEqual(left: string, right: string, encoding: BufferEncoding = 'utf8'): boolean {
@@ -130,6 +139,55 @@ export function verifyShopifyCallbackTimestamp(timestamp: string): void {
   if (Math.abs(Date.now() - seconds * 1000) > OAUTH_CONTEXT_TTL_MS) {
     throw new AppError('Shopify callback timestamp is stale', 401, 'INVALID_SHOPIFY_TIMESTAMP');
   }
+}
+// endregion
+
+// region Admin GraphQL helpers
+export function parseRetryAfterMs(value: string | null): number | null {
+  if (!value) return null;
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000);
+
+  const date = Date.parse(value);
+  if (Number.isNaN(date)) return null;
+  return Math.max(0, date - Date.now());
+}
+
+export function calculateShopifyThrottleDelayMs(cost: ShopifyGraphqlCost | undefined): number {
+  const throttle = cost?.throttleStatus;
+  if (!throttle || throttle.restoreRate <= 0) return 1_000;
+
+  const requested = cost?.requestedQueryCost ?? cost?.actualQueryCost ?? 1;
+  const deficit = Math.max(1, requested - throttle.currentlyAvailable);
+  return Math.min(5_000, Math.ceil((deficit / throttle.restoreRate) * 1000) + 100);
+}
+
+export async function* paginateShopifyConnection<TNode>(
+  fetchPage: (cursor: string | null) => Promise<ShopifyConnectionPage<TNode>>,
+): AsyncGenerator<TNode[], void, void> {
+  let cursor: string | null = null;
+
+  while (true) {
+    const page = await fetchPage(cursor);
+    yield page.nodes;
+
+    if (!page.pageInfo.hasNextPage) return;
+
+    const nextCursor = page.pageInfo.endCursor;
+    if (!nextCursor || nextCursor === cursor) {
+      throw new AppError(
+        'Shopify pagination returned an invalid next cursor',
+        502,
+        'SHOPIFY_BAD_PAGINATION',
+      );
+    }
+    cursor = nextCursor;
+  }
+}
+
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 // endregion
 

@@ -105,6 +105,18 @@ Middleware reused across modules belongs in `src/middleware/`.
 
 Authentication stays in `auth.middleware.ts`. Store membership and Store-role middleware stays in `store.middleware.ts`.
 
+## Provider sync rule
+
+Provider modules keep the same controller/service/repository architecture as the rest of the backend.
+
+- Controllers expose explicit sync operations; they do not contain provider logic.
+- Services orchestrate provider requests, validation, retries, normalization, and SyncRun lifecycle calls.
+- Repositories contain only Store-scoped database reads/writes.
+- Shared integration infrastructure owns `SyncRun` and raw `ExternalPayload` persistence.
+- Small provider transport helpers such as cursor pagination and throttle-delay calculation stay in the provider `*.utils.ts` file. A separate API client/adapter should only be introduced when the provider transport becomes large enough to justify it.
+
+Every provider sync must be idempotent at the resource persistence layer, use the Store as its tenant boundary, record failure state in its SyncRun, and preserve relevant raw provider payloads where the data architecture calls for them.
+
 ## Tenancy rule
 
 `Store` is the operational tenant boundary and the default ML/data isolation boundary.
