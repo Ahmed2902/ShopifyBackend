@@ -180,6 +180,8 @@ Operational webhook coverage includes products, locations, inventory levels, ord
 
 Webhook subscriptions are application configuration, not runtime business logic. Shopify recommends app-specific subscriptions for uniform topics, so operational topics should be configured once in Shopify app configuration/Dev Dashboard and deployed to all installed shops. The backend only receives, verifies, queues, and processes deliveries; OAuth, manual sync, and backfill do not list/create/update webhook subscriptions through Admin GraphQL.
 
+Do not add runtime subscription-management code unless we later have a real per-shop requirement for different topics, URIs, or filters.
+
 The app configuration must cover the operational topics handled by this backend: product create/update/delete, inventory-level connect/update/disconnect, location create/update/delete/activate/deactivate, order create/update/delete, refund create, app uninstall, and bulk-operation finish. Mandatory privacy/compliance webhooks must also be configured before public App Store distribution.
 
 Ongoing Store freshness is a separate concern from historical bootstrap. Webhooks provide near-real-time updates, while periodic reconciliation will later call a small set of resource-focused sync functions (catalog, commerce, inventory). Plan/billing policy decides when a Store is due for reconciliation; Shopify services do not contain plan-specific scheduling logic.
