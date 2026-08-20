@@ -49,5 +49,8 @@ jobs:
       - name: Apply database migrations
         run: npm run prisma:migrate:deploy
 
+      - name: Verify migration drift
+        run: npm run prisma:migrate:check
+
       - name: Verify
         run: npm run ci
