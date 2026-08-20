@@ -1,11 +1,13 @@
 import { AppError } from '../../../errors/app-error.js';
-import type { ShopifyApiService } from '../shared/shopify-api.service.js';
 import type { ShopifyBulkService } from '../bulk/shopify-bulk.service.js';
+import type { ShopifyApiService } from '../shared/shopify-api.service.js';
 import type { ShopifyRequestContext, ShopifySyncContext } from '../shopify.types.js';
+import { paginateShopifyConnection } from '../shopify.utils.js';
 import {
   ORDER_DETAILS_QUERY,
   ORDER_HISTORY_BULK_QUERY,
   REFUND_DETAILS_QUERY,
+  UPDATED_ORDERS_QUERY,
 } from './shopify-order.queries.js';
 import type { ShopifyOrderRepository } from './shopify-order.repository.js';
 import {
@@ -13,6 +15,7 @@ import {
   shopifyOrderDetailsSchema,
   shopifyOrderHeaderSchema,
   shopifyRefundQuerySchema,
+  shopifyUpdatedOrderConnectionSchema,
   type ShopifyOrderHeader,
   type ShopifyRefund,
 } from './shopify-order.schema.js';
@@ -21,10 +24,14 @@ import type {
   ShopifyOrderBackfillInspection,
   ShopifyOrderBackfillResult,
   ShopifyOrderQueryData,
+  ShopifyOrderReconciliationResult,
   ShopifyRefundQueryData,
+  ShopifyUpdatedOrdersQueryData,
 } from './shopify-order.types.js';
 
 const DETAIL_PAGE_SIZE = 250;
+const UPDATED_ORDER_PAGE_SIZE = 100;
+const RECONCILIATION_OVERLAP_MS = 5 * 60_000;
 
 export class ShopifyOrderService {
   constructor(
@@ -76,6 +83,60 @@ export class ShopifyOrderService {
       502,
       'SHOPIFY_BAD_RESPONSE',
     );
+  }
+
+  async reconcileUpdatedOrders(
+    input: ShopifyRequestContext,
+    since: Date,
+  ): Promise<ShopifyOrderReconciliationResult> {
+    const result: ShopifyOrderReconciliationResult = {
+      ...this.emptyResult(),
+      ordersScanned: 0,
+      ordersReconciled: 0,
+    };
+    const watermark = new Date(Math.max(0, since.getTime() - RECONCILIATION_OVERLAP_MS));
+    const search = `updated_at:>'${watermark.toISOString()}'`;
+
+    const pages = paginateShopifyConnection(async (cursor) => {
+      const data = await this.apiService.requestAdminGraphql<ShopifyUpdatedOrdersQueryData>({
+        shop: input.shop,
+        accessToken: input.accessToken,
+        apiVersion: input.apiVersion,
+        connectionId: input.connectionId,
+        query: UPDATED_ORDERS_QUERY,
+        variables: {
+          first: UPDATED_ORDER_PAGE_SIZE,
+          after: cursor,
+          query: search,
+        },
+      });
+      const parsed = shopifyUpdatedOrderConnectionSchema.safeParse(data.orders);
+      if (!parsed.success) {
+        throw new AppError(
+          'Shopify updated orders query returned an unexpected shape',
+          502,
+          'SHOPIFY_BAD_RESPONSE',
+        );
+      }
+      return parsed.data;
+    });
+
+    for await (const orders of pages) {
+      result.ordersScanned += orders.length;
+      for (const order of orders) {
+        const reconciled = await this.reconcileOrder(input, order.id);
+        if (!reconciled.found || !reconciled.result) continue;
+        result.ordersReconciled += 1;
+        result.recordsRead += reconciled.result.recordsRead;
+        result.recordsWritten += reconciled.result.recordsWritten;
+        result.breakdown.orders += reconciled.result.breakdown.orders;
+        result.breakdown.lineItems += reconciled.result.breakdown.lineItems;
+        result.breakdown.refunds += reconciled.result.breakdown.refunds;
+        result.breakdown.refundLineItems += reconciled.result.breakdown.refundLineItems;
+      }
+    }
+
+    return result;
   }
 
   async reconcileOrder(

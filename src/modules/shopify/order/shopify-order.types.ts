@@ -11,6 +11,10 @@ export interface ShopifyOrderQueryData {
   order: unknown | null;
 }
 
+export interface ShopifyUpdatedOrdersQueryData {
+  orders: unknown;
+}
+
 export type ShopifyImportedOrder = ShopifyOrderHeader & {
   lineItems: ShopifyOrderLineItem[];
 };
@@ -34,6 +38,11 @@ export interface ShopifyOrderBackfillResult {
   recordsRead: number;
   recordsWritten: number;
   breakdown: ShopifyOrderBackfillBreakdown;
+}
+
+export interface ShopifyOrderReconciliationResult extends ShopifyOrderBackfillResult {
+  ordersScanned: number;
+  ordersReconciled: number;
 }
 
 export type ShopifyOrderBackfillInspection =

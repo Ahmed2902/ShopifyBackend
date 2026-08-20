@@ -68,6 +68,18 @@ export const ORDER_HISTORY_BULK_QUERY = `#graphql
   }
 `;
 
+export const UPDATED_ORDERS_QUERY = `#graphql
+  query UpdatedOrders($first: Int!, $after: String, $query: String!) {
+    orders(first: $first, after: $after, query: $query, sortKey: UPDATED_AT) {
+      nodes {
+        id
+        updatedAt
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
 export const ORDER_DETAILS_QUERY = `#graphql
   query WebhookOrder($id: ID!, $first: Int!, $after: String) {
     order(id: $id) {

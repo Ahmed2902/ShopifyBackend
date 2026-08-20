@@ -101,6 +101,7 @@ export class ShopifyRepository {
             select: { id: true },
           });
 
+      const now = new Date();
       await tx.shopifyConnection.upsert({
         where: { storeId: store.id },
         create: {
@@ -112,6 +113,7 @@ export class ShopifyRepository {
           refreshTokenExpiresAt: input.credentials.refreshTokenExpiresAt,
           scopes: input.credentials.scopes,
           apiVersion: input.apiVersion,
+          nextReconciliationAt: now,
         },
         update: {
           status: 'ACTIVE',
@@ -121,8 +123,10 @@ export class ShopifyRepository {
           refreshTokenExpiresAt: input.credentials.refreshTokenExpiresAt,
           scopes: input.credentials.scopes,
           apiVersion: input.apiVersion,
-          installedAt: new Date(),
+          installedAt: now,
           uninstalledAt: null,
+          nextReconciliationAt: now,
+          reconciliationClaimedAt: null,
         },
       });
 
@@ -157,6 +161,9 @@ export class ShopifyRepository {
             scopes: true,
             apiVersion: true,
             lastSyncedAt: true,
+            lastReconciledAt: true,
+            nextReconciliationAt: true,
+            reconciliationIntervalMinutes: true,
           },
         },
       },
@@ -389,17 +396,138 @@ export class ShopifyRepository {
     });
   }
 
-  markConnectionSynced(connectionId: string) {
-    return prisma.shopifyConnection.update({
-      where: { id: connectionId },
-      data: { status: 'ACTIVE', lastSyncedAt: new Date() },
+  async markMissingCatalogDeleted(
+    storeId: string,
+    activeShopifyProductIds: string[],
+    activeShopifyVariantIds: string[],
+  ): Promise<{ products: number; variants: number }> {
+    return prisma.$transaction(async (tx) => {
+      const now = new Date();
+      const missingVariants = await tx.productVariant.findMany({
+        where: {
+          storeId,
+          deletedAt: null,
+          ...(activeShopifyVariantIds.length > 0
+            ? { shopifyVariantId: { notIn: activeShopifyVariantIds } }
+            : {}),
+        },
+        select: { id: true },
+      });
+      const missingVariantIds = missingVariants.map((variant) => variant.id);
+      if (missingVariantIds.length > 0) {
+        await tx.inventoryItem.updateMany({
+          where: { storeId, variantId: { in: missingVariantIds } },
+          data: { deletedAt: now },
+        });
+        await tx.productVariant.updateMany({
+          where: { id: { in: missingVariantIds } },
+          data: { deletedAt: now },
+        });
+      }
+
+      const productResult = await tx.product.updateMany({
+        where: {
+          storeId,
+          deletedAt: null,
+          ...(activeShopifyProductIds.length > 0
+            ? { shopifyProductId: { notIn: activeShopifyProductIds } }
+            : {}),
+        },
+        data: { deletedAt: now },
+      });
+
+      return { products: productResult.count, variants: missingVariantIds.length };
+    });
+  }
+
+  async markMissingLocationsDeleted(
+    storeId: string,
+    activeShopifyLocationIds: string[],
+  ): Promise<number> {
+    return prisma.$transaction(async (tx) => {
+      const missing = await tx.location.findMany({
+        where: {
+          storeId,
+          deletedAt: null,
+          ...(activeShopifyLocationIds.length > 0
+            ? { shopifyLocationId: { notIn: activeShopifyLocationIds } }
+            : {}),
+        },
+        select: { id: true },
+      });
+      if (missing.length === 0) return 0;
+      const ids = missing.map((location) => location.id);
+      await tx.inventoryLevelCurrent.deleteMany({ where: { locationId: { in: ids } } });
+      await tx.location.updateMany({
+        where: { id: { in: ids } },
+        data: { deletedAt: new Date(), isActive: false },
+      });
+      return ids.length;
+    });
+  }
+
+  async deleteMissingInventoryLevelsForLocation(
+    storeId: string,
+    shopifyLocationId: string,
+    activeShopifyInventoryItemIds: string[],
+  ): Promise<number> {
+    return prisma.$transaction(async (tx) => {
+      const location = await tx.location.findUnique({
+        where: { storeId_shopifyLocationId: { storeId, shopifyLocationId } },
+        select: { id: true },
+      });
+      if (!location) return 0;
+
+      const activeItems = activeShopifyInventoryItemIds.length
+        ? await tx.inventoryItem.findMany({
+            where: {
+              storeId,
+              shopifyInventoryItemId: { in: activeShopifyInventoryItemIds },
+            },
+            select: { id: true },
+          })
+        : [];
+      const activeIds = activeItems.map((item) => item.id);
+      const deleted = await tx.inventoryLevelCurrent.deleteMany({
+        where: {
+          locationId: location.id,
+          ...(activeIds.length > 0 ? { inventoryItemId: { notIn: activeIds } } : {}),
+        },
+      });
+      return deleted.count;
+    });
+  }
+
+  async markConnectionSynced(connectionId: string) {
+    const completedAt = new Date();
+    return prisma.$transaction(async (tx) => {
+      const connection = await tx.shopifyConnection.findUniqueOrThrow({
+        where: { id: connectionId },
+        select: { reconciliationIntervalMinutes: true },
+      });
+      const nextReconciliationAt = new Date(
+        completedAt.getTime() + connection.reconciliationIntervalMinutes * 60_000,
+      );
+      return tx.shopifyConnection.update({
+        where: { id: connectionId },
+        data: {
+          status: 'ACTIVE',
+          lastSyncedAt: completedAt,
+          lastReconciledAt: completedAt,
+          nextReconciliationAt,
+          reconciliationClaimedAt: null,
+        },
+      });
     });
   }
 
   markConnectionReauthRequired(connectionId: string) {
     return prisma.shopifyConnection.update({
       where: { id: connectionId },
-      data: { status: 'REAUTH_REQUIRED' },
+      data: {
+        status: 'REAUTH_REQUIRED',
+        reconciliationClaimedAt: null,
+      },
     });
   }
 }

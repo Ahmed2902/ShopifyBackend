@@ -126,6 +126,20 @@ export class IntegrationRepository {
     });
   }
 
+  findLastSuccessfulShopifySyncRun(connectionId: string, resourceType: string) {
+    return prisma.syncRun.findFirst({
+      where: {
+        provider: 'SHOPIFY',
+        shopifyConnectionId: connectionId,
+        resourceType,
+        status: 'SUCCEEDED',
+        finishedAt: { not: null },
+      },
+      orderBy: [{ finishedAt: 'desc' }, { createdAt: 'desc' }],
+      select: { finishedAt: true },
+    });
+  }
+
   createExternalPayload(input: {
     provider: IntegrationProviderName;
     resourceType: string;

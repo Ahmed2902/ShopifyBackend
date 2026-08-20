@@ -10,8 +10,8 @@ import {
 import type {
   ShopifyProductsQueryData,
   ShopifyRequestContext,
+  ShopifyResourceSyncStats,
   ShopifySyncContext,
-  ShopifySyncStats,
   ShopifyVariantsQueryData,
 } from '../shopify.types.js';
 import { paginateShopifyConnection } from '../shopify.utils.js';
@@ -28,11 +28,12 @@ export class ShopifyCatalogService {
   ) {}
 
   async sync(input: ShopifySyncContext): Promise<{
-    products: ShopifySyncStats;
-    variants: ShopifySyncStats;
+    products: ShopifyResourceSyncStats;
+    variants: ShopifyResourceSyncStats;
   }> {
     const products = await this.syncProducts(input);
     const variants = await this.syncVariants(input);
+    await this.repository.markMissingCatalogDeleted(input.storeId, products.ids, variants.ids);
     return { products, variants };
   }
 
@@ -114,9 +115,10 @@ export class ShopifyCatalogService {
     return { found: true, variantIds };
   }
 
-  private async syncProducts(input: ShopifySyncContext): Promise<ShopifySyncStats> {
+  private async syncProducts(input: ShopifySyncContext): Promise<ShopifyResourceSyncStats> {
     let read = 0;
     let written = 0;
+    const ids: string[] = [];
 
     const pages = paginateShopifyConnection(async (cursor) => {
       const data = await this.apiService.requestAdminGraphql<ShopifyProductsQueryData>({
@@ -139,16 +141,18 @@ export class ShopifyCatalogService {
       read += products.length;
       for (const product of products) {
         await this.repository.upsertProduct(input.storeId, product);
+        ids.push(product.id);
         written += 1;
       }
     }
 
-    return { read, written };
+    return { read, written, ids };
   }
 
-  private async syncVariants(input: ShopifySyncContext): Promise<ShopifySyncStats> {
+  private async syncVariants(input: ShopifySyncContext): Promise<ShopifyResourceSyncStats> {
     let read = 0;
     let written = 0;
+    const ids: string[] = [];
 
     const pages = paginateShopifyConnection(async (cursor) => {
       const data = await this.apiService.requestAdminGraphql<ShopifyVariantsQueryData>({
@@ -178,11 +182,12 @@ export class ShopifyCatalogService {
             'SHOPIFY_CATALOG_INCONSISTENT',
           );
         }
+        ids.push(variant.id);
         written += 1;
       }
     }
 
-    return { read, written };
+    return { read, written, ids };
   }
 
   private recordPagePayload(
