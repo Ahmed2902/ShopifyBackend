@@ -17,6 +17,21 @@ function jsonResponse(body: unknown) {
   });
 }
 
+function stubBulkStart() {
+  const fetchMock = vi.fn().mockResolvedValue(
+    jsonResponse({
+      data: {
+        bulkOperationRunQuery: {
+          bulkOperation: { id: operationId, status: 'CREATED' },
+          userErrors: [],
+        },
+      },
+    }),
+  );
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
 function buildService(scopes = ['read_products', 'read_inventory', 'read_locations', 'read_orders']) {
   const repository = {
     findConnectionForSync: vi.fn().mockResolvedValue({
@@ -75,19 +90,7 @@ afterEach(() => {
 describe('Shopify order-history facade', () => {
   it('starts order history as one asynchronous Shopify bulk operation', async () => {
     const { integrationService, service } = buildService();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        jsonResponse({
-          data: {
-            bulkOperationRunQuery: {
-              bulkOperation: { id: operationId, status: 'CREATED' },
-              userErrors: [],
-            },
-          },
-        }),
-      ),
-    );
+    const fetchMock = stubBulkStart();
 
     const result = await service.startOrderHistoryBackfill(storeId);
 
@@ -99,6 +102,7 @@ describe('Shopify order-history facade', () => {
       providerStatus: 'CREATED',
       historyAccess: 'LAST_60_DAYS',
     });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(integrationService.startSyncRun).toHaveBeenCalledWith({
       provider: 'SHOPIFY',
       connectionId,
@@ -120,19 +124,7 @@ describe('Shopify order-history facade', () => {
 
   it('reports full order-history access when read_all_orders is granted', async () => {
     const { service } = buildService(['read_orders', 'read_all_orders']);
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        jsonResponse({
-          data: {
-            bulkOperationRunQuery: {
-              bulkOperation: { id: operationId, status: 'CREATED' },
-              userErrors: [],
-            },
-          },
-        }),
-      ),
-    );
+    stubBulkStart();
 
     const result = await service.startOrderHistoryBackfill(storeId);
 

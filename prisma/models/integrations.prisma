@@ -108,11 +108,14 @@ model WebhookDelivery {
   apiVersion          String?
   triggeredAt         DateTime?
   receivedAt          DateTime            @default(now())
+  processingStartedAt DateTime?
+  nextAttemptAt       DateTime?
   processedAt         DateTime?
   status              WebhookStatus       @default(RECEIVED)
   attempts            Int                 @default(0)
   lastError           String?
   payload             Json
+  updatedAt           DateTime            @updatedAt
 
   shopifyConnection ShopifyConnection? @relation(fields: [shopifyConnectionId], references: [id], onDelete: SetNull)
   metaConnection    MetaConnection?    @relation(fields: [metaConnectionId], references: [id], onDelete: SetNull)
@@ -120,6 +123,8 @@ model WebhookDelivery {
 
   @@unique([provider, externalDeliveryId])
   @@index([provider, topic, receivedAt])
+  @@index([status, nextAttemptAt, receivedAt])
+  @@index([status, processingStartedAt])
 }
 
 model ExternalPayload {

@@ -236,7 +236,7 @@ describe('Shopify catalog and inventory sync', () => {
     });
   });
 
-  it('marks the connection for reauthorization when Shopify rejects the credential', async () => {
+  it('marks the connection for reauthorization and fails the sync when Shopify rejects the credential', async () => {
     const { repository, integrationService, service } = buildService();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
 
@@ -245,6 +245,7 @@ describe('Shopify catalog and inventory sync', () => {
     });
 
     expect(repository.markConnectionReauthRequired).toHaveBeenCalledWith(connectionId);
+    expect(integrationService.startSyncRun).toHaveBeenCalledTimes(1);
     expect(integrationService.failSyncRun).toHaveBeenCalledWith(syncRunId, expect.anything());
   });
 

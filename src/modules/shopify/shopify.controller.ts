@@ -50,6 +50,22 @@ export class ShopifyController {
     res.redirect(303, buildShopifySuccessRedirect(result.storeId, result.shop));
   };
 
+  webhook = async (req: Request, res: Response) => {
+    const result = await this.service.receiveWebhook(
+      {
+        hmac: req.get('x-shopify-hmac-sha256'),
+        topic: req.get('x-shopify-topic'),
+        shopDomain: req.get('x-shopify-shop-domain'),
+        webhookId: req.get('x-shopify-webhook-id'),
+        apiVersion: req.get('x-shopify-api-version'),
+        triggeredAt: req.get('x-shopify-triggered-at'),
+      },
+      req.rawBody,
+    );
+
+    res.status(200).json({ received: true, ...result });
+  };
+
   sync = async (req: Request, res: Response) => {
     const result = await this.service.syncStoreData(req.context.storeId!);
     res.status(200).json(result);

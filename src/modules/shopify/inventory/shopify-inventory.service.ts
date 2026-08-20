@@ -4,18 +4,25 @@ import type { ShopifyRepository } from '../shopify.repository.js';
 import { LOCATION_INVENTORY_QUERY, LOCATIONS_QUERY } from '../shopify.queries.js';
 import {
   shopifyInventoryLevelConnectionSchema,
+  shopifyInventoryLevelSchema,
   shopifyLocationConnectionSchema,
+  shopifyLocationSchema,
 } from '../shopify.schema.js';
 import type {
   ShopifyInventorySnapshotSource,
   ShopifyLocationInventoryQueryData,
   ShopifyLocationsQueryData,
   ShopifyLocationSyncStats,
+  ShopifyRequestContext,
   ShopifySyncContext,
   ShopifySyncStats,
 } from '../shopify.types.js';
 import { paginateShopifyConnection } from '../shopify.utils.js';
 import type { ShopifyApiService } from '../shared/shopify-api.service.js';
+import {
+  INVENTORY_LEVEL_BY_ITEM_LOCATION_QUERY,
+  LOCATION_BY_ID_QUERY,
+} from './shopify-inventory.queries.js';
 
 const SHOPIFY_PAGE_SIZE = 100;
 const REQUIRED_INVENTORY_STATES = [
@@ -53,6 +60,82 @@ export class ShopifyInventoryService {
     }
 
     return { locations, inventoryLevels };
+  }
+
+  async reconcileLocation(
+    input: ShopifyRequestContext,
+    locationId: string,
+  ): Promise<{ found: boolean }> {
+    const data = await this.apiService.requestAdminGraphql<{ location: unknown | null }>({
+      shop: input.shop,
+      accessToken: input.accessToken,
+      apiVersion: input.apiVersion,
+      connectionId: input.connectionId,
+      query: LOCATION_BY_ID_QUERY,
+      variables: { id: locationId },
+    });
+    if (!data.location) return { found: false };
+
+    const location = shopifyLocationSchema.safeParse(data.location);
+    if (!location.success || location.data.id !== locationId) {
+      throw new AppError(
+        'Shopify location webhook reconciliation returned an unexpected shape',
+        502,
+        'SHOPIFY_BAD_RESPONSE',
+      );
+    }
+    await this.repository.upsertLocation(input.storeId, location.data);
+    return { found: true };
+  }
+
+  async reconcileInventoryLevel(
+    input: ShopifyRequestContext,
+    inventoryItemId: string,
+    locationId: string,
+  ): Promise<{ found: boolean }> {
+    const data = await this.apiService.requestAdminGraphql<{
+      inventoryItem: { inventoryLevel: unknown | null } | null;
+    }>({
+      shop: input.shop,
+      accessToken: input.accessToken,
+      apiVersion: input.apiVersion,
+      connectionId: input.connectionId,
+      query: INVENTORY_LEVEL_BY_ITEM_LOCATION_QUERY,
+      variables: { inventoryItemId, locationId },
+    });
+    const rawLevel = data.inventoryItem?.inventoryLevel ?? null;
+    if (!rawLevel) return { found: false };
+
+    const level = shopifyInventoryLevelSchema.safeParse(rawLevel);
+    if (!level.success) {
+      throw new AppError(
+        'Shopify inventory webhook reconciliation returned an unexpected shape',
+        502,
+        'SHOPIFY_BAD_RESPONSE',
+      );
+    }
+    if (level.data.item.id !== inventoryItemId || level.data.location.id !== locationId) {
+      throw new AppError(
+        'Shopify returned a different inventory level during webhook reconciliation',
+        502,
+        'SHOPIFY_CATALOG_INCONSISTENT',
+      );
+    }
+
+    this.assertInventoryQuantities(level.data.quantities.map((quantity) => quantity.name));
+    const persisted = await this.repository.upsertInventoryLevel(
+      input.storeId,
+      level.data,
+      'WEBHOOK_RECONCILIATION',
+    );
+    if (!persisted) {
+      throw new AppError(
+        'Shopify inventory webhook references catalog data that is not synchronized',
+        502,
+        'SHOPIFY_CATALOG_INCONSISTENT',
+      );
+    }
+    return { found: true };
   }
 
   private async syncLocations(input: ShopifySyncContext): Promise<ShopifyLocationSyncStats> {

@@ -1,22 +1,13 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireRole, requireStoreMembership } from '../../middleware/store.middleware.js';
-import { IntegrationRepository } from '../integrations/integration.repository.js';
-import { IntegrationService } from '../integrations/integration.service.js';
 import { ShopifyController } from './shopify.controller.js';
-import { ShopifyOrderRepository } from './order/shopify-order.repository.js';
-import { ShopifyRepository } from './shopify.repository.js';
-import { ShopifyService } from './shopify.service.js';
+import { shopifyService } from './shopify.module.js';
 
-const integrationService = new IntegrationService(new IntegrationRepository());
-const service = new ShopifyService(
-  new ShopifyRepository(),
-  integrationService,
-  new ShopifyOrderRepository(),
-);
-const controller = new ShopifyController(service);
+const controller = new ShopifyController(shopifyService);
 
 export const shopifyRouter = Router();
+shopifyRouter.post('/webhooks', controller.webhook);
 shopifyRouter.post('/install', requireAuth, controller.install);
 shopifyRouter.get('/callback', controller.callback);
 

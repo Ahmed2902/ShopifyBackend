@@ -8,9 +8,12 @@ import { ShopifyOrderService } from '../../../src/modules/shopify/order/shopify-
 import { ShopifyService } from '../../../src/modules/shopify/shopify.service.js';
 import { ShopifyApiService } from '../../../src/modules/shopify/shared/shopify-api.service.js';
 import { ShopifyAuthService } from '../../../src/modules/shopify/shared/shopify-auth.service.js';
+import { ShopifyWebhookRepository } from '../../../src/modules/shopify/webhook/shopify-webhook.repository.js';
+import { ShopifyWebhookService } from '../../../src/modules/shopify/webhook/shopify-webhook.service.js';
+import { ShopifyWebhookWorker } from '../../../src/modules/shopify/webhook/shopify-webhook.worker.js';
 
 describe('Shopify feature layout', () => {
-  it('keeps the facade, controller, shared infrastructure and feature services importable', () => {
+  it('keeps the facade, shared infrastructure and feature services importable', () => {
     expect(ShopifyController).toBeTypeOf('function');
     expect(ShopifyService).toBeTypeOf('function');
     expect(ShopifyApiService).toBeTypeOf('function');
@@ -20,5 +23,8 @@ describe('Shopify feature layout', () => {
     expect(ShopifyInventoryService).toBeTypeOf('function');
     expect(ShopifyOrderService).toBeTypeOf('function');
     expect(ShopifyOrderRepository).toBeTypeOf('function');
+    expect(ShopifyWebhookService).toBeTypeOf('function');
+    expect(ShopifyWebhookRepository).toBeTypeOf('function');
+    expect(ShopifyWebhookWorker).toBeTypeOf('function');
   });
 });

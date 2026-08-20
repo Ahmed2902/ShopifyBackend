@@ -7,6 +7,10 @@ export interface ShopifyRefundQueryData {
   refund: unknown;
 }
 
+export interface ShopifyOrderQueryData {
+  order: unknown | null;
+}
+
 export type ShopifyImportedOrder = ShopifyOrderHeader & {
   lineItems: ShopifyOrderLineItem[];
 };
