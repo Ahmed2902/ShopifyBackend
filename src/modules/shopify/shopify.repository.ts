@@ -7,6 +7,7 @@ import type {
   ShopifyShopProfile,
   ShopifyVariant,
 } from './shopify.schema.js';
+import type { ShopifyInventorySnapshotSource } from './shopify.types.js';
 
 interface ShopifyTokenSet {
   accessTokenCiphertext: string;
@@ -323,7 +324,7 @@ export class ShopifyRepository {
   async upsertInventoryLevel(
     storeId: string,
     level: ShopifyInventoryLevel,
-    source: 'INITIAL_SYNC' | 'MANUAL_RECONCILIATION',
+    source: ShopifyInventorySnapshotSource,
   ): Promise<boolean> {
     return prisma.$transaction(async (tx) => {
       const [item, location] = await Promise.all([
