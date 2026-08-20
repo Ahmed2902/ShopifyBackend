@@ -13,7 +13,6 @@ import type { ShopifySyncContext } from './shopify.types.js';
 import { normalizeShopDomain } from './shopify.utils.js';
 import { ShopifyWebhookRepository } from './webhook/shopify-webhook.repository.js';
 import { ShopifyWebhookService } from './webhook/shopify-webhook.service.js';
-import { ShopifyWebhookSubscriptionService } from './webhook/shopify-webhook-subscription.service.js';
 
 const ORDER_HISTORY_RESOURCE = 'OrdersRefunds';
 
@@ -23,7 +22,6 @@ export class ShopifyService {
   private readonly catalogService: ShopifyCatalogService;
   private readonly inventoryService: ShopifyInventoryService;
   private readonly orderService: ShopifyOrderService;
-  private readonly webhookSubscriptionService: ShopifyWebhookSubscriptionService;
   private readonly webhookService: ShopifyWebhookService;
 
   constructor(
@@ -41,7 +39,6 @@ export class ShopifyService {
       this.apiService,
       new ShopifyBulkService(this.apiService),
     );
-    this.webhookSubscriptionService = new ShopifyWebhookSubscriptionService(this.apiService);
     this.webhookService = new ShopifyWebhookService(
       webhookRepository,
       integrationService,
@@ -56,15 +53,13 @@ export class ShopifyService {
     return this.authService.beginOAuth(userId, requestedShop);
   }
 
-  async completeOAuth(input: {
+  completeOAuth(input: {
     code: string;
     shop: string;
     state: string;
     oauthContextCookie: string | undefined;
   }) {
-    const result = await this.authService.completeOAuth(input);
-    await this.ensureWebhookSubscriptions(result.storeId);
-    return result;
+    return this.authService.completeOAuth(input);
   }
 
   receiveWebhook(
@@ -91,13 +86,6 @@ export class ShopifyService {
       store.myshopifyDomain,
       connection,
     );
-    await this.webhookSubscriptionService.ensure({
-      shop: store.myshopifyDomain,
-      accessToken,
-      apiVersion: connection.apiVersion,
-      connectionId: connection.id,
-      scopes: connection.scopes,
-    });
 
     const syncRun = await this.integrationService.startSyncRun({
       provider: 'SHOPIFY',
@@ -164,13 +152,6 @@ export class ShopifyService {
       store.myshopifyDomain,
       connection,
     );
-    await this.webhookSubscriptionService.ensure({
-      shop: store.myshopifyDomain,
-      accessToken,
-      apiVersion: connection.apiVersion,
-      connectionId: connection.id,
-      scopes: connection.scopes,
-    });
 
     const syncRun = await this.integrationService.startSyncRun({
       provider: 'SHOPIFY',
@@ -324,21 +305,6 @@ export class ShopifyService {
       await this.integrationService.failSyncRun(syncRun.id, error).catch(() => undefined);
       throw error;
     }
-  }
-
-  private async ensureWebhookSubscriptions(storeId: string): Promise<void> {
-    const { store, connection } = await this.requireActiveConnection(storeId);
-    const accessToken = await this.authService.resolveAccessToken(
-      store.myshopifyDomain,
-      connection,
-    );
-    await this.webhookSubscriptionService.ensure({
-      shop: store.myshopifyDomain,
-      accessToken,
-      apiVersion: connection.apiVersion,
-      connectionId: connection.id,
-      scopes: connection.scopes,
-    });
   }
 
   private async requireActiveConnection(storeId: string) {
