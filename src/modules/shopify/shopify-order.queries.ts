@@ -14,6 +14,8 @@ export const ORDERS_QUERY = `#graphql
         updatedAt
         cancelledAt
         cancelReason
+        sourceName
+        test
         currencyCode
         presentmentCurrencyCode
         displayFinancialStatus
