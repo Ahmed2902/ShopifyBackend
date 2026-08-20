@@ -189,6 +189,8 @@ export class ShopifyOrderRepository {
       shopifyUpdatedAt: optionalDate(order.updatedAt),
       cancelledAt: optionalDate(order.cancelledAt),
       cancelReason: order.cancelReason ?? null,
+      sourceName: order.sourceName ?? null,
+      isTest: order.test,
       currencyCode: order.currencyCode,
       presentmentCurrencyCode: order.presentmentCurrencyCode ?? null,
       displayFinancialStatus: order.displayFinancialStatus ?? null,
