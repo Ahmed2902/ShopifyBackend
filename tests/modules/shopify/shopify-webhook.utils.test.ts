@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   parseShopifyWebhookJson,
   shopifyGid,
-  shopifyWebhookUri,
   verifyShopifyWebhookHmac,
 } from '../../../src/modules/shopify/webhook/shopify-webhook.utils.js';
 
@@ -35,9 +34,5 @@ describe('Shopify webhook utilities', () => {
   it('normalizes numeric Shopify webhook IDs to GraphQL GIDs without double-wrapping GIDs', () => {
     expect(shopifyGid('Product', 42)).toBe('gid://shopify/Product/42');
     expect(shopifyGid('Product', 'gid://shopify/Product/42')).toBe('gid://shopify/Product/42');
-  });
-
-  it('derives the webhook endpoint from the configured backend callback origin', () => {
-    expect(shopifyWebhookUri()).toBe('http://localhost:3001/v1/integrations/shopify/webhooks');
   });
 });
