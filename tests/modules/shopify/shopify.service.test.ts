@@ -175,6 +175,7 @@ function buildService(connectionOverrides: Record<string, unknown> = {}) {
 
   const integrationService = {
     startSyncRun: vi.fn().mockResolvedValue({ id: syncRunId }),
+    getLastSuccessfulShopifySyncRun: vi.fn().mockResolvedValue(null),
     recordExternalPayload: vi.fn().mockResolvedValue(undefined),
     completeSyncRun: vi.fn().mockResolvedValue(undefined),
     failSyncRun: vi.fn().mockResolvedValue(undefined),
@@ -251,12 +252,15 @@ describe('Shopify catalog and inventory sync', () => {
     );
   });
 
-  it('runs periodic catalog/inventory reconciliation and records its own SyncRun', async () => {
+  it('uses the last successful periodic run as the commerce watermark', async () => {
     const watermark = new Date('2026-08-20T00:00:00.000Z');
     const { repository, integrationService, service } = buildService({
-      lastSyncedAt: watermark,
-      lastReconciledAt: watermark,
+      lastSyncedAt: new Date('2026-08-20T23:00:00.000Z'),
+      lastReconciledAt: new Date('2026-08-20T23:00:00.000Z'),
     });
+    vi.mocked(integrationService.getLastSuccessfulShopifySyncRun).mockResolvedValue({
+      finishedAt: watermark,
+    } as never);
     stubFullCatalogInventorySync();
 
     const result = await service.reconcileStoreData(storeId);
@@ -277,6 +281,10 @@ describe('Shopify catalog and inventory sync', () => {
       storeId,
       expect.anything(),
       'PERIODIC_RECONCILIATION',
+    );
+    expect(integrationService.getLastSuccessfulShopifySyncRun).toHaveBeenCalledWith(
+      connectionId,
+      'StoreReconciliation',
     );
     expect(integrationService.startSyncRun).toHaveBeenCalledWith(
       expect.objectContaining({ resourceType: 'StoreReconciliation', mode: 'PERIODIC' }),
