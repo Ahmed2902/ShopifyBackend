@@ -35,12 +35,15 @@ export interface ShopifyConnectionCredentialState {
   scopes: string[];
 }
 
-export interface ShopifySyncContext {
+export interface ShopifyRequestContext {
   storeId: string;
   shop: string;
   accessToken: string;
   connectionId: string;
   apiVersion: string;
+}
+
+export interface ShopifySyncContext extends ShopifyRequestContext {
   syncRunId: string;
 }
 
@@ -53,4 +56,8 @@ export interface ShopifyLocationSyncStats extends ShopifySyncStats {
   ids: string[];
 }
 
-export type ShopifyInventorySnapshotSource = 'INITIAL_SYNC' | 'MANUAL_RECONCILIATION';
+export type ShopifyInventorySnapshotSource =
+  | 'INITIAL_SYNC'
+  | 'WEBHOOK_RECONCILIATION'
+  | 'PERIODIC_RECONCILIATION'
+  | 'MANUAL_RECONCILIATION';

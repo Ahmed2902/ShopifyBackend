@@ -68,6 +68,67 @@ export const ORDER_HISTORY_BULK_QUERY = `#graphql
   }
 `;
 
+export const ORDER_DETAILS_QUERY = `#graphql
+  query WebhookOrder($id: ID!, $first: Int!, $after: String) {
+    order(id: $id) {
+      id
+      name
+      createdAt
+      processedAt
+      updatedAt
+      cancelledAt
+      cancelReason
+      sourceName
+      test
+      currencyCode
+      presentmentCurrencyCode
+      displayFinancialStatus
+      displayFulfillmentStatus
+      currentSubtotalLineItemsQuantity
+      currentSubtotalPriceSet { ...MoneyBagFields }
+      currentShippingPriceSet { ...MoneyBagFields }
+      currentTotalDiscountsSet { ...MoneyBagFields }
+      currentTotalTaxSet { ...MoneyBagFields }
+      currentTotalPriceSet { ...MoneyBagFields }
+      discountCodes
+      refunds {
+        id
+        createdAt
+        processedAt
+        updatedAt
+        totalRefundedSet { ...MoneyBagFields }
+      }
+      lineItems(first: $first, after: $after) {
+        nodes {
+          id
+          sku
+          title
+          variantTitle
+          quantity
+          currentQuantity
+          refundableQuantity
+          requiresShipping
+          restockable
+          product { id }
+          variant { id }
+          originalUnitPriceSet { ...MoneyBagFields }
+          originalTotalSet { ...MoneyBagFields }
+          discountedTotalSet(withCodeDiscounts: true) { ...MoneyBagFields }
+          discountedUnitPriceAfterAllDiscountsSet { ...MoneyBagFields }
+          totalDiscountSet { ...MoneyBagFields }
+          discountAllocations { allocatedAmountSet { ...MoneyBagFields } }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+
+  fragment MoneyBagFields on MoneyBag {
+    shopMoney { amount currencyCode }
+    presentmentMoney { amount currencyCode }
+  }
+`;
+
 // Shopify Bulk Operations cannot place a connection under Order.refunds because
 // refunds is a list rather than a connection. Refund headers therefore come
 // from the bulk file and this focused query loads their line items afterward.

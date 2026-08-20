@@ -41,6 +41,11 @@ export const shopifyOrderLineItemSchema = z.object({
   discountAllocations: z.array(discountAllocationSchema).default([]),
 });
 
+export const shopifyOrderLineItemConnectionSchema = z.object({
+  nodes: z.array(shopifyOrderLineItemSchema),
+  pageInfo: pageInfoSchema,
+});
+
 export const shopifyBulkOrderLineItemSchema = shopifyOrderLineItemSchema.extend({
   __parentId: z.string().min(1),
 });
@@ -100,6 +105,10 @@ export const shopifyOrderHeaderSchema = z.object({
   currentTotalPriceSet: shopifyMoneyBagSchema,
   discountCodes: z.array(z.string()).default([]),
   refunds: z.array(shopifyRefundHeaderSchema).default([]),
+});
+
+export const shopifyOrderDetailsSchema = shopifyOrderHeaderSchema.extend({
+  lineItems: shopifyOrderLineItemConnectionSchema,
 });
 
 export const shopifyOrderBackfillParamsSchema = z.object({
