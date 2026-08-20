@@ -1,6 +1,6 @@
 import { AppError } from '../../../errors/app-error.js';
 import type { IntegrationService } from '../../integrations/integration.service.js';
-import { ShopifyOrderRepository } from '../shopify-order.repository.js';
+import type { ShopifyOrderRepository } from '../shopify-order.repository.js';
 import type { ShopifyRepository } from '../shopify.repository.js';
 import type { ShopifyShopProfile } from '../shopify.schema.js';
 import type { ShopifySyncContext } from '../shopify.types.js';
@@ -21,7 +21,7 @@ export class ShopifyService {
   constructor(
     private readonly repository: ShopifyRepository,
     private readonly integrationService: IntegrationService,
-    orderRepository: ShopifyOrderRepository = new ShopifyOrderRepository(),
+    orderRepository: ShopifyOrderRepository,
   ) {
     this.apiService = new ShopifyApiService(repository);
     this.authService = new ShopifyAuthService(repository, this.apiService);
