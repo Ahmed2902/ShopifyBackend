@@ -10,7 +10,6 @@ import { ShopifyApiService } from '../../../src/modules/shopify/shared/shopify-a
 import { ShopifyAuthService } from '../../../src/modules/shopify/shared/shopify-auth.service.js';
 import { ShopifyWebhookRepository } from '../../../src/modules/shopify/webhook/shopify-webhook.repository.js';
 import { ShopifyWebhookService } from '../../../src/modules/shopify/webhook/shopify-webhook.service.js';
-import { ShopifyWebhookSubscriptionService } from '../../../src/modules/shopify/webhook/shopify-webhook-subscription.service.js';
 import { ShopifyWebhookWorker } from '../../../src/modules/shopify/webhook/shopify-webhook.worker.js';
 
 describe('Shopify feature layout', () => {
@@ -26,7 +25,6 @@ describe('Shopify feature layout', () => {
     expect(ShopifyOrderRepository).toBeTypeOf('function');
     expect(ShopifyWebhookService).toBeTypeOf('function');
     expect(ShopifyWebhookRepository).toBeTypeOf('function');
-    expect(ShopifyWebhookSubscriptionService).toBeTypeOf('function');
     expect(ShopifyWebhookWorker).toBeTypeOf('function');
   });
 });
