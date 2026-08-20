@@ -45,41 +45,4 @@ export const shopifyBulkOperationWebhookSchema = z
     message: 'Bulk operation webhook is missing its resource ID',
   });
 
-const webhookSubscriptionNodeSchema = z.object({
-  id: z.string().min(1),
-  topic: z.string().min(1),
-  uri: z.string().min(1),
-});
-
-const pageInfoSchema = z.object({
-  hasNextPage: z.boolean(),
-  endCursor: z.string().nullable(),
-});
-
-export const webhookSubscriptionsSchema = z.object({
-  webhookSubscriptions: z.object({
-    nodes: z.array(webhookSubscriptionNodeSchema),
-    pageInfo: pageInfoSchema,
-  }),
-});
-
-const webhookSubscriptionMutationPayloadSchema = z.object({
-  webhookSubscription: webhookSubscriptionNodeSchema.nullable(),
-  userErrors: z.array(
-    z.object({
-      field: z.array(z.string()).nullable().optional(),
-      message: z.string(),
-    }),
-  ),
-});
-
-export const webhookSubscriptionCreateSchema = z.object({
-  webhookSubscriptionCreate: webhookSubscriptionMutationPayloadSchema,
-});
-
-export const webhookSubscriptionUpdateSchema = z.object({
-  webhookSubscriptionUpdate: webhookSubscriptionMutationPayloadSchema,
-});
-
 export type ShopifyWebhookHeaders = z.infer<typeof shopifyWebhookHeadersSchema>;
-export type ShopifyWebhookSubscriptionNode = z.infer<typeof webhookSubscriptionNodeSchema>;
