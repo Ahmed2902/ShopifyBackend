@@ -22,6 +22,8 @@ model Order {
   shopifyUpdatedAt                 DateTime?
   cancelledAt                      DateTime?
   cancelReason                     String?
+  sourceName                       String?
+  isTest                           Boolean   @default(false)
   currencyCode                     String
   presentmentCurrencyCode          String?
   displayFinancialStatus           String?
@@ -43,6 +45,8 @@ model Order {
 
   @@unique([storeId, shopifyOrderId])
   @@index([storeId, shopifyCreatedAt])
+  @@index([storeId, isTest, shopifyCreatedAt])
+  @@index([storeId, sourceName, shopifyCreatedAt])
   @@index([storeId, cancelledAt])
 }
 
@@ -114,7 +118,7 @@ model RefundLineItem {
   price               Decimal? @db.Decimal(20, 6)
   subtotal            Decimal? @db.Decimal(20, 6)
   tax                 Decimal? @db.Decimal(20, 6)
-  rawJson             Json?
+  rawJson              Json?
   createdAt            DateTime @default(now())
 
   refund        Refund        @relation(fields: [refundId], references: [id], onDelete: Restrict)
