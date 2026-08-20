@@ -51,6 +51,7 @@ export class ShopifyInventoryService {
     inventoryLevels: ShopifySyncStats;
   }> {
     const locations = await this.syncLocations(input);
+    await this.repository.markMissingLocationsDeleted(input.storeId, locations.ids);
     const inventoryLevels = { read: 0, written: 0 };
 
     for (const locationId of locations.ids) {
@@ -179,6 +180,7 @@ export class ShopifyInventoryService {
   ): Promise<ShopifySyncStats> {
     let read = 0;
     let written = 0;
+    const inventoryItemIds: string[] = [];
 
     const pages = paginateShopifyConnection(async (cursor) => {
       const data = await this.apiService.requestAdminGraphql<ShopifyLocationInventoryQueryData>({
@@ -224,10 +226,16 @@ export class ShopifyInventoryService {
             'SHOPIFY_CATALOG_INCONSISTENT',
           );
         }
+        inventoryItemIds.push(level.item.id);
         written += 1;
       }
     }
 
+    await this.repository.deleteMissingInventoryLevelsForLocation(
+      input.storeId,
+      locationId,
+      inventoryItemIds,
+    );
     return { read, written };
   }
 
