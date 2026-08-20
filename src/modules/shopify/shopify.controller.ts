@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { shopifyOrderBackfillParamsSchema } from './shopify-order.schema.js';
+import { shopifyOrderBackfillParamsSchema } from './order/shopify-order.schema.js';
 import { shopifyCallbackSchema, shopifyInstallSchema } from './shopify.schema.js';
 import type { ShopifyService } from './shopify.service.js';
 import {
