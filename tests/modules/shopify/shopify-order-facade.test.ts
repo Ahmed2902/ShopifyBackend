@@ -9,27 +9,6 @@ const storeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const connectionId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const syncRunId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const operationId = 'gid://shopify/BulkOperation/1';
-const webhookUri = 'http://localhost:3001/v1/integrations/shopify/webhooks';
-
-const managedTopics = [
-  'APP_UNINSTALLED',
-  'BULK_OPERATIONS_FINISH',
-  'PRODUCTS_CREATE',
-  'PRODUCTS_UPDATE',
-  'PRODUCTS_DELETE',
-  'INVENTORY_LEVELS_CONNECT',
-  'INVENTORY_LEVELS_UPDATE',
-  'INVENTORY_LEVELS_DISCONNECT',
-  'LOCATIONS_CREATE',
-  'LOCATIONS_UPDATE',
-  'LOCATIONS_DELETE',
-  'LOCATIONS_ACTIVATE',
-  'LOCATIONS_DEACTIVATE',
-  'ORDERS_CREATE',
-  'ORDERS_UPDATED',
-  'ORDERS_DELETE',
-  'REFUNDS_CREATE',
-];
 
 function jsonResponse(body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -38,35 +17,17 @@ function jsonResponse(body: unknown) {
   });
 }
 
-function subscriptionResponse() {
-  return {
-    data: {
-      webhookSubscriptions: {
-        nodes: managedTopics.map((topic, index) => ({
-          id: `gid://shopify/WebhookSubscription/${index + 1}`,
-          topic,
-          uri: webhookUri,
-        })),
-        pageInfo: { hasNextPage: false, endCursor: null },
-      },
-    },
-  };
-}
-
-function stubSubscriptionsAndBulk() {
-  const fetchMock = vi
-    .fn()
-    .mockResolvedValueOnce(jsonResponse(subscriptionResponse()))
-    .mockResolvedValueOnce(
-      jsonResponse({
-        data: {
-          bulkOperationRunQuery: {
-            bulkOperation: { id: operationId, status: 'CREATED' },
-            userErrors: [],
-          },
+function stubBulkStart() {
+  const fetchMock = vi.fn().mockResolvedValue(
+    jsonResponse({
+      data: {
+        bulkOperationRunQuery: {
+          bulkOperation: { id: operationId, status: 'CREATED' },
+          userErrors: [],
         },
-      }),
-    );
+      },
+    }),
+  );
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
 }
@@ -127,9 +88,9 @@ afterEach(() => {
 });
 
 describe('Shopify order-history facade', () => {
-  it('starts order history as one asynchronous Shopify bulk operation after ensuring webhooks', async () => {
+  it('starts order history as one asynchronous Shopify bulk operation', async () => {
     const { integrationService, service } = buildService();
-    const fetchMock = stubSubscriptionsAndBulk();
+    const fetchMock = stubBulkStart();
 
     const result = await service.startOrderHistoryBackfill(storeId);
 
@@ -141,7 +102,7 @@ describe('Shopify order-history facade', () => {
       providerStatus: 'CREATED',
       historyAccess: 'LAST_60_DAYS',
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(integrationService.startSyncRun).toHaveBeenCalledWith({
       provider: 'SHOPIFY',
       connectionId,
@@ -163,7 +124,7 @@ describe('Shopify order-history facade', () => {
 
   it('reports full order-history access when read_all_orders is granted', async () => {
     const { service } = buildService(['read_orders', 'read_all_orders']);
-    stubSubscriptionsAndBulk();
+    stubBulkStart();
 
     const result = await service.startOrderHistoryBackfill(storeId);
 
