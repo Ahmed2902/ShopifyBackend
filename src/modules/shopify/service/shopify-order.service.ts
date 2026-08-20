@@ -24,7 +24,10 @@ import type {
 import type { ShopifySyncContext } from '../shopify.types.js';
 import type { ShopifyApiService } from './shopify-api.service.js';
 
-const ORDER_PAGE_SIZE = 50;
+// Keep the top-level query deliberately modest because Shopify enforces a
+// single-query cost ceiling and nested connections multiply requested cost.
+const ORDER_PAGE_SIZE = 25;
+const EMBEDDED_DETAIL_PAGE_SIZE = 10;
 const DETAIL_PAGE_SIZE = 100;
 
 interface PageInfo {
@@ -60,6 +63,8 @@ export class ShopifyOrderService {
         variables: {
           first: ORDER_PAGE_SIZE,
           after: cursor,
+          lineItemFirst: EMBEDDED_DETAIL_PAGE_SIZE,
+          refundLineItemFirst: EMBEDDED_DETAIL_PAGE_SIZE,
         },
       });
 
