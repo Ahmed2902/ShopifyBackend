@@ -48,4 +48,9 @@ export class ShopifyController {
     clearShopifyOAuthCookie(res);
     res.redirect(303, buildShopifySuccessRedirect(result.storeId, result.shop));
   };
+
+  sync = async (req: Request, res: Response) => {
+    const result = await this.service.syncShopProfile(req.context.storeId!);
+    res.status(200).json(result);
+  };
 }
