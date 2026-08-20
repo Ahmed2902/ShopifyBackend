@@ -111,6 +111,16 @@ export const shopifyOrderDetailsSchema = shopifyOrderHeaderSchema.extend({
   lineItems: shopifyOrderLineItemConnectionSchema,
 });
 
+export const shopifyUpdatedOrderConnectionSchema = z.object({
+  nodes: z.array(
+    z.object({
+      id: z.string().min(1),
+      updatedAt: z.string().datetime(),
+    }),
+  ),
+  pageInfo: pageInfoSchema,
+});
+
 export const shopifyOrderBackfillParamsSchema = z.object({
   syncRunId: z.string().uuid(),
 });
