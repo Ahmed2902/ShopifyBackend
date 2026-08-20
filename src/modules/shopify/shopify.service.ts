@@ -15,6 +15,8 @@ import { ShopifyWebhookRepository } from './webhook/shopify-webhook.repository.j
 import { ShopifyWebhookService } from './webhook/shopify-webhook.service.js';
 
 const ORDER_HISTORY_RESOURCE = 'OrdersRefunds';
+const RECONCILIATION_RESOURCE = 'StoreReconciliation';
+const FALLBACK_RECONCILIATION_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
 export class ShopifyService {
   private readonly apiService: ShopifyApiService;
@@ -135,6 +137,87 @@ export class ShopifyService {
         syncRunId: syncRun.id,
         status: 'SUCCEEDED' as const,
         resourceType: 'CatalogInventory' as const,
+        recordsRead,
+        recordsWritten,
+        breakdown,
+      };
+    } catch (error) {
+      await this.integrationService.failSyncRun(syncRun.id, error).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async reconcileStoreData(storeId: string) {
+    const { store, connection } = await this.requireActiveConnection(storeId);
+    const accessToken = await this.authService.resolveAccessToken(
+      store.myshopifyDomain,
+      connection,
+    );
+    const syncRun = await this.integrationService.startSyncRun({
+      provider: 'SHOPIFY',
+      connectionId: connection.id,
+      resourceType: RECONCILIATION_RESOURCE,
+      mode: 'PERIODIC',
+      apiVersion: connection.apiVersion,
+    });
+    const syncContext = this.buildSyncContext(
+      storeId,
+      store.myshopifyDomain,
+      accessToken,
+      connection,
+      syncRun.id,
+    );
+    const since =
+      connection.lastReconciledAt ??
+      connection.lastSyncedAt ??
+      new Date(Date.now() - FALLBACK_RECONCILIATION_LOOKBACK_MS);
+
+    try {
+      await this.syncShopProfile(syncContext);
+      const catalog = await this.catalogService.sync(syncContext);
+      const inventory = await this.inventoryService.sync(
+        syncContext,
+        'PERIODIC_RECONCILIATION',
+      );
+      const commerce = this.hasOrderScope(connection.scopes)
+        ? await this.orderService.reconcileUpdatedOrders(syncContext, since)
+        : null;
+
+      const recordsRead =
+        1 +
+        catalog.products.read +
+        catalog.variants.read +
+        inventory.locations.read +
+        inventory.inventoryLevels.read +
+        (commerce?.recordsRead ?? 0);
+      const recordsWritten =
+        1 +
+        catalog.products.written +
+        catalog.variants.written +
+        inventory.locations.written +
+        inventory.inventoryLevels.written +
+        (commerce?.recordsWritten ?? 0);
+      const breakdown = {
+        shop: 1,
+        products: catalog.products.written,
+        variants: catalog.variants.written,
+        locations: inventory.locations.written,
+        inventoryLevels: inventory.inventoryLevels.written,
+        ordersScanned: commerce?.ordersScanned ?? 0,
+        orders: commerce?.breakdown.orders ?? 0,
+        orderLineItems: commerce?.breakdown.lineItems ?? 0,
+        refunds: commerce?.breakdown.refunds ?? 0,
+        refundLineItems: commerce?.breakdown.refundLineItems ?? 0,
+        commerceSkipped: !commerce,
+      };
+
+      await this.repository.markConnectionSynced(connection.id);
+      await this.integrationService.completeSyncRun(syncRun.id, { recordsRead, recordsWritten });
+      return {
+        syncRunId: syncRun.id,
+        status: 'SUCCEEDED' as const,
+        resourceType: RECONCILIATION_RESOURCE,
+        since,
         recordsRead,
         recordsWritten,
         breakdown,
@@ -326,8 +409,12 @@ export class ShopifyService {
     return { store, connection };
   }
 
+  private hasOrderScope(scopes: string[]): boolean {
+    return scopes.includes('read_orders') || scopes.includes('write_orders');
+  }
+
   private requireOrderScope(scopes: string[]): void {
-    if (!scopes.includes('read_orders') && !scopes.includes('write_orders')) {
+    if (!this.hasOrderScope(scopes)) {
       throw new AppError(
         'Shopify order access is not authorized for this connection',
         409,
