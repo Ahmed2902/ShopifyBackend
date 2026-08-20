@@ -140,26 +140,33 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 function buildService(connectionOverrides: Record<string, unknown> = {}) {
+  const connection = {
+    id: connectionId,
+    status: 'ACTIVE' as const,
+    accessTokenCiphertext: encryptSecret('shopify-access-token'),
+    accessTokenExpiresAt: null,
+    refreshTokenCiphertext: null,
+    refreshTokenExpiresAt: null,
+    refreshClaimedAt: null,
+    scopes: ['read_products', 'read_inventory', 'read_locations'],
+    apiVersion: '2026-07',
+    lastSyncedAt: null,
+    lastReconciledAt: null,
+    nextReconciliationAt: null,
+    reconciliationIntervalMinutes: 1440,
+    ...connectionOverrides,
+  };
   const repository = {
     findConnectionForSync: vi.fn().mockResolvedValue({
       id: storeId,
       myshopifyDomain: 'example-store.myshopify.com',
-      shopifyConnection: {
-        id: connectionId,
-        status: 'ACTIVE',
-        accessTokenCiphertext: encryptSecret('shopify-access-token'),
-        accessTokenExpiresAt: null,
-        refreshTokenCiphertext: null,
-        refreshTokenExpiresAt: null,
-        scopes: ['read_products', 'read_inventory', 'read_locations'],
-        apiVersion: '2026-07',
-        lastSyncedAt: null,
-        lastReconciledAt: null,
-        nextReconciliationAt: null,
-        reconciliationIntervalMinutes: 1440,
-        ...connectionOverrides,
-      },
+      shopifyConnection: connection,
     }),
+    getConnectionCredentialState: vi.fn().mockResolvedValue(connection),
+    tryClaimTokenRefresh: vi.fn().mockResolvedValue(true),
+    completeTokenRefresh: vi.fn().mockResolvedValue(true),
+    releaseTokenRefreshClaim: vi.fn().mockResolvedValue(undefined),
+    markConnectionReauthRequiredIfRefreshTokenMatches: vi.fn().mockResolvedValue(true),
     updateConnectionTokens: vi.fn().mockResolvedValue(undefined),
     updateStoreProfile: vi.fn().mockResolvedValue(undefined),
     upsertProduct: vi.fn().mockResolvedValue(undefined),
@@ -306,9 +313,10 @@ describe('Shopify catalog and inventory sync', () => {
   });
 
   it('rotates an expiring offline token before running the sync', async () => {
+    const oldRefreshCiphertext = encryptSecret('shopify-refresh-token');
     const { repository, service } = buildService({
       accessTokenExpiresAt: new Date(Date.now() + 60_000),
-      refreshTokenCiphertext: encryptSecret('shopify-refresh-token'),
+      refreshTokenCiphertext: oldRefreshCiphertext,
       refreshTokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
 
@@ -337,8 +345,16 @@ describe('Shopify catalog and inventory sync', () => {
     const body = (tokenRequest?.[1] as RequestInit).body as URLSearchParams;
     expect(body.get('grant_type')).toBe('refresh_token');
     expect(body.get('refresh_token')).toBe('shopify-refresh-token');
-    expect(repository.updateConnectionTokens).toHaveBeenCalledWith(
+    expect(repository.tryClaimTokenRefresh).toHaveBeenCalledWith(
       connectionId,
+      oldRefreshCiphertext,
+      expect.any(Date),
+      expect.any(Date),
+    );
+    expect(repository.completeTokenRefresh).toHaveBeenCalledWith(
+      connectionId,
+      oldRefreshCiphertext,
+      expect.any(Date),
       expect.objectContaining({
         accessTokenCiphertext: expect.any(String),
         refreshTokenCiphertext: expect.any(String),

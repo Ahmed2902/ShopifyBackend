@@ -32,6 +32,7 @@ export interface ShopifyConnectionCredentialState {
   accessTokenExpiresAt: Date | null;
   refreshTokenCiphertext: string | null;
   refreshTokenExpiresAt: Date | null;
+  refreshClaimedAt?: Date | null;
   scopes: string[];
 }
 

@@ -121,6 +121,7 @@ export class ShopifyRepository {
           accessTokenExpiresAt: input.credentials.accessTokenExpiresAt,
           refreshTokenCiphertext: input.credentials.refreshTokenCiphertext,
           refreshTokenExpiresAt: input.credentials.refreshTokenExpiresAt,
+          refreshClaimedAt: null,
           scopes: input.credentials.scopes,
           apiVersion: input.apiVersion,
           installedAt: now,
@@ -158,6 +159,7 @@ export class ShopifyRepository {
             accessTokenExpiresAt: true,
             refreshTokenCiphertext: true,
             refreshTokenExpiresAt: true,
+            refreshClaimedAt: true,
             scopes: true,
             apiVersion: true,
             lastSyncedAt: true,
@@ -170,6 +172,75 @@ export class ShopifyRepository {
     });
   }
 
+  getConnectionCredentialState(connectionId: string) {
+    return prisma.shopifyConnection.findUnique({
+      where: { id: connectionId },
+      select: {
+        id: true,
+        status: true,
+        accessTokenCiphertext: true,
+        accessTokenExpiresAt: true,
+        refreshTokenCiphertext: true,
+        refreshTokenExpiresAt: true,
+        refreshClaimedAt: true,
+        scopes: true,
+      },
+    });
+  }
+
+  async tryClaimTokenRefresh(
+    connectionId: string,
+    expectedRefreshTokenCiphertext: string,
+    claimedAt: Date,
+    staleBefore: Date,
+  ): Promise<boolean> {
+    const result = await prisma.shopifyConnection.updateMany({
+      where: {
+        id: connectionId,
+        status: 'ACTIVE',
+        refreshTokenCiphertext: expectedRefreshTokenCiphertext,
+        OR: [
+          { refreshClaimedAt: null },
+          { refreshClaimedAt: { lte: staleBefore } },
+        ],
+      },
+      data: { refreshClaimedAt: claimedAt },
+    });
+    return result.count === 1;
+  }
+
+  async completeTokenRefresh(
+    connectionId: string,
+    expectedRefreshTokenCiphertext: string,
+    claimedAt: Date,
+    credentials: ShopifyTokenSet,
+  ): Promise<boolean> {
+    const result = await prisma.shopifyConnection.updateMany({
+      where: {
+        id: connectionId,
+        status: 'ACTIVE',
+        refreshTokenCiphertext: expectedRefreshTokenCiphertext,
+        refreshClaimedAt: claimedAt,
+      },
+      data: {
+        accessTokenCiphertext: credentials.accessTokenCiphertext,
+        accessTokenExpiresAt: credentials.accessTokenExpiresAt,
+        refreshTokenCiphertext: credentials.refreshTokenCiphertext,
+        refreshTokenExpiresAt: credentials.refreshTokenExpiresAt,
+        refreshClaimedAt: null,
+        scopes: credentials.scopes,
+      },
+    });
+    return result.count === 1;
+  }
+
+  async releaseTokenRefreshClaim(connectionId: string, claimedAt: Date): Promise<void> {
+    await prisma.shopifyConnection.updateMany({
+      where: { id: connectionId, refreshClaimedAt: claimedAt },
+      data: { refreshClaimedAt: null },
+    });
+  }
+
   updateConnectionTokens(connectionId: string, credentials: ShopifyTokenSet) {
     return prisma.shopifyConnection.update({
       where: { id: connectionId },
@@ -179,6 +250,7 @@ export class ShopifyRepository {
         accessTokenExpiresAt: credentials.accessTokenExpiresAt,
         refreshTokenCiphertext: credentials.refreshTokenCiphertext,
         refreshTokenExpiresAt: credentials.refreshTokenExpiresAt,
+        refreshClaimedAt: null,
         scopes: credentials.scopes,
       },
     });
@@ -521,11 +593,31 @@ export class ShopifyRepository {
     });
   }
 
+  async markConnectionReauthRequiredIfRefreshTokenMatches(
+    connectionId: string,
+    expectedRefreshTokenCiphertext: string,
+  ): Promise<boolean> {
+    const result = await prisma.shopifyConnection.updateMany({
+      where: {
+        id: connectionId,
+        status: 'ACTIVE',
+        refreshTokenCiphertext: expectedRefreshTokenCiphertext,
+      },
+      data: {
+        status: 'REAUTH_REQUIRED',
+        refreshClaimedAt: null,
+        reconciliationClaimedAt: null,
+      },
+    });
+    return result.count === 1;
+  }
+
   markConnectionReauthRequired(connectionId: string) {
     return prisma.shopifyConnection.update({
       where: { id: connectionId },
       data: {
         status: 'REAUTH_REQUIRED',
+        refreshClaimedAt: null,
         reconciliationClaimedAt: null,
       },
     });

@@ -12,12 +12,18 @@ import {
   buildShopifyAuthorizationUrl,
   createShopifyOAuthContext,
   normalizeShopDomain,
+  parseRetryAfterMs,
+  sleep,
   verifyShopifyOAuthContext,
 } from '../shopify.utils.js';
 import type { ShopifyApiService } from './shopify-api.service.js';
 
 const SHOPIFY_REQUEST_TIMEOUT_MS = 10_000;
+const SHOPIFY_REFRESH_REQUEST_ATTEMPTS = 3;
 const ACCESS_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+const REFRESH_CLAIM_STALE_MS = 45_000;
+const REFRESH_WAIT_TIMEOUT_MS = 50_000;
+const REFRESH_WAIT_POLL_MS = 100;
 
 export class ShopifyAuthService {
   constructor(
@@ -85,40 +91,180 @@ export class ShopifyAuthService {
     shop: string,
     connection: ShopifyConnectionCredentialState,
   ): Promise<string> {
-    if (
-      !connection.accessTokenExpiresAt ||
-      connection.accessTokenExpiresAt.getTime() > Date.now() + ACCESS_TOKEN_REFRESH_WINDOW_MS
-    ) {
+    if (this.accessTokenIsUsable(connection)) {
       return this.decryptCredential(connection.accessTokenCiphertext);
     }
 
-    if (
-      !connection.refreshTokenCiphertext ||
-      !connection.refreshTokenExpiresAt ||
-      connection.refreshTokenExpiresAt.getTime() <= Date.now()
-    ) {
-      await this.repository.markConnectionReauthRequired(connection.id).catch(() => undefined);
-      throw new AppError(
-        'Shopify offline credential has expired and must be reauthorized',
-        409,
-        'SHOPIFY_REAUTH_REQUIRED',
-      );
+    return this.refreshOrWait(shop, connection);
+  }
+
+  private accessTokenIsUsable(connection: ShopifyConnectionCredentialState): boolean {
+    return (
+      !connection.accessTokenExpiresAt ||
+      connection.accessTokenExpiresAt.getTime() > Date.now() + ACCESS_TOKEN_REFRESH_WINDOW_MS
+    );
+  }
+
+  private refreshTokenIsUsable(connection: ShopifyConnectionCredentialState): boolean {
+    return Boolean(
+      connection.refreshTokenCiphertext &&
+        connection.refreshTokenExpiresAt &&
+        connection.refreshTokenExpiresAt.getTime() > Date.now(),
+    );
+  }
+
+  private async refreshOrWait(
+    shop: string,
+    connection: ShopifyConnectionCredentialState,
+  ): Promise<string> {
+    if (!this.refreshTokenIsUsable(connection)) {
+      return this.resolveInvalidRefreshState(shop, connection);
     }
 
-    const refreshToken = this.decryptCredential(connection.refreshTokenCiphertext);
+    const refreshTokenCiphertext = connection.refreshTokenCiphertext!;
+    const claimedAt = new Date();
+    const staleBefore = new Date(claimedAt.getTime() - REFRESH_CLAIM_STALE_MS);
+    const claimed = await this.repository.tryClaimTokenRefresh(
+      connection.id,
+      refreshTokenCiphertext,
+      claimedAt,
+      staleBefore,
+    );
+
+    if (!claimed) {
+      return this.waitForConcurrentRefresh(shop, connection);
+    }
+
+    return this.performClaimedRefresh(shop, connection, refreshTokenCiphertext, claimedAt);
+  }
+
+  private async performClaimedRefresh(
+    shop: string,
+    connection: ShopifyConnectionCredentialState,
+    refreshTokenCiphertext: string,
+    claimedAt: Date,
+  ): Promise<string> {
+    const refreshToken = this.decryptCredential(refreshTokenCiphertext);
     let refreshed: ShopifyAccessTokenResponse;
+
     try {
       refreshed = await this.refreshAccessToken(shop, refreshToken);
     } catch (error) {
       if (error instanceof AppError && error.code === 'SHOPIFY_REAUTH_REQUIRED') {
-        await this.repository.markConnectionReauthRequired(connection.id).catch(() => undefined);
+        const marked = await this.repository.markConnectionReauthRequiredIfRefreshTokenMatches(
+          connection.id,
+          refreshTokenCiphertext,
+        );
+        if (!marked) {
+          const latest = await this.repository.getConnectionCredentialState(connection.id);
+          if (latest?.status === 'ACTIVE') return this.resolveAccessToken(shop, latest);
+        }
+      } else {
+        await this.repository.releaseTokenRefreshClaim(connection.id, claimedAt).catch(() => undefined);
       }
       throw error;
     }
 
     const tokenSet = this.toPlainTokenSet(refreshed);
-    await this.repository.updateConnectionTokens(connection.id, this.encryptTokenSet(tokenSet));
-    return tokenSet.accessToken;
+    const persisted = await this.repository.completeTokenRefresh(
+      connection.id,
+      refreshTokenCiphertext,
+      claimedAt,
+      this.encryptTokenSet(tokenSet),
+    );
+    if (persisted) return tokenSet.accessToken;
+
+    const latest = await this.repository.getConnectionCredentialState(connection.id);
+    if (latest?.status === 'ACTIVE' && this.accessTokenIsUsable(latest)) {
+      return this.decryptCredential(latest.accessTokenCiphertext);
+    }
+
+    throw new AppError(
+      'Shopify credential changed while token refresh was completing',
+      503,
+      'SHOPIFY_TOKEN_REFRESH_CONFLICT',
+    );
+  }
+
+  private async waitForConcurrentRefresh(
+    shop: string,
+    original: ShopifyConnectionCredentialState,
+  ): Promise<string> {
+    const deadline = Date.now() + REFRESH_WAIT_TIMEOUT_MS;
+
+    while (Date.now() < deadline) {
+      await sleep(REFRESH_WAIT_POLL_MS);
+      const latest = await this.repository.getConnectionCredentialState(original.id);
+      if (!latest) {
+        throw new AppError('Shopify connection no longer exists', 409, 'SHOPIFY_NOT_CONNECTED');
+      }
+      if (latest.status !== 'ACTIVE') {
+        throw new AppError(
+          'Shopify connection requires merchant attention',
+          409,
+          'SHOPIFY_REAUTH_REQUIRED',
+        );
+      }
+      if (this.accessTokenIsUsable(latest)) {
+        return this.decryptCredential(latest.accessTokenCiphertext);
+      }
+
+      const claimIsStale =
+        !latest.refreshClaimedAt ||
+        latest.refreshClaimedAt.getTime() <= Date.now() - REFRESH_CLAIM_STALE_MS;
+      const refreshTokenChanged =
+        latest.refreshTokenCiphertext !== original.refreshTokenCiphertext;
+
+      if (refreshTokenChanged || claimIsStale) {
+        return this.refreshOrWait(shop, latest);
+      }
+    }
+
+    throw new AppError(
+      'Timed out waiting for another worker to refresh the Shopify credential',
+      503,
+      'SHOPIFY_TOKEN_REFRESH_BUSY',
+    );
+  }
+
+  private async resolveInvalidRefreshState(
+    shop: string,
+    original: ShopifyConnectionCredentialState,
+  ): Promise<string> {
+    const latest = await this.repository.getConnectionCredentialState(original.id);
+    if (!latest) {
+      throw new AppError('Shopify connection no longer exists', 409, 'SHOPIFY_NOT_CONNECTED');
+    }
+    if (latest.status !== 'ACTIVE') {
+      throw new AppError(
+        'Shopify connection requires merchant attention',
+        409,
+        'SHOPIFY_REAUTH_REQUIRED',
+      );
+    }
+    if (this.accessTokenIsUsable(latest)) {
+      return this.decryptCredential(latest.accessTokenCiphertext);
+    }
+    if (this.refreshTokenIsUsable(latest)) {
+      return this.refreshOrWait(shop, latest);
+    }
+
+    if (latest.refreshTokenCiphertext) {
+      await this.repository
+        .markConnectionReauthRequiredIfRefreshTokenMatches(
+          latest.id,
+          latest.refreshTokenCiphertext,
+        )
+        .catch(() => undefined);
+    } else {
+      await this.repository.markConnectionReauthRequired(latest.id).catch(() => undefined);
+    }
+
+    throw new AppError(
+      'Shopify offline credential has expired and must be reauthorized',
+      409,
+      'SHOPIFY_REAUTH_REQUIRED',
+    );
   }
 
   private toPlainTokenSet(response: ShopifyAccessTokenResponse): PlainShopifyTokenSet {
@@ -184,37 +330,62 @@ export class ShopifyAuthService {
     body: URLSearchParams,
     isRefresh: boolean,
   ): Promise<ShopifyAccessTokenResponse> {
-    let response: Response;
-    try {
-      response = await fetch(`https://${shop}/admin/oauth/access_token`, {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body,
-        signal: AbortSignal.timeout(SHOPIFY_REQUEST_TIMEOUT_MS),
-      });
-    } catch {
-      throw new AppError('Could not reach Shopify token endpoint', 502, 'SHOPIFY_UNAVAILABLE');
+    const attempts = isRefresh ? SHOPIFY_REFRESH_REQUEST_ATTEMPTS : 1;
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      let response: Response;
+      try {
+        response = await fetch(`https://${shop}/admin/oauth/access_token`, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body,
+          signal: AbortSignal.timeout(SHOPIFY_REQUEST_TIMEOUT_MS),
+        });
+      } catch {
+        if (isRefresh && attempt < attempts - 1) {
+          await sleep(250 * 2 ** attempt);
+          continue;
+        }
+        throw new AppError('Could not reach Shopify token endpoint', 502, 'SHOPIFY_UNAVAILABLE');
+      }
+
+      if (response.status === 429) {
+        if (isRefresh && attempt < attempts - 1) {
+          await sleep(parseRetryAfterMs(response.headers.get('retry-after')) ?? 500 * 2 ** attempt);
+          continue;
+        }
+        throw new AppError(
+          'Shopify token endpoint is temporarily rate limited',
+          502,
+          'SHOPIFY_UNAVAILABLE',
+        );
+      }
+      if (response.status >= 500) {
+        if (isRefresh && attempt < attempts - 1) {
+          await sleep(250 * 2 ** attempt);
+          continue;
+        }
+        throw new AppError('Shopify token endpoint is unavailable', 502, 'SHOPIFY_UNAVAILABLE');
+      }
+      if (!response.ok) {
+        throw new AppError(
+          isRefresh ? 'Shopify refresh token was rejected' : 'Shopify rejected the authorization code',
+          isRefresh ? 409 : 502,
+          isRefresh ? 'SHOPIFY_REAUTH_REQUIRED' : 'SHOPIFY_TOKEN_EXCHANGE_FAILED',
+        );
+      }
+
+      const parsed = shopifyAccessTokenSchema.safeParse(await this.parseJsonResponse(response));
+      if (!parsed.success) {
+        throw new AppError('Shopify token response had an unexpected shape', 502, 'SHOPIFY_BAD_RESPONSE');
+      }
+      return parsed.data;
     }
 
-    if (response.status >= 500) {
-      throw new AppError('Shopify token endpoint is unavailable', 502, 'SHOPIFY_UNAVAILABLE');
-    }
-    if (!response.ok) {
-      throw new AppError(
-        isRefresh ? 'Shopify refresh token was rejected' : 'Shopify rejected the authorization code',
-        isRefresh ? 409 : 502,
-        isRefresh ? 'SHOPIFY_REAUTH_REQUIRED' : 'SHOPIFY_TOKEN_EXCHANGE_FAILED',
-      );
-    }
-
-    const parsed = shopifyAccessTokenSchema.safeParse(await this.parseJsonResponse(response));
-    if (!parsed.success) {
-      throw new AppError('Shopify token response had an unexpected shape', 502, 'SHOPIFY_BAD_RESPONSE');
-    }
-    return parsed.data;
+    throw new AppError('Shopify token endpoint is unavailable', 502, 'SHOPIFY_UNAVAILABLE');
   }
 
   private async parseJsonResponse(response: Response): Promise<unknown> {
