@@ -24,7 +24,7 @@ function orderFixture(): ShopifyOrder {
     cancelledAt: null,
     cancelReason: null,
     sourceName: 'web',
-    test: false,
+    test: true,
     currencyCode: 'USD',
     presentmentCurrencyCode: 'USD',
     displayFinancialStatus: 'PARTIALLY_REFUNDED',
@@ -147,7 +147,7 @@ describeDatabase('ShopifyOrderRepository', () => {
     });
 
     expect(persisted.sourceName).toBe('web');
-    expect(persisted.isTest).toBe(false);
+    expect(persisted.isTest).toBe(true);
     expect(persisted.lineItems).toHaveLength(1);
     expect(persisted.refunds).toHaveLength(1);
     expect(persisted.refunds[0]?.shopifyCreatedAt).toBeNull();
