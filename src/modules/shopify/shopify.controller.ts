@@ -50,7 +50,7 @@ export class ShopifyController {
   };
 
   sync = async (req: Request, res: Response) => {
-    const result = await this.service.syncShopProfile(req.context.storeId!);
+    const result = await this.service.syncStoreData(req.context.storeId!);
     res.status(200).json(result);
   };
 }
