@@ -59,6 +59,8 @@ function refundLineItem(id: string, orderLineItemId: string) {
 function orderResponse(options?: {
   lineItemsHasNextPage?: boolean;
   refundLinesHasNextPage?: boolean;
+  orderHasNextPage?: boolean;
+  orderCursor?: string | null;
 }) {
   return {
     orders: {
@@ -71,6 +73,8 @@ function orderResponse(options?: {
           updatedAt: '2026-08-02T10:00:00.000Z',
           cancelledAt: null,
           cancelReason: null,
+          sourceName: 'web',
+          test: false,
           currencyCode: 'USD',
           presentmentCurrencyCode: 'USD',
           displayFinancialStatus: 'PARTIALLY_REFUNDED',
@@ -112,7 +116,11 @@ function orderResponse(options?: {
           ],
         },
       ],
-      pageInfo: { hasNextPage: false, endCursor: 'order-cursor-1' },
+      pageInfo: {
+        hasNextPage: options?.orderHasNextPage ?? false,
+        endCursor:
+          options?.orderCursor === undefined ? 'order-cursor-1' : options.orderCursor,
+      },
     },
   };
 }
@@ -222,6 +230,8 @@ describe('ShopifyOrderService', () => {
 
     const savedOrder = vi.mocked(repository.upsertOrderWithLineItems).mock.calls[0]?.[1];
     expect(savedOrder?.lineItems.nodes).toHaveLength(2);
+    expect(savedOrder?.sourceName).toBe('web');
+    expect(savedOrder?.test).toBe(false);
 
     const savedRefund = vi.mocked(repository.upsertRefundWithLineItems).mock.calls[0]?.[2];
     expect(savedRefund?.refundLineItems.nodes).toHaveLength(2);
@@ -233,6 +243,27 @@ describe('ShopifyOrderService', () => {
 
     await expect(service.sync(syncContext)).rejects.toMatchObject({
       code: 'SHOPIFY_ORDER_INCONSISTENT',
+    });
+  });
+
+  it('fails if Shopify repeats a top-level order cursor', async () => {
+    const { service } = buildService([
+      orderResponse({ orderHasNextPage: true, orderCursor: 'repeat-cursor' }),
+      orderResponse({ orderHasNextPage: true, orderCursor: 'repeat-cursor' }),
+    ]);
+
+    await expect(service.sync(syncContext)).rejects.toMatchObject({
+      code: 'SHOPIFY_BAD_RESPONSE',
+    });
+  });
+
+  it('fails if Shopify says another order page exists without a cursor', async () => {
+    const { service } = buildService([
+      orderResponse({ orderHasNextPage: true, orderCursor: null }),
+    ]);
+
+    await expect(service.sync(syncContext)).rejects.toMatchObject({
+      code: 'SHOPIFY_BAD_RESPONSE',
     });
   });
 });
