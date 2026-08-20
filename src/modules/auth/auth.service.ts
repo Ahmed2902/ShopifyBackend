@@ -8,9 +8,9 @@ import {
   issueAccessToken,
   normalizeEmail,
   refreshSessionExpiry,
-  type StoreAccessClaim,
   verifyPassword,
 } from './auth.utils.js';
+import type { StoreAccessClaim } from '../../types/auth.js';
 
 interface SessionMetadata {
   userAgent?: string;

@@ -1,7 +1,7 @@
 import type { RequestHandler } from 'express';
 import { AppError } from '../errors/app-error.js';
-import type { StoreRoleClaim } from '../modules/auth/auth.utils.js';
 import { storeParamsSchema } from '../modules/stores/store.schema.js';
+import type { StoreRoleClaim } from '../types/auth.js';
 
 export const requireStoreMembership: RequestHandler = (req, _res, next) => {
   if (!req.context.userId) {

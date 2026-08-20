@@ -3,6 +3,7 @@ import type { CookieOptions, Response } from 'express';
 import { jwtVerify, SignJWT } from 'jose';
 import { env } from '../../config/env.js';
 import { AppError } from '../../errors/app-error.js';
+import type { StoreAccessClaim, StoreRoleClaim } from '../../types/auth.js';
 
 // region Passwords
 const SCRYPT_KEY_LENGTH = 64;
@@ -35,13 +36,6 @@ export async function verifyPassword(password: string, encoded: string): Promise
 // endregion
 
 // region Tokens
-export type StoreRoleClaim = 'OWNER' | 'ADMIN' | 'MEMBER';
-
-export interface StoreAccessClaim {
-  storeId: string;
-  role: StoreRoleClaim;
-}
-
 export interface AccessTokenContext {
   userId: string;
   stores: StoreAccessClaim[];
