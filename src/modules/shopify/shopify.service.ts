@@ -153,6 +153,13 @@ export class ShopifyService {
       store.myshopifyDomain,
       connection,
     );
+    const previousRun = await this.integrationService.getLastSuccessfulShopifySyncRun(
+      connection.id,
+      RECONCILIATION_RESOURCE,
+    );
+    const since =
+      previousRun?.finishedAt ?? new Date(Date.now() - FALLBACK_RECONCILIATION_LOOKBACK_MS);
+
     const syncRun = await this.integrationService.startSyncRun({
       provider: 'SHOPIFY',
       connectionId: connection.id,
@@ -167,10 +174,6 @@ export class ShopifyService {
       connection,
       syncRun.id,
     );
-    const since =
-      connection.lastReconciledAt ??
-      connection.lastSyncedAt ??
-      new Date(Date.now() - FALLBACK_RECONCILIATION_LOOKBACK_MS);
 
     try {
       await this.syncShopProfile(syncContext);
