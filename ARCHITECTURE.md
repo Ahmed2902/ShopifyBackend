@@ -116,7 +116,7 @@ Provider modules keep the same controller/service/repository architecture as the
 - Small provider transport helpers such as cursor pagination and throttle-delay calculation stay in the provider `*.utils.ts` file.
 - Once a provider module has several substantial resource families, feature-specific code is co-located by feature rather than collected in one giant `service/` directory.
 - Shared cross-feature Shopify infrastructure belongs under `shopify/shared/`; today that includes the Admin GraphQL transport and OAuth/token lifecycle services.
-- Resource folders such as `shopify/order/` and `shopify/bulk/` keep their service, repository, schema, types, and query documents together when those files are specific to that resource family.
+- Resource folders such as `shopify/order/`, `shopify/bulk/`, and `shopify/webhook/` keep their service, repository, schema, types, and query documents together when those files are specific to that resource family.
 - Lightweight resources that currently need only one focused service, such as catalog and inventory, still get their own feature folder without creating empty repository/schema sublayers.
 - Provider GraphQL documents belong in dedicated `*.queries.ts` files once they are large enough to obscure service behavior. Internal cross-service contracts belong in module-local `*.types.ts` files.
 - A dedicated provider API service is justified once transport behavior such as authentication failures, retries, throttling, response validation, and GraphQL envelopes is shared across multiple resource syncs.
@@ -126,13 +126,16 @@ For Shopify, the root `ShopifyService` remains the public facade and orchestrati
 ```text
 shopify/
   shopify.service.ts
+  shopify.module.ts
   shared/
     shopify-api.service.ts
     shopify-auth.service.ts
   catalog/
     shopify-catalog.service.ts
+    shopify-catalog.queries.ts
   inventory/
     shopify-inventory.service.ts
+    shopify-inventory.queries.ts
   bulk/
     shopify-bulk.service.ts
     shopify-bulk.queries.ts
@@ -143,6 +146,14 @@ shopify/
     shopify-order.queries.ts
     shopify-order.schema.ts
     shopify-order.types.ts
+  webhook/
+    shopify-webhook.service.ts
+    shopify-webhook.repository.ts
+    shopify-webhook-subscription.service.ts
+    shopify-webhook.worker.ts
+    shopify-webhook.queries.ts
+    shopify-webhook.schema.ts
+    shopify-webhook.utils.ts
 ```
 
 Historical datasets that are naturally large should use Shopify Bulk Operations rather than manual top-level pagination. Order history is started as one asynchronous bulk workflow, the returned provider operation ID is stored on the `SyncRun`, and JSONL results are streamed instead of loaded into memory. Bulk order results contain order rows and nested line-item rows linked through Shopify's `__parentId` field.
@@ -150,6 +161,28 @@ Historical datasets that are naturally large should use Shopify Bulk Operations 
 Shopify currently does not allow a connection field under the `Order.refunds` list inside a Bulk Operation, so refund headers are included in the bulk order export and `Refund.refundLineItems` are hydrated afterward through one focused refund query (with pagination only if a refund exceeds Shopify's per-request connection limit). This exception is provider-driven and should not reintroduce manual pagination for the whole order history.
 
 Order/refund ingestion intentionally excludes direct customer PII. Money is normalized in shop currency while presentment currency metadata and raw provider payloads remain available for traceability. Test-order and source metadata must be preserved so analytics and ML can exclude fake demand and distinguish sales channels.
+
+## Shopify webhook rule
+
+Shopify webhook delivery is a durable inbox, not request-thread business processing:
+
+1. preserve the exact raw HTTP body before JSON parsing
+2. verify `X-Shopify-Hmac-Sha256` with the Shopify app client secret using a timing-safe comparison
+3. normalize the shop domain and parse the payload
+4. deduplicate with Shopify's `X-Shopify-Webhook-Id`
+5. persist the delivery as `QUEUED`
+6. acknowledge the HTTP request after durable persistence
+7. let the webhook worker claim and process queued deliveries with bounded retries and stale-claim recovery
+
+Webhook payloads are event signals. For mutable Shopify resources, processing refetches the current Admin GraphQL resource and writes it through the same idempotent persistence paths used by reconciliation instead of relying on provider webhook payload shape as the canonical internal model.
+
+Operational webhook coverage includes products, locations, inventory levels, orders, refunds, app uninstall, and bulk-operation completion. Product updates reconcile the product and its full current variant set; missing variants are soft-deleted. Inventory updates append `WEBHOOK_RECONCILIATION` snapshots. Deletions remove or tombstone current state while preserving history where the data model supports it.
+
+`APP_UNINSTALLED` immediately marks the connection `UNINSTALLED` and does not require a working access token. `BULK_OPERATIONS_FINISH` finalizes a matching running order-history `SyncRun`; the explicit GET status endpoint remains a fallback if webhook delivery is delayed or missed.
+
+Webhook subscription installation is idempotent. OAuth completion ensures subscriptions for new installs, while manual sync/backfill also ensures them so existing installations can converge without a forced reinstall. Subscription creation is scope-aware and does not request resource topics the connection cannot read.
+
+Shopify App Store privacy/compliance webhooks are a separate distribution requirement and must be configured through the Shopify app configuration/Partner setup when public distribution work begins; operational webhook registration must not be mistaken for that compliance setup.
 
 Ongoing Store freshness is a separate concern from historical bootstrap. Webhooks provide near-real-time updates, while periodic reconciliation will later call a small set of resource-focused sync functions (catalog, commerce, inventory). Plan/billing policy decides when a Store is due for reconciliation; Shopify services do not contain plan-specific scheduling logic.
 
