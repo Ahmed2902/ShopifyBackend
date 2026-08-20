@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { prisma } from '../../../src/lib/prisma.js';
 import { ShopifyOrderRepository } from '../../../src/modules/shopify/shopify-order.repository.js';
-import type { ShopifyOrder } from '../../../src/modules/shopify/shopify-order.schema.js';
+import type { ShopifyRefund } from '../../../src/modules/shopify/shopify-order.schema.js';
+import type { ShopifyImportedOrder } from '../../../src/modules/shopify/shopify-order.types.js';
 
 const describeDatabase = process.env.RUN_DB_TESTS === 'true' ? describe : describe.skip;
 const createdStoreIds: string[] = [];
@@ -14,7 +15,7 @@ function money(amount: string) {
   };
 }
 
-function orderFixture(): ShopifyOrder {
+function orderFixture(): ShopifyImportedOrder {
   return {
     id: 'gid://shopify/Order/9001',
     name: '#9001',
@@ -24,7 +25,7 @@ function orderFixture(): ShopifyOrder {
     cancelledAt: null,
     cancelReason: null,
     sourceName: 'web',
-    test: true,
+    test: false,
     currencyCode: 'USD',
     presentmentCurrencyCode: 'USD',
     displayFinancialStatus: 'PARTIALLY_REFUNDED',
@@ -36,30 +37,6 @@ function orderFixture(): ShopifyOrder {
     currentTotalTaxSet: money('4.50'),
     currentTotalPriceSet: money('54.50'),
     discountCodes: ['WELCOME10'],
-    lineItems: {
-      nodes: [
-        {
-          id: 'gid://shopify/LineItem/9001',
-          sku: 'HOODIE-BLK-L',
-          title: 'Black Hoodie',
-          variantTitle: 'Large',
-          quantity: 2,
-          currentQuantity: 1,
-          refundableQuantity: 1,
-          requiresShipping: true,
-          restockable: true,
-          product: null,
-          variant: null,
-          originalUnitPriceSet: money('50.00'),
-          originalTotalSet: money('100.00'),
-          discountedTotalSet: money('90.00'),
-          discountedUnitPriceAfterAllDiscountsSet: money('45.00'),
-          totalDiscountSet: money('10.00'),
-          discountAllocations: [{ allocatedAmountSet: money('10.00') }],
-        },
-      ],
-      pageInfo: { hasNextPage: false, endCursor: 'line-end' },
-    },
     refunds: [
       {
         id: 'gid://shopify/Refund/9001',
@@ -67,24 +44,55 @@ function orderFixture(): ShopifyOrder {
         processedAt: '2026-08-02T10:01:00.000Z',
         updatedAt: '2026-08-02T10:02:00.000Z',
         totalRefundedSet: money('49.50'),
-        refundLineItems: {
-          nodes: [
-            {
-              id: null,
-              quantity: 1,
-              restocked: true,
-              restockType: 'RETURN',
-              lineItem: { id: 'gid://shopify/LineItem/9001' },
-              location: null,
-              priceSet: money('50.00'),
-              subtotalSet: money('45.00'),
-              totalTaxSet: money('4.50'),
-            },
-          ],
-          pageInfo: { hasNextPage: false, endCursor: 'refund-line-end' },
-        },
       },
     ],
+    lineItems: [
+      {
+        id: 'gid://shopify/LineItem/9001',
+        sku: 'HOODIE-BLK-L',
+        title: 'Black Hoodie',
+        variantTitle: 'Large',
+        quantity: 2,
+        currentQuantity: 1,
+        refundableQuantity: 1,
+        requiresShipping: true,
+        restockable: true,
+        product: null,
+        variant: null,
+        originalUnitPriceSet: money('50.00'),
+        originalTotalSet: money('100.00'),
+        discountedTotalSet: money('90.00'),
+        discountedUnitPriceAfterAllDiscountsSet: money('45.00'),
+        totalDiscountSet: money('10.00'),
+        discountAllocations: [{ allocatedAmountSet: money('10.00') }],
+      },
+    ],
+  };
+}
+
+function refundFixture(): ShopifyRefund {
+  return {
+    id: 'gid://shopify/Refund/9001',
+    createdAt: null,
+    processedAt: '2026-08-02T10:01:00.000Z',
+    updatedAt: '2026-08-02T10:02:00.000Z',
+    totalRefundedSet: money('49.50'),
+    refundLineItems: {
+      nodes: [
+        {
+          id: null,
+          quantity: 1,
+          restocked: true,
+          restockType: 'RETURN',
+          lineItem: { id: 'gid://shopify/LineItem/9001' },
+          location: null,
+          priceSet: money('50.00'),
+          subtotalSet: money('45.00'),
+          totalTaxSet: money('4.50'),
+        },
+      ],
+      pageInfo: { hasNextPage: false, endCursor: null },
+    },
   };
 }
 
@@ -126,12 +134,13 @@ describeDatabase('ShopifyOrderRepository', () => {
 
     const repository = new ShopifyOrderRepository();
     const order = orderFixture();
+    const refund = refundFixture();
 
     const first = await repository.upsertOrderWithLineItems(store.id, order);
-    expect(await repository.upsertRefundWithLineItems(store.id, first, order.refunds[0]!)).toBe(true);
+    expect(await repository.upsertRefundWithLineItems(store.id, first, refund)).toBe(true);
 
     const second = await repository.upsertOrderWithLineItems(store.id, order);
-    expect(await repository.upsertRefundWithLineItems(store.id, second, order.refunds[0]!)).toBe(true);
+    expect(await repository.upsertRefundWithLineItems(store.id, second, refund)).toBe(true);
 
     const persisted = await prisma.order.findUniqueOrThrow({
       where: {
@@ -147,7 +156,7 @@ describeDatabase('ShopifyOrderRepository', () => {
     });
 
     expect(persisted.sourceName).toBe('web');
-    expect(persisted.isTest).toBe(true);
+    expect(persisted.isTest).toBe(false);
     expect(persisted.lineItems).toHaveLength(1);
     expect(persisted.refunds).toHaveLength(1);
     expect(persisted.refunds[0]?.shopifyCreatedAt).toBeNull();

@@ -56,6 +56,13 @@ export class IntegrationRepository {
     });
   }
 
+  attachProviderOperation(syncRunId: string, providerOperationId: string) {
+    return prisma.syncRun.update({
+      where: { id: syncRunId },
+      data: { providerOperationId },
+    });
+  }
+
   updateSyncRunProgress(
     syncRunId: string,
     input: {
@@ -94,6 +101,28 @@ export class IntegrationRepository {
     return prisma.syncRun.update({
       where: { id: syncRunId },
       data: { status: 'FAILED', finishedAt: new Date(), lastError },
+    });
+  }
+
+  findShopifySyncRun(storeId: string, syncRunId: string, resourceType: string) {
+    return prisma.syncRun.findFirst({
+      where: {
+        id: syncRunId,
+        provider: 'SHOPIFY',
+        resourceType,
+        shopifyConnection: { is: { storeId } },
+      },
+      select: {
+        id: true,
+        status: true,
+        providerOperationId: true,
+        recordsRead: true,
+        recordsWritten: true,
+        lastError: true,
+        finishedAt: true,
+        apiVersion: true,
+        shopifyConnectionId: true,
+      },
     });
   }
 

@@ -7,9 +7,12 @@ import type { ShopifySyncContext } from '../shopify.types.js';
 import { normalizeShopDomain } from '../shopify.utils.js';
 import { ShopifyApiService } from './shopify-api.service.js';
 import { ShopifyAuthService } from './shopify-auth.service.js';
+import { ShopifyBulkService } from './shopify-bulk.service.js';
 import { ShopifyCatalogService } from './shopify-catalog.service.js';
 import { ShopifyInventoryService } from './shopify-inventory.service.js';
 import { ShopifyOrderService } from './shopify-order.service.js';
+
+const ORDER_HISTORY_RESOURCE = 'OrdersRefunds';
 
 export class ShopifyService {
   private readonly apiService: ShopifyApiService;
@@ -27,7 +30,11 @@ export class ShopifyService {
     this.authService = new ShopifyAuthService(repository, this.apiService);
     this.catalogService = new ShopifyCatalogService(repository, integrationService, this.apiService);
     this.inventoryService = new ShopifyInventoryService(repository, integrationService, this.apiService);
-    this.orderService = new ShopifyOrderService(orderRepository, integrationService, this.apiService);
+    this.orderService = new ShopifyOrderService(
+      orderRepository,
+      this.apiService,
+      new ShopifyBulkService(this.apiService),
+    );
   }
 
   beginOAuth(userId: string, requestedShop: string) {
@@ -107,10 +114,9 @@ export class ShopifyService {
     }
   }
 
-  async syncOrderHistory(storeId: string) {
+  async startOrderHistoryBackfill(storeId: string) {
     const { store, connection } = await this.requireActiveConnection(storeId);
     this.requireOrderScope(connection.scopes);
-
     const accessToken = await this.authService.resolveAccessToken(
       store.myshopifyDomain,
       connection,
@@ -118,7 +124,7 @@ export class ShopifyService {
     const syncRun = await this.integrationService.startSyncRun({
       provider: 'SHOPIFY',
       connectionId: connection.id,
-      resourceType: 'OrdersRefunds',
+      resourceType: ORDER_HISTORY_RESOURCE,
       mode: 'BACKFILL',
       apiVersion: connection.apiVersion,
     });
@@ -131,20 +137,137 @@ export class ShopifyService {
     );
 
     try {
-      const result = await this.orderService.sync(syncContext);
+      const operation = await this.orderService.startBulkBackfill(syncContext);
+      await this.integrationService.attachProviderOperation(syncRun.id, operation.id);
+      await this.integrationService.recordExternalPayload({
+        provider: 'SHOPIFY',
+        resourceType: 'OrderHistoryBulkOperation',
+        externalId: operation.id,
+        apiVersion: connection.apiVersion,
+        payload: operation,
+        syncRunId: syncRun.id,
+      });
+
+      return {
+        syncRunId: syncRun.id,
+        status: 'RUNNING' as const,
+        resourceType: ORDER_HISTORY_RESOURCE,
+        providerOperationId: operation.id,
+        providerStatus: operation.status,
+        historyAccess: this.historyAccess(connection.scopes),
+      };
+    } catch (error) {
+      await this.integrationService.failSyncRun(syncRun.id, error).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async getOrderHistoryBackfill(storeId: string, syncRunId: string) {
+    const syncRun = await this.integrationService.getShopifySyncRun(
+      storeId,
+      syncRunId,
+      ORDER_HISTORY_RESOURCE,
+    );
+    if (!syncRun) {
+      throw new AppError('Shopify order backfill was not found', 404, 'SYNC_RUN_NOT_FOUND');
+    }
+    if (syncRun.status !== 'RUNNING') {
+      return {
+        syncRunId: syncRun.id,
+        status: syncRun.status,
+        resourceType: ORDER_HISTORY_RESOURCE,
+        recordsRead: syncRun.recordsRead,
+        recordsWritten: syncRun.recordsWritten,
+        lastError: syncRun.lastError,
+        finishedAt: syncRun.finishedAt,
+      };
+    }
+    if (!syncRun.providerOperationId) {
+      const error = new AppError(
+        'Shopify order backfill is missing its bulk-operation ID',
+        500,
+        'SYNC_RUN_INVALID',
+      );
+      await this.integrationService.failSyncRun(syncRun.id, error).catch(() => undefined);
+      throw error;
+    }
+
+    const { store, connection } = await this.requireActiveConnection(storeId);
+    this.requireOrderScope(connection.scopes);
+    const accessToken = await this.authService.resolveAccessToken(
+      store.myshopifyDomain,
+      connection,
+    );
+    const syncContext = this.buildSyncContext(
+      storeId,
+      store.myshopifyDomain,
+      accessToken,
+      connection,
+      syncRun.id,
+    );
+
+    try {
+      const inspection = await this.orderService.inspectBulkBackfill(
+        syncContext,
+        syncRun.providerOperationId,
+      );
+      if (inspection.state === 'RUNNING') {
+        return {
+          syncRunId: syncRun.id,
+          status: 'RUNNING' as const,
+          resourceType: ORDER_HISTORY_RESOURCE,
+          providerOperationId: syncRun.providerOperationId,
+          providerStatus: inspection.providerStatus,
+          objectCount: inspection.objectCount,
+          historyAccess: this.historyAccess(connection.scopes),
+        };
+      }
+
+      if (inspection.state === 'FAILED') {
+        const error = new AppError(
+          inspection.errorCode
+            ? `Shopify bulk order backfill failed: ${inspection.errorCode}`
+            : `Shopify bulk order backfill ended with ${inspection.providerStatus}`,
+          502,
+          'SHOPIFY_BULK_FAILED',
+        );
+        await this.integrationService.failSyncRun(syncRun.id, error);
+        return {
+          syncRunId: syncRun.id,
+          status: 'FAILED' as const,
+          resourceType: ORDER_HISTORY_RESOURCE,
+          providerOperationId: syncRun.providerOperationId,
+          providerStatus: inspection.providerStatus,
+          lastError: error.message,
+        };
+      }
+
       await this.integrationService.completeSyncRun(syncRun.id, {
-        recordsRead: result.recordsRead,
-        recordsWritten: result.recordsWritten,
+        recordsRead: inspection.recordsRead,
+        recordsWritten: inspection.recordsWritten,
+      });
+      await this.integrationService.recordExternalPayload({
+        provider: 'SHOPIFY',
+        resourceType: 'OrderHistoryBulkCompletion',
+        externalId: syncRun.providerOperationId,
+        apiVersion: connection.apiVersion,
+        payload: {
+          providerStatus: inspection.providerStatus,
+          breakdown: inspection.breakdown,
+        },
+        syncRunId: syncRun.id,
       });
 
       return {
         syncRunId: syncRun.id,
         status: 'SUCCEEDED' as const,
-        resourceType: 'OrdersRefunds' as const,
-        historyAccess: connection.scopes.includes('read_all_orders')
-          ? ('ALL_ORDERS' as const)
-          : ('LAST_60_DAYS' as const),
-        ...result,
+        resourceType: ORDER_HISTORY_RESOURCE,
+        providerOperationId: syncRun.providerOperationId,
+        providerStatus: inspection.providerStatus,
+        historyAccess: this.historyAccess(connection.scopes),
+        recordsRead: inspection.recordsRead,
+        recordsWritten: inspection.recordsWritten,
+        breakdown: inspection.breakdown,
       };
     } catch (error) {
       await this.integrationService.failSyncRun(syncRun.id, error).catch(() => undefined);
@@ -179,6 +302,10 @@ export class ShopifyService {
         'SHOPIFY_ORDER_SCOPE_REQUIRED',
       );
     }
+  }
+
+  private historyAccess(scopes: string[]) {
+    return scopes.includes('read_all_orders') ? ('ALL_ORDERS' as const) : ('LAST_60_DAYS' as const);
   }
 
   private buildSyncContext(

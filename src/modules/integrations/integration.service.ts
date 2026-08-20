@@ -27,6 +27,10 @@ export class IntegrationService {
     return this.repository.createSyncRun({ ...input, mode: input.mode ?? null });
   }
 
+  attachProviderOperation(syncRunId: string, providerOperationId: string) {
+    return this.repository.attachProviderOperation(syncRunId, providerOperationId);
+  }
+
   updateSyncRunProgress(
     syncRunId: string,
     input: {
@@ -51,6 +55,10 @@ export class IntegrationService {
 
   failSyncRun(syncRunId: string, error: unknown) {
     return this.repository.failSyncRun(syncRunId, toErrorMessage(error));
+  }
+
+  getShopifySyncRun(storeId: string, syncRunId: string, resourceType: string) {
+    return this.repository.findShopifySyncRun(storeId, syncRunId, resourceType);
   }
 
   recordExternalPayload(input: {

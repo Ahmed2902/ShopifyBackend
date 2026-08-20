@@ -29,9 +29,16 @@ shopifyStoreRouter.post(
   controller.sync,
 );
 shopifyStoreRouter.post(
-  '/orders/sync',
+  '/orders/backfill',
   requireAuth,
   requireStoreMembership,
   requireRole('OWNER', 'ADMIN'),
-  controller.syncOrders,
+  controller.startOrderBackfill,
+);
+shopifyStoreRouter.get(
+  '/orders/backfill/:syncRunId',
+  requireAuth,
+  requireStoreMembership,
+  requireRole('OWNER', 'ADMIN'),
+  controller.getOrderBackfill,
 );

@@ -41,9 +41,16 @@ export const shopifyOrderLineItemSchema = z.object({
   discountAllocations: z.array(discountAllocationSchema).default([]),
 });
 
-export const shopifyOrderLineItemConnectionSchema = z.object({
-  nodes: z.array(shopifyOrderLineItemSchema),
-  pageInfo: pageInfoSchema,
+export const shopifyBulkOrderLineItemSchema = shopifyOrderLineItemSchema.extend({
+  __parentId: z.string().min(1),
+});
+
+export const shopifyRefundHeaderSchema = z.object({
+  id: z.string().min(1),
+  createdAt: z.string().datetime().nullable().optional(),
+  processedAt: z.string().datetime().nullable().optional(),
+  updatedAt: z.string().datetime().nullable().optional(),
+  totalRefundedSet: shopifyMoneyBagSchema,
 });
 
 export const shopifyRefundLineItemSchema = z.object({
@@ -63,16 +70,15 @@ export const shopifyRefundLineItemConnectionSchema = z.object({
   pageInfo: pageInfoSchema,
 });
 
-export const shopifyRefundSchema = z.object({
-  id: z.string().min(1),
-  createdAt: z.string().datetime().nullable().optional(),
-  processedAt: z.string().datetime().nullable().optional(),
-  updatedAt: z.string().datetime().nullable().optional(),
-  totalRefundedSet: shopifyMoneyBagSchema,
+export const shopifyRefundSchema = shopifyRefundHeaderSchema.extend({
   refundLineItems: shopifyRefundLineItemConnectionSchema,
 });
 
-export const shopifyOrderSchema = z.object({
+export const shopifyRefundQuerySchema = z.object({
+  refund: shopifyRefundSchema.nullable(),
+});
+
+export const shopifyOrderHeaderSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   createdAt: z.string().datetime(),
@@ -93,17 +99,16 @@ export const shopifyOrderSchema = z.object({
   currentTotalTaxSet: shopifyMoneyBagSchema,
   currentTotalPriceSet: shopifyMoneyBagSchema,
   discountCodes: z.array(z.string()).default([]),
-  lineItems: shopifyOrderLineItemConnectionSchema,
-  refunds: z.array(shopifyRefundSchema).default([]),
+  refunds: z.array(shopifyRefundHeaderSchema).default([]),
 });
 
-export const shopifyOrderConnectionSchema = z.object({
-  nodes: z.array(shopifyOrderSchema),
-  pageInfo: pageInfoSchema,
+export const shopifyOrderBackfillParamsSchema = z.object({
+  syncRunId: z.string().uuid(),
 });
 
-export type ShopifyMoneyBag = z.infer<typeof shopifyMoneyBagSchema>;
-export type ShopifyOrder = z.infer<typeof shopifyOrderSchema>;
+export type ShopifyOrderHeader = z.infer<typeof shopifyOrderHeaderSchema>;
 export type ShopifyOrderLineItem = z.infer<typeof shopifyOrderLineItemSchema>;
+export type ShopifyBulkOrderLineItem = z.infer<typeof shopifyBulkOrderLineItemSchema>;
+export type ShopifyRefundHeader = z.infer<typeof shopifyRefundHeaderSchema>;
 export type ShopifyRefund = z.infer<typeof shopifyRefundSchema>;
 export type ShopifyRefundLineItem = z.infer<typeof shopifyRefundLineItemSchema>;

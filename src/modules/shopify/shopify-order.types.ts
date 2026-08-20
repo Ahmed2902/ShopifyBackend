@@ -1,14 +1,15 @@
-export interface ShopifyOrdersQueryData {
-  orders: unknown;
+import type {
+  ShopifyOrderHeader,
+  ShopifyOrderLineItem,
+} from './shopify-order.schema.js';
+
+export interface ShopifyRefundQueryData {
+  refund: unknown;
 }
 
-export interface ShopifyOrderLineItemsQueryData {
-  order: { lineItems: unknown } | null;
-}
-
-export interface ShopifyRefundLineItemsQueryData {
-  refund: { refundLineItems: unknown } | null;
-}
+export type ShopifyImportedOrder = ShopifyOrderHeader & {
+  lineItems: ShopifyOrderLineItem[];
+};
 
 export interface PersistedShopifyOrder {
   id: string;
@@ -18,16 +19,31 @@ export interface PersistedShopifyOrder {
   }>;
 }
 
-export interface ShopifyOrderSyncBreakdown {
+export interface ShopifyOrderBackfillBreakdown {
   orders: number;
   lineItems: number;
   refunds: number;
   refundLineItems: number;
 }
 
-export interface ShopifyOrderSyncResult {
+export interface ShopifyOrderBackfillResult {
   recordsRead: number;
   recordsWritten: number;
-  checkpointCursor: string | null;
-  breakdown: ShopifyOrderSyncBreakdown;
+  breakdown: ShopifyOrderBackfillBreakdown;
 }
+
+export type ShopifyOrderBackfillInspection =
+  | {
+      state: 'RUNNING';
+      providerStatus: string;
+      objectCount: string | number | null;
+    }
+  | {
+      state: 'FAILED';
+      providerStatus: string;
+      errorCode: string | null;
+    }
+  | ({
+      state: 'COMPLETED';
+      providerStatus: 'COMPLETED';
+    } & ShopifyOrderBackfillResult);

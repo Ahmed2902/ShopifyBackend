@@ -8,6 +8,7 @@ import { ShopifyService } from '../../../src/modules/shopify/shopify.service.js'
 const storeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const connectionId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const syncRunId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const operationId = 'gid://shopify/BulkOperation/1';
 
 function jsonResponse(body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -43,8 +44,19 @@ function buildService(scopes = ['read_products', 'read_inventory', 'read_locatio
 
   const integrationService = {
     startSyncRun: vi.fn().mockResolvedValue({ id: syncRunId }),
+    attachProviderOperation: vi.fn().mockResolvedValue(undefined),
     recordExternalPayload: vi.fn().mockResolvedValue(undefined),
-    updateSyncRunProgress: vi.fn().mockResolvedValue(undefined),
+    getShopifySyncRun: vi.fn().mockResolvedValue({
+      id: syncRunId,
+      status: 'RUNNING',
+      providerOperationId: operationId,
+      recordsRead: 0,
+      recordsWritten: 0,
+      lastError: null,
+      finishedAt: null,
+      apiVersion: '2026-07',
+      shopifyConnectionId: connectionId,
+    }),
     completeSyncRun: vi.fn().mockResolvedValue(undefined),
     failSyncRun: vi.fn().mockResolvedValue(undefined),
   } as unknown as IntegrationService;
@@ -61,38 +73,31 @@ afterEach(() => {
 });
 
 describe('Shopify order-history facade', () => {
-  it('runs an order/refund backfill as its own SyncRun and reports the standard history window', async () => {
+  it('starts order history as one asynchronous Shopify bulk operation', async () => {
     const { integrationService, service } = buildService();
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
         jsonResponse({
           data: {
-            orders: {
-              nodes: [],
-              pageInfo: { hasNextPage: false, endCursor: null },
+            bulkOperationRunQuery: {
+              bulkOperation: { id: operationId, status: 'CREATED' },
+              userErrors: [],
             },
           },
         }),
       ),
     );
 
-    const result = await service.syncOrderHistory(storeId);
+    const result = await service.startOrderHistoryBackfill(storeId);
 
     expect(result).toEqual({
       syncRunId,
-      status: 'SUCCEEDED',
+      status: 'RUNNING',
       resourceType: 'OrdersRefunds',
+      providerOperationId: operationId,
+      providerStatus: 'CREATED',
       historyAccess: 'LAST_60_DAYS',
-      recordsRead: 0,
-      recordsWritten: 0,
-      checkpointCursor: null,
-      breakdown: {
-        orders: 0,
-        lineItems: 0,
-        refunds: 0,
-        refundLineItems: 0,
-      },
     });
     expect(integrationService.startSyncRun).toHaveBeenCalledWith({
       provider: 'SHOPIFY',
@@ -101,16 +106,13 @@ describe('Shopify order-history facade', () => {
       mode: 'BACKFILL',
       apiVersion: '2026-07',
     });
-    expect(integrationService.completeSyncRun).toHaveBeenCalledWith(syncRunId, {
-      recordsRead: 0,
-      recordsWritten: 0,
-    });
+    expect(integrationService.attachProviderOperation).toHaveBeenCalledWith(syncRunId, operationId);
   });
 
   it('does not start a backfill when the connection lacks order scope', async () => {
     const { integrationService, service } = buildService(['read_products']);
 
-    await expect(service.syncOrderHistory(storeId)).rejects.toMatchObject({
+    await expect(service.startOrderHistoryBackfill(storeId)).rejects.toMatchObject({
       code: 'SHOPIFY_ORDER_SCOPE_REQUIRED',
     });
     expect(integrationService.startSyncRun).not.toHaveBeenCalled();
@@ -123,17 +125,73 @@ describe('Shopify order-history facade', () => {
       vi.fn().mockResolvedValue(
         jsonResponse({
           data: {
-            orders: {
-              nodes: [],
-              pageInfo: { hasNextPage: false, endCursor: null },
+            bulkOperationRunQuery: {
+              bulkOperation: { id: operationId, status: 'CREATED' },
+              userErrors: [],
             },
           },
         }),
       ),
     );
 
-    const result = await service.syncOrderHistory(storeId);
+    const result = await service.startOrderHistoryBackfill(storeId);
 
     expect(result.historyAccess).toBe('ALL_ORDERS');
+  });
+
+  it('polls the provider operation without importing while Shopify is still running', async () => {
+    const { integrationService, service } = buildService();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          data: {
+            bulkOperation: {
+              id: operationId,
+              status: 'RUNNING',
+              errorCode: null,
+              objectCount: '120',
+              url: null,
+              partialDataUrl: null,
+            },
+          },
+        }),
+      ),
+    );
+
+    const result = await service.getOrderHistoryBackfill(storeId, syncRunId);
+
+    expect(result).toEqual({
+      syncRunId,
+      status: 'RUNNING',
+      resourceType: 'OrdersRefunds',
+      providerOperationId: operationId,
+      providerStatus: 'RUNNING',
+      objectCount: '120',
+      historyAccess: 'LAST_60_DAYS',
+    });
+    expect(integrationService.completeSyncRun).not.toHaveBeenCalled();
+  });
+
+  it('returns an already-finished SyncRun without calling Shopify again', async () => {
+    const { integrationService, service } = buildService();
+    vi.mocked(integrationService.getShopifySyncRun).mockResolvedValue({
+      id: syncRunId,
+      status: 'SUCCEEDED',
+      providerOperationId: operationId,
+      recordsRead: 25,
+      recordsWritten: 25,
+      lastError: null,
+      finishedAt: new Date('2026-08-20T12:00:00.000Z'),
+      apiVersion: '2026-07',
+      shopifyConnectionId: connectionId,
+    } as never);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await service.getOrderHistoryBackfill(storeId, syncRunId);
+
+    expect(result).toMatchObject({ status: 'SUCCEEDED', recordsRead: 25, recordsWritten: 25 });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

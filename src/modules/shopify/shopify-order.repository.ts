@@ -1,11 +1,13 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
 import type {
-  ShopifyOrder,
   ShopifyOrderLineItem,
   ShopifyRefund,
 } from './shopify-order.schema.js';
-import type { PersistedShopifyOrder } from './shopify-order.types.js';
+import type {
+  PersistedShopifyOrder,
+  ShopifyImportedOrder,
+} from './shopify-order.types.js';
 
 function optionalDate(value: string | null | undefined): Date | null {
   return value ? new Date(value) : null;
@@ -24,7 +26,7 @@ function asJson(value: unknown): Prisma.InputJsonValue {
 export class ShopifyOrderRepository {
   async upsertOrderWithLineItems(
     storeId: string,
-    order: ShopifyOrder,
+    order: ShopifyImportedOrder,
   ): Promise<PersistedShopifyOrder> {
     return prisma.$transaction(async (tx) => {
       const savedOrder = await tx.order.upsert({
@@ -42,9 +44,8 @@ export class ShopifyOrderRepository {
         select: { id: true },
       });
 
-      const productIds = this.uniqueIds(order.lineItems.nodes, (line) => line.product?.id);
-      const variantIds = this.uniqueIds(order.lineItems.nodes, (line) => line.variant?.id);
-
+      const productIds = this.uniqueIds(order.lineItems, (line) => line.product?.id);
+      const variantIds = this.uniqueIds(order.lineItems, (line) => line.variant?.id);
       const [products, variants] = await Promise.all([
         productIds.length
           ? tx.product.findMany({
@@ -64,7 +65,7 @@ export class ShopifyOrderRepository {
       const variantMap = new Map(variants.map((variant) => [variant.shopifyVariantId, variant.id]));
       const persistedLineItems: PersistedShopifyOrder['lineItems'] = [];
 
-      for (const lineItem of order.lineItems.nodes) {
+      for (const lineItem of order.lineItems) {
         const shopifyProductId = lineItem.product?.id ?? null;
         const shopifyVariantId = lineItem.variant?.id ?? null;
         const data = this.lineItemData(
@@ -95,10 +96,7 @@ export class ShopifyOrderRepository {
         });
       }
 
-      return {
-        id: savedOrder.id,
-        lineItems: persistedLineItems,
-      };
+      return { id: savedOrder.id, lineItems: persistedLineItems };
     });
   }
 
@@ -110,7 +108,6 @@ export class ShopifyOrderRepository {
     const lineItemMap = new Map(
       order.lineItems.map((lineItem) => [lineItem.shopifyLineItemId, lineItem.id]),
     );
-
     if (
       refund.refundLineItems.nodes.some(
         (lineItem) => !lineItemMap.has(lineItem.lineItem.id),
@@ -152,10 +149,7 @@ export class ShopifyOrderRepository {
         select: { id: true },
       });
 
-      await tx.refundLineItem.deleteMany({
-        where: { refundId: savedRefund.id },
-      });
-
+      await tx.refundLineItem.deleteMany({ where: { refundId: savedRefund.id } });
       if (refund.refundLineItems.nodes.length > 0) {
         await tx.refundLineItem.createMany({
           data: refund.refundLineItems.nodes.map((lineItem) => ({
@@ -180,7 +174,7 @@ export class ShopifyOrderRepository {
     });
   }
 
-  private orderData(order: ShopifyOrder) {
+  private orderData(order: ShopifyImportedOrder) {
     return {
       shopifyOrderId: order.id,
       name: order.name,

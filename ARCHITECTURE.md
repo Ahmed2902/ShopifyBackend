@@ -119,9 +119,15 @@ Provider modules keep the same controller/service/repository architecture as the
 - Large provider resource families may use focused resource files such as `shopify-order.schema.ts`, `shopify-order.queries.ts`, and `shopify-order.repository.ts` rather than growing the shared module files indefinitely.
 - A dedicated provider API service is justified once transport behavior such as authentication failures, retries, throttling, response validation, and GraphQL envelopes is shared across multiple resource syncs.
 
-For Shopify, `ShopifyService` remains the public facade. OAuth/token lifecycle, Admin GraphQL transport, catalog sync, inventory sync, and order/refund sync are separate focused services under `src/modules/shopify/service/`.
+For Shopify, `ShopifyService` remains the public facade. OAuth/token lifecycle, Admin GraphQL transport, bulk-operation transport, catalog sync, inventory sync, and order/refund sync are separate focused services under `src/modules/shopify/service/`.
 
-Order/refund ingestion intentionally excludes direct customer PII. Historical order sync normalizes money in shop currency, preserves presentment currency metadata, checkpoints each completed top-level page in `SyncRun.cursor`, and preserves raw provider payloads for traceability.
+Historical datasets that are naturally large should use Shopify Bulk Operations rather than manual top-level pagination. Order history is started as one asynchronous bulk workflow, the returned provider operation ID is stored on the `SyncRun`, and JSONL results are streamed instead of loaded into memory. Bulk order results contain order rows and nested line-item rows linked through Shopify's `__parentId` field.
+
+Shopify currently does not allow a connection field under the `Order.refunds` list inside a Bulk Operation, so refund headers are included in the bulk order export and `Refund.refundLineItems` are hydrated afterward through one focused refund query (with pagination only if a refund exceeds Shopify's per-request connection limit). This exception is provider-driven and should not reintroduce manual pagination for the whole order history.
+
+Order/refund ingestion intentionally excludes direct customer PII. Money is normalized in shop currency while presentment currency metadata and raw provider payloads remain available for traceability. Test-order and source metadata must be preserved so analytics and ML can exclude fake demand and distinguish sales channels.
+
+Ongoing Store freshness is a separate concern from historical bootstrap. Webhooks provide near-real-time updates, while periodic reconciliation will later call a small set of resource-focused sync functions (catalog, commerce, inventory). Plan/billing policy decides when a Store is due for reconciliation; Shopify services do not contain plan-specific scheduling logic.
 
 Every provider sync must be idempotent at the resource persistence layer, use the Store as its tenant boundary, record failure state in its SyncRun, and preserve relevant raw provider payloads where the data architecture calls for them.
 

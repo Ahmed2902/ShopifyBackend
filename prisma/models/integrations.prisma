@@ -78,6 +78,7 @@ model SyncRun {
   mode                String?
   apiVersion          String
   status              SyncStatus          @default(PENDING)
+  providerOperationId String?
   cursor              String?
   recordsRead         Int                 @default(0)
   recordsWritten      Int                 @default(0)
@@ -92,6 +93,7 @@ model SyncRun {
   payloads          ExternalPayload[]
 
   @@index([provider, resourceType, createdAt])
+  @@index([providerOperationId])
   @@index([shopifyConnectionId, createdAt])
   @@index([metaConnectionId, createdAt])
 }
