@@ -28,17 +28,20 @@ enum WebhookStatus {
 }
 
 model ShopifyConnection {
-  id                    String           @id @default(uuid()) @db.Uuid
-  storeId               String           @unique @db.Uuid
-  status                ConnectionStatus @default(ACTIVE)
-  accessTokenCiphertext String
-  scopes                String[]         @default([])
-  apiVersion            String
-  installedAt           DateTime         @default(now())
-  uninstalledAt         DateTime?
-  lastSyncedAt          DateTime?
-  createdAt             DateTime         @default(now())
-  updatedAt             DateTime         @updatedAt
+  id                     String           @id @default(uuid()) @db.Uuid
+  storeId                String           @unique @db.Uuid
+  status                 ConnectionStatus @default(ACTIVE)
+  accessTokenCiphertext  String
+  accessTokenExpiresAt   DateTime?
+  refreshTokenCiphertext String?
+  refreshTokenExpiresAt  DateTime?
+  scopes                 String[]         @default([])
+  apiVersion             String
+  installedAt            DateTime         @default(now())
+  uninstalledAt          DateTime?
+  lastSyncedAt           DateTime?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
 
   store             Store             @relation(fields: [storeId], references: [id], onDelete: Restrict)
   syncRuns          SyncRun[]
