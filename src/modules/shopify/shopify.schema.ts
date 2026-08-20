@@ -28,9 +28,46 @@ export const shopifyProfileSchema = z.object({
   createdAt: z.string().datetime(),
 });
 
+const shopifyGraphqlErrorSchema = z.object({
+  message: z.string(),
+  extensions: z
+    .object({
+      code: z.string().optional(),
+    })
+    .passthrough()
+    .optional(),
+});
+
+const shopifyThrottleStatusSchema = z.object({
+  maximumAvailable: z.number(),
+  currentlyAvailable: z.number(),
+  restoreRate: z.number(),
+});
+
+const shopifyGraphqlCostSchema = z.object({
+  requestedQueryCost: z.number().optional(),
+  actualQueryCost: z.number().optional(),
+  throttleStatus: shopifyThrottleStatusSchema.optional(),
+});
+
+export const shopifyGraphqlResponseSchema = z
+  .object({
+    data: z.unknown().optional(),
+    errors: z.array(shopifyGraphqlErrorSchema).optional(),
+    extensions: z
+      .object({
+        cost: shopifyGraphqlCostSchema.optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
+
 export const shopifyProfileResponseSchema = z.object({
   data: z.object({ shop: shopifyProfileSchema }).optional(),
   errors: z.array(z.object({ message: z.string() })).optional(),
 });
 
 export type ShopifyShopProfile = z.infer<typeof shopifyProfileSchema>;
+export type ShopifyGraphqlResponse = z.infer<typeof shopifyGraphqlResponseSchema>;
+export type ShopifyGraphqlCost = z.infer<typeof shopifyGraphqlCostSchema>;
