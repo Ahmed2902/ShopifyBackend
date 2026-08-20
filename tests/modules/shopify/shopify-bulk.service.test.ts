@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ShopifyApiService } from '../../../src/modules/shopify/service/shopify-api.service.js';
-import { ShopifyBulkService } from '../../../src/modules/shopify/service/shopify-bulk.service.js';
+import { ShopifyBulkService } from '../../../src/modules/shopify/bulk/shopify-bulk.service.js';
+import type { ShopifyApiService } from '../../../src/modules/shopify/shared/shopify-api.service.js';
 
 const syncContext = {
   storeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -81,5 +81,38 @@ describe('ShopifyBulkService', () => {
     await expect(service.startQuery(syncContext, '{ orders { edges { node { id } } } }')).rejects.toMatchObject({
       code: 'SHOPIFY_BULK_REJECTED',
     });
+  });
+
+  it('rejects a mismatched provider operation ID', async () => {
+    const apiService = {
+      requestAdminGraphql: vi.fn().mockResolvedValue({
+        bulkOperation: {
+          id: 'gid://shopify/BulkOperation/other',
+          status: 'RUNNING',
+          errorCode: null,
+          objectCount: '1',
+          url: null,
+          partialDataUrl: null,
+        },
+      }),
+    } as unknown as ShopifyApiService;
+    const service = new ShopifyBulkService(apiService);
+
+    await expect(
+      service.getStatus(syncContext, 'gid://shopify/BulkOperation/expected'),
+    ).rejects.toMatchObject({ code: 'SHOPIFY_BAD_RESPONSE' });
+  });
+
+  it('rejects malformed JSONL rows', async () => {
+    const apiService = { requestAdminGraphql: vi.fn() } as unknown as ShopifyApiService;
+    const service = new ShopifyBulkService(apiService);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response('{"id":"valid"}\nnot-json\n', { status: 200 })),
+    );
+
+    const iterator = service.streamJsonl('https://storage.example/orders.jsonl');
+    await expect(iterator.next()).resolves.toEqual({ value: { id: 'valid' }, done: false });
+    await expect(iterator.next()).rejects.toMatchObject({ code: 'SHOPIFY_BAD_RESPONSE' });
   });
 });

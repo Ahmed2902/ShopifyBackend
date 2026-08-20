@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ShopifyOrderRepository } from '../../../src/modules/shopify/shopify-order.repository.js';
-import { ShopifyOrderService } from '../../../src/modules/shopify/service/shopify-order.service.js';
-import type { ShopifyApiService } from '../../../src/modules/shopify/service/shopify-api.service.js';
-import type { ShopifyBulkService } from '../../../src/modules/shopify/service/shopify-bulk.service.js';
+import type { ShopifyBulkService } from '../../../src/modules/shopify/bulk/shopify-bulk.service.js';
+import type { ShopifyOrderRepository } from '../../../src/modules/shopify/order/shopify-order.repository.js';
+import { ShopifyOrderService } from '../../../src/modules/shopify/order/shopify-order.service.js';
+import type { ShopifyApiService } from '../../../src/modules/shopify/shared/shopify-api.service.js';
 
 const syncContext = {
   storeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -261,6 +261,33 @@ describe('ShopifyOrderService bulk history', () => {
     );
 
     expect(result).toEqual({ state: 'FAILED', providerStatus: 'FAILED', errorCode: 'TIMEOUT' });
+    expect(repository.upsertOrderWithLineItems).not.toHaveBeenCalled();
+  });
+
+  it('treats a completed bulk operation with no result URL as an empty successful history', async () => {
+    const { repository, service } = buildService({
+      status: {
+        id: 'gid://shopify/BulkOperation/1',
+        status: 'COMPLETED',
+        errorCode: null,
+        objectCount: '0',
+        url: null,
+        partialDataUrl: null,
+      },
+    });
+
+    const result = await service.inspectBulkBackfill(
+      syncContext,
+      'gid://shopify/BulkOperation/1',
+    );
+
+    expect(result).toEqual({
+      state: 'COMPLETED',
+      providerStatus: 'COMPLETED',
+      recordsRead: 0,
+      recordsWritten: 0,
+      breakdown: { orders: 0, lineItems: 0, refunds: 0, refundLineItems: 0 },
+    });
     expect(repository.upsertOrderWithLineItems).not.toHaveBeenCalled();
   });
 });

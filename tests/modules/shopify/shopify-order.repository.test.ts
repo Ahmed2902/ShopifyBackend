@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { prisma } from '../../../src/lib/prisma.js';
-import { ShopifyOrderRepository } from '../../../src/modules/shopify/shopify-order.repository.js';
-import type { ShopifyRefund } from '../../../src/modules/shopify/shopify-order.schema.js';
-import type { ShopifyImportedOrder } from '../../../src/modules/shopify/shopify-order.types.js';
+import { ShopifyOrderRepository } from '../../../src/modules/shopify/order/shopify-order.repository.js';
+import type { ShopifyRefund } from '../../../src/modules/shopify/order/shopify-order.schema.js';
+import type { ShopifyImportedOrder } from '../../../src/modules/shopify/order/shopify-order.types.js';
 
 const describeDatabase = process.env.RUN_DB_TESTS === 'true' ? describe : describe.skip;
 const createdStoreIds: string[] = [];

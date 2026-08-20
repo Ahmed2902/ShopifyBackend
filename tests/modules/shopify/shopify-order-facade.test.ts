@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encryptSecret } from '../../../src/modules/integrations/integration.utils.js';
 import type { IntegrationService } from '../../../src/modules/integrations/integration.service.js';
-import type { ShopifyOrderRepository } from '../../../src/modules/shopify/shopify-order.repository.js';
+import type { ShopifyOrderRepository } from '../../../src/modules/shopify/order/shopify-order.repository.js';
 import type { ShopifyRepository } from '../../../src/modules/shopify/shopify.repository.js';
 import { ShopifyService } from '../../../src/modules/shopify/shopify.service.js';
 

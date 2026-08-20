@@ -1,22 +1,22 @@
 import { AppError } from '../../../errors/app-error.js';
-import type { ShopifyOrderRepository } from '../shopify-order.repository.js';
-import { ORDER_HISTORY_BULK_QUERY, REFUND_DETAILS_QUERY } from '../shopify-order.queries.js';
+import type { ShopifyApiService } from '../shared/shopify-api.service.js';
+import type { ShopifyBulkService } from '../bulk/shopify-bulk.service.js';
+import type { ShopifySyncContext } from '../shopify.types.js';
+import { ORDER_HISTORY_BULK_QUERY, REFUND_DETAILS_QUERY } from './shopify-order.queries.js';
+import type { ShopifyOrderRepository } from './shopify-order.repository.js';
 import {
   shopifyBulkOrderLineItemSchema,
   shopifyOrderHeaderSchema,
   shopifyRefundQuerySchema,
   type ShopifyOrderHeader,
   type ShopifyRefund,
-} from '../shopify-order.schema.js';
+} from './shopify-order.schema.js';
 import type {
   ShopifyImportedOrder,
   ShopifyOrderBackfillInspection,
   ShopifyOrderBackfillResult,
   ShopifyRefundQueryData,
-} from '../shopify-order.types.js';
-import type { ShopifySyncContext } from '../shopify.types.js';
-import type { ShopifyApiService } from './shopify-api.service.js';
-import type { ShopifyBulkService } from './shopify-bulk.service.js';
+} from './shopify-order.types.js';
 
 const REFUND_LINE_PAGE_SIZE = 250;
 

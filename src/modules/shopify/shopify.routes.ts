@@ -4,7 +4,7 @@ import { requireRole, requireStoreMembership } from '../../middleware/store.midd
 import { IntegrationRepository } from '../integrations/integration.repository.js';
 import { IntegrationService } from '../integrations/integration.service.js';
 import { ShopifyController } from './shopify.controller.js';
-import { ShopifyOrderRepository } from './shopify-order.repository.js';
+import { ShopifyOrderRepository } from './order/shopify-order.repository.js';
 import { ShopifyRepository } from './shopify.repository.js';
 import { ShopifyService } from './shopify.service.js';
 
