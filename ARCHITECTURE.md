@@ -149,9 +149,7 @@ shopify/
   webhook/
     shopify-webhook.service.ts
     shopify-webhook.repository.ts
-    shopify-webhook-subscription.service.ts
     shopify-webhook.worker.ts
-    shopify-webhook.queries.ts
     shopify-webhook.schema.ts
     shopify-webhook.utils.ts
 ```
@@ -180,9 +178,9 @@ Operational webhook coverage includes products, locations, inventory levels, ord
 
 `APP_UNINSTALLED` immediately marks the connection `UNINSTALLED` and does not require a working access token. `BULK_OPERATIONS_FINISH` finalizes a matching running order-history `SyncRun`; the explicit GET status endpoint remains a fallback if webhook delivery is delayed or missed.
 
-Webhook subscription installation is idempotent. OAuth completion ensures subscriptions for new installs, while manual sync/backfill also ensures them so existing installations can converge without a forced reinstall. Subscription creation is scope-aware and does not request resource topics the connection cannot read.
+Webhook subscriptions are application configuration, not runtime business logic. Shopify recommends app-specific subscriptions for uniform topics, so operational topics should be configured once in Shopify app configuration/Dev Dashboard and deployed to all installed shops. The backend only receives, verifies, queues, and processes deliveries; OAuth, manual sync, and backfill do not list/create/update webhook subscriptions through Admin GraphQL.
 
-Shopify App Store privacy/compliance webhooks are a separate distribution requirement and must be configured through the Shopify app configuration/Partner setup when public distribution work begins; operational webhook registration must not be mistaken for that compliance setup.
+The app configuration must cover the operational topics handled by this backend: product create/update/delete, inventory-level connect/update/disconnect, location create/update/delete/activate/deactivate, order create/update/delete, refund create, app uninstall, and bulk-operation finish. Mandatory privacy/compliance webhooks must also be configured before public App Store distribution.
 
 Ongoing Store freshness is a separate concern from historical bootstrap. Webhooks provide near-real-time updates, while periodic reconciliation will later call a small set of resource-focused sync functions (catalog, commerce, inventory). Plan/billing policy decides when a Store is due for reconciliation; Shopify services do not contain plan-specific scheduling logic.
 
