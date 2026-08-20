@@ -56,7 +56,7 @@ export interface ShopifyResourceSyncStats extends ShopifySyncStats {
   ids: string[];
 }
 
-export interface ShopifyLocationSyncStats extends ShopifyResourceSyncStats {}
+export type ShopifyLocationSyncStats = ShopifyResourceSyncStats;
 
 export type ShopifyInventorySnapshotSource =
   | 'INITIAL_SYNC'
