@@ -52,6 +52,7 @@ export class ShopifyOrderService {
     let recordsRead = 0;
     let recordsWritten = 0;
     let cursor: string | null = null;
+    const seenOrderCursors = new Set<string>();
 
     while (true) {
       const data = await this.apiService.requestAdminGraphql<ShopifyOrdersQueryData>({
@@ -116,7 +117,7 @@ export class ShopifyOrderService {
       }
 
       const nextCursor = parsed.data.pageInfo.hasNextPage
-        ? this.requireNextCursor(parsed.data.pageInfo, 'orders')
+        ? this.requireNextCursor(parsed.data.pageInfo, 'orders', seenOrderCursors)
         : parsed.data.pageInfo.endCursor;
       await this.integrationService.updateSyncRunProgress(input.syncRunId, {
         cursor: nextCursor,
@@ -179,10 +180,11 @@ export class ShopifyOrderService {
     }
 
     const nodes = [...initial];
+    const seenCursors = new Set<string>();
     let pageInfo = initialPageInfo;
 
     while (pageInfo.hasNextPage) {
-      const after = this.requireNextCursor(pageInfo, 'order line items');
+      const after = this.requireNextCursor(pageInfo, 'order line items', seenCursors);
       const data = await this.apiService.requestAdminGraphql<ShopifyOrderLineItemsQueryData>({
         shop: input.shop,
         accessToken: input.accessToken,
@@ -240,10 +242,11 @@ export class ShopifyOrderService {
     }
 
     const nodes = [...initial];
+    const seenCursors = new Set<string>();
     let pageInfo = initialPageInfo;
 
     while (pageInfo.hasNextPage) {
-      const after = this.requireNextCursor(pageInfo, 'refund line items');
+      const after = this.requireNextCursor(pageInfo, 'refund line items', seenCursors);
       const data = await this.apiService.requestAdminGraphql<ShopifyRefundLineItemsQueryData>({
         shop: input.shop,
         accessToken: input.accessToken,
@@ -290,14 +293,27 @@ export class ShopifyOrderService {
     return { nodes, pageInfo };
   }
 
-  private requireNextCursor(pageInfo: PageInfo, resource: string): string {
-    if (!pageInfo.endCursor) {
+  private requireNextCursor(
+    pageInfo: PageInfo,
+    resource: string,
+    seenCursors: Set<string>,
+  ): string {
+    const cursor = pageInfo.endCursor;
+    if (!cursor) {
       throw new AppError(
         `Shopify ${resource} pagination did not provide a next cursor`,
         502,
         'SHOPIFY_BAD_RESPONSE',
       );
     }
-    return pageInfo.endCursor;
+    if (seenCursors.has(cursor)) {
+      throw new AppError(
+        `Shopify ${resource} pagination repeated a cursor`,
+        502,
+        'SHOPIFY_BAD_RESPONSE',
+      );
+    }
+    seenCursors.add(cursor);
+    return cursor;
   }
 }
