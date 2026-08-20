@@ -26,7 +26,7 @@ export const ORDERS_QUERY = `#graphql
           pageInfo { hasNextPage endCursor }
         }
 
-        refunds(first: 250) {
+        refunds {
           id
           createdAt
           processedAt
