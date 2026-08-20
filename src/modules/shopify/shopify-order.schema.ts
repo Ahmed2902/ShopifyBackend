@@ -80,6 +80,8 @@ export const shopifyOrderSchema = z.object({
   updatedAt: z.string().datetime().nullable().optional(),
   cancelledAt: z.string().datetime().nullable().optional(),
   cancelReason: z.string().nullable().optional(),
+  sourceName: z.string().nullable().optional(),
+  test: z.boolean(),
   currencyCode: z.string().min(1),
   presentmentCurrencyCode: z.string().min(1).nullable().optional(),
   displayFinancialStatus: z.string().nullable().optional(),
