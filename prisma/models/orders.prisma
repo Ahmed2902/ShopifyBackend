@@ -22,6 +22,8 @@ model Order {
   shopifyUpdatedAt                 DateTime?
   cancelledAt                      DateTime?
   cancelReason                     String?
+  sourceName                       String?
+  isTest                           Boolean   @default(false)
   currencyCode                     String
   presentmentCurrencyCode          String?
   displayFinancialStatus           String?
@@ -43,6 +45,8 @@ model Order {
 
   @@unique([storeId, shopifyOrderId])
   @@index([storeId, shopifyCreatedAt])
+  @@index([storeId, isTest, shopifyCreatedAt])
+  @@index([storeId, sourceName, shopifyCreatedAt])
   @@index([storeId, cancelledAt])
 }
 
@@ -83,17 +87,17 @@ model OrderLineItem {
 }
 
 model Refund {
-  id               String   @id @default(uuid()) @db.Uuid
-  orderId          String   @db.Uuid
+  id               String    @id @default(uuid()) @db.Uuid
+  orderId          String    @db.Uuid
   shopifyRefundId  String
-  shopifyCreatedAt DateTime
+  shopifyCreatedAt DateTime?
   processedAt      DateTime?
   shopifyUpdatedAt DateTime?
-  totalRefunded    Decimal? @db.Decimal(20, 6)
+  totalRefunded    Decimal?  @db.Decimal(20, 6)
   currencyCode     String?
   rawJson          Json?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   order     Order            @relation(fields: [orderId], references: [id], onDelete: Restrict)
   lineItems RefundLineItem[]
@@ -114,8 +118,8 @@ model RefundLineItem {
   price               Decimal? @db.Decimal(20, 6)
   subtotal            Decimal? @db.Decimal(20, 6)
   tax                 Decimal? @db.Decimal(20, 6)
-  rawJson             Json?
-  createdAt           DateTime @default(now())
+  rawJson              Json?
+  createdAt            DateTime @default(now())
 
   refund        Refund        @relation(fields: [refundId], references: [id], onDelete: Restrict)
   orderLineItem OrderLineItem @relation(fields: [orderLineItemId], references: [id], onDelete: Restrict)

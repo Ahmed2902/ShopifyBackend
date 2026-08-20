@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { shopifyOrderBackfillParamsSchema } from './order/shopify-order.schema.js';
 import { shopifyCallbackSchema, shopifyInstallSchema } from './shopify.schema.js';
 import type { ShopifyService } from './shopify.service.js';
 import {
@@ -51,6 +52,20 @@ export class ShopifyController {
 
   sync = async (req: Request, res: Response) => {
     const result = await this.service.syncStoreData(req.context.storeId!);
+    res.status(200).json(result);
+  };
+
+  startOrderBackfill = async (req: Request, res: Response) => {
+    const result = await this.service.startOrderHistoryBackfill(req.context.storeId!);
+    res.status(202).json(result);
+  };
+
+  getOrderBackfill = async (req: Request, res: Response) => {
+    const { syncRunId } = shopifyOrderBackfillParamsSchema.parse(req.params);
+    const result = await this.service.getOrderHistoryBackfill(
+      req.context.storeId!,
+      syncRunId,
+    );
     res.status(200).json(result);
   };
 }

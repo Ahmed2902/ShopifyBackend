@@ -13,7 +13,7 @@ import type {
   ShopifyVariantsQueryData,
 } from '../shopify.types.js';
 import { paginateShopifyConnection } from '../shopify.utils.js';
-import type { ShopifyApiService } from './shopify-api.service.js';
+import type { ShopifyApiService } from '../shared/shopify-api.service.js';
 
 const SHOPIFY_PAGE_SIZE = 100;
 
