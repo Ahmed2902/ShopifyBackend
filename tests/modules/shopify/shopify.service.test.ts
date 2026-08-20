@@ -154,6 +154,9 @@ function buildService(connectionOverrides: Record<string, unknown> = {}) {
         scopes: ['read_products', 'read_inventory', 'read_locations'],
         apiVersion: '2026-07',
         lastSyncedAt: null,
+        lastReconciledAt: null,
+        nextReconciliationAt: null,
+        reconciliationIntervalMinutes: 1440,
         ...connectionOverrides,
       },
     }),
@@ -163,6 +166,9 @@ function buildService(connectionOverrides: Record<string, unknown> = {}) {
     upsertVariant: vi.fn().mockResolvedValue(true),
     upsertLocation: vi.fn().mockResolvedValue(undefined),
     upsertInventoryLevel: vi.fn().mockResolvedValue(true),
+    markMissingCatalogDeleted: vi.fn().mockResolvedValue({ products: 0, variants: 0 }),
+    markMissingLocationsDeleted: vi.fn().mockResolvedValue(0),
+    deleteMissingInventoryLevelsForLocation: vi.fn().mockResolvedValue(0),
     markConnectionSynced: vi.fn().mockResolvedValue(undefined),
     markConnectionReauthRequired: vi.fn().mockResolvedValue(undefined),
   } as unknown as ShopifyRepository;
@@ -181,6 +187,18 @@ function buildService(connectionOverrides: Record<string, unknown> = {}) {
   };
 }
 
+function stubFullCatalogInventorySync() {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(jsonResponse(shopResponse))
+    .mockResolvedValueOnce(jsonResponse(productResponse))
+    .mockResolvedValueOnce(jsonResponse(variantResponse))
+    .mockResolvedValueOnce(jsonResponse(locationResponse))
+    .mockResolvedValueOnce(jsonResponse(inventoryResponse));
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -188,14 +206,7 @@ afterEach(() => {
 describe('Shopify catalog and inventory sync', () => {
   it('synchronizes shop, products, variants, locations and all inventory states', async () => {
     const { repository, integrationService, service } = buildService();
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse(shopResponse))
-      .mockResolvedValueOnce(jsonResponse(productResponse))
-      .mockResolvedValueOnce(jsonResponse(variantResponse))
-      .mockResolvedValueOnce(jsonResponse(locationResponse))
-      .mockResolvedValueOnce(jsonResponse(inventoryResponse));
-    vi.stubGlobal('fetch', fetchMock);
+    const fetchMock = stubFullCatalogInventorySync();
 
     const result = await service.syncStoreData(storeId);
 
@@ -214,9 +225,17 @@ describe('Shopify catalog and inventory sync', () => {
       },
     });
     expect(fetchMock).toHaveBeenCalledTimes(5);
-    expect(repository.upsertProduct).toHaveBeenCalledTimes(1);
-    expect(repository.upsertVariant).toHaveBeenCalledTimes(1);
-    expect(repository.upsertLocation).toHaveBeenCalledTimes(1);
+    expect(repository.markMissingCatalogDeleted).toHaveBeenCalledWith(storeId, [
+      'gid://shopify/Product/1',
+    ], ['gid://shopify/ProductVariant/1']);
+    expect(repository.markMissingLocationsDeleted).toHaveBeenCalledWith(storeId, [
+      'gid://shopify/Location/1',
+    ]);
+    expect(repository.deleteMissingInventoryLevelsForLocation).toHaveBeenCalledWith(
+      storeId,
+      'gid://shopify/Location/1',
+      ['gid://shopify/InventoryItem/1'],
+    );
     expect(repository.upsertInventoryLevel).toHaveBeenCalledWith(
       storeId,
       expect.objectContaining({ id: 'gid://shopify/InventoryLevel/1' }),
@@ -230,10 +249,39 @@ describe('Shopify catalog and inventory sync', () => {
         mode: 'MANUAL',
       }),
     );
-    expect(integrationService.completeSyncRun).toHaveBeenCalledWith(syncRunId, {
-      recordsRead: 5,
-      recordsWritten: 5,
+  });
+
+  it('runs periodic catalog/inventory reconciliation and records its own SyncRun', async () => {
+    const watermark = new Date('2026-08-20T00:00:00.000Z');
+    const { repository, integrationService, service } = buildService({
+      lastSyncedAt: watermark,
+      lastReconciledAt: watermark,
     });
+    stubFullCatalogInventorySync();
+
+    const result = await service.reconcileStoreData(storeId);
+
+    expect(result).toMatchObject({
+      status: 'SUCCEEDED',
+      resourceType: 'StoreReconciliation',
+      since: watermark,
+      breakdown: {
+        products: 1,
+        variants: 1,
+        inventoryLevels: 1,
+        ordersScanned: 0,
+        commerceSkipped: true,
+      },
+    });
+    expect(repository.upsertInventoryLevel).toHaveBeenCalledWith(
+      storeId,
+      expect.anything(),
+      'PERIODIC_RECONCILIATION',
+    );
+    expect(integrationService.startSyncRun).toHaveBeenCalledWith(
+      expect.objectContaining({ resourceType: 'StoreReconciliation', mode: 'PERIODIC' }),
+    );
+    expect(repository.markConnectionSynced).toHaveBeenCalledWith(connectionId);
   });
 
   it('marks the connection for reauthorization and fails the sync when Shopify rejects the credential', async () => {
