@@ -61,6 +61,10 @@ export class IntegrationService {
     return this.repository.findShopifySyncRun(storeId, syncRunId, resourceType);
   }
 
+  getLastSuccessfulShopifySyncRun(connectionId: string, resourceType: string) {
+    return this.repository.findLastSuccessfulShopifySyncRun(connectionId, resourceType);
+  }
+
   recordExternalPayload(input: {
     provider: IntegrationProviderName;
     resourceType: string;
