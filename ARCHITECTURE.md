@@ -113,7 +113,12 @@ Provider modules keep the same controller/service/repository architecture as the
 - Services orchestrate provider requests, validation, retries, normalization, and SyncRun lifecycle calls.
 - Repositories contain only Store-scoped database reads/writes.
 - Shared integration infrastructure owns `SyncRun` and raw `ExternalPayload` persistence.
-- Small provider transport helpers such as cursor pagination and throttle-delay calculation stay in the provider `*.utils.ts` file. A separate API client/adapter should only be introduced when the provider transport becomes large enough to justify it.
+- Small provider transport helpers such as cursor pagination and throttle-delay calculation stay in the provider `*.utils.ts` file.
+- When one provider service grows into several real responsibilities, that module may use a `service/` folder with focused service classes behind one module-level facade. This is an exception for complex modules, not the default layout for every module.
+- Provider GraphQL documents belong in a dedicated `*.queries.ts` file once they are large enough to obscure service behavior. Internal cross-service contracts belong in a module-local `*.types.ts` file.
+- A dedicated provider API service is justified once transport behavior such as authentication failures, retries, throttling, response validation, and GraphQL envelopes is shared across multiple resource syncs.
+
+For Shopify, `ShopifyService` remains the public facade. OAuth/token lifecycle, Admin GraphQL transport, catalog sync, and inventory sync are separate focused services under `src/modules/shopify/service/`.
 
 Every provider sync must be idempotent at the resource persistence layer, use the Store as its tenant boundary, record failure state in its SyncRun, and preserve relevant raw provider payloads where the data architecture calls for them.
 

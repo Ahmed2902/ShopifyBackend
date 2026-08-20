@@ -1,0 +1,56 @@
+export interface ShopifyShopQueryData {
+  shop: unknown;
+}
+
+export interface ShopifyProductsQueryData {
+  products: unknown;
+}
+
+export interface ShopifyVariantsQueryData {
+  productVariants: unknown;
+}
+
+export interface ShopifyLocationsQueryData {
+  locations: unknown;
+}
+
+export interface ShopifyLocationInventoryQueryData {
+  location: { inventoryLevels: unknown } | null;
+}
+
+export interface PlainShopifyTokenSet {
+  accessToken: string;
+  accessTokenExpiresAt: Date;
+  refreshToken: string;
+  refreshTokenExpiresAt: Date;
+  scopes: string[];
+}
+
+export interface ShopifyConnectionCredentialState {
+  id: string;
+  accessTokenCiphertext: string;
+  accessTokenExpiresAt: Date | null;
+  refreshTokenCiphertext: string | null;
+  refreshTokenExpiresAt: Date | null;
+  scopes: string[];
+}
+
+export interface ShopifySyncContext {
+  storeId: string;
+  shop: string;
+  accessToken: string;
+  connectionId: string;
+  apiVersion: string;
+  syncRunId: string;
+}
+
+export interface ShopifySyncStats {
+  read: number;
+  written: number;
+}
+
+export interface ShopifyLocationSyncStats extends ShopifySyncStats {
+  ids: string[];
+}
+
+export type ShopifyInventorySnapshotSource = 'INITIAL_SYNC' | 'MANUAL_RECONCILIATION';
