@@ -4,6 +4,7 @@ import {
   hashPassword,
   hashRefreshToken,
   issueAccessToken,
+  refreshCookieOptions,
   verifyAccessToken,
   verifyPassword,
 } from '../../../src/modules/auth/auth.utils.js';
@@ -40,5 +41,20 @@ describe('auth utilities', () => {
     expect(token.length).toBeGreaterThan(40);
     expect(hashRefreshToken(token)).toBe(hashRefreshToken(token));
     expect(hashRefreshToken(token)).not.toBe(token);
+  });
+
+  it('uses cross-site-safe secure cookies in production and lax cookies locally', () => {
+    expect(refreshCookieOptions('production')).toMatchObject({
+      httpOnly: true,
+      secure: true,
+      sameSite: 'none',
+      path: '/v1/auth',
+    });
+    expect(refreshCookieOptions('development')).toMatchObject({
+      httpOnly: true,
+      secure: false,
+      sameSite: 'lax',
+      path: '/v1/auth',
+    });
   });
 });
