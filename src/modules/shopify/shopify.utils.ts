@@ -160,7 +160,7 @@ export function calculateShopifyThrottleDelayMs(cost: ShopifyGraphqlCost | undef
 
   const requested = cost?.requestedQueryCost ?? cost?.actualQueryCost ?? 1;
   const deficit = Math.max(1, requested - throttle.currentlyAvailable);
-  return Math.min(5_000, Math.ceil((deficit / throttle.restoreRate) * 1000) + 100);
+  return Math.min(5_000, Math.ceil((deficit / throttle.restoreRate) * 1000) + 100;
 }
 
 export async function* paginateShopifyConnection<TNode>(
@@ -213,7 +213,7 @@ export function clearShopifyOAuthCookie(res: Response): void {
 }
 
 export function buildShopifySuccessRedirect(storeId: string, shop: string): string {
-  const destination = new URL('/settings/integrations', env.CORS_ORIGIN);
+  const destination = new URL('/app/integrations', env.CORS_ORIGIN);
   destination.searchParams.set('shopify', 'connected');
   destination.searchParams.set('storeId', storeId);
   destination.searchParams.set('shop', shop);
