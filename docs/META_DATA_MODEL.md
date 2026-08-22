@@ -330,3 +330,7 @@ The frontend should display mapping precision rather than hiding it. Examples:
 - `Unmapped` — needs review
 
 This prevents the product from presenting a precise stock recommendation when the ad itself is only known at product or collection level.
+
+## PR validation
+
+The repository CI should verify this change through committed PostgreSQL migrations, Prisma migration drift checks, Prisma schema validation, ESLint, TypeScript, and the existing Vitest suite. Provider integration behavior is intentionally deferred to the following Meta implementation PRs.
