@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AppError } from '../../../src/errors/app-error.js';
 import {
   buildShopifyAuthorizationUrl,
+  buildShopifySuccessRedirect,
   calculateShopifyThrottleDelayMs,
   computeShopifyOAuthHmac,
   createShopifyOAuthContext,
@@ -45,6 +46,20 @@ describe('Shopify OAuth utilities', () => {
     expect(url.searchParams.get('state')).toBe('random-state');
     expect(url.searchParams.get('grant_options[]')).toBeNull();
     expect(url.searchParams.get('scope')).toContain('read_products');
+  });
+
+  it('returns OAuth installs to the real integrations page', () => {
+    const redirect = new URL(
+      buildShopifySuccessRedirect(
+        'b3ecf1b1-49bf-4ecf-982a-43db2f481cf0',
+        'example-store.myshopify.com',
+      ),
+    );
+
+    expect(redirect.pathname).toBe('/app/integrations');
+    expect(redirect.searchParams.get('shopify')).toBe('connected');
+    expect(redirect.searchParams.get('storeId')).toBe('b3ecf1b1-49bf-4ecf-982a-43db2f481cf0');
+    expect(redirect.searchParams.get('shop')).toBe('example-store.myshopify.com');
   });
 
   it('verifies callback HMAC and rejects modified parameters', () => {
