@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { ShopifyMetricsRepository } from '../../../src/modules/shopify/read/shopify-metrics.repository.js';
 import type { ShopifyReadRepository } from '../../../src/modules/shopify/read/shopify-read.repository.js';
 import { ShopifyReadService } from '../../../src/modules/shopify/read/shopify-read.service.js';
 
-function buildService(overrides: Partial<ShopifyReadRepository> = {}) {
+function buildService(
+  overrides: Partial<ShopifyReadRepository> = {},
+  metricOverrides: Partial<ShopifyMetricsRepository> = {},
+) {
   const repository = {
     getStatus: vi.fn().mockResolvedValue({ store: { id: 'store-1' } }),
     listProducts: vi.fn().mockResolvedValue({ items: [], page: 1, limit: 50, total: 0, hasMore: false }),
@@ -13,11 +17,29 @@ function buildService(overrides: Partial<ShopifyReadRepository> = {}) {
     getOrder: vi.fn().mockResolvedValue({ id: 'order-1' }),
     ...overrides,
   } as unknown as ShopifyReadRepository;
+  const metricsRepository = {
+    getSummary: vi.fn().mockResolvedValue({ catalog: {}, inventory: {}, commerce: {} }),
+    getProductSales: vi.fn().mockResolvedValue({ product: { id: 'product-1' }, summary: {}, variants: [], daily: [] }),
+    ...metricOverrides,
+  } as unknown as ShopifyMetricsRepository;
 
-  return { repository, service: new ShopifyReadService(repository) };
+  return {
+    repository,
+    metricsRepository,
+    service: new ShopifyReadService(repository, metricsRepository),
+  };
 }
 
 describe('ShopifyReadService', () => {
+  it('delegates summary queries with the trusted store boundary', async () => {
+    const { metricsRepository, service } = buildService();
+    const query = { lowStockBelow: 5 };
+
+    await service.getSummary('store-a', query);
+
+    expect(metricsRepository.getSummary).toHaveBeenCalledWith('store-a', query);
+  });
+
   it('delegates product filters with the trusted store boundary', async () => {
     const { repository, service } = buildService();
     const query = { page: 2, limit: 25, q: 'hoodie', status: 'ACTIVE' };
@@ -25,6 +47,15 @@ describe('ShopifyReadService', () => {
     await service.listProducts('store-a', query);
 
     expect(repository.listProducts).toHaveBeenCalledWith('store-a', query);
+  });
+
+  it('delegates product demand queries with the trusted store boundary', async () => {
+    const { metricsRepository, service } = buildService();
+    const query = { from: '2026-08-01T00:00:00.000Z', to: '2026-08-21T00:00:00.000Z' };
+
+    await service.getProductSales('store-a', 'product-a', query);
+
+    expect(metricsRepository.getProductSales).toHaveBeenCalledWith('store-a', 'product-a', query);
   });
 
   it('delegates inventory filters with the trusted store boundary', async () => {
@@ -58,6 +89,15 @@ describe('ShopifyReadService', () => {
     const { service } = buildService({ getProduct: vi.fn().mockResolvedValue(null) } as Partial<ShopifyReadRepository>);
 
     await expect(service.getProduct('store-a', 'product-b')).rejects.toMatchObject({
+      statusCode: 404,
+      code: 'SHOPIFY_PRODUCT_NOT_FOUND',
+    });
+  });
+
+  it('returns a structured not-found error for missing product demand', async () => {
+    const { service } = buildService({}, { getProductSales: vi.fn().mockResolvedValue(null) } as Partial<ShopifyMetricsRepository>);
+
+    await expect(service.getProductSales('store-a', 'product-b', {})).rejects.toMatchObject({
       statusCode: 404,
       code: 'SHOPIFY_PRODUCT_NOT_FOUND',
     });
