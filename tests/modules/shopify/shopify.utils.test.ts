@@ -23,18 +23,19 @@ describe('Shopify OAuth utilities', () => {
     expect(() => normalizeShopDomain('https://example-store.myshopify.com/admin')).toThrow(AppError);
   });
 
-  it('signs OAuth context and detects tampering', () => {
+  it('makes OAuth state self-verifying and detects tampering without a callback cookie', () => {
     const created = createShopifyOAuthContext(
       'b3ecf1b1-49bf-4ecf-982a-43db2f481cf0',
       'example-store.myshopify.com',
     );
-    const verified = verifyShopifyOAuthContext(created.cookieValue);
+    const verified = verifyShopifyOAuthContext(created.state);
 
     expect(verified.userId).toBe('b3ecf1b1-49bf-4ecf-982a-43db2f481cf0');
     expect(verified.shop).toBe('example-store.myshopify.com');
-    expect(verified.state).toBe(created.state);
+    expect(verified.state.length).toBeGreaterThanOrEqual(32);
+    expect(created.cookieValue).toBe(created.state);
 
-    const tampered = `${created.cookieValue.slice(0, -1)}${created.cookieValue.endsWith('A') ? 'B' : 'A'}`;
+    const tampered = `${created.state.slice(0, -1)}${created.state.endsWith('A') ? 'B' : 'A'}`;
     expect(() => verifyShopifyOAuthContext(tampered)).toThrow(AppError);
   });
 
