@@ -43,9 +43,11 @@ export class ShopifyAuthService {
     oauthContextCookie: string | undefined;
   }): Promise<{ storeId: string; shop: string }> {
     const shop = normalizeShopDomain(input.shop);
-    const context = verifyShopifyOAuthContext(input.oauthContextCookie);
+    // State is self-verifying so OAuth works even when frontend/backend are on separate
+    // domains and the browser blocks the compatibility cookie set by the install XHR.
+    const context = verifyShopifyOAuthContext(input.state);
 
-    if (context.state !== input.state || context.shop !== shop) {
+    if (context.shop !== shop) {
       throw new AppError('Shopify OAuth state does not match', 401, 'INVALID_OAUTH_STATE');
     }
 

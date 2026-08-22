@@ -64,17 +64,21 @@ export function createShopifyOAuthContext(userId: string, shop: string) {
     expiresAt: Date.now() + OAUTH_CONTEXT_TTL_MS,
   };
   const payload = Buffer.from(JSON.stringify(context), 'utf8').toString('base64url');
+  const signedContext = `${payload}.${signContextPayload(payload)}`;
 
   return {
-    state: context.state,
-    cookieValue: `${payload}.${signContextPayload(payload)}`,
+    // The state parameter is intentionally self-verifying. Keeping cookieValue equal to the
+    // signed state preserves the existing cookie as a best-effort compatibility layer, while
+    // the callback no longer depends on a third-party cookie surviving the Shopify redirect.
+    state: signedContext,
+    cookieValue: signedContext,
   };
 }
 
-export function verifyShopifyOAuthContext(cookieValue: string | undefined): ShopifyOAuthContext {
-  if (!cookieValue) throw new AppError('Shopify OAuth context is missing', 401, 'INVALID_OAUTH_STATE');
+export function verifyShopifyOAuthContext(signedContext: string | undefined): ShopifyOAuthContext {
+  if (!signedContext) throw new AppError('Shopify OAuth context is missing', 401, 'INVALID_OAUTH_STATE');
 
-  const [payload, signature, ...extra] = cookieValue.split('.');
+  const [payload, signature, ...extra] = signedContext.split('.');
   if (!payload || !signature || extra.length > 0 || !safeEqual(signContextPayload(payload), signature)) {
     throw new AppError('Shopify OAuth context is invalid', 401, 'INVALID_OAUTH_STATE');
   }
@@ -83,6 +87,7 @@ export function verifyShopifyOAuthContext(cookieValue: string | undefined): Shop
     const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as ShopifyOAuthContext;
     if (
       typeof parsed.state !== 'string' ||
+      parsed.state.length < 32 ||
       typeof parsed.userId !== 'string' ||
       typeof parsed.shop !== 'string' ||
       typeof parsed.expiresAt !== 'number' ||
@@ -213,7 +218,7 @@ export function clearShopifyOAuthCookie(res: Response): void {
 }
 
 export function buildShopifySuccessRedirect(storeId: string, shop: string): string {
-  const destination = new URL('/settings/integrations', env.CORS_ORIGIN);
+  const destination = new URL('/app/integrations', env.CORS_ORIGIN);
   destination.searchParams.set('shopify', 'connected');
   destination.searchParams.set('storeId', storeId);
   destination.searchParams.set('shop', shop);

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AppError } from '../../../src/errors/app-error.js';
 import {
   buildShopifyAuthorizationUrl,
+  buildShopifySuccessRedirect,
   calculateShopifyThrottleDelayMs,
   computeShopifyOAuthHmac,
   createShopifyOAuthContext,
@@ -22,18 +23,19 @@ describe('Shopify OAuth utilities', () => {
     expect(() => normalizeShopDomain('https://example-store.myshopify.com/admin')).toThrow(AppError);
   });
 
-  it('signs OAuth context and detects tampering', () => {
+  it('makes OAuth state self-verifying and detects tampering without a callback cookie', () => {
     const created = createShopifyOAuthContext(
       'b3ecf1b1-49bf-4ecf-982a-43db2f481cf0',
       'example-store.myshopify.com',
     );
-    const verified = verifyShopifyOAuthContext(created.cookieValue);
+    const verified = verifyShopifyOAuthContext(created.state);
 
     expect(verified.userId).toBe('b3ecf1b1-49bf-4ecf-982a-43db2f481cf0');
     expect(verified.shop).toBe('example-store.myshopify.com');
-    expect(verified.state).toBe(created.state);
+    expect(verified.state.length).toBeGreaterThanOrEqual(32);
+    expect(created.cookieValue).toBe(created.state);
 
-    const tampered = `${created.cookieValue.slice(0, -1)}${created.cookieValue.endsWith('A') ? 'B' : 'A'}`;
+    const tampered = `${created.state.slice(0, -1)}${created.state.endsWith('A') ? 'B' : 'A'}`;
     expect(() => verifyShopifyOAuthContext(tampered)).toThrow(AppError);
   });
 
@@ -45,6 +47,20 @@ describe('Shopify OAuth utilities', () => {
     expect(url.searchParams.get('state')).toBe('random-state');
     expect(url.searchParams.get('grant_options[]')).toBeNull();
     expect(url.searchParams.get('scope')).toContain('read_products');
+  });
+
+  it('returns OAuth installs to the real integrations page', () => {
+    const redirect = new URL(
+      buildShopifySuccessRedirect(
+        'b3ecf1b1-49bf-4ecf-982a-43db2f481cf0',
+        'example-store.myshopify.com',
+      ),
+    );
+
+    expect(redirect.pathname).toBe('/app/integrations');
+    expect(redirect.searchParams.get('shopify')).toBe('connected');
+    expect(redirect.searchParams.get('storeId')).toBe('b3ecf1b1-49bf-4ecf-982a-43db2f481cf0');
+    expect(redirect.searchParams.get('shop')).toBe('example-store.myshopify.com');
   });
 
   it('verifies callback HMAC and rejects modified parameters', () => {
