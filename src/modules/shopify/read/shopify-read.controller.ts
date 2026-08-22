@@ -5,7 +5,9 @@ import {
   shopifyOrderParamsSchema,
   shopifyOrdersQuerySchema,
   shopifyProductParamsSchema,
+  shopifyProductSalesQuerySchema,
   shopifyProductsQuerySchema,
+  shopifySummaryQuerySchema,
 } from './shopify-read.schema.js';
 
 export class ShopifyReadController {
@@ -13,6 +15,11 @@ export class ShopifyReadController {
 
   status = async (req: Request, res: Response) => {
     res.status(200).json(await this.service.getStatus(req.context.storeId!));
+  };
+
+  summary = async (req: Request, res: Response) => {
+    const query = shopifySummaryQuerySchema.parse(req.query);
+    res.status(200).json(await this.service.getSummary(req.context.storeId!, query));
   };
 
   products = async (req: Request, res: Response) => {
@@ -23,6 +30,12 @@ export class ShopifyReadController {
   product = async (req: Request, res: Response) => {
     const { productId } = shopifyProductParamsSchema.parse(req.params);
     res.status(200).json(await this.service.getProduct(req.context.storeId!, productId));
+  };
+
+  productSales = async (req: Request, res: Response) => {
+    const { productId } = shopifyProductParamsSchema.parse(req.params);
+    const query = shopifyProductSalesQuerySchema.parse(req.query);
+    res.status(200).json(await this.service.getProductSales(req.context.storeId!, productId, query));
   };
 
   inventory = async (req: Request, res: Response) => {

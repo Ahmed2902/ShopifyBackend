@@ -17,7 +17,9 @@ export const shopifyStoreRouter = Router({ mergeParams: true });
 shopifyStoreRouter.use(requireAuth, requireStoreMembership);
 
 shopifyStoreRouter.get('/status', readController.status);
+shopifyStoreRouter.get('/summary', readController.summary);
 shopifyStoreRouter.get('/products', readController.products);
+shopifyStoreRouter.get('/products/:productId/sales', readController.productSales);
 shopifyStoreRouter.get('/products/:productId', readController.product);
 shopifyStoreRouter.get('/inventory', readController.inventory);
 shopifyStoreRouter.get('/locations', readController.locations);
