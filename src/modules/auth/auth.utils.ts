@@ -110,11 +110,12 @@ export function hashRefreshToken(token: string): string {
 // region Cookies and request metadata
 export const REFRESH_COOKIE_NAME = 'refresh_token';
 
-function refreshCookieOptions(): CookieOptions {
+export function refreshCookieOptions(nodeEnv: string = env.NODE_ENV): CookieOptions {
+  const production = nodeEnv === 'production';
   return {
     httpOnly: true,
-    secure: env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: production,
+    sameSite: production ? 'none' : 'lax',
     path: '/v1/auth',
   };
 }
