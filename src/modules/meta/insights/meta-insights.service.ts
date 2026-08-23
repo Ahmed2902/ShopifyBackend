@@ -1,61 +1,25 @@
 import { AppError } from '../../../errors/app-error.js';
 import type { MetaApiContext } from '../meta.types.js';
+import { toJsonSafe } from '../meta.utils.js';
 import type { MetaApiService } from '../shared/meta-api.service.js';
 import type { MetaInsightsRepository } from './meta-insights.repository.js';
-import { metaInsightRowSchema, type MetaInsightRow } from './meta-insights.schema.js';
+import { metaInsightRowSchema } from './meta-insights.schema.js';
 
 const INITIAL_LOOKBACK_DAYS = 90;
 const REFRESH_LOOKBACK_DAYS = 35;
 const CHUNK_DAYS = 28;
 const ACTION_REPORT_TIME = 'impression';
-
 const INSIGHT_FIELDS = [
-  'date_start',
-  'date_stop',
-  'account_id',
-  'account_currency',
-  'campaign_id',
-  'adset_id',
-  'ad_id',
-  'objective',
-  'optimization_goal',
-  'attribution_setting',
-  'spend',
-  'social_spend',
-  'impressions',
-  'reach',
-  'clicks',
-  'unique_clicks',
-  'outbound_clicks',
-  'unique_outbound_clicks',
-  'inline_link_clicks',
-  'inline_post_engagement',
-  'estimated_ad_recallers',
-  'estimated_ad_recall_rate',
-  'cpc',
-  'cpm',
-  'cpp',
-  'ctr',
-  'frequency',
-  'actions',
-  'unique_actions',
-  'action_values',
-  'cost_per_action_type',
-  'cost_per_unique_action_type',
-  'conversions',
-  'conversion_values',
-  'purchase_roas',
-  'website_purchase_roas',
-  'website_ctr',
-  'video_thruplay_watched_actions',
-  'video_avg_time_watched_actions',
-  'video_p25_watched_actions',
-  'video_p50_watched_actions',
-  'video_p75_watched_actions',
-  'video_p95_watched_actions',
-  'video_p100_watched_actions',
-  'video_30_sec_watched_actions',
-  'video_play_actions',
+  'date_start', 'date_stop', 'account_id', 'account_currency', 'campaign_id', 'adset_id', 'ad_id',
+  'objective', 'optimization_goal', 'attribution_setting', 'spend', 'social_spend', 'impressions',
+  'reach', 'clicks', 'unique_clicks', 'outbound_clicks', 'unique_outbound_clicks',
+  'inline_link_clicks', 'inline_post_engagement', 'estimated_ad_recallers',
+  'estimated_ad_recall_rate', 'cpc', 'cpm', 'cpp', 'ctr', 'frequency', 'actions', 'unique_actions',
+  'action_values', 'cost_per_action_type', 'cost_per_unique_action_type', 'conversions',
+  'conversion_values', 'purchase_roas', 'website_purchase_roas', 'website_ctr',
+  'video_thruplay_watched_actions', 'video_avg_time_watched_actions', 'video_p25_watched_actions',
+  'video_p50_watched_actions', 'video_p75_watched_actions', 'video_p95_watched_actions',
+  'video_p100_watched_actions', 'video_30_sec_watched_actions', 'video_play_actions',
 ].join(',');
 
 function dateOnly(date: Date): string {
@@ -72,25 +36,13 @@ function addDays(date: Date, days: number): Date {
   return result;
 }
 
-function parseInsight(value: unknown): MetaInsightRow | null {
-  const parsed = metaInsightRowSchema.safeParse(value);
-  if (!parsed.success) {
-    throw new AppError('Meta Insights returned an invalid row', 502, 'META_BAD_RESPONSE');
-  }
-  return parsed.data;
-}
-
 export class MetaInsightsService {
   constructor(
     private readonly repository: MetaInsightsRepository,
     private readonly apiService: MetaApiService,
   ) {}
 
-  async syncAccount(
-    context: MetaApiContext,
-    metaAccountId: string,
-    requestedLookbackDays?: number,
-  ) {
+  async syncAccount(context: MetaApiContext, metaAccountId: string, requestedLookbackDays?: number) {
     const account = await this.repository.findAccount(
       context.storeId,
       context.connectionId,
@@ -105,8 +57,8 @@ export class MetaInsightsService {
     }
 
     const hasExistingInsights = await this.repository.hasInsights(account.id);
-    const lookbackDays = requestedLookbackDays ??
-      (hasExistingInsights ? REFRESH_LOOKBACK_DAYS : INITIAL_LOOKBACK_DAYS);
+    const lookbackDays =
+      requestedLookbackDays ?? (hasExistingInsights ? REFRESH_LOOKBACK_DAYS : INITIAL_LOOKBACK_DAYS);
     if (!Number.isInteger(lookbackDays) || lookbackDays < 1 || lookbackDays > 365) {
       throw new AppError('Meta Insights lookback must be between 1 and 365 days', 400, 'INVALID_LOOKBACK');
     }
@@ -119,7 +71,9 @@ export class MetaInsightsService {
     let staleRowsDeleted = 0;
 
     for (let chunkStart = firstDay; chunkStart <= today; chunkStart = addDays(chunkStart, CHUNK_DAYS)) {
-      const chunkEnd = new Date(Math.min(addDays(chunkStart, CHUNK_DAYS - 1).getTime(), today.getTime()));
+      const chunkEnd = new Date(
+        Math.min(addDays(chunkStart, CHUNK_DAYS - 1).getTime(), today.getTime()),
+      );
       const rows = await this.apiService.collectGraphPages(
         context,
         `/${metaAccountId}/insights`,
@@ -133,26 +87,37 @@ export class MetaInsightsService {
           fields: INSIGHT_FIELDS,
           limit: '100',
         },
-        parseInsight,
+        (value) => {
+          const parsed = metaInsightRowSchema.safeParse(value);
+          if (!parsed.success) {
+            throw new AppError('Meta Insights returned an invalid row', 502, 'META_BAD_RESPONSE');
+          }
+          return parsed.data;
+        },
       );
 
       const keys: string[] = [];
       for (const row of rows) {
-        // Meta account_id is normally the numeric account id while our selected external id is act_<id>.
-        const expectedNumericAccountId = metaAccountId.replace(/^act_/, '');
-        if (row.account_id !== expectedNumericAccountId && row.account_id !== metaAccountId) {
-          throw new AppError('Meta Insights returned data for a different ad account', 502, 'META_IDENTITY_MISMATCH');
+        const expectedAccountId = metaAccountId.replace(/^act_/, '');
+        if (row.account_id !== expectedAccountId && row.account_id !== metaAccountId) {
+          throw new AppError(
+            'Meta Insights returned data for a different ad account',
+            502,
+            'META_IDENTITY_MISMATCH',
+          );
         }
-        const key = await this.repository.upsertDailyInsight({
-          adAccountId: account.id,
-          campaignId: row.campaign_id ? hierarchy.campaigns.get(row.campaign_id) ?? null : null,
-          adSetId: row.adset_id ? hierarchy.adSets.get(row.adset_id) ?? null : null,
-          adId: row.ad_id ? hierarchy.ads.get(row.ad_id) ?? null : null,
-          row,
-          actionReportTime: ACTION_REPORT_TIME,
-        });
-        keys.push(key);
+        keys.push(
+          await this.repository.upsertDailyInsight({
+            adAccountId: account.id,
+            campaignId: row.campaign_id ? hierarchy.campaigns.get(row.campaign_id) ?? null : null,
+            adSetId: row.adset_id ? hierarchy.adSets.get(row.adset_id) ?? null : null,
+            adId: row.ad_id ? hierarchy.ads.get(row.ad_id) ?? null : null,
+            row,
+            actionReportTime: ACTION_REPORT_TIME,
+          }),
+        );
       }
+
       const deleted = await this.repository.deleteMissingRange(account.id, chunkStart, chunkEnd, keys);
       recordsRead += rows.length;
       recordsWritten += rows.length + deleted.count;
@@ -168,5 +133,20 @@ export class MetaInsightsService {
       actionReportTime: ACTION_REPORT_TIME,
       attributionMode: 'UNIFIED_ADSET_SETTING' as const,
     };
+  }
+
+  async listDaily(
+    storeId: string,
+    input: { from: string; to: string; adId?: string; page: number; limit: number },
+  ) {
+    return toJsonSafe(
+      await this.repository.listDaily(storeId, {
+        from: new Date(`${input.from}T00:00:00.000Z`),
+        to: new Date(`${input.to}T23:59:59.999Z`),
+        adId: input.adId,
+        page: input.page,
+        limit: input.limit,
+      }),
+    );
   }
 }
