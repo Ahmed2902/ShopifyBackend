@@ -6,7 +6,12 @@ import {
   metaAdSetListQuerySchema,
   metaCallbackSchema,
   metaCampaignListQuerySchema,
+  metaCatalogItemsQuerySchema,
+  metaCatalogParamsSchema,
   metaConfigureAssetsSchema,
+  metaConfigureCatalogsSchema,
+  metaInsightsListQuerySchema,
+  metaInsightsSyncSchema,
 } from './meta.schema.js';
 import type { MetaService } from './meta.service.js';
 import { buildMetaSuccessRedirect } from './meta.utils.js';
@@ -47,8 +52,22 @@ export class MetaController {
     res.status(200).json(await this.service.configureAssets(req.context.storeId!, input));
   };
 
+  configureCatalogs = async (req: Request, res: Response) => {
+    const input = metaConfigureCatalogsSchema.parse(req.body);
+    res.status(200).json(await this.service.configureCatalogs(req.context.storeId!, input.catalogIds));
+  };
+
   sync = async (req: Request, res: Response) => {
     res.status(200).json(await this.service.syncAdsHierarchy(req.context.storeId!));
+  };
+
+  syncCatalogs = async (req: Request, res: Response) => {
+    res.status(200).json(await this.service.syncCatalogs(req.context.storeId!));
+  };
+
+  syncInsights = async (req: Request, res: Response) => {
+    const input = metaInsightsSyncSchema.parse(req.body ?? {});
+    res.status(200).json(await this.service.syncInsights(req.context.storeId!, input.lookbackDays));
   };
 
   adAccounts = async (req: Request, res: Response) => {
@@ -73,5 +92,20 @@ export class MetaController {
   ad = async (req: Request, res: Response) => {
     const { adId } = metaAdParamsSchema.parse(req.params);
     res.status(200).json(await this.service.getAd(req.context.storeId!, adId));
+  };
+
+  catalogs = async (req: Request, res: Response) => {
+    res.status(200).json(await this.service.listCatalogs(req.context.storeId!));
+  };
+
+  catalogItems = async (req: Request, res: Response) => {
+    const { catalogId } = metaCatalogParamsSchema.parse(req.params);
+    const { page, limit } = metaCatalogItemsQuerySchema.parse(req.query);
+    res.status(200).json(await this.service.listCatalogItems(req.context.storeId!, catalogId, page, limit));
+  };
+
+  insights = async (req: Request, res: Response) => {
+    const input = metaInsightsListQuerySchema.parse(req.query);
+    res.status(200).json(await this.service.listInsights(req.context.storeId!, input));
   };
 }

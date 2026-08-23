@@ -13,6 +13,13 @@ export const metaConfigureAssetsSchema = z.object({
   ),
 });
 
+export const metaConfigureCatalogsSchema = z.object({
+  catalogIds: z.array(z.string().min(1)).max(50).refine(
+    (values) => new Set(values).size === values.length,
+    'Meta catalog IDs must be unique',
+  ),
+});
+
 const pagination = {
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(100).default(50),
@@ -37,9 +44,26 @@ export const metaAdListQuerySchema = z.object({
   status: z.string().min(1).optional(),
 });
 
-export const metaAdParamsSchema = z.object({
-  adId: z.string().min(1),
+export const metaAdParamsSchema = z.object({ adId: z.string().min(1) });
+export const metaCatalogParamsSchema = z.object({ catalogId: z.string().min(1) });
+export const metaCatalogItemsQuerySchema = z.object({ ...pagination });
+
+export const metaInsightsSyncSchema = z.object({
+  lookbackDays: z.coerce.number().int().min(1).max(365).optional(),
 });
+
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+export const metaInsightsListQuerySchema = z
+  .object({
+    ...pagination,
+    from: isoDate,
+    to: isoDate,
+    adId: z.string().min(1).optional(),
+  })
+  .refine((value) => value.from <= value.to, {
+    message: 'from must be on or before to',
+    path: ['from'],
+  });
 
 export const metaTokenResponseSchema = z.object({
   access_token: z.string().min(1),
