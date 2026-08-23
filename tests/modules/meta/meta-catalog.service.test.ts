@@ -20,8 +20,24 @@ const providerCatalog = {
   feed_count: 1,
 };
 const items = [
-  { id: 'item_1', retailer_id: 'SKU-1', retailer_product_group_id: 'GROUP-1', name: 'Black / S', color: 'Black', size: 'S', url: 'https://store.test/products/hoodie?variant=1' },
-  { id: 'item_2', retailer_id: 'SKU-2', retailer_product_group_id: 'GROUP-1', name: 'Black / M', color: 'Black', size: 'M', url: 'https://store.test/products/hoodie?variant=2' },
+  {
+    id: 'item_1',
+    retailer_id: 'SKU-1',
+    retailer_product_group_id: 'GROUP-1',
+    name: 'Black / S',
+    color: 'Black',
+    size: 'S',
+    url: 'https://store.test/products/hoodie?variant=1',
+  },
+  {
+    id: 'item_2',
+    retailer_id: 'SKU-2',
+    retailer_product_group_id: 'GROUP-1',
+    name: 'Black / M',
+    color: 'Black',
+    size: 'M',
+    url: 'https://store.test/products/hoodie?variant=2',
+  },
 ];
 
 function build() {
@@ -33,8 +49,16 @@ function build() {
     markCatalogSynced: vi.fn().mockResolvedValue(undefined),
   } as unknown as MetaCatalogRepository;
   const apiService = {
-    collectGraphPages: vi.fn().mockImplementation(async (_context, path: string) =>
-      path.includes('owned_product_catalogs') ? [providerCatalog] : items,
+    collectGraphPages: vi.fn().mockImplementation(
+      async (
+        _context: unknown,
+        path: string,
+        _params: unknown,
+        parseItem: (value: unknown) => unknown | null,
+      ) => {
+        const providerRows = path.includes('owned_product_catalogs') ? [providerCatalog] : items;
+        return providerRows.map(parseItem).filter((value) => value !== null);
+      },
     ),
   } as unknown as MetaApiService;
   return { repository, apiService, service: new MetaCatalogService(repository, apiService) };
@@ -54,9 +78,9 @@ describe('MetaCatalogService', () => {
     const { repository, service } = build();
     const discovered = await service.discoverOwnedCatalogs(context, ['biz_1']);
 
-    await expect(service.configureCatalogs(context, discovered, ['cat_missing'])).rejects.toMatchObject({
-      code: 'META_CATALOG_NOT_ACCESSIBLE',
-    });
+    await expect(
+      service.configureCatalogs(context, discovered, ['cat_missing']),
+    ).rejects.toMatchObject({ code: 'META_CATALOG_NOT_ACCESSIBLE' });
     expect(repository.configureSelection).not.toHaveBeenCalled();
   });
 
