@@ -92,7 +92,7 @@ describe('Shopify order-history facade', () => {
     const { integrationService, service } = buildService();
     const fetchMock = stubBulkStart();
 
-    const result = await service.startOrderHistoryBackfill(storeId);
+    const result = await service.startOrderHistoryImport(storeId);
 
     expect(result).toEqual({
       syncRunId,
@@ -116,7 +116,7 @@ describe('Shopify order-history facade', () => {
   it('does not start a backfill when the connection lacks order scope', async () => {
     const { integrationService, service } = buildService(['read_products']);
 
-    await expect(service.startOrderHistoryBackfill(storeId)).rejects.toMatchObject({
+    await expect(service.startOrderHistoryImport(storeId)).rejects.toMatchObject({
       code: 'SHOPIFY_ORDER_SCOPE_REQUIRED',
     });
     expect(integrationService.startSyncRun).not.toHaveBeenCalled();
@@ -126,7 +126,7 @@ describe('Shopify order-history facade', () => {
     const { service } = buildService(['read_orders', 'read_all_orders']);
     stubBulkStart();
 
-    const result = await service.startOrderHistoryBackfill(storeId);
+    const result = await service.startOrderHistoryImport(storeId);
 
     expect(result.historyAccess).toBe('ALL_ORDERS');
   });
@@ -151,7 +151,7 @@ describe('Shopify order-history facade', () => {
       ),
     );
 
-    const result = await service.getOrderHistoryBackfill(storeId, syncRunId);
+    const result = await service.getOrderHistoryImportStatus(storeId, syncRunId);
 
     expect(result).toEqual({
       syncRunId,
@@ -181,7 +181,7 @@ describe('Shopify order-history facade', () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await service.getOrderHistoryBackfill(storeId, syncRunId);
+    const result = await service.getOrderHistoryImportStatus(storeId, syncRunId);
 
     expect(result).toMatchObject({ status: 'SUCCEEDED', recordsRead: 25, recordsWritten: 25 });
     expect(fetchMock).not.toHaveBeenCalled();
