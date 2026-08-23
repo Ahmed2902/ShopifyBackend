@@ -51,17 +51,6 @@ export class MetaAuthService {
       apiVersion: env.META_API_VERSION,
     });
 
-    const apiContext: MetaApiContext = {
-      storeId: connection.storeId,
-      connectionId: connection.id,
-      accessToken: exchanged.accessToken,
-      apiVersion: connection.apiVersion,
-    };
-    const user = await this.apiService.fetchCurrentUser(apiContext);
-    if (user.id !== inspection.userId) {
-      throw new AppError('Meta user identity changed during OAuth', 401, 'META_IDENTITY_MISMATCH');
-    }
-
     return {
       storeId: connection.storeId,
       connectionId: connection.id,
