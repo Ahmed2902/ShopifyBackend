@@ -36,32 +36,44 @@ function parsePrice(value: string | number | null | undefined, currencyHint: str
 }
 
 export class MetaCatalogRepository {
-  upsertDiscoveredCatalog(storeId: string, connectionId: string, catalog: MetaCatalogAsset) {
-    return prisma.metaProductCatalog.upsert({
-      where: { storeId_metaCatalogId: { storeId, metaCatalogId: catalog.id } },
-      create: {
-        storeId,
-        metaConnectionId: connectionId,
-        metaCatalogId: catalog.id,
-        name: catalog.name,
-        businessId: catalog.businessId,
-        ownerBusinessId: catalog.ownerBusinessId,
-        vertical: catalog.vertical,
-        productCount: catalog.productCount,
-        feedCount: catalog.feedCount,
-        rawJson: catalog.raw as Prisma.InputJsonValue,
-      },
-      update: {
-        metaConnectionId: connectionId,
-        name: catalog.name,
-        businessId: catalog.businessId,
-        ownerBusinessId: catalog.ownerBusinessId,
-        vertical: catalog.vertical,
-        productCount: catalog.productCount,
-        feedCount: catalog.feedCount,
-        rawJson: catalog.raw as Prisma.InputJsonValue,
-      },
-      select: { id: true, metaCatalogId: true },
+  async configureSelection(
+    storeId: string,
+    connectionId: string,
+    catalogs: MetaCatalogAsset[],
+  ) {
+    return prisma.$transaction(async (tx) => {
+      for (const catalog of catalogs) {
+        await tx.metaProductCatalog.upsert({
+          where: { storeId_metaCatalogId: { storeId, metaCatalogId: catalog.id } },
+          create: {
+            storeId,
+            metaConnectionId: connectionId,
+            metaCatalogId: catalog.id,
+            name: catalog.name,
+            businessId: catalog.businessId,
+            ownerBusinessId: catalog.ownerBusinessId,
+            vertical: catalog.vertical,
+            productCount: catalog.productCount,
+            feedCount: catalog.feedCount,
+            rawJson: catalog.raw as Prisma.InputJsonValue,
+          },
+          update: {
+            metaConnectionId: connectionId,
+            name: catalog.name,
+            businessId: catalog.businessId,
+            ownerBusinessId: catalog.ownerBusinessId,
+            vertical: catalog.vertical,
+            productCount: catalog.productCount,
+            feedCount: catalog.feedCount,
+            rawJson: catalog.raw as Prisma.InputJsonValue,
+          },
+        });
+      }
+      return tx.metaConnection.update({
+        where: { id: connectionId },
+        data: { selectedCatalogIds: catalogs.map((catalog) => catalog.id) },
+        select: { selectedCatalogIds: true },
+      });
     });
   }
 
