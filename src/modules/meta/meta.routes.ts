@@ -16,7 +16,7 @@ export const metaStoreRouter = Router({ mergeParams: true });
 metaStoreRouter.use(requireAuth, requireStoreMembership);
 
 metaStoreRouter.get('/status', controller.status);
-metaStoreRouter.get('/assets', controller.assets);
+metaStoreRouter.get('/assets', ownerOrAdmin, controller.assets);
 metaStoreRouter.get('/ad-accounts', controller.adAccounts);
 metaStoreRouter.get('/campaigns', controller.campaigns);
 metaStoreRouter.get('/adsets', controller.adSets);
