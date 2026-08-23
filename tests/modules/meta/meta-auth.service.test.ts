@@ -7,9 +7,10 @@ import { createMetaOAuthState } from '../../../src/modules/meta/meta.utils.js';
 const userId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const storeId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const connectionId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const requiredScopes = ['ads_read', 'business_management', 'catalog_management'];
 
 function build(options?: { role?: 'OWNER' | 'ADMIN' | 'MEMBER'; scopes?: string[] }) {
-  const scopes = options?.scopes ?? ['ads_read', 'business_management'];
+  const scopes = options?.scopes ?? requiredScopes;
   const repository = {
     findMembership: vi.fn().mockResolvedValue({ role: options?.role ?? 'OWNER' }),
     upsertConnection: vi.fn().mockImplementation((input) =>
@@ -64,7 +65,7 @@ describe('MetaAuthService', () => {
       expect.objectContaining({
         storeId,
         metaUserId: 'meta-user-1',
-        scopes: ['ads_read', 'business_management'],
+        scopes: requiredScopes,
         apiVersion: 'v26.0',
         accessTokenCiphertext: expect.any(String),
       }),
@@ -75,13 +76,58 @@ describe('MetaAuthService', () => {
   });
 
   it('rejects OAuth completion if ads_read was not granted', async () => {
-    const { repository, service } = build({ scopes: ['business_management'] });
+    const { repository, service } = build({
+      scopes: ['business_management', 'catalog_management'],
+    });
     const state = createMetaOAuthState(userId, storeId);
 
     await expect(service.completeInstall('oauth-code', state)).rejects.toMatchObject({
       code: 'META_ADS_READ_REQUIRED',
     });
     expect(repository.upsertConnection).not.toHaveBeenCalled();
+  });
+
+  it('rejects OAuth completion if business_management was not granted', async () => {
+    const { repository, service } = build({ scopes: ['ads_read', 'catalog_management'] });
+    const state = createMetaOAuthState(userId, storeId);
+
+    await expect(service.completeInstall('oauth-code', state)).rejects.toMatchObject({
+      code: 'META_BUSINESS_PERMISSION_REQUIRED',
+    });
+    expect(repository.upsertConnection).not.toHaveBeenCalled();
+  });
+
+  it('rejects OAuth completion if catalog_management was not granted', async () => {
+    const { repository, service } = build({ scopes: ['ads_read', 'business_management'] });
+    const state = createMetaOAuthState(userId, storeId);
+
+    await expect(service.completeInstall('oauth-code', state)).rejects.toMatchObject({
+      code: 'META_CATALOG_PERMISSION_REQUIRED',
+    });
+    expect(repository.upsertConnection).not.toHaveBeenCalled();
+  });
+
+  it('rejects an active stored connection that no longer has every required permission', async () => {
+    const { repository, service } = build();
+    vi.mocked(repository.findConnectionForStore).mockResolvedValue({
+      id: connectionId,
+      storeId,
+      status: 'ACTIVE',
+      metaUserId: 'meta-user-1',
+      metaBusinessId: null,
+      selectedAdAccountIds: [],
+      selectedCatalogIds: [],
+      accessTokenCiphertext: 'unused',
+      tokenExpiresAt: new Date(Date.now() + 60_000),
+      scopes: ['ads_read', 'business_management'],
+      apiVersion: 'v26.0',
+      lastSyncedAt: null,
+      adAccounts: [],
+    } as never);
+
+    await expect(service.getApiContext(storeId)).rejects.toMatchObject({
+      code: 'META_CATALOG_PERMISSION_REQUIRED',
+    });
   });
 
   it('marks an expired stored token for reauthorization before returning it', async () => {
@@ -96,7 +142,7 @@ describe('MetaAuthService', () => {
       selectedCatalogIds: [],
       accessTokenCiphertext: 'unused',
       tokenExpiresAt: new Date(Date.now() - 1_000),
-      scopes: ['ads_read'],
+      scopes: requiredScopes,
       apiVersion: 'v26.0',
       lastSyncedAt: null,
       adAccounts: [],
