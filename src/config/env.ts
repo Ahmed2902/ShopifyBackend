@@ -30,6 +30,8 @@ const envSchema = z.object({
   TIKTOK_REDIRECT_URI: z.string().url(),
   TIKTOK_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default('v1.3'),
   TIKTOK_STATE_SECRET: z.string().min(32),
+  TIKTOK_WEBHOOK_URL: z.string().url(),
+  TIKTOK_WEBHOOK_TOKEN: z.string().min(32),
   TIKTOK_WEBHOOK_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(300),
 });
 
