@@ -45,30 +45,20 @@ export class MetaCatalogRepository {
   ) {
     return prisma.$transaction(async (tx) => {
       for (const catalog of catalogs) {
+        const data = {
+          metaConnectionId: connectionId,
+          name: catalog.name,
+          businessId: catalog.businessId,
+          ownerBusinessId: catalog.ownerBusinessId,
+          vertical: catalog.vertical,
+          productCount: catalog.productCount,
+          feedCount: catalog.feedCount,
+          rawJson: catalog.raw as Prisma.InputJsonValue,
+        };
         await tx.metaProductCatalog.upsert({
           where: { storeId_metaCatalogId: { storeId, metaCatalogId: catalog.id } },
-          create: {
-            storeId,
-            metaConnectionId: connectionId,
-            metaCatalogId: catalog.id,
-            name: catalog.name,
-            businessId: catalog.businessId,
-            ownerBusinessId: catalog.ownerBusinessId,
-            vertical: catalog.vertical,
-            productCount: catalog.productCount,
-            feedCount: catalog.feedCount,
-            rawJson: catalog.raw as Prisma.InputJsonValue,
-          },
-          update: {
-            metaConnectionId: connectionId,
-            name: catalog.name,
-            businessId: catalog.businessId,
-            ownerBusinessId: catalog.ownerBusinessId,
-            vertical: catalog.vertical,
-            productCount: catalog.productCount,
-            feedCount: catalog.feedCount,
-            rawJson: catalog.raw as Prisma.InputJsonValue,
-          },
+          create: { storeId, metaCatalogId: catalog.id, ...data },
+          update: data,
         });
       }
       return tx.metaConnection.update({
@@ -89,14 +79,6 @@ export class MetaCatalogRepository {
   upsertItem(catalogId: string, item: MetaCatalogItemPayload) {
     const basePrice = parsePrice(item.price, item.currency ?? null);
     const salePrice = parsePrice(item.sale_price, basePrice.currency);
-    const currency = basePrice.currency ?? salePrice.currency;
-    const customLabels = {
-      label0: item.custom_label_0 ?? null,
-      label1: item.custom_label_1 ?? null,
-      label2: item.custom_label_2 ?? null,
-      label3: item.custom_label_3 ?? null,
-      label4: item.custom_label_4 ?? null,
-    };
     const data = {
       retailerId: item.retailer_id ?? null,
       retailerProductGroupId: item.retailer_product_group_id ?? null,
@@ -106,13 +88,19 @@ export class MetaCatalogRepository {
       availability: item.availability ?? null,
       priceMinor: basePrice.minor,
       salePriceMinor: salePrice.minor,
-      currency,
+      currency: basePrice.currency ?? salePrice.currency,
       size: item.size ?? null,
       color: item.color ?? null,
       pattern: item.pattern ?? null,
       url: item.url ?? null,
       productType: item.product_type ?? null,
-      customLabels: customLabels as Prisma.InputJsonValue,
+      customLabels: {
+        label0: item.custom_label_0 ?? null,
+        label1: item.custom_label_1 ?? null,
+        label2: item.custom_label_2 ?? null,
+        label3: item.custom_label_3 ?? null,
+        label4: item.custom_label_4 ?? null,
+      } as Prisma.InputJsonValue,
       productFeedId: item.product_feed?.id ?? null,
       quantityToSellOnFacebook: item.quantity_to_sell_on_facebook ?? null,
       status: item.status ?? null,
