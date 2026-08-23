@@ -177,16 +177,29 @@ export class MetaMappingService {
     };
   }
 
-  replaceManualAdMappings(storeId: string, metaAdId: string, mappings: ManualAdMappingInput[]) {
+  async replaceManualAdMappings(
+    storeId: string,
+    metaAdId: string,
+    mappings: ManualAdMappingInput[],
+  ) {
+    await this.requireSelectedAd(storeId, metaAdId);
     return this.repository.replaceManualAdMappings(storeId, metaAdId, mappings);
   }
 
-  confirmCurrentAdMappings(storeId: string, metaAdId: string) {
+  async confirmCurrentAdMappings(storeId: string, metaAdId: string) {
+    await this.requireSelectedAd(storeId, metaAdId);
     return this.repository.confirmCurrentAdMappings(storeId, metaAdId);
   }
 
   replaceManualCatalogMappings(storeId: string, metaProductItemId: string, variantIds: string[]) {
     return this.repository.replaceManualCatalogMappings(storeId, metaProductItemId, variantIds);
+  }
+
+  private async requireSelectedAd(storeId: string, metaAdId: string): Promise<void> {
+    const dataset = await this.requireDataset(storeId);
+    if (!dataset.ads.some((ad) => ad.metaAdId === metaAdId)) {
+      throw new AppError('Meta ad was not found', 404, 'META_AD_NOT_FOUND');
+    }
   }
 
   private async requireDataset(storeId: string): Promise<MappingDataset> {
