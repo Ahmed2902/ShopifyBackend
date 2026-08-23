@@ -89,6 +89,13 @@ export class MetaRepository {
     });
   }
 
+  markConnectionSynced(connectionId: string, syncedAt = new Date()) {
+    return prisma.metaConnection.update({
+      where: { id: connectionId },
+      data: { lastSyncedAt: syncedAt },
+    });
+  }
+
   async configureAssets(input: {
     connectionId: string;
     storeId: string;

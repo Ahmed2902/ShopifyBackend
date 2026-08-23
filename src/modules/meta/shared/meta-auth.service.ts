@@ -8,6 +8,13 @@ import type { MetaApiService } from './meta-api.service.js';
 
 const TOKEN_EXPIRY_SKEW_MS = 5 * 60_000;
 
+export interface MetaConnectionContext extends MetaApiContext {
+  scopes: string[];
+  metaBusinessId: string | null;
+  selectedAdAccountIds: string[];
+  selectedCatalogIds: string[];
+}
+
 export class MetaAuthService {
   constructor(
     private readonly repository: MetaRepository,
@@ -60,7 +67,7 @@ export class MetaAuthService {
     };
   }
 
-  async getApiContext(storeId: string): Promise<MetaApiContext & { scopes: string[] }> {
+  async getApiContext(storeId: string): Promise<MetaConnectionContext> {
     const connection = await this.repository.findConnectionForStore(storeId);
     if (!connection) {
       throw new AppError('Meta is not connected for this store', 409, 'META_NOT_CONNECTED');
@@ -86,6 +93,9 @@ export class MetaAuthService {
       accessToken: decryptSecret(connection.accessTokenCiphertext),
       apiVersion: connection.apiVersion,
       scopes: connection.scopes,
+      metaBusinessId: connection.metaBusinessId,
+      selectedAdAccountIds: connection.selectedAdAccountIds,
+      selectedCatalogIds: connection.selectedCatalogIds,
     };
   }
 

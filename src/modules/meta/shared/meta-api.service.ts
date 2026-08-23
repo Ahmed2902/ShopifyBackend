@@ -20,6 +20,20 @@ import { computeMetaAppSecretProof, parseMetaMinorAmount } from '../meta.utils.j
 
 const MAX_ATTEMPTS = 3;
 const TRANSIENT_META_CODES = new Set([1, 2, 4, 17, 32, 613]);
+const AD_ACCOUNT_FIELDS = [
+  'id',
+  'account_id',
+  'name',
+  'account_status',
+  'currency',
+  'timezone_name',
+  'timezone_id',
+  'timezone_offset_hours_utc',
+  'amount_spent',
+  'balance',
+  'spend_cap',
+  'business',
+].join(',');
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -29,6 +43,27 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function parseAdAccount(item: unknown): MetaAdAccountAsset | null {
+  const parsed = metaAdAccountSchema.safeParse(item);
+  if (!parsed.success) return null;
+  const account = parsed.data;
+  return {
+    id: account.id,
+    accountId: account.account_id,
+    name: account.name,
+    accountStatus: account.account_status ?? null,
+    currency: account.currency,
+    timezoneName: account.timezone_name ?? null,
+    timezoneId: account.timezone_id ?? null,
+    timezoneOffsetHoursUtc: account.timezone_offset_hours_utc ?? null,
+    amountSpentMinor: parseMetaMinorAmount(account.amount_spent),
+    balanceMinor: parseMetaMinorAmount(account.balance),
+    spendCapMinor: parseMetaMinorAmount(account.spend_cap),
+    business: account.business ?? null,
+    raw: item,
+  };
 }
 
 export class MetaApiService {
@@ -89,48 +124,30 @@ export class MetaApiService {
   }
 
   listBusinesses(context: MetaApiContext): Promise<MetaBusinessAsset[]> {
-    return this.collectPages(context, '/me/businesses', { fields: 'id,name', limit: '100' }, (item) => {
+    return this.collectGraphPages(context, '/me/businesses', { fields: 'id,name', limit: '100' }, (item) => {
       const parsed = metaBusinessSchema.safeParse(item);
       return parsed.success ? parsed.data : null;
     });
   }
 
-  async listAdAccounts(context: MetaApiContext): Promise<MetaAdAccountAsset[]> {
-    const fields = [
-      'id',
-      'account_id',
-      'name',
-      'account_status',
-      'currency',
-      'timezone_name',
-      'timezone_id',
-      'timezone_offset_hours_utc',
-      'amount_spent',
-      'balance',
-      'spend_cap',
-      'business',
-    ].join(',');
+  listAdAccounts(context: MetaApiContext): Promise<MetaAdAccountAsset[]> {
+    return this.collectGraphPages(
+      context,
+      '/me/adaccounts',
+      { fields: AD_ACCOUNT_FIELDS, limit: '100' },
+      parseAdAccount,
+    );
+  }
 
-    return this.collectPages(context, '/me/adaccounts', { fields, limit: '100' }, (item) => {
-      const parsed = metaAdAccountSchema.safeParse(item);
-      if (!parsed.success) return null;
-      const account = parsed.data;
-      return {
-        id: account.id,
-        accountId: account.account_id,
-        name: account.name,
-        accountStatus: account.account_status ?? null,
-        currency: account.currency,
-        timezoneName: account.timezone_name ?? null,
-        timezoneId: account.timezone_id ?? null,
-        timezoneOffsetHoursUtc: account.timezone_offset_hours_utc ?? null,
-        amountSpentMinor: parseMetaMinorAmount(account.amount_spent),
-        balanceMinor: parseMetaMinorAmount(account.balance),
-        spendCapMinor: parseMetaMinorAmount(account.spend_cap),
-        business: account.business ?? null,
-        raw: item,
-      };
+  async getAdAccount(context: MetaApiContext, adAccountId: string): Promise<MetaAdAccountAsset> {
+    const payload = await this.requestGraph(context, `/${adAccountId}`, {
+      fields: AD_ACCOUNT_FIELDS,
     });
+    const account = parseAdAccount(payload);
+    if (!account || account.id !== adAccountId) {
+      throw new AppError('Meta ad account response was invalid', 502, 'META_BAD_RESPONSE');
+    }
+    return account;
   }
 
   async requestGraph(
@@ -188,7 +205,7 @@ export class MetaApiService {
     throw lastNetworkError ?? new AppError('Meta API request failed', 502, 'META_REQUEST_FAILED');
   }
 
-  private async collectPages<T>(
+  async collectGraphPages<T>(
     context: MetaApiContext,
     path: string,
     baseParams: Record<string, string>,
