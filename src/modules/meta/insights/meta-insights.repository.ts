@@ -93,10 +93,9 @@ export class MetaInsightsRepository {
   }
 
   hasInsights(adAccountId: string) {
-    return prisma.metaInsightDaily.findFirst({
-      where: { adAccountId, level: 'AD' },
-      select: { id: true },
-    }).then(Boolean);
+    return prisma.metaInsightDaily
+      .findFirst({ where: { adAccountId, level: 'AD' }, select: { id: true } })
+      .then(Boolean);
   }
 
   async upsertDailyInsight(input: {
@@ -117,6 +116,53 @@ export class MetaInsightsRepository {
     ]);
     const date = new Date(`${input.row.date_start}T00:00:00.000Z`);
     const rawJson = input.row as unknown as Prisma.InputJsonValue;
+    const videoMetrics = {
+      thruplay: input.row.video_thruplay_watched_actions ?? null,
+      avgTime: input.row.video_avg_time_watched_actions ?? null,
+      p25: input.row.video_p25_watched_actions ?? null,
+      p50: input.row.video_p50_watched_actions ?? null,
+      p75: input.row.video_p75_watched_actions ?? null,
+      p95: input.row.video_p95_watched_actions ?? null,
+      p100: input.row.video_p100_watched_actions ?? null,
+      sec30: input.row.video_30_sec_watched_actions ?? null,
+      plays: input.row.video_play_actions ?? null,
+    } as Prisma.InputJsonValue;
+    const data = {
+      campaignId: input.campaignId,
+      adSetId: input.adSetId,
+      adId: input.adId,
+      accountCurrency: input.row.account_currency,
+      spend: decimalMetric(input.row.spend) ?? '0',
+      socialSpend: decimalMetric(input.row.social_spend),
+      impressions: bigintMetric(input.row.impressions),
+      reach: bigintMetric(input.row.reach),
+      clicks: bigintMetric(input.row.clicks),
+      uniqueClicks: bigintMetric(input.row.unique_clicks),
+      outboundClicks: sumActionValues(input.row.outbound_clicks),
+      uniqueOutboundClicks: sumActionValues(input.row.unique_outbound_clicks),
+      inlineLinkClicks: bigintMetric(input.row.inline_link_clicks),
+      inlinePostEngagement: bigintMetric(input.row.inline_post_engagement),
+      estimatedAdRecallers:
+        input.row.estimated_ad_recallers == null
+          ? null
+          : bigintMetric(input.row.estimated_ad_recallers),
+      estimatedAdRecallRate: decimalMetric(input.row.estimated_ad_recall_rate),
+      cpc: decimalMetric(input.row.cpc),
+      cpm: decimalMetric(input.row.cpm),
+      cpp: decimalMetric(input.row.cpp),
+      ctr: decimalMetric(input.row.ctr),
+      frequency: decimalMetric(input.row.frequency),
+      objective: input.row.objective ?? null,
+      optimizationGoal: input.row.optimization_goal ?? null,
+      attributionSetting: input.row.attribution_setting ?? null,
+      actionReportTime: input.actionReportTime,
+      websiteCtr: (input.row.website_ctr ?? Prisma.DbNull) as Prisma.InputJsonValue,
+      conversions: (input.row.conversions ?? []) as unknown as Prisma.InputJsonValue,
+      conversionValues: (input.row.conversion_values ?? []) as unknown as Prisma.InputJsonValue,
+      videoMetrics,
+      rawJson,
+      syncedAt: new Date(),
+    };
 
     return prisma.$transaction(async (tx) => {
       const insight = await tx.metaInsightDaily.upsert({
@@ -124,99 +170,11 @@ export class MetaInsightsRepository {
         create: {
           insightKey,
           adAccountId: input.adAccountId,
-          campaignId: input.campaignId,
-          adSetId: input.adSetId,
-          adId: input.adId,
           level: 'AD',
           date,
-          accountCurrency: input.row.account_currency,
-          spend: decimalMetric(input.row.spend) ?? '0',
-          socialSpend: decimalMetric(input.row.social_spend),
-          impressions: bigintMetric(input.row.impressions),
-          reach: bigintMetric(input.row.reach),
-          clicks: bigintMetric(input.row.clicks),
-          uniqueClicks: bigintMetric(input.row.unique_clicks),
-          outboundClicks: sumActionValues(input.row.outbound_clicks),
-          uniqueOutboundClicks: sumActionValues(input.row.unique_outbound_clicks),
-          inlineLinkClicks: bigintMetric(input.row.inline_link_clicks),
-          inlinePostEngagement: bigintMetric(input.row.inline_post_engagement),
-          estimatedAdRecallers:
-            input.row.estimated_ad_recallers == null
-              ? null
-              : bigintMetric(input.row.estimated_ad_recallers),
-          estimatedAdRecallRate: decimalMetric(input.row.estimated_ad_recall_rate),
-          cpc: decimalMetric(input.row.cpc),
-          cpm: decimalMetric(input.row.cpm),
-          cpp: decimalMetric(input.row.cpp),
-          ctr: decimalMetric(input.row.ctr),
-          frequency: decimalMetric(input.row.frequency),
-          objective: input.row.objective ?? null,
-          optimizationGoal: input.row.optimization_goal ?? null,
-          attributionSetting: input.row.attribution_setting ?? null,
-          actionReportTime: input.actionReportTime,
-          websiteCtr: (input.row.website_ctr ?? Prisma.DbNull) as Prisma.InputJsonValue,
-          conversions: (input.row.conversions ?? []) as unknown as Prisma.InputJsonValue,
-          conversionValues: (input.row.conversion_values ?? []) as unknown as Prisma.InputJsonValue,
-          videoMetrics: {
-            thruplay: input.row.video_thruplay_watched_actions ?? null,
-            avgTime: input.row.video_avg_time_watched_actions ?? null,
-            p25: input.row.video_p25_watched_actions ?? null,
-            p50: input.row.video_p50_watched_actions ?? null,
-            p75: input.row.video_p75_watched_actions ?? null,
-            p95: input.row.video_p95_watched_actions ?? null,
-            p100: input.row.video_p100_watched_actions ?? null,
-            sec30: input.row.video_30_sec_watched_actions ?? null,
-            plays: input.row.video_play_actions ?? null,
-          } as Prisma.InputJsonValue,
-          rawJson,
-          syncedAt: new Date(),
+          ...data,
         },
-        update: {
-          campaignId: input.campaignId,
-          adSetId: input.adSetId,
-          adId: input.adId,
-          accountCurrency: input.row.account_currency,
-          spend: decimalMetric(input.row.spend) ?? '0',
-          socialSpend: decimalMetric(input.row.social_spend),
-          impressions: bigintMetric(input.row.impressions),
-          reach: bigintMetric(input.row.reach),
-          clicks: bigintMetric(input.row.clicks),
-          uniqueClicks: bigintMetric(input.row.unique_clicks),
-          outboundClicks: sumActionValues(input.row.outbound_clicks),
-          uniqueOutboundClicks: sumActionValues(input.row.unique_outbound_clicks),
-          inlineLinkClicks: bigintMetric(input.row.inline_link_clicks),
-          inlinePostEngagement: bigintMetric(input.row.inline_post_engagement),
-          estimatedAdRecallers:
-            input.row.estimated_ad_recallers == null
-              ? null
-              : bigintMetric(input.row.estimated_ad_recallers),
-          estimatedAdRecallRate: decimalMetric(input.row.estimated_ad_recall_rate),
-          cpc: decimalMetric(input.row.cpc),
-          cpm: decimalMetric(input.row.cpm),
-          cpp: decimalMetric(input.row.cpp),
-          ctr: decimalMetric(input.row.ctr),
-          frequency: decimalMetric(input.row.frequency),
-          objective: input.row.objective ?? null,
-          optimizationGoal: input.row.optimization_goal ?? null,
-          attributionSetting: input.row.attribution_setting ?? null,
-          actionReportTime: input.actionReportTime,
-          websiteCtr: (input.row.website_ctr ?? Prisma.DbNull) as Prisma.InputJsonValue,
-          conversions: (input.row.conversions ?? []) as unknown as Prisma.InputJsonValue,
-          conversionValues: (input.row.conversion_values ?? []) as unknown as Prisma.InputJsonValue,
-          videoMetrics: {
-            thruplay: input.row.video_thruplay_watched_actions ?? null,
-            avgTime: input.row.video_avg_time_watched_actions ?? null,
-            p25: input.row.video_p25_watched_actions ?? null,
-            p50: input.row.video_p50_watched_actions ?? null,
-            p75: input.row.video_p75_watched_actions ?? null,
-            p95: input.row.video_p95_watched_actions ?? null,
-            p100: input.row.video_p100_watched_actions ?? null,
-            sec30: input.row.video_30_sec_watched_actions ?? null,
-            plays: input.row.video_play_actions ?? null,
-          } as Prisma.InputJsonValue,
-          rawJson,
-          syncedAt: new Date(),
-        },
+        update: data,
         select: { id: true },
       });
 
