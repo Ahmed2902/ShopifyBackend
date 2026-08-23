@@ -257,7 +257,7 @@ export class ShopifyService {
       ORDER_HISTORY_RESOURCE,
     );
     if (!syncRun) {
-      throw new AppError('Shopify order import was not found', 404, 'SYNC_RUN_NOT_FOUND');
+      throw new AppError('Shopify order backfill was not found', 404, 'SYNC_RUN_NOT_FOUND');
     }
     if (syncRun.status !== 'RUNNING') {
       return {
@@ -272,7 +272,7 @@ export class ShopifyService {
     }
     if (!syncRun.providerOperationId) {
       const error = new AppError(
-        'Shopify order import is missing its bulk-operation ID',
+        'Shopify order backfill is missing its bulk-operation ID',
         500,
         'SYNC_RUN_INVALID',
       );
@@ -304,8 +304,8 @@ export class ShopifyService {
       if (inspection.state === 'FAILED') {
         const error = new AppError(
           inspection.errorCode
-            ? `Shopify bulk order import failed: ${inspection.errorCode}`
-            : `Shopify bulk order import ended with ${inspection.providerStatus}`,
+            ? `Shopify bulk order backfill failed: ${inspection.errorCode}`
+            : `Shopify bulk order backfill ended with ${inspection.providerStatus}`,
           502,
           'SHOPIFY_BULK_FAILED',
         );
