@@ -1,5 +1,6 @@
 import { env } from '../../../config/env.js';
 import { AppError } from '../../../errors/app-error.js';
+import type { MetaRepository } from '../meta.repository.js';
 import {
   metaAdAccountSchema,
   metaBusinessSchema,
@@ -16,7 +17,6 @@ import type {
   MetaTokenInspection,
 } from '../meta.types.js';
 import { computeMetaAppSecretProof, parseMetaMinorAmount } from '../meta.utils.js';
-import type { MetaRepository } from '../meta.repository.js';
 
 const MAX_ATTEMPTS = 3;
 const TRANSIENT_META_CODES = new Set([1, 2, 4, 17, 32, 613]);
@@ -42,14 +42,12 @@ export class MetaApiService {
       code,
     });
 
-    const longLived = await this.requestToken({
+    return this.requestToken({
       grant_type: 'fb_exchange_token',
       client_id: env.META_APP_ID,
       client_secret: env.META_APP_SECRET,
       fb_exchange_token: shortLived.accessToken,
     });
-
-    return longLived;
   }
 
   async inspectAccessToken(accessToken: string): Promise<MetaTokenInspection> {
@@ -90,8 +88,7 @@ export class MetaApiService {
     return parsed.data;
   }
 
-  async listBusinesses(context: MetaApiContext): Promise<MetaBusinessAsset[]> {
-    if (!context.accessToken) return [];
+  listBusinesses(context: MetaApiContext): Promise<MetaBusinessAsset[]> {
     return this.collectPages(context, '/me/businesses', { fields: 'id,name', limit: '100' }, (item) => {
       const parsed = metaBusinessSchema.safeParse(item);
       return parsed.success ? parsed.data : null;
@@ -141,52 +138,54 @@ export class MetaApiService {
     path: string,
     params: Record<string, string> = {},
   ): Promise<unknown> {
-    let lastError: unknown;
+    let lastNetworkError: unknown;
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-      try {
-        const url = this.graphUrl(path, context.apiVersion);
-        for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
-        url.searchParams.set('appsecret_proof', computeMetaAppSecretProof(context.accessToken));
+      const url = this.graphUrl(path, context.apiVersion);
+      for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+      url.searchParams.set('appsecret_proof', computeMetaAppSecretProof(context.accessToken));
 
-        const response = await fetch(url, {
+      let response: Response;
+      try {
+        response = await fetch(url, {
           headers: { Authorization: `Bearer ${context.accessToken}` },
         });
-        const body = await this.parseResponseBody(response);
-
-        if (response.ok && !metaGraphErrorSchema.safeParse(body).success) return body;
-
-        const providerError = this.toProviderError(body, response.status);
-        const graph = metaGraphErrorSchema.safeParse(body);
-        const code = graph.success ? graph.data.error.code : undefined;
-
-        if (code === 190) {
-          await this.repository.markConnectionReauthRequired(context.connectionId).catch(() => undefined);
-          throw new AppError(
-            'Meta access token requires reauthorization',
-            401,
-            'META_REAUTH_REQUIRED',
-          );
-        }
-
-        const transient =
-          response.status === 429 ||
-          response.status >= 500 ||
-          (graph.success &&
-            (graph.data.error.is_transient === true ||
-              (code !== undefined && TRANSIENT_META_CODES.has(code))));
-        if (!transient || attempt === MAX_ATTEMPTS) throw providerError;
-        lastError = providerError;
       } catch (error) {
-        if (error instanceof AppError && error.code === 'META_REAUTH_REQUIRED') throw error;
-        lastError = error;
-        if (attempt === MAX_ATTEMPTS) throw error;
+        lastNetworkError = error;
+        if (attempt === MAX_ATTEMPTS) {
+          throw new AppError('Meta API network request failed', 502, 'META_REQUEST_FAILED');
+        }
+        await sleep(250 * 2 ** (attempt - 1));
+        continue;
       }
+
+      const body = await this.parseResponseBody(response);
+      const graph = metaGraphErrorSchema.safeParse(body);
+      if (response.ok && !graph.success) return body;
+
+      const code = graph.success ? graph.data.error.code : undefined;
+      if (code === 190) {
+        await this.repository.markConnectionReauthRequired(context.connectionId).catch(() => undefined);
+        throw new AppError(
+          'Meta access token requires reauthorization',
+          401,
+          'META_REAUTH_REQUIRED',
+        );
+      }
+
+      const providerError = this.toProviderError(body, response.status);
+      const transient =
+        response.status === 429 ||
+        response.status >= 500 ||
+        (graph.success &&
+          (graph.data.error.is_transient === true ||
+            (code !== undefined && TRANSIENT_META_CODES.has(code))));
+      if (!transient || attempt === MAX_ATTEMPTS) throw providerError;
 
       await sleep(250 * 2 ** (attempt - 1));
     }
 
-    throw lastError ?? new AppError('Meta API request failed', 502, 'META_REQUEST_FAILED');
+    throw lastNetworkError ?? new AppError('Meta API request failed', 502, 'META_REQUEST_FAILED');
   }
 
   private async collectPages<T>(
@@ -271,8 +270,11 @@ export class MetaApiService {
     }
 
     const error = parsed.data.error;
-    const status = error.code === 200 || error.code === 10 ? 403 : httpStatus >= 500 ? 502 : 400;
-    const code = error.code === 200 || error.code === 10 ? 'META_PERMISSION_DENIED' : 'META_REQUEST_FAILED';
-    return new AppError(`Meta API error: ${error.message}`, status, code);
+    const permissionDenied = error.code === 200 || error.code === 10;
+    return new AppError(
+      `Meta API error: ${error.message}`,
+      permissionDenied ? 403 : httpStatus >= 500 ? 502 : 400,
+      permissionDenied ? 'META_PERMISSION_DENIED' : 'META_REQUEST_FAILED',
+    );
   }
 }
