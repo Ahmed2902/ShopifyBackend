@@ -9,7 +9,10 @@ import { logger } from './lib/logger.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import { router } from './routes.js';
 
-const SHOPIFY_WEBHOOK_PATH = '/v1/integrations/shopify/webhooks';
+const RAW_BODY_WEBHOOK_PATHS = [
+  '/v1/integrations/shopify/webhooks',
+  '/v1/integrations/tiktok/webhooks',
+] as const;
 
 export function createApp() {
   const app = express();
@@ -33,7 +36,7 @@ export function createApp() {
       limit: '1mb',
       verify(req, _res, buffer) {
         const request = req as express.Request;
-        if (request.originalUrl.startsWith(SHOPIFY_WEBHOOK_PATH)) {
+        if (RAW_BODY_WEBHOOK_PATHS.some((path) => request.originalUrl.startsWith(path))) {
           request.rawBody = Buffer.from(buffer);
         }
       },
