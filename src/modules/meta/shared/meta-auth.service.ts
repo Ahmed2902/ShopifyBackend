@@ -81,7 +81,12 @@ export class MetaAuthService {
       throw new AppError('Meta access token requires reauthorization', 401, 'META_REAUTH_REQUIRED');
     }
 
-    this.assertRequiredPermissions(connection.scopes);
+    try {
+      this.assertRequiredPermissions(connection.scopes);
+    } catch (error) {
+      await this.repository.markConnectionReauthRequired(connection.id);
+      throw error;
+    }
 
     return {
       storeId,
