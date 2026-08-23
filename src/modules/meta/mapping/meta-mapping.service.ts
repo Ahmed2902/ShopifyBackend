@@ -33,10 +33,9 @@ export class MetaMappingService {
 
   async resolveStoreMappings(storeId: string) {
     const dataset = await this.requireDataset(storeId);
-    const connectionId = await this.connectionId(storeId);
     const syncRun = await this.integrationService.startSyncRun({
       provider: 'META',
-      connectionId,
+      connectionId: dataset.connectionId,
       resourceType: MAPPING_RESOURCE,
       mode: 'DERIVED',
       apiVersion: 'internal-v1',
@@ -93,10 +92,10 @@ export class MetaMappingService {
       for (const ad of dataset.ads) {
         const confirmed = ad.activeMappings.filter((mapping) => mapping.isMerchantConfirmed);
         if (confirmed.length > 0) {
-          await this.repository.applyAutomaticAdResolution(ad.id, emptyAdResolution());
+          const applied = await this.repository.applyAutomaticAdResolution(ad.id, emptyAdResolution());
+          if (applied.changed) ads.changed += 1;
           ads.preservedConfirmed += 1;
-          const scope = deriveScopeFromMappings(confirmed);
-          this.incrementScope(ads, scope);
+          this.incrementScope(ads, deriveScopeFromMappings(confirmed));
           continue;
         }
 
@@ -194,20 +193,6 @@ export class MetaMappingService {
     const dataset = await this.repository.loadDataset(storeId);
     if (!dataset) throw new AppError('Meta is not connected for this store', 409, 'META_NOT_CONNECTED');
     return dataset;
-  }
-
-  private async connectionId(storeId: string): Promise<string> {
-    // The mapping repository deliberately returns only normalized mapping data. The existing
-    // integration relation is looked up here through a tiny dataset-independent read.
-    const dataset = await this.repository.loadDataset(storeId);
-    if (!dataset) throw new AppError('Meta is not connected for this store', 409, 'META_NOT_CONNECTED');
-    const connection = await this.repositoryConnectionId(storeId);
-    if (!connection) throw new AppError('Meta is not connected for this store', 409, 'META_NOT_CONNECTED');
-    return connection;
-  }
-
-  private repositoryConnectionId(storeId: string): Promise<string | null> {
-    return this.repository.connectionId(storeId);
   }
 
   private incrementScope(
