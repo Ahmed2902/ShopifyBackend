@@ -2,6 +2,31 @@ import type { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
 import type { MetaAdAccountAsset } from './meta.types.js';
 
+const adAccountSelect = {
+  id: true,
+  metaAccountId: true,
+  name: true,
+  status: true,
+  currency: true,
+  timezoneName: true,
+  lastSyncedAt: true,
+} satisfies Prisma.MetaAdAccountSelect;
+
+const connectionSelect = {
+  id: true,
+  storeId: true,
+  status: true,
+  metaUserId: true,
+  metaBusinessId: true,
+  selectedAdAccountIds: true,
+  selectedCatalogIds: true,
+  tokenExpiresAt: true,
+  scopes: true,
+  apiVersion: true,
+  lastSyncedAt: true,
+  adAccounts: { select: adAccountSelect },
+} satisfies Prisma.MetaConnectionSelect;
+
 export class MetaRepository {
   findMembership(userId: string, storeId: string) {
     return prisma.storeMembership.findUnique({
@@ -18,25 +43,18 @@ export class MetaRepository {
     scopes: string[];
     apiVersion: string;
   }) {
+    const data = {
+      status: 'ACTIVE' as const,
+      metaUserId: input.metaUserId,
+      accessTokenCiphertext: input.accessTokenCiphertext,
+      tokenExpiresAt: input.tokenExpiresAt,
+      scopes: input.scopes,
+      apiVersion: input.apiVersion,
+    };
     return prisma.metaConnection.upsert({
       where: { storeId: input.storeId },
-      create: {
-        storeId: input.storeId,
-        status: 'ACTIVE',
-        metaUserId: input.metaUserId,
-        accessTokenCiphertext: input.accessTokenCiphertext,
-        tokenExpiresAt: input.tokenExpiresAt,
-        scopes: input.scopes,
-        apiVersion: input.apiVersion,
-      },
-      update: {
-        status: 'ACTIVE',
-        metaUserId: input.metaUserId,
-        accessTokenCiphertext: input.accessTokenCiphertext,
-        tokenExpiresAt: input.tokenExpiresAt,
-        scopes: input.scopes,
-        apiVersion: input.apiVersion,
-      },
+      create: { storeId: input.storeId, ...data },
+      update: data,
       select: {
         id: true,
         storeId: true,
@@ -54,31 +72,7 @@ export class MetaRepository {
   findConnectionForStore(storeId: string) {
     return prisma.metaConnection.findUnique({
       where: { storeId },
-      select: {
-        id: true,
-        storeId: true,
-        status: true,
-        metaUserId: true,
-        metaBusinessId: true,
-        selectedAdAccountIds: true,
-        selectedCatalogIds: true,
-        accessTokenCiphertext: true,
-        tokenExpiresAt: true,
-        scopes: true,
-        apiVersion: true,
-        lastSyncedAt: true,
-        adAccounts: {
-          select: {
-            id: true,
-            metaAccountId: true,
-            name: true,
-            status: true,
-            currency: true,
-            timezoneName: true,
-            lastSyncedAt: true,
-          },
-        },
-      },
+      select: { ...connectionSelect, accessTokenCiphertext: true },
     });
   }
 
@@ -103,16 +97,28 @@ export class MetaRepository {
     adAccounts: MetaAdAccountAsset[];
   }) {
     return prisma.$transaction(async (tx) => {
-      const selectedIds = input.adAccounts.map((account) => account.id);
       const connection = await tx.metaConnection.update({
         where: { id: input.connectionId },
         data: {
           metaBusinessId: input.metaBusinessId,
-          selectedAdAccountIds: selectedIds,
+          selectedAdAccountIds: input.adAccounts.map((account) => account.id),
         },
       });
 
       for (const account of input.adAccounts) {
+        const data = {
+          metaConnectionId: input.connectionId,
+          name: account.name,
+          status: account.accountStatus === null ? null : String(account.accountStatus),
+          currency: account.currency,
+          timezoneName: account.timezoneName,
+          timezoneId: account.timezoneId,
+          timezoneOffsetHours: account.timezoneOffsetHoursUtc,
+          amountSpentMinor: account.amountSpentMinor,
+          balanceMinor: account.balanceMinor,
+          spendCapMinor: account.spendCapMinor,
+          rawJson: account.raw as Prisma.InputJsonValue,
+        };
         await tx.metaAdAccount.upsert({
           where: {
             storeId_metaAccountId: {
@@ -122,32 +128,10 @@ export class MetaRepository {
           },
           create: {
             storeId: input.storeId,
-            metaConnectionId: input.connectionId,
             metaAccountId: account.id,
-            name: account.name,
-            status: account.accountStatus === null ? null : String(account.accountStatus),
-            currency: account.currency,
-            timezoneName: account.timezoneName,
-            timezoneId: account.timezoneId,
-            timezoneOffsetHours: account.timezoneOffsetHoursUtc,
-            amountSpentMinor: account.amountSpentMinor,
-            balanceMinor: account.balanceMinor,
-            spendCapMinor: account.spendCapMinor,
-            rawJson: account.raw as Prisma.InputJsonValue,
+            ...data,
           },
-          update: {
-            metaConnectionId: input.connectionId,
-            name: account.name,
-            status: account.accountStatus === null ? null : String(account.accountStatus),
-            currency: account.currency,
-            timezoneName: account.timezoneName,
-            timezoneId: account.timezoneId,
-            timezoneOffsetHours: account.timezoneOffsetHoursUtc,
-            amountSpentMinor: account.amountSpentMinor,
-            balanceMinor: account.balanceMinor,
-            spendCapMinor: account.spendCapMinor,
-            rawJson: account.raw as Prisma.InputJsonValue,
-          },
+          update: data,
         });
       }
 
@@ -156,31 +140,6 @@ export class MetaRepository {
   }
 
   getStatus(storeId: string) {
-    return prisma.metaConnection.findUnique({
-      where: { storeId },
-      select: {
-        id: true,
-        status: true,
-        metaUserId: true,
-        metaBusinessId: true,
-        selectedAdAccountIds: true,
-        selectedCatalogIds: true,
-        tokenExpiresAt: true,
-        scopes: true,
-        apiVersion: true,
-        lastSyncedAt: true,
-        adAccounts: {
-          select: {
-            id: true,
-            metaAccountId: true,
-            name: true,
-            status: true,
-            currency: true,
-            timezoneName: true,
-            lastSyncedAt: true,
-          },
-        },
-      },
-    });
+    return prisma.metaConnection.findUnique({ where: { storeId }, select: connectionSelect });
   }
 }
