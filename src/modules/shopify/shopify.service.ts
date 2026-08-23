@@ -14,6 +14,7 @@ import { normalizeShopDomain } from './shopify.utils.js';
 import { ShopifyWebhookRepository } from './webhook/shopify-webhook.repository.js';
 import { ShopifyWebhookService } from './webhook/shopify-webhook.service.js';
 
+const CATALOG_INVENTORY_RESOURCE = 'CatalogInventory';
 const ORDER_HISTORY_RESOURCE = 'OrdersRefunds';
 const RECONCILIATION_RESOURCE = 'StoreReconciliation';
 const FALLBACK_RECONCILIATION_LOOKBACK_MS = 24 * 60 * 60 * 1000;
@@ -82,30 +83,19 @@ export class ShopifyService {
     return this.webhookService.processDueDeliveries(limit);
   }
 
-  async syncStoreData(storeId: string) {
-    const { store, connection } = await this.requireActiveConnection(storeId);
-    const accessToken = await this.authService.resolveAccessToken(
-      store.myshopifyDomain,
-      connection,
-    );
-
+  async syncCatalogAndInventory(storeId: string) {
+    const { connection, syncContextBase } = await this.loadSyncTarget(storeId);
     const syncRun = await this.integrationService.startSyncRun({
       provider: 'SHOPIFY',
       connectionId: connection.id,
-      resourceType: 'CatalogInventory',
+      resourceType: CATALOG_INVENTORY_RESOURCE,
       mode: 'MANUAL',
       apiVersion: connection.apiVersion,
     });
-    const syncContext = this.buildSyncContext(
-      storeId,
-      store.myshopifyDomain,
-      accessToken,
-      connection,
-      syncRun.id,
-    );
+    const syncContext: ShopifySyncContext = { ...syncContextBase, syncRunId: syncRun.id };
 
     try {
-      await this.syncShopProfile(syncContext);
+      await this.syncStoreProfile(syncContext);
       const catalog = await this.catalogService.sync(syncContext);
       const snapshotSource = connection.lastSyncedAt ? 'MANUAL_RECONCILIATION' : 'INITIAL_SYNC';
       const inventory = await this.inventoryService.sync(syncContext, snapshotSource);
@@ -136,7 +126,7 @@ export class ShopifyService {
       return {
         syncRunId: syncRun.id,
         status: 'SUCCEEDED' as const,
-        resourceType: 'CatalogInventory' as const,
+        resourceType: CATALOG_INVENTORY_RESOURCE,
         recordsRead,
         recordsWritten,
         breakdown,
@@ -147,12 +137,8 @@ export class ShopifyService {
     }
   }
 
-  async reconcileStoreData(storeId: string) {
-    const { store, connection } = await this.requireActiveConnection(storeId);
-    const accessToken = await this.authService.resolveAccessToken(
-      store.myshopifyDomain,
-      connection,
-    );
+  async refreshStoreData(storeId: string) {
+    const { connection, syncContextBase } = await this.loadSyncTarget(storeId);
     const previousRun = await this.integrationService.getLastSuccessfulShopifySyncRun(
       connection.id,
       RECONCILIATION_RESOURCE,
@@ -167,22 +153,16 @@ export class ShopifyService {
       mode: 'PERIODIC',
       apiVersion: connection.apiVersion,
     });
-    const syncContext = this.buildSyncContext(
-      storeId,
-      store.myshopifyDomain,
-      accessToken,
-      connection,
-      syncRun.id,
-    );
+    const syncContext: ShopifySyncContext = { ...syncContextBase, syncRunId: syncRun.id };
 
     try {
-      await this.syncShopProfile(syncContext);
+      await this.syncStoreProfile(syncContext);
       const catalog = await this.catalogService.sync(syncContext);
       const inventory = await this.inventoryService.sync(
         syncContext,
         'PERIODIC_RECONCILIATION',
       );
-      const commerce = this.hasOrderScope(connection.scopes)
+      const commerce = this.canReadOrders(connection.scopes)
         ? await this.orderService.reconcileUpdatedOrders(syncContext, since)
         : null;
 
@@ -232,12 +212,8 @@ export class ShopifyService {
   }
 
   async startOrderHistoryBackfill(storeId: string) {
-    const { store, connection } = await this.requireActiveConnection(storeId);
-    this.requireOrderScope(connection.scopes);
-    const accessToken = await this.authService.resolveAccessToken(
-      store.myshopifyDomain,
-      connection,
-    );
+    const { connection, syncContextBase } = await this.loadSyncTarget(storeId);
+    this.assertOrderReadAccess(connection.scopes);
 
     const syncRun = await this.integrationService.startSyncRun({
       provider: 'SHOPIFY',
@@ -246,13 +222,7 @@ export class ShopifyService {
       mode: 'BACKFILL',
       apiVersion: connection.apiVersion,
     });
-    const syncContext = this.buildSyncContext(
-      storeId,
-      store.myshopifyDomain,
-      accessToken,
-      connection,
-      syncRun.id,
-    );
+    const syncContext: ShopifySyncContext = { ...syncContextBase, syncRunId: syncRun.id };
 
     try {
       const operation = await this.orderService.startBulkBackfill(syncContext);
@@ -272,7 +242,7 @@ export class ShopifyService {
         resourceType: ORDER_HISTORY_RESOURCE,
         providerOperationId: operation.id,
         providerStatus: operation.status,
-        historyAccess: this.historyAccess(connection.scopes),
+        historyAccess: this.getOrderHistoryAccess(connection.scopes),
       };
     } catch (error) {
       await this.integrationService.failSyncRun(syncRun.id, error).catch(() => undefined);
@@ -310,19 +280,9 @@ export class ShopifyService {
       throw error;
     }
 
-    const { store, connection } = await this.requireActiveConnection(storeId);
-    this.requireOrderScope(connection.scopes);
-    const accessToken = await this.authService.resolveAccessToken(
-      store.myshopifyDomain,
-      connection,
-    );
-    const syncContext = this.buildSyncContext(
-      storeId,
-      store.myshopifyDomain,
-      accessToken,
-      connection,
-      syncRun.id,
-    );
+    const { connection, syncContextBase } = await this.loadSyncTarget(storeId);
+    this.assertOrderReadAccess(connection.scopes);
+    const syncContext: ShopifySyncContext = { ...syncContextBase, syncRunId: syncRun.id };
 
     try {
       const inspection = await this.orderService.inspectBulkBackfill(
@@ -337,7 +297,7 @@ export class ShopifyService {
           providerOperationId: syncRun.providerOperationId,
           providerStatus: inspection.providerStatus,
           objectCount: inspection.objectCount,
-          historyAccess: this.historyAccess(connection.scopes),
+          historyAccess: this.getOrderHistoryAccess(connection.scopes),
         };
       }
 
@@ -382,7 +342,7 @@ export class ShopifyService {
         resourceType: ORDER_HISTORY_RESOURCE,
         providerOperationId: syncRun.providerOperationId,
         providerStatus: inspection.providerStatus,
-        historyAccess: this.historyAccess(connection.scopes),
+        historyAccess: this.getOrderHistoryAccess(connection.scopes),
         recordsRead: inspection.recordsRead,
         recordsWritten: inspection.recordsWritten,
         breakdown: inspection.breakdown,
@@ -393,7 +353,7 @@ export class ShopifyService {
     }
   }
 
-  private async requireActiveConnection(storeId: string) {
+  private async loadSyncTarget(storeId: string) {
     const store = await this.repository.findConnectionForSync(storeId);
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
 
@@ -409,15 +369,30 @@ export class ShopifyService {
       );
     }
 
-    return { store, connection };
+    const accessToken = await this.authService.resolveAccessToken(
+      store.myshopifyDomain,
+      connection,
+    );
+
+    return {
+      store,
+      connection,
+      syncContextBase: {
+        storeId,
+        shop: store.myshopifyDomain,
+        accessToken,
+        connectionId: connection.id,
+        apiVersion: connection.apiVersion,
+      },
+    };
   }
 
-  private hasOrderScope(scopes: string[]): boolean {
+  private canReadOrders(scopes: string[]): boolean {
     return scopes.includes('read_orders') || scopes.includes('write_orders');
   }
 
-  private requireOrderScope(scopes: string[]): void {
-    if (!this.hasOrderScope(scopes)) {
+  private assertOrderReadAccess(scopes: string[]): void {
+    if (!this.canReadOrders(scopes)) {
       throw new AppError(
         'Shopify order access is not authorized for this connection',
         409,
@@ -426,28 +401,11 @@ export class ShopifyService {
     }
   }
 
-  private historyAccess(scopes: string[]) {
+  private getOrderHistoryAccess(scopes: string[]) {
     return scopes.includes('read_all_orders') ? ('ALL_ORDERS' as const) : ('LAST_60_DAYS' as const);
   }
 
-  private buildSyncContext(
-    storeId: string,
-    shop: string,
-    accessToken: string,
-    connection: { id: string; apiVersion: string },
-    syncRunId: string,
-  ): ShopifySyncContext {
-    return {
-      storeId,
-      shop,
-      accessToken,
-      connectionId: connection.id,
-      apiVersion: connection.apiVersion,
-      syncRunId,
-    };
-  }
-
-  private async syncShopProfile(input: ShopifySyncContext): Promise<ShopifyShopProfile> {
+  private async syncStoreProfile(input: ShopifySyncContext): Promise<ShopifyShopProfile> {
     const profile = await this.apiService.fetchShopProfile(
       input.shop,
       input.accessToken,

@@ -67,7 +67,7 @@ export class ShopifyController {
   };
 
   sync = async (req: Request, res: Response) => {
-    const result = await this.service.syncStoreData(req.context.storeId!);
+    const result = await this.service.syncCatalogAndInventory(req.context.storeId!);
     res.status(200).json(result);
   };
 
@@ -78,10 +78,7 @@ export class ShopifyController {
 
   getOrderBackfill = async (req: Request, res: Response) => {
     const { syncRunId } = shopifyOrderBackfillParamsSchema.parse(req.params);
-    const result = await this.service.getOrderHistoryBackfill(
-      req.context.storeId!,
-      syncRunId,
-    );
+    const result = await this.service.getOrderHistoryBackfill(req.context.storeId!, syncRunId);
     res.status(200).json(result);
   };
 }

@@ -26,11 +26,7 @@ shopifyStoreRouter.get('/locations', readController.locations);
 shopifyStoreRouter.get('/orders', readController.orders);
 shopifyStoreRouter.get('/orders/:orderId', readController.order);
 
-shopifyStoreRouter.post(
-  '/sync',
-  requireRole('OWNER', 'ADMIN'),
-  controller.sync,
-);
+shopifyStoreRouter.post('/sync', requireRole('OWNER', 'ADMIN'), controller.sync);
 shopifyStoreRouter.post(
   '/orders/backfill',
   requireRole('OWNER', 'ADMIN'),
