@@ -14,10 +14,10 @@ function build(options?: { fail?: boolean; claim?: boolean }) {
     ),
     markShopifyFailed: vi.fn().mockResolvedValue(undefined),
   } as unknown as ReconciliationRepository;
-  const reconcileStoreData = options?.fail
+  const reconcileStore = options?.fail
     ? vi.fn().mockRejectedValue(new Error('temporary failure'))
     : vi.fn().mockResolvedValue({ status: 'SUCCEEDED' });
-  const shopifyService = { reconcileStoreData } as unknown as ShopifyService;
+  const shopifyService = { reconcileStore } as unknown as ShopifyService;
   return {
     repository,
     shopifyService,
@@ -39,7 +39,7 @@ describe('ReconciliationService', () => {
       expect.any(Date),
       expect.any(Date),
     );
-    expect(shopifyService.reconcileStoreData).toHaveBeenCalledWith(storeId);
+    expect(shopifyService.reconcileStore).toHaveBeenCalledWith(storeId);
     expect(repository.markShopifyFailed).not.toHaveBeenCalled();
   });
 
@@ -51,7 +51,7 @@ describe('ReconciliationService', () => {
       succeeded: 0,
       failed: 0,
     });
-    expect(shopifyService.reconcileStoreData).not.toHaveBeenCalled();
+    expect(shopifyService.reconcileStore).not.toHaveBeenCalled();
   });
 
   it('releases failed work with a short retry instead of blocking the remaining scheduler', async () => {
