@@ -1,6 +1,7 @@
-import type { IntegrationProvider, Prisma } from '../../generated/prisma/client.js';
+import type { Prisma } from '../../generated/prisma/client.js';
 import { AppError } from '../../errors/app-error.js';
-import { IntegrationRepository } from './integration.repository.js';
+import type { IntegrationRepository } from './integration.repository.js';
+import type { IntegrationProviderName } from './integration.schema.js';
 import { toErrorMessage } from './integration.utils.js';
 
 export class IntegrationService {
@@ -13,7 +14,7 @@ export class IntegrationService {
   }
 
   startSyncRun(input: {
-    provider: IntegrationProvider;
+    provider: IntegrationProviderName;
     connectionId: string;
     resourceType: string;
     mode?: string;
@@ -50,7 +51,7 @@ export class IntegrationService {
   }
 
   recordExternalPayload(input: {
-    provider: IntegrationProvider;
+    provider: IntegrationProviderName;
     resourceType: string;
     externalId?: string;
     apiVersion: string;
@@ -71,7 +72,7 @@ export class IntegrationService {
 
   async listRecentSyncRuns(
     storeId: string,
-    provider: IntegrationProvider | undefined,
+    provider: IntegrationProviderName | undefined,
     limit: number,
   ) {
     const connections = await this.repository.findConnectionIds(storeId);
@@ -85,5 +86,3 @@ export class IntegrationService {
     );
   }
 }
-
-export const integrationService = new IntegrationService(new IntegrationRepository());
