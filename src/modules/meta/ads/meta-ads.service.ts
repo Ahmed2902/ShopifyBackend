@@ -1,5 +1,6 @@
 import { AppError } from '../../../errors/app-error.js';
 import type { MetaApiContext } from '../meta.types.js';
+import { toJsonSafe } from '../meta.utils.js';
 import type { MetaApiService } from '../shared/meta-api.service.js';
 import type { MetaAdsRepository } from './meta-ads.repository.js';
 import {
@@ -7,20 +8,14 @@ import {
   metaAdSetSchema,
   metaCampaignSchema,
   metaCreativeSchema,
-  type MetaAdPayload,
-  type MetaAdSetPayload,
-  type MetaCampaignPayload,
-  type MetaCreativePayload,
 } from './meta-ads.schema.js';
 
 const PAGE_SIZE = '100';
-
 const CAMPAIGN_FIELDS = [
   'id', 'name', 'status', 'configured_status', 'effective_status', 'objective', 'buying_type',
   'bid_strategy', 'daily_budget', 'lifetime_budget', 'budget_remaining', 'spend_cap', 'start_time',
   'stop_time', 'promoted_object', 'recommendations', 'issues_info', 'created_time', 'updated_time',
 ].join(',');
-
 const ADSET_FIELDS = [
   'id', 'campaign_id', 'name', 'status', 'configured_status', 'effective_status', 'daily_budget',
   'lifetime_budget', 'budget_remaining', 'daily_spend_cap', 'lifetime_spend_cap', 'bid_strategy',
@@ -28,7 +23,6 @@ const ADSET_FIELDS = [
   'is_dynamic_creative', 'targeting', 'promoted_object', 'attribution_spec', 'start_time', 'end_time',
   'learning_stage_info', 'recommendations', 'issues_info', 'created_time', 'updated_time',
 ].join(',');
-
 const CREATIVE_FIELDS = [
   'id', 'name', 'title', 'body', 'call_to_action', 'call_to_action_type', 'image_url', 'thumbnail_url',
   'video_id', 'link_url', 'link_deep_link_url', 'object_url', 'object_story_id',
@@ -36,7 +30,6 @@ const CREATIVE_FIELDS = [
   'object_story_spec', 'product_set_id', 'product_data', 'asset_feed_spec', 'degrees_of_freedom_spec',
   'template_url', 'template_url_spec', 'url_tags', 'created_time', 'updated_time',
 ].join(',');
-
 const AD_FIELDS = [
   'id', 'campaign_id', 'adset_id', 'name', 'status', 'configured_status', 'effective_status',
   'conversion_domain', 'source_ad_id', 'creative{id}', 'placement', 'tracking_specs', 'conversion_specs',
@@ -59,33 +52,18 @@ function parseOrThrow<T>(
   return parsed.data;
 }
 
-export interface MetaAdsHierarchySyncResult {
-  recordsRead: number;
-  recordsWritten: number;
-  breakdown: {
-    adAccounts: number;
-    campaigns: number;
-    adSets: number;
-    creatives: number;
-    ads: number;
-    softDeletedCampaigns: number;
-    softDeletedAdSets: number;
-    softDeletedCreatives: number;
-    softDeletedAds: number;
-  };
-}
-
 export class MetaAdsService {
   constructor(
     private readonly repository: MetaAdsRepository,
     private readonly apiService: MetaApiService,
   ) {}
 
-  async syncSelectedAccount(
-    context: MetaApiContext,
-    metaAccountId: string,
-  ): Promise<MetaAdsHierarchySyncResult> {
-    const account = await this.repository.findAccount(context.storeId, context.connectionId, metaAccountId);
+  async syncSelectedAccount(context: MetaApiContext, metaAccountId: string) {
+    const account = await this.repository.findAccount(
+      context.storeId,
+      context.connectionId,
+      metaAccountId,
+    );
     if (!account) {
       throw new AppError(
         'Selected Meta ad account is missing from local configuration',
@@ -94,36 +72,52 @@ export class MetaAdsService {
       );
     }
 
-    // Fetch a complete provider snapshot before mutating local current-state rows. This prevents a
-    // partially fetched account from being interpreted as provider deletions.
+    // Fetch the full provider snapshot before mutating current state so a partial fetch can never
+    // look like provider deletions.
     const [accountProfile, campaigns, adSets, creatives, ads] = await Promise.all([
       this.apiService.getAdAccount(context, metaAccountId),
-      this.fetchCampaigns(context, metaAccountId),
-      this.fetchAdSets(context, metaAccountId),
-      this.fetchCreatives(context, metaAccountId),
-      this.fetchAds(context, metaAccountId),
+      this.apiService.collectGraphPages(
+        context,
+        `/${metaAccountId}/campaigns`,
+        { fields: CAMPAIGN_FIELDS, limit: PAGE_SIZE },
+        (value) => parseOrThrow(metaCampaignSchema, value, 'campaign'),
+      ),
+      this.apiService.collectGraphPages(
+        context,
+        `/${metaAccountId}/adsets`,
+        { fields: ADSET_FIELDS, limit: PAGE_SIZE },
+        (value) => parseOrThrow(metaAdSetSchema, value, 'ad set'),
+      ),
+      this.apiService.collectGraphPages(
+        context,
+        `/${metaAccountId}/adcreatives`,
+        { fields: CREATIVE_FIELDS, limit: PAGE_SIZE },
+        (value) => parseOrThrow(metaCreativeSchema, value, 'creative'),
+      ),
+      this.apiService.collectGraphPages(
+        context,
+        `/${metaAccountId}/ads`,
+        { fields: AD_FIELDS, limit: PAGE_SIZE },
+        (value) => parseOrThrow(metaAdSchema, value, 'ad'),
+      ),
     ]);
 
     const campaignIds = new Set(campaigns.map((campaign) => campaign.id));
-    for (const adSet of adSets) {
-      if (!campaignIds.has(adSet.campaign_id)) {
-        throw new AppError(
-          `Meta ad set ${adSet.id} references campaign ${adSet.campaign_id} outside the account snapshot`,
-          502,
-          'META_HIERARCHY_INCONSISTENT',
-        );
-      }
+    if (adSets.some((adSet) => !campaignIds.has(adSet.campaign_id))) {
+      throw new AppError(
+        'Meta ad set references a campaign outside the account snapshot',
+        502,
+        'META_HIERARCHY_INCONSISTENT',
+      );
     }
 
     const adSetIds = new Set(adSets.map((adSet) => adSet.id));
-    for (const ad of ads) {
-      if (!campaignIds.has(ad.campaign_id) || !adSetIds.has(ad.adset_id)) {
-        throw new AppError(
-          `Meta ad ${ad.id} references a parent outside the account snapshot`,
-          502,
-          'META_HIERARCHY_INCONSISTENT',
-        );
-      }
+    if (ads.some((ad) => !campaignIds.has(ad.campaign_id) || !adSetIds.has(ad.adset_id))) {
+      throw new AppError(
+        'Meta ad references a parent outside the account snapshot',
+        502,
+        'META_HIERARCHY_INCONSISTENT',
+      );
     }
 
     await this.repository.updateAccountProfile(account.id, {
@@ -167,9 +161,14 @@ export class MetaAdsService {
       if (!campaignId || !adSetId) {
         throw new AppError('Meta ad parent was not persisted', 500, 'META_HIERARCHY_INCONSISTENT');
       }
-      const externalCreativeId = ad.creative?.id ?? null;
-      const creativeId = externalCreativeId ? creativeMap.get(externalCreativeId) ?? null : null;
-      await this.repository.upsertAd(account.id, campaignId, adSetId, creativeId, ad);
+      const externalCreativeId = ad.creative?.id;
+      await this.repository.upsertAd(
+        account.id,
+        campaignId,
+        adSetId,
+        externalCreativeId ? creativeMap.get(externalCreativeId) ?? null : null,
+        ad,
+      );
     }
 
     const deleted = await this.repository.softDeleteMissing(account.id, {
@@ -199,39 +198,34 @@ export class MetaAdsService {
     };
   }
 
-  private fetchCampaigns(context: MetaApiContext, accountId: string): Promise<MetaCampaignPayload[]> {
-    return this.apiService.collectGraphPages(
-      context,
-      `/${accountId}/campaigns`,
-      { fields: CAMPAIGN_FIELDS, limit: PAGE_SIZE },
-      (value) => parseOrThrow(metaCampaignSchema, value, 'campaign'),
-    );
+  async listAdAccounts(storeId: string) {
+    return toJsonSafe(await this.repository.listAdAccounts(storeId));
   }
 
-  private fetchAdSets(context: MetaApiContext, accountId: string): Promise<MetaAdSetPayload[]> {
-    return this.apiService.collectGraphPages(
-      context,
-      `/${accountId}/adsets`,
-      { fields: ADSET_FIELDS, limit: PAGE_SIZE },
-      (value) => parseOrThrow(metaAdSetSchema, value, 'ad set'),
-    );
+  async listCampaigns(
+    storeId: string,
+    input: { adAccountId?: string; status?: string; page: number; limit: number },
+  ) {
+    return toJsonSafe(await this.repository.listCampaigns(storeId, input));
   }
 
-  private fetchCreatives(context: MetaApiContext, accountId: string): Promise<MetaCreativePayload[]> {
-    return this.apiService.collectGraphPages(
-      context,
-      `/${accountId}/adcreatives`,
-      { fields: CREATIVE_FIELDS, limit: PAGE_SIZE },
-      (value) => parseOrThrow(metaCreativeSchema, value, 'creative'),
-    );
+  async listAdSets(
+    storeId: string,
+    input: { campaignId?: string; status?: string; page: number; limit: number },
+  ) {
+    return toJsonSafe(await this.repository.listAdSets(storeId, input));
   }
 
-  private fetchAds(context: MetaApiContext, accountId: string): Promise<MetaAdPayload[]> {
-    return this.apiService.collectGraphPages(
-      context,
-      `/${accountId}/ads`,
-      { fields: AD_FIELDS, limit: PAGE_SIZE },
-      (value) => parseOrThrow(metaAdSchema, value, 'ad'),
-    );
+  async listAds(
+    storeId: string,
+    input: { campaignId?: string; adSetId?: string; status?: string; page: number; limit: number },
+  ) {
+    return toJsonSafe(await this.repository.listAds(storeId, input));
+  }
+
+  async getAd(storeId: string, metaAdId: string) {
+    const ad = await this.repository.getAd(storeId, metaAdId);
+    if (!ad) throw new AppError('Meta ad was not found', 404, 'META_AD_NOT_FOUND');
+    return toJsonSafe(ad);
   }
 }
