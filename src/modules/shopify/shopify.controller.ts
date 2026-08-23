@@ -14,9 +14,9 @@ import {
 export class ShopifyController {
   constructor(private readonly service: ShopifyService) {}
 
-  install = async (req: Request, res: Response) => {
+  startInstall = async (req: Request, res: Response) => {
     const { shop } = shopifyInstallSchema.parse(req.body);
-    const oauth = this.service.beginOAuth(req.context.userId!, shop);
+    const oauth = this.service.startOAuthInstall(req.context.userId!, shop);
 
     setShopifyOAuthCookie(res, oauth.cookieValue);
     res.status(200).json({
@@ -25,7 +25,7 @@ export class ShopifyController {
     });
   };
 
-  callback = async (req: Request, res: Response) => {
+  completeInstall = async (req: Request, res: Response) => {
     const callbackUrl = new URL(req.originalUrl, 'http://localhost');
     verifyShopifyOAuthHmac(callbackUrl.searchParams);
 
@@ -39,7 +39,7 @@ export class ShopifyController {
 
     verifyShopifyCallbackTimestamp(query.timestamp);
 
-    const result = await this.service.completeOAuth({
+    const result = await this.service.completeOAuthInstall({
       code: query.code,
       shop: query.shop,
       state: query.state,
@@ -50,8 +50,8 @@ export class ShopifyController {
     res.redirect(303, buildShopifySuccessRedirect(result.storeId, result.shop));
   };
 
-  webhook = async (req: Request, res: Response) => {
-    const result = await this.service.receiveWebhook(
+  receiveWebhook = async (req: Request, res: Response) => {
+    const result = await this.service.receiveWebhookDelivery(
       {
         hmac: req.get('x-shopify-hmac-sha256'),
         topic: req.get('x-shopify-topic'),
@@ -66,19 +66,19 @@ export class ShopifyController {
     res.status(200).json({ received: true, ...result });
   };
 
-  sync = async (req: Request, res: Response) => {
-    const result = await this.service.syncStoreData(req.context.storeId!);
+  syncCatalogAndInventory = async (req: Request, res: Response) => {
+    const result = await this.service.syncCatalogAndInventory(req.context.storeId!);
     res.status(200).json(result);
   };
 
-  startOrderBackfill = async (req: Request, res: Response) => {
-    const result = await this.service.startOrderHistoryBackfill(req.context.storeId!);
+  startOrderHistoryImport = async (req: Request, res: Response) => {
+    const result = await this.service.startOrderHistoryImport(req.context.storeId!);
     res.status(202).json(result);
   };
 
-  getOrderBackfill = async (req: Request, res: Response) => {
+  getOrderHistoryImportStatus = async (req: Request, res: Response) => {
     const { syncRunId } = shopifyOrderBackfillParamsSchema.parse(req.params);
-    const result = await this.service.getOrderHistoryBackfill(
+    const result = await this.service.getOrderHistoryImportStatus(
       req.context.storeId!,
       syncRunId,
     );
