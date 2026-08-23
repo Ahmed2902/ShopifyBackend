@@ -6,6 +6,8 @@ import { MetaCatalogRepository } from './catalog/meta-catalog.repository.js';
 import { MetaCatalogService } from './catalog/meta-catalog.service.js';
 import { MetaInsightsRepository } from './insights/meta-insights.repository.js';
 import { MetaInsightsService } from './insights/meta-insights.service.js';
+import { MetaMappingRepository } from './mapping/meta-mapping.repository.js';
+import { MetaMappingService } from './mapping/meta-mapping.service.js';
 import { MetaRepository } from './meta.repository.js';
 import { MetaService } from './meta.service.js';
 import { MetaApiService } from './shared/meta-api.service.js';
@@ -20,7 +22,10 @@ const metaCatalogRepository = new MetaCatalogRepository();
 const metaCatalogService = new MetaCatalogService(metaCatalogRepository, metaApiService);
 const metaInsightsRepository = new MetaInsightsRepository();
 const metaInsightsService = new MetaInsightsService(metaInsightsRepository, metaApiService);
+const metaMappingRepository = new MetaMappingRepository();
 const integrationService = new IntegrationService(new IntegrationRepository());
+
+export const metaMappingService = new MetaMappingService(metaMappingRepository, integrationService);
 
 export const metaService = new MetaService(
   metaRepository,
