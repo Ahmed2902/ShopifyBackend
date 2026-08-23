@@ -4,6 +4,11 @@ enum StoreRole {
   MEMBER
 }
 
+enum AuthTokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
 model User {
   id              String   @id @default(uuid()) @db.Uuid
   email           String   @unique
@@ -16,6 +21,7 @@ model User {
 
   memberships StoreMembership[]
   sessions    RefreshSession[]
+  authTokens  AuthToken[]
 
   @@index([createdAt])
 }
@@ -35,6 +41,21 @@ model RefreshSession {
 
   @@index([userId, expiresAt])
   @@index([revokedAt])
+}
+
+model AuthToken {
+  id        String        @id @default(uuid()) @db.Uuid
+  userId    String        @db.Uuid
+  type      AuthTokenType
+  tokenHash String        @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime      @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
+  @@index([expiresAt])
 }
 
 model StoreMembership {

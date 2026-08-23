@@ -11,6 +11,10 @@ const accessSecret = new TextEncoder().encode(env.JWT_ACCESS_SECRET);
 const accessAudience = 'shopify-intelligence-web';
 const storeRoles: StoreRoleClaim[] = ['OWNER', 'ADMIN', 'MEMBER'];
 
+export const EMAIL_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
+export const PASSWORD_RESET_TTL_MS = 30 * 60 * 1000;
+export const AUTH_EMAIL_COOLDOWN_MS = 60 * 1000;
+
 function derivePasswordKey(password: string, salt: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     scrypt(password, salt, SCRYPT_KEY_LENGTH, (error, derivedKey) => {
@@ -84,6 +88,18 @@ export function createRefreshToken(): string {
 
 export function hashRefreshToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
+}
+
+export function createAuthToken(): string {
+  return randomBytes(32).toString('base64url');
+}
+
+export function hashAuthToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+export function authTokenExpiry(ttlMs: number): Date {
+  return new Date(Date.now() + ttlMs);
 }
 
 export const REFRESH_COOKIE_NAME = 'refresh_token';
