@@ -1,6 +1,5 @@
-import type { Prisma } from '../../generated/prisma/client.js';
+import type { IntegrationProvider, Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
-import type { IntegrationProviderName } from './integration.schema.js';
 
 export class IntegrationRepository {
   findSummary(storeId: string) {
@@ -35,7 +34,7 @@ export class IntegrationRepository {
   }
 
   createSyncRun(input: {
-    provider: IntegrationProviderName;
+    provider: IntegrationProvider;
     connectionId: string;
     resourceType: string;
     mode: string | null;
@@ -60,24 +59,6 @@ export class IntegrationRepository {
     return prisma.syncRun.update({
       where: { id: syncRunId },
       data: { providerOperationId },
-    });
-  }
-
-  updateSyncRunProgress(
-    syncRunId: string,
-    input: {
-      cursor: string | null;
-      recordsRead: number;
-      recordsWritten: number;
-    },
-  ) {
-    return prisma.syncRun.update({
-      where: { id: syncRunId },
-      data: {
-        cursor: input.cursor,
-        recordsRead: input.recordsRead,
-        recordsWritten: input.recordsWritten,
-      },
     });
   }
 
@@ -141,7 +122,7 @@ export class IntegrationRepository {
   }
 
   createExternalPayload(input: {
-    provider: IntegrationProviderName;
+    provider: IntegrationProvider;
     resourceType: string;
     externalId: string | null;
     apiVersion: string;
@@ -162,26 +143,21 @@ export class IntegrationRepository {
     });
   }
 
-  listByShopifyConnection(connectionId: string, limit: number) {
-    return prisma.syncRun.findMany({
-      where: { shopifyConnectionId: connectionId },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
-  }
-
-  listByMetaConnection(connectionId: string, limit: number) {
-    return prisma.syncRun.findMany({
-      where: { metaConnectionId: connectionId },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
-  }
-
-  listByConnections(
-    connections: Array<{ shopifyConnectionId?: string; metaConnectionId?: string }>,
+  listSyncRuns(
+    shopifyConnectionId: string | null,
+    metaConnectionId: string | null,
+    provider: IntegrationProvider | undefined,
     limit: number,
   ) {
+    const connections: Prisma.SyncRunWhereInput[] = [];
+    if ((!provider || provider === 'SHOPIFY') && shopifyConnectionId) {
+      connections.push({ shopifyConnectionId });
+    }
+    if ((!provider || provider === 'META') && metaConnectionId) {
+      connections.push({ metaConnectionId });
+    }
+    if (connections.length === 0) return Promise.resolve([]);
+
     return prisma.syncRun.findMany({
       where: { OR: connections },
       orderBy: { createdAt: 'desc' },
