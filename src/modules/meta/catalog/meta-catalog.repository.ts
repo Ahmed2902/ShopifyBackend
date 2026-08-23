@@ -1,4 +1,4 @@
-import { Prisma } from '../../../generated/prisma/client.js';
+import type { Prisma } from '../../../generated/prisma/client.js';
 import { AppError } from '../../../errors/app-error.js';
 import { prisma } from '../../../lib/prisma.js';
 import type { MetaCatalogAsset } from '../meta.types.js';
