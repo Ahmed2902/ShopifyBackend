@@ -1,7 +1,6 @@
-import type { Prisma } from '../../generated/prisma/client.js';
+import type { IntegrationProvider, Prisma } from '../../generated/prisma/client.js';
 import { AppError } from '../../errors/app-error.js';
-import type { IntegrationRepository } from './integration.repository.js';
-import type { IntegrationProviderName } from './integration.schema.js';
+import { IntegrationRepository } from './integration.repository.js';
 import { toErrorMessage } from './integration.utils.js';
 
 export class IntegrationService {
@@ -10,15 +9,11 @@ export class IntegrationService {
   async getSummary(storeId: string) {
     const store = await this.repository.findSummary(storeId);
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
-
-    return {
-      shopify: store.shopifyConnection,
-      meta: store.metaConnection,
-    };
+    return { shopify: store.shopifyConnection, meta: store.metaConnection };
   }
 
   startSyncRun(input: {
-    provider: IntegrationProviderName;
+    provider: IntegrationProvider;
     connectionId: string;
     resourceType: string;
     mode?: string;
@@ -29,17 +24,6 @@ export class IntegrationService {
 
   attachProviderOperation(syncRunId: string, providerOperationId: string) {
     return this.repository.attachProviderOperation(syncRunId, providerOperationId);
-  }
-
-  updateSyncRunProgress(
-    syncRunId: string,
-    input: {
-      cursor: string | null;
-      recordsRead: number;
-      recordsWritten: number;
-    },
-  ) {
-    return this.repository.updateSyncRunProgress(syncRunId, input);
   }
 
   completeSyncRun(
@@ -66,7 +50,7 @@ export class IntegrationService {
   }
 
   recordExternalPayload(input: {
-    provider: IntegrationProviderName;
+    provider: IntegrationProvider;
     resourceType: string;
     externalId?: string;
     apiVersion: string;
@@ -87,34 +71,19 @@ export class IntegrationService {
 
   async listRecentSyncRuns(
     storeId: string,
-    provider: IntegrationProviderName | undefined,
+    provider: IntegrationProvider | undefined,
     limit: number,
   ) {
     const connections = await this.repository.findConnectionIds(storeId);
     if (!connections) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
 
-    if (provider === 'SHOPIFY') {
-      return connections.shopifyConnection
-        ? this.repository.listByShopifyConnection(connections.shopifyConnection.id, limit)
-        : [];
-    }
-
-    if (provider === 'META') {
-      return connections.metaConnection
-        ? this.repository.listByMetaConnection(connections.metaConnection.id, limit)
-        : [];
-    }
-
-    const connectionIds: Array<{ shopifyConnectionId?: string; metaConnectionId?: string }> = [];
-    if (connections.shopifyConnection) {
-      connectionIds.push({ shopifyConnectionId: connections.shopifyConnection.id });
-    }
-    if (connections.metaConnection) {
-      connectionIds.push({ metaConnectionId: connections.metaConnection.id });
-    }
-
-    return connectionIds.length > 0
-      ? this.repository.listByConnections(connectionIds, limit)
-      : [];
+    return this.repository.listSyncRuns(
+      connections.shopifyConnection?.id ?? null,
+      connections.metaConnection?.id ?? null,
+      provider,
+      limit,
+    );
   }
 }
+
+export const integrationService = new IntegrationService(new IntegrationRepository());
