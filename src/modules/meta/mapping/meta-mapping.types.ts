@@ -91,6 +91,7 @@ export interface MetaAdIdentity {
 }
 
 export interface MappingDataset {
+  connectionId: string;
   store: {
     myshopifyDomain: string;
     primaryDomainHost: string | null;
