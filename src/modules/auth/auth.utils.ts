@@ -3,18 +3,13 @@ import type { CookieOptions, Response } from 'express';
 import { jwtVerify, SignJWT } from 'jose';
 import { env } from '../../config/env.js';
 import { AppError } from '../../errors/app-error.js';
-
-export type StoreRoleClaim = 'OWNER' | 'ADMIN' | 'MEMBER';
-export interface StoreAccessClaim {
-  storeId: string;
-  role: StoreRoleClaim;
-}
+import type { StoreAccessClaim, StoreRoleClaim } from '../../types/auth.js';
 
 const SCRYPT_KEY_LENGTH = 64;
 const PASSWORD_FORMAT = 'scrypt$v1';
 const accessSecret = new TextEncoder().encode(env.JWT_ACCESS_SECRET);
 const accessAudience = 'shopify-intelligence-web';
-const storeRoles = ['OWNER', 'ADMIN', 'MEMBER'] as const;
+const storeRoles: StoreRoleClaim[] = ['OWNER', 'ADMIN', 'MEMBER'];
 
 function derivePasswordKey(password: string, salt: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
