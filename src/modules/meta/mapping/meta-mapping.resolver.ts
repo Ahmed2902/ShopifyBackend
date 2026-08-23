@@ -24,6 +24,7 @@ const PROVIDER_ID_KEYS = new Set([
   'content_id',
   'content_ids',
 ]);
+const PRODUCT_SET_KEYS = new Set(['product_set_id', 'product_set_ids']);
 
 interface ResolverIndex {
   hosts: Set<string>;
@@ -396,6 +397,29 @@ function collectProviderIds(value: unknown, found = new Set<string>()): Set<stri
   return found;
 }
 
+function collectProductSetIds(value: unknown, found = new Set<string>()): Set<string> {
+  if (Array.isArray(value)) {
+    for (const item of value) collectProductSetIds(item, found);
+    return found;
+  }
+  if (!value || typeof value !== 'object') return found;
+
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = key.toLowerCase();
+    if (PRODUCT_SET_KEYS.has(normalizedKey)) {
+      const values = Array.isArray(child) ? child : [child];
+      for (const candidate of values) {
+        if (typeof candidate === 'string' || typeof candidate === 'number') {
+          const token = String(candidate).trim();
+          if (token) found.add(token);
+        }
+      }
+    }
+    collectProductSetIds(child, found);
+  }
+  return found;
+}
+
 function destinationUrls(ad: MetaAdIdentity): string[] {
   const values: string[] = [];
   const creative = ad.creative;
@@ -607,6 +631,8 @@ function textSuggestions(ad: MetaAdIdentity, index: ResolverIndex): AdSuggestion
 export function resolveAd(ad: MetaAdIdentity, dataset: MappingDataset): AdResolution {
   const index = buildIndex(dataset);
   const structuredIds = new Set<string>();
+  const productSetIds = new Set<string>();
+  if (ad.creative?.productSetId) productSetIds.add(ad.creative.productSetId);
   for (const value of [
     ad.creative?.productData,
     ad.creative?.assetFeedSpec,
@@ -614,6 +640,7 @@ export function resolveAd(ad: MetaAdIdentity, dataset: MappingDataset): AdResolu
     ad.campaignPromotedObject,
   ]) {
     collectProviderIds(value, structuredIds);
+    collectProductSetIds(value, productSetIds);
   }
 
   if (structuredIds.size > 0) {
@@ -749,7 +776,7 @@ export function resolveAd(ad: MetaAdIdentity, dataset: MappingDataset): AdResolu
     }
   }
 
-  if (ad.creative?.productSetId) {
+  if (productSetIds.size > 0) {
     return {
       scope: 'MULTI_PRODUCT',
       confidence: 0.95,
@@ -757,7 +784,7 @@ export function resolveAd(ad: MetaAdIdentity, dataset: MappingDataset): AdResolu
       evidence: {
         resolverVersion: RESOLVER_VERSION,
         matchedBy: 'product_set',
-        productSetId: ad.creative.productSetId,
+        productSetIds: [...productSetIds],
       },
       suggestions: [],
     };
