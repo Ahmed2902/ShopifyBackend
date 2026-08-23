@@ -3,12 +3,12 @@ import { AppError } from '../../../errors/app-error.js';
 import type { TikTokService } from '../tiktok.service.js';
 import {
   asRecord,
-  asString,
   deriveTikTokDeliveryId,
   getTikTokWebhookAdvertiserId,
   getTikTokWebhookTopic,
   parseTikTokDate,
   verifyTikTokWebhookSignature,
+  verifyTikTokWebhookToken,
 } from '../tiktok.utils.js';
 import type { TikTokWebhookRepository } from './tiktok-webhook.repository.js';
 
@@ -20,14 +20,24 @@ export class TikTokWebhookService {
     private readonly tiktokService: TikTokService,
   ) {}
 
-  async receive(input: { rawBody: Buffer | undefined; signature: string | undefined; payload: unknown }) {
-    verifyTikTokWebhookSignature(input.rawBody, input.signature);
-    const rawBody = input.rawBody!;
+  async receive(input: {
+    rawBody: Buffer | undefined;
+    signature: string | undefined;
+    token: string | undefined;
+    payload: unknown;
+  }) {
+    if (input.token) {
+      verifyTikTokWebhookToken(input.token);
+    } else {
+      verifyTikTokWebhookSignature(input.rawBody, input.signature);
+    }
+
+    const rawBody = input.rawBody ?? Buffer.from(JSON.stringify(input.payload ?? {}), 'utf8');
     const payload = asRecord(input.payload);
     const advertiserId = getTikTokWebhookAdvertiserId(payload);
     const connection = advertiserId ? await this.repository.findConnectionByAdvertiserId(advertiserId) : null;
     const topic = getTikTokWebhookTopic(payload);
-    const triggeredAt = parseTikTokDate(payload.timestamp ?? payload.create_time ?? payload.event_time);
+    const triggeredAt = parseTikTokDate(payload.time ?? payload.timestamp ?? payload.create_time ?? payload.event_time);
     const result = await this.repository.createDelivery({
       externalDeliveryId: deriveTikTokDeliveryId(payload, rawBody),
       connectionId: connection?.tiktokConnectionId ?? null,
@@ -58,16 +68,31 @@ export class TikTokWebhookService {
       }
 
       try {
+        const storeId = delivery.tiktokConnection.storeId;
         const topic = delivery.topic.toUpperCase();
-        if (topic.includes('CATALOG') || topic.includes('PRODUCT')) {
-          await this.tiktokService.syncCatalogs(delivery.tiktokConnection.storeId);
+        if (topic === 'REPORT_DATA_CHANGE') {
+          await this.tiktokService.syncInsights(storeId, 2);
+        } else if (topic.includes('CATALOG') || topic.includes('PRODUCT')) {
+          await this.tiktokService.syncCatalogs(storeId);
+        } else if (
+          topic === 'AD_REVIEW' ||
+          topic === 'AD_GROUP_REVIEW' ||
+          topic === 'CREATIVE_FATIGUE' ||
+          topic.includes('AD_ACCOUNT') ||
+          topic.startsWith('WEBHOOK_')
+        ) {
+          await this.tiktokService.syncAdsHierarchy(storeId);
         } else {
-          await this.tiktokService.syncAdsHierarchy(delivery.tiktokConnection.storeId);
+          await this.repository.markIgnored(id, `No reconciliation handler for ${delivery.topic}`);
+          continue;
         }
         await this.repository.markProcessed(id);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (error instanceof AppError && ['TIKTOK_NOT_CONNECTED', 'TIKTOK_CONNECTION_INACTIVE'].includes(error.code)) {
+        if (
+          error instanceof AppError &&
+          ['TIKTOK_NOT_CONNECTED', 'TIKTOK_CONNECTION_INACTIVE'].includes(error.code)
+        ) {
           await this.repository.markIgnored(id, message);
         } else {
           await this.repository.markFailed(id, delivery.attempts, message);
