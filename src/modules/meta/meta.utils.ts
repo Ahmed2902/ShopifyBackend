@@ -53,13 +53,7 @@ export function verifyMetaOAuthState(state: string | undefined): MetaOAuthContex
 }
 
 export function configuredMetaScopes(): string[] {
-  return Array.from(
-    new Set(
-      env.META_SCOPES.split(',')
-        .map((scope) => scope.trim())
-        .filter(Boolean),
-    ),
-  );
+  return [...new Set(env.META_SCOPES.split(',').map((scope) => scope.trim()).filter(Boolean))];
 }
 
 export function buildMetaAuthorizationUrl(userId: string, storeId: string) {
@@ -70,7 +64,6 @@ export function buildMetaAuthorizationUrl(userId: string, storeId: string) {
   url.searchParams.set('state', state);
   url.searchParams.set('scope', configuredMetaScopes().join(','));
   url.searchParams.set('response_type', 'code');
-
   return { authorizationUrl: url.toString(), state };
 }
 
@@ -102,4 +95,12 @@ export function parseMetaMinorAmount(value: unknown): bigint | null {
   } catch {
     return null;
   }
+}
+
+export function toJsonSafe<T>(value: T): unknown {
+  return JSON.parse(
+    JSON.stringify(value, (_key, current) =>
+      typeof current === 'bigint' ? current.toString() : current,
+    ),
+  ) as unknown;
 }
