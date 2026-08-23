@@ -56,9 +56,3 @@ export interface MetaCatalogAsset {
   feedCount: number | null;
   raw: unknown;
 }
-
-export interface MetaDiscoveredAssets {
-  businesses: MetaBusinessAsset[];
-  adAccounts: MetaAdAccountAsset[];
-  catalogs: MetaCatalogAsset[];
-}
