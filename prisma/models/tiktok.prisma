@@ -1,0 +1,346 @@
+enum TikTokInsightLevel {
+  ADVERTISER
+  CAMPAIGN
+  ADGROUP
+  AD
+}
+
+enum TikTokAdTargetScope {
+  STORE
+  COLLECTION
+  PRODUCT
+  PRODUCT_OPTION
+  VARIANT
+  MULTI_PRODUCT
+  UNKNOWN
+}
+
+model TikTokAdvertiser {
+  id                 String   @id @default(uuid()) @db.Uuid
+  storeId            String   @db.Uuid
+  tiktokConnectionId String   @db.Uuid
+  advertiserId       String
+  name               String
+  status             String?
+  currency           String?
+  timezone           String?
+  countryCode        String?
+  industry           String?
+  company            String?
+  balance            Decimal? @db.Decimal(20, 6)
+  lastSyncedAt       DateTime?
+  rawJson            Json?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  store      Store            @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  connection TikTokConnection @relation(fields: [tiktokConnectionId], references: [id], onDelete: Restrict)
+  campaigns  TikTokCampaign[]
+  adGroups   TikTokAdGroup[]
+  ads        TikTokAd[]
+  insights   TikTokInsightDaily[]
+
+  @@unique([storeId, advertiserId])
+  @@index([tiktokConnectionId])
+}
+
+model TikTokCampaign {
+  id                   String   @id @default(uuid()) @db.Uuid
+  advertiserDbId       String   @db.Uuid
+  tiktokCampaignId     String
+  name                 String
+  objectiveType        String?
+  campaignType         String?
+  operationStatus      String?
+  secondaryStatus      String?
+  budgetMode           String?
+  budget               Decimal? @db.Decimal(20, 6)
+  deepBidType          String?
+  roasBid              Decimal? @db.Decimal(20, 8)
+  isSmartPerformance   Boolean?
+  tiktokCreatedAt      DateTime?
+  tiktokUpdatedAt      DateTime?
+  deletedAt            DateTime?
+  rawJson              Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  advertiser TikTokAdvertiser   @relation(fields: [advertiserDbId], references: [id], onDelete: Restrict)
+  adGroups   TikTokAdGroup[]
+  ads        TikTokAd[]
+  insights   TikTokInsightDaily[]
+
+  @@unique([advertiserDbId, tiktokCampaignId])
+  @@index([advertiserDbId, operationStatus])
+  @@index([deletedAt])
+}
+
+model TikTokAdGroup {
+  id                   String   @id @default(uuid()) @db.Uuid
+  advertiserDbId       String   @db.Uuid
+  campaignId           String   @db.Uuid
+  tiktokAdGroupId      String
+  name                 String
+  operationStatus      String?
+  secondaryStatus      String?
+  placementType        String?
+  placements           Json?
+  promotionType        String?
+  optimizationGoal     String?
+  optimizationEvent    String?
+  billingEvent         String?
+  bidType              String?
+  bidPrice             Decimal? @db.Decimal(20, 6)
+  deepBidType          String?
+  roasBid              Decimal? @db.Decimal(20, 8)
+  budgetMode           String?
+  budget               Decimal? @db.Decimal(20, 6)
+  scheduleType         String?
+  scheduleStartTime    DateTime?
+  scheduleEndTime      DateTime?
+  dayparting           String?
+  pixelId              String?
+  catalogId            String?
+  productSetId         String?
+  productSource        String?
+  targeting            Json?
+  attribution          Json?
+  tiktokCreatedAt      DateTime?
+  tiktokUpdatedAt      DateTime?
+  deletedAt            DateTime?
+  rawJson              Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  advertiser TikTokAdvertiser   @relation(fields: [advertiserDbId], references: [id], onDelete: Restrict)
+  campaign   TikTokCampaign     @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  ads        TikTokAd[]
+  insights   TikTokInsightDaily[]
+
+  @@unique([advertiserDbId, tiktokAdGroupId])
+  @@index([campaignId, operationStatus])
+  @@index([catalogId])
+  @@index([deletedAt])
+}
+
+model TikTokAd {
+  id                    String               @id @default(uuid()) @db.Uuid
+  advertiserDbId        String               @db.Uuid
+  campaignId            String               @db.Uuid
+  adGroupId             String               @db.Uuid
+  tiktokAdId            String
+  name                  String
+  operationStatus       String?
+  secondaryStatus       String?
+  adFormat              String?
+  creativeMaterialMode  String?
+  identityId            String?
+  identityType          String?
+  sparkAdPostId         String?
+  videoId               String?
+  imageIds              Json?
+  thumbnailUrl          String?
+  adText                String?
+  displayName           String?
+  callToAction          String?
+  landingPageUrl        String?
+  trackingPixelId       String?
+  catalogId             String?
+  productSetId          String?
+  targetScope           TikTokAdTargetScope @default(UNKNOWN)
+  targetScopeConfidence Decimal?             @db.Decimal(5, 4)
+  targetScopeEvidence   Json?
+  tracking              Json?
+  creativeJson          Json?
+  tiktokCreatedAt       DateTime?
+  tiktokUpdatedAt       DateTime?
+  deletedAt             DateTime?
+  rawJson               Json?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  advertiser      TikTokAdvertiser       @relation(fields: [advertiserDbId], references: [id], onDelete: Restrict)
+  campaign        TikTokCampaign         @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  adGroup         TikTokAdGroup          @relation(fields: [adGroupId], references: [id], onDelete: Restrict)
+  insights        TikTokInsightDaily[]
+  productMappings TikTokAdProductMapping[]
+
+  @@unique([advertiserDbId, tiktokAdId])
+  @@index([adGroupId, operationStatus])
+  @@index([videoId])
+  @@index([catalogId])
+  @@index([targetScope])
+  @@index([deletedAt])
+}
+
+model TikTokCatalog {
+  id                 String   @id @default(uuid()) @db.Uuid
+  storeId            String   @db.Uuid
+  tiktokConnectionId String   @db.Uuid
+  tiktokCatalogId    String
+  name               String
+  businessCenterId   String?
+  catalogType        String?
+  vertical           String?
+  region             String?
+  currency           String?
+  productCount       Int?
+  lastSyncedAt       DateTime?
+  rawJson            Json?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  store      Store            @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  connection TikTokConnection @relation(fields: [tiktokConnectionId], references: [id], onDelete: Restrict)
+  items      TikTokCatalogItem[]
+
+  @@unique([storeId, tiktokCatalogId])
+  @@index([tiktokConnectionId])
+}
+
+model TikTokCatalogItem {
+  id                    String   @id @default(uuid()) @db.Uuid
+  catalogId             String   @db.Uuid
+  tiktokProductId       String
+  retailerId            String?
+  itemGroupId           String?
+  title                 String?
+  description           String?
+  brand                 String?
+  availability          String?
+  price                 Decimal? @db.Decimal(20, 6)
+  salePrice             Decimal? @db.Decimal(20, 6)
+  currency              String?
+  size                  String?
+  color                 String?
+  pattern               String?
+  url                   String?
+  imageUrl              String?
+  productType           String?
+  category              String?
+  customLabels          Json?
+  variants              Json?
+  videoIds              Json?
+  status                String?
+  deletedAt             DateTime?
+  rawJson               Json?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  catalog           TikTokCatalog                    @relation(fields: [catalogId], references: [id], onDelete: Restrict)
+  variantMappings   TikTokCatalogItemVariantMapping[]
+  adProductMappings TikTokAdProductMapping[]
+
+  @@unique([catalogId, tiktokProductId])
+  @@index([catalogId, retailerId])
+  @@index([itemGroupId])
+  @@index([deletedAt])
+}
+
+model TikTokCatalogItemVariantMapping {
+  id                  String                      @id @default(uuid()) @db.Uuid
+  catalogItemId       String                      @db.Uuid
+  variantId           String                      @db.Uuid
+  source              CatalogVariantMappingSource
+  confidence          Decimal                     @db.Decimal(5, 4)
+  isMerchantConfirmed Boolean                     @default(false)
+  validFrom           DateTime                    @default(now())
+  validUntil          DateTime?
+  createdAt           DateTime                    @default(now())
+  updatedAt           DateTime                    @updatedAt
+
+  catalogItem TikTokCatalogItem @relation(fields: [catalogItemId], references: [id], onDelete: Restrict)
+  variant     ProductVariant    @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  @@index([catalogItemId, validUntil])
+  @@index([variantId, validUntil])
+}
+
+model TikTokAdProductMapping {
+  id                     String                      @id @default(uuid()) @db.Uuid
+  tiktokAdId             String                      @db.Uuid
+  productId              String                      @db.Uuid
+  variantId              String?                     @db.Uuid
+  catalogItemId          String?                     @db.Uuid
+  granularity            AdProductMappingGranularity @default(PRODUCT)
+  optionSelector         Json?
+  source                 AdProductMappingSource
+  confidence             Decimal                     @db.Decimal(5, 4)
+  evidenceJson           Json?
+  landingUrl             String?
+  providerProductId      String?
+  providerProductGroupId String?
+  isMerchantConfirmed    Boolean                     @default(false)
+  validFrom              DateTime                    @default(now())
+  validUntil             DateTime?
+  createdAt              DateTime                    @default(now())
+  updatedAt              DateTime                    @updatedAt
+
+  ad          TikTokAd           @relation(fields: [tiktokAdId], references: [id], onDelete: Restrict)
+  product     Product            @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variant     ProductVariant?    @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  catalogItem TikTokCatalogItem? @relation(fields: [catalogItemId], references: [id], onDelete: Restrict)
+
+  @@index([tiktokAdId, validUntil])
+  @@index([productId, validUntil])
+  @@index([variantId, validUntil])
+  @@index([catalogItemId, validUntil])
+  @@index([granularity, source, confidence])
+}
+
+model TikTokInsightDaily {
+  id                 String             @id @default(uuid()) @db.Uuid
+  insightKey         String             @unique
+  advertiserDbId     String             @db.Uuid
+  campaignId         String?            @db.Uuid
+  adGroupId          String?            @db.Uuid
+  adId               String?            @db.Uuid
+  level              TikTokInsightLevel
+  date               DateTime           @db.Date
+  accountCurrency    String?
+  spend              Decimal            @default(0) @db.Decimal(20, 6)
+  impressions        BigInt             @default(0)
+  reach              BigInt?
+  clicks             BigInt             @default(0)
+  ctr                Decimal?           @db.Decimal(20, 8)
+  cpc                Decimal?           @db.Decimal(20, 8)
+  cpm                Decimal?           @db.Decimal(20, 8)
+  frequency          Decimal?           @db.Decimal(20, 8)
+  conversions        Decimal?           @db.Decimal(20, 8)
+  conversionValue    Decimal?           @db.Decimal(20, 8)
+  costPerConversion  Decimal?           @db.Decimal(20, 8)
+  roas               Decimal?           @db.Decimal(20, 8)
+  resultCount        Decimal?           @db.Decimal(20, 8)
+  costPerResult      Decimal?           @db.Decimal(20, 8)
+  videoPlayActions   BigInt?
+  videoWatched2s     BigInt?
+  videoWatched6s     BigInt?
+  videoViewsP25      BigInt?
+  videoViewsP50      BigInt?
+  videoViewsP75      BigInt?
+  videoViewsP100     BigInt?
+  likes              BigInt?
+  comments           BigInt?
+  shares             BigInt?
+  follows            BigInt?
+  profileVisits      BigInt?
+  objectiveType      String?
+  optimizationGoal   String?
+  attributionWindow  String?
+  dimensionsJson     Json?
+  metricsJson        Json?
+  rawJson            Json?
+  syncedAt           DateTime           @default(now())
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  advertiser TikTokAdvertiser @relation(fields: [advertiserDbId], references: [id], onDelete: Restrict)
+  campaign   TikTokCampaign?   @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  adGroup    TikTokAdGroup?    @relation(fields: [adGroupId], references: [id], onDelete: SetNull)
+  ad         TikTokAd?         @relation(fields: [adId], references: [id], onDelete: SetNull)
+
+  @@index([advertiserDbId, date, level])
+  @@index([campaignId, date])
+  @@index([adGroupId, date])
+  @@index([adId, date])
+}

@@ -1,6 +1,29 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
-import type { IntegrationProviderName } from './integration.schema.js';
+import { INTEGRATION_PROVIDERS, type IntegrationProviderName } from './integration.schema.js';
+
+function syncRunConnectionData(
+  provider: IntegrationProviderName,
+  connectionId: string,
+): Pick<
+  Prisma.SyncRunUncheckedCreateInput,
+  'shopifyConnectionId' | 'metaConnectionId' | 'tiktokConnectionId'
+> {
+  return {
+    shopifyConnectionId: provider === 'SHOPIFY' ? connectionId : null,
+    metaConnectionId: provider === 'META' ? connectionId : null,
+    tiktokConnectionId: provider === 'TIKTOK' ? connectionId : null,
+  };
+}
+
+function syncRunConnectionFilter(
+  provider: IntegrationProviderName,
+  connectionId: string,
+): Prisma.SyncRunWhereInput {
+  if (provider === 'SHOPIFY') return { shopifyConnectionId: connectionId };
+  if (provider === 'META') return { metaConnectionId: connectionId };
+  return { tiktokConnectionId: connectionId };
+}
 
 export class IntegrationRepository {
   findSummary(storeId: string) {
@@ -30,6 +53,18 @@ export class IntegrationRepository {
             adAccounts: { select: { id: true, metaAccountId: true, name: true, status: true } },
           },
         },
+        tiktokConnection: {
+          select: {
+            id: true,
+            status: true,
+            scopes: true,
+            apiVersion: true,
+            accessTokenExpiresAt: true,
+            refreshTokenExpiresAt: true,
+            lastSyncedAt: true,
+            advertisers: { select: { id: true, advertiserId: true, name: true, status: true } },
+          },
+        },
       },
     });
   }
@@ -49,9 +84,7 @@ export class IntegrationRepository {
         apiVersion: input.apiVersion,
         status: 'RUNNING',
         startedAt: new Date(),
-        ...(input.provider === 'SHOPIFY'
-          ? { shopifyConnectionId: input.connectionId }
-          : { metaConnectionId: input.connectionId }),
+        ...syncRunConnectionData(input.provider, input.connectionId),
       },
     });
   }
@@ -140,23 +173,22 @@ export class IntegrationRepository {
       select: {
         shopifyConnection: { select: { id: true } },
         metaConnection: { select: { id: true } },
+        tiktokConnection: { select: { id: true } },
       },
     });
   }
 
   listSyncRuns(
-    shopifyConnectionId: string | null,
-    metaConnectionId: string | null,
+    connectionIds: Partial<Record<IntegrationProviderName, string | null>>,
     provider: IntegrationProviderName | undefined,
     limit: number,
   ) {
-    const connections: Prisma.SyncRunWhereInput[] = [];
-    if ((!provider || provider === 'SHOPIFY') && shopifyConnectionId) {
-      connections.push({ shopifyConnectionId });
-    }
-    if ((!provider || provider === 'META') && metaConnectionId) {
-      connections.push({ metaConnectionId });
-    }
+    const providers = provider ? [provider] : [...INTEGRATION_PROVIDERS];
+    const connections = providers.flatMap((currentProvider) => {
+      const connectionId = connectionIds[currentProvider];
+      return connectionId ? [syncRunConnectionFilter(currentProvider, connectionId)] : [];
+    });
+
     if (connections.length === 0) return Promise.resolve([]);
 
     return prisma.syncRun.findMany({

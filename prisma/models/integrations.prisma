@@ -1,6 +1,7 @@
 enum IntegrationProvider {
   SHOPIFY
   META
+  TIKTOK
 }
 
 enum ConnectionStatus {
@@ -78,62 +79,93 @@ model MetaConnection {
   webhookDeliveries WebhookDelivery[]
 }
 
+model TikTokConnection {
+  id                     String           @id @default(uuid()) @db.Uuid
+  storeId                String           @unique @db.Uuid
+  status                 ConnectionStatus @default(ACTIVE)
+  openId                 String?
+  businessCenterId       String?
+  selectedAdvertiserIds  String[]         @default([])
+  selectedCatalogIds     String[]         @default([])
+  accessTokenCiphertext  String
+  accessTokenExpiresAt   DateTime?
+  refreshTokenCiphertext String?
+  refreshTokenExpiresAt  DateTime?
+  scopes                 String[]         @default([])
+  apiVersion             String
+  lastSyncedAt           DateTime?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  store             Store                   @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  advertisers       TikTokAdvertiser[]
+  catalogs          TikTokCatalog[]
+  syncRuns          SyncRun[]
+  webhookDeliveries WebhookDelivery[]
+}
+
 model SyncRun {
-  id                  String              @id @default(uuid()) @db.Uuid
-  provider            IntegrationProvider
-  shopifyConnectionId String?             @db.Uuid
-  metaConnectionId    String?             @db.Uuid
-  resourceType        String
-  mode                String?
-  apiVersion          String
-  status              SyncStatus          @default(PENDING)
-  providerOperationId String?
-  cursor              String?
-  recordsRead         Int                 @default(0)
-  recordsWritten      Int                 @default(0)
-  startedAt           DateTime?
-  finishedAt          DateTime?
-  lastError           String?
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
+  id                   String              @id @default(uuid()) @db.Uuid
+  provider             IntegrationProvider
+  shopifyConnectionId  String?             @db.Uuid
+  metaConnectionId     String?             @db.Uuid
+  tiktokConnectionId   String?             @db.Uuid
+  resourceType         String
+  mode                 String?
+  apiVersion           String
+  status               SyncStatus          @default(PENDING)
+  providerOperationId  String?
+  cursor               String?
+  recordsRead          Int                 @default(0)
+  recordsWritten       Int                 @default(0)
+  startedAt            DateTime?
+  finishedAt           DateTime?
+  lastError            String?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
 
   shopifyConnection ShopifyConnection? @relation(fields: [shopifyConnectionId], references: [id], onDelete: SetNull)
   metaConnection    MetaConnection?    @relation(fields: [metaConnectionId], references: [id], onDelete: SetNull)
+  tiktokConnection  TikTokConnection?  @relation(fields: [tiktokConnectionId], references: [id], onDelete: SetNull)
   payloads          ExternalPayload[]
 
   @@index([provider, resourceType, createdAt])
   @@index([providerOperationId])
   @@index([shopifyConnectionId, createdAt])
   @@index([metaConnectionId, createdAt])
+  @@index([tiktokConnectionId, createdAt])
 }
 
 model WebhookDelivery {
-  id                  String              @id @default(uuid()) @db.Uuid
-  provider            IntegrationProvider
-  externalDeliveryId  String
-  shopifyConnectionId String?             @db.Uuid
-  metaConnectionId    String?             @db.Uuid
-  topic               String
-  apiVersion          String?
-  triggeredAt         DateTime?
-  receivedAt          DateTime            @default(now())
-  processingStartedAt DateTime?
-  nextAttemptAt       DateTime?
-  processedAt         DateTime?
-  status              WebhookStatus       @default(RECEIVED)
-  attempts            Int                 @default(0)
-  lastError           String?
-  payload             Json
-  updatedAt           DateTime             @updatedAt
+  id                   String              @id @default(uuid()) @db.Uuid
+  provider             IntegrationProvider
+  externalDeliveryId   String
+  shopifyConnectionId  String?             @db.Uuid
+  metaConnectionId     String?             @db.Uuid
+  tiktokConnectionId   String?             @db.Uuid
+  topic                String
+  apiVersion           String?
+  triggeredAt          DateTime?
+  receivedAt           DateTime            @default(now())
+  processingStartedAt  DateTime?
+  nextAttemptAt        DateTime?
+  processedAt          DateTime?
+  status               WebhookStatus       @default(RECEIVED)
+  attempts             Int                 @default(0)
+  lastError            String?
+  payload              Json
+  updatedAt            DateTime             @updatedAt
 
   shopifyConnection ShopifyConnection? @relation(fields: [shopifyConnectionId], references: [id], onDelete: SetNull)
   metaConnection    MetaConnection?    @relation(fields: [metaConnectionId], references: [id], onDelete: SetNull)
+  tiktokConnection  TikTokConnection?  @relation(fields: [tiktokConnectionId], references: [id], onDelete: SetNull)
   payloads          ExternalPayload[]
 
   @@unique([provider, externalDeliveryId])
   @@index([provider, topic, receivedAt])
   @@index([status, nextAttemptAt, receivedAt])
   @@index([status, processingStartedAt])
+  @@index([tiktokConnectionId, receivedAt])
 }
 
 model ExternalPayload {

@@ -10,7 +10,11 @@ export class IntegrationService {
   async getSummary(storeId: string) {
     const store = await this.repository.findSummary(storeId);
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
-    return { shopify: store.shopifyConnection, meta: store.metaConnection };
+    return {
+      shopify: store.shopifyConnection,
+      meta: store.metaConnection,
+      tiktok: store.tiktokConnection,
+    };
   }
 
   startSyncRun(input: {
@@ -79,8 +83,11 @@ export class IntegrationService {
     if (!connections) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
 
     return this.repository.listSyncRuns(
-      connections.shopifyConnection?.id ?? null,
-      connections.metaConnection?.id ?? null,
+      {
+        SHOPIFY: connections.shopifyConnection?.id ?? null,
+        META: connections.metaConnection?.id ?? null,
+        TIKTOK: connections.tiktokConnection?.id ?? null,
+      },
       provider,
       limit,
     );
