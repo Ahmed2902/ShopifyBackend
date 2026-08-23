@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import type { StoreService } from './store.service.js';
+import { storeService, type StoreService } from './store.service.js';
 
 export class StoreController {
   constructor(private readonly service: StoreService) {}
@@ -14,3 +14,5 @@ export class StoreController {
     res.status(200).json({ store: { ...store, role: req.context.role } });
   };
 }
+
+export const storeController = new StoreController(storeService);

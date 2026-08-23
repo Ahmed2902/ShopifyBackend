@@ -1,6 +1,6 @@
 import { AppError } from '../../errors/app-error.js';
 import type { StoreAccessClaim } from '../../types/auth.js';
-import type { AuthRepository } from './auth.repository.js';
+import { AuthRepository } from './auth.repository.js';
 import type { LoginInput, RegisterInput } from './auth.schema.js';
 import {
   createRefreshToken,
@@ -139,3 +139,5 @@ export class AuthService {
     return user;
   }
 }
+
+export const authService = new AuthService(new AuthRepository());

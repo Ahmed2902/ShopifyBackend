@@ -1,6 +1,6 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { AppError } from '../../errors/app-error.js';
-import type { IntegrationRepository } from './integration.repository.js';
+import { IntegrationRepository } from './integration.repository.js';
 import type { IntegrationProviderName } from './integration.schema.js';
 import { toErrorMessage } from './integration.utils.js';
 
@@ -93,3 +93,6 @@ export class IntegrationService {
     );
   }
 }
+
+// Keep construction close to the feature instead of in a separate *.module.ts file.
+export const integrationService = new IntegrationService(new IntegrationRepository());

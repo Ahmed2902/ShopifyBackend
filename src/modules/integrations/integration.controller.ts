@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { syncRunQuerySchema } from './integration.schema.js';
-import type { IntegrationService } from './integration.service.js';
+import { integrationService, type IntegrationService } from './integration.service.js';
 
 export class IntegrationController {
   constructor(private readonly service: IntegrationService) {}
@@ -20,3 +20,5 @@ export class IntegrationController {
     });
   };
 }
+
+export const integrationController = new IntegrationController(integrationService);

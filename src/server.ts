@@ -2,14 +2,12 @@ import { app } from './app.js';
 import { env } from './config/env.js';
 import { logger } from './lib/logger.js';
 import { prisma } from './lib/prisma.js';
-import { reconciliationWorker } from './modules/reconciliation/reconciliation.module.js';
-import { shopifyWebhookWorker } from './modules/shopify/shopify.module.js';
+import { startWorkers, stopWorkers } from './workers.js';
 
 const server = app.listen(env.PORT, () => {
   logger.info({ port: env.PORT, environment: env.NODE_ENV }, 'API listening');
 });
-shopifyWebhookWorker.start();
-reconciliationWorker.start();
+startWorkers();
 
 let shuttingDown = false;
 
@@ -24,7 +22,7 @@ async function shutdown(signal: string) {
       process.exitCode = 1;
     }
 
-    await Promise.all([shopifyWebhookWorker.stop(), reconciliationWorker.stop()]);
+    await stopWorkers();
     await prisma.$disconnect();
     process.exit();
   });

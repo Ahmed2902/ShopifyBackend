@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../../errors/app-error.js';
 import { loginSchema, registerSchema } from './auth.schema.js';
-import type { AuthService } from './auth.service.js';
+import { authService, type AuthService } from './auth.service.js';
 import {
   clearRefreshCookie,
   REFRESH_COOKIE_NAME,
@@ -54,3 +54,5 @@ export class AuthController {
     res.status(200).json({ user: await this.service.getCurrentUser(req.context.userId!) });
   };
 }
+
+export const authController = new AuthController(authService);

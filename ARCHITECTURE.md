@@ -1,197 +1,259 @@
 # Backend Architecture
 
-## Module convention
+The backend follows one rule above everything else: **keep the request path obvious**.
 
-A normal business module should stay compact:
+A developer should be able to open a feature folder and understand the HTTP entrypoint, business logic, persistence, and provider boundary without tracing a dependency container or framework-specific wiring.
 
-- `*.routes.ts` — route wiring and route-level middleware only
-- `*.controller.ts` — HTTP request/response handling and endpoint-specific Zod parsing
-- `*.service.ts` — business logic only
-- `*.repository.ts` — Prisma/database access
-- `*.schema.ts` — module-specific Zod schemas and inferred types
-- `*.utils.ts` — small module-specific helpers
+Security stays strict, but security concerns belong in clear middleware/protocol boundaries rather than extra architectural layers.
 
-Controllers, services, and repositories are classes. Routes explicitly compose them without a DI framework.
+## Default feature shape
 
-Do not create extra `client`, `manager`, `handler`, `adapter`, or helper files unless a responsibility becomes large enough to justify the split. Small related logic can stay grouped in regions.
+Most features should look like this:
+
+```text
+feature/
+  feature.routes.ts
+  feature.controller.ts
+  feature.service.ts
+  feature.repository.ts   # only when persistence is substantial
+  feature.schema.ts       # when request/query validation is needed
+  feature.utils.ts        # small feature-specific helpers only
+```
+
+Responsibilities:
+
+- `*.routes.ts` — endpoints and route-level guards only.
+- `*.controller.ts` — HTTP translation and endpoint-specific validation.
+- `*.service.ts` — business rules and orchestration.
+- `*.repository.ts` — Prisma/database access.
+- `*.schema.ts` — Zod request/query/parameter schemas.
+- `*.utils.ts` — small protocol/domain helpers that do not deserve their own layer.
+
+Classes remain injectable so focused tests can construct them with mocks. The normal application singleton is exported from the same feature file:
+
+```ts
+export class ExampleService {
+  constructor(private readonly repository: ExampleRepository) {}
+}
+
+export const exampleService = new ExampleService(new ExampleRepository());
+```
+
+Controllers follow the same pattern. Routes import the ready controller and remain declarative.
+
+Do **not** add `*.module.ts` composition containers, factories, managers, adapters, handlers, or provider frameworks unless a concrete problem requires them. Two duplicated lines are often cheaper than a premature abstraction.
+
+## When a feature may split further
+
+Large external-provider domains have real complexity. A feature may use subfolders when a resource family owns substantial logic/data contracts of its own.
+
+Examples that justify a split:
+
+- Shopify bulk operations
+- Shopify orders/refunds
+- Shopify webhooks
+- Meta campaign/ad hierarchy
+- Meta catalogs
+- Meta Insights
+- Meta product/ad mapping
+
+The goal is **not** one giant service file. The goal is to avoid layers that merely forward calls.
+
+## Request flow
+
+The normal request path is:
+
+```text
+route
+  -> middleware/guards
+  -> controller
+  -> service
+  -> repository/provider API
+```
+
+A layer should exist because it owns a responsibility, not because an architecture diagram has a box for it.
 
 ## Request context and authorization
 
-Trusted request identity is built by middleware before controllers run.
+Trusted identity is established before business code runs.
 
 ### Authentication
 
-Login and refresh load the user's current `StoreMembership` rows once and encode the Store access claims in the short-lived access token:
+Login and refresh load the user's current `StoreMembership` rows and encode Store access claims in the short-lived access token:
 
 ```ts
 {
   sub: userId,
-  stores: [
-    { storeId, role }
-  ]
+  stores: [{ storeId, role }]
 }
 ```
 
-`requireAuth` verifies the bearer token and writes the trusted token context to:
+`requireAuth` verifies issuer, audience, algorithm and expiry, then writes trusted data to:
 
 ```ts
 req.context.userId
 req.context.storeAccess
 ```
 
-This avoids a StoreMembership database query on every Store-scoped request. Membership/role changes become visible when a new access token is issued (login or refresh); the access-token TTL therefore bounds how long an old authorization claim can remain valid.
-
 ### Store membership
 
 For Store-scoped routes, `requireStoreMembership` runs after `requireAuth`:
 
 1. validate `:storeId`
-2. find that Store in the verified token's `storeAccess` claims
-3. reject when the token has no matching membership
-4. attach the selected trusted Store context:
+2. find the Store in verified access-token claims
+3. reject missing membership
+4. attach:
 
 ```ts
 req.context.storeId
 req.context.role
 ```
 
-`requireStoreMembership` must not query Prisma.
+It does not query Prisma.
 
 ### Roles
 
-`requireRole(...roles)` runs only after `requireStoreMembership` and checks the already-selected `req.context.role`. It must not issue another membership query.
+`requireRole(...roles)` checks the already-selected trusted Store role. Generic authentication/membership/role prerequisites belong in middleware; resource-specific authorization remains in the service when it is part of the business rule.
 
-Example:
+Repositories still scope tenant-owned queries by trusted `storeId`. Route authorization and Store-scoped persistence are separate isolation boundaries.
 
-```ts
-router.post(
-  '/settings',
-  requireAuth,
-  requireStoreMembership,
-  requireRole('OWNER', 'ADMIN'),
-  controller.update,
-);
-```
+## Validation
 
-Generic access prerequisites belong in middleware:
+Middleware validates values that middleware itself needs, such as the standard Store parameter.
 
-- authenticated user
-- Store membership
-- coarse Store role
+Controllers validate endpoint-specific bodies, query strings and resource parameters with Zod before calling services.
 
-Resource-specific/business authorization belongs in the service when it is part of the business rule rather than generic route access.
+Validation logic should not be duplicated inside the service unless the same business invariant must also hold for non-HTTP callers.
 
-## Service rule
+## Security baseline
 
-Services must not repeat generic authentication, Store-membership, or Store-role checks for HTTP routes. Route middleware establishes those prerequisites before the controller executes.
+Readability must never be achieved by weakening boundaries. The backend keeps security mechanisms small and centralized:
 
-Services receive trusted IDs and implement business behavior.
+- short-lived signed access tokens with strict issuer/audience/algorithm checks
+- opaque refresh tokens stored only as hashes, rotated on use, with reuse detection
+- HttpOnly/Secure cookie policy where applicable
+- Store-scoped authorization middleware
+- timing-safe OAuth/HMAC comparisons
+- OAuth state, PKCE and nonce validation where the provider supports them
+- encrypted provider credentials/tokens at rest
+- exact provider identity/account checks before accepting sync data
+- raw-body webhook signature verification before processing
+- durable webhook idempotency and bounded retries
+- request-body size limits
+- Helmet, explicit CORS and request IDs
 
-## Repository rule
+CSRF protection for cross-site cookie-authenticated mutations, rate limiting and common HTTP validation policy belong in shared middleware. They are intentionally handled in a separate security-hardening change so behavior changes are reviewed independently from structural refactors.
 
-Repositories remain tenant-scoped even after route authorization. Queries for tenant-owned resources must include the trusted `storeId` where applicable.
+## Provider modules
 
-Token-backed route authorization prevents unauthorized route access; Store-scoped queries provide a second isolation boundary at the database layer.
+Provider code uses the same architecture as normal features. Provider-specific database models stay provider-specific when the APIs have different semantics; the intelligence layer receives normalized contracts later.
 
-## Validation rule
+A provider root service is the public orchestration boundary. Subfeatures own substantial resource families.
 
-Middleware validates data that the middleware itself needs, such as the standard `:storeId` parameter.
-
-Controllers validate endpoint-specific body/query/parameter inputs with the module's Zod schemas before calling services.
-
-## Middleware placement
-
-Middleware reused across modules belongs in `src/middleware/`.
-
-Authentication stays in `auth.middleware.ts`. Store membership and Store-role middleware stays in `store.middleware.ts`.
-
-## Provider sync rule
-
-Provider modules keep the same controller/service/repository architecture as the rest of the backend.
-
-- Controllers expose explicit sync operations; they do not contain provider logic.
-- Services orchestrate provider requests, validation, retries, normalization, and SyncRun lifecycle calls.
-- Repositories contain only Store-scoped database reads/writes.
-- Shared integration infrastructure owns `SyncRun` and raw `ExternalPayload` persistence.
-- Small provider transport helpers such as cursor pagination and throttle-delay calculation stay in the provider `*.utils.ts` file.
-- Once a provider module has several substantial resource families, feature-specific code is co-located by feature rather than collected in one giant `service/` directory.
-- Shared cross-feature Shopify infrastructure belongs under `shopify/shared/`; today that includes the Admin GraphQL transport and OAuth/token lifecycle services.
-- Resource folders such as `shopify/order/`, `shopify/bulk/`, and `shopify/webhook/` keep their service, repository, schema, types, and query documents together when those files are specific to that resource family.
-- Lightweight resources that currently need only one focused service, such as catalog and inventory, still get their own feature folder without creating empty repository/schema sublayers.
-- Provider GraphQL documents belong in dedicated `*.queries.ts` files once they are large enough to obscure service behavior. Internal cross-service contracts belong in module-local `*.types.ts` files.
-- A dedicated provider API service is justified once transport behavior such as authentication failures, retries, throttling, response validation, and GraphQL envelopes is shared across multiple resource syncs.
-
-For Shopify, the root `ShopifyService` remains the public facade and orchestration boundary. Feature code is organized as:
+### Shopify
 
 ```text
 shopify/
+  shopify.routes.ts
+  shopify.controller.ts
   shopify.service.ts
-  shopify.module.ts
+  shopify.repository.ts
+  shopify.schema.ts
+  shopify.types.ts
+  shopify.utils.ts
+
   shared/
     shopify-api.service.ts
     shopify-auth.service.ts
+
   catalog/
-    shopify-catalog.service.ts
-    shopify-catalog.queries.ts
   inventory/
-    shopify-inventory.service.ts
-    shopify-inventory.queries.ts
   bulk/
-    shopify-bulk.service.ts
-    shopify-bulk.queries.ts
-    shopify-bulk.schema.ts
   order/
-    shopify-order.service.ts
-    shopify-order.repository.ts
-    shopify-order.queries.ts
-    shopify-order.schema.ts
-    shopify-order.types.ts
+  read/
   webhook/
-    shopify-webhook.service.ts
-    shopify-webhook.repository.ts
-    shopify-webhook.worker.ts
-    shopify-webhook.schema.ts
-    shopify-webhook.utils.ts
 ```
 
-Historical datasets that are naturally large should use Shopify Bulk Operations rather than manual top-level pagination. Order history is started as one asynchronous bulk workflow, the returned provider operation ID is stored on the `SyncRun`, and JSONL results are streamed instead of loaded into memory. Bulk order results contain order rows and nested line-item rows linked through Shopify's `__parentId` field.
+`ShopifyService` coordinates OAuth, sync, order backfills, reconciliation and webhook processing. It delegates provider/resource details to the focused subfeature instead of duplicating them or becoming a giant provider client.
 
-Shopify currently does not allow a connection field under the `Order.refunds` list inside a Bulk Operation, so refund headers are included in the bulk order export and `Refund.refundLineItems` are hydrated afterward through one focused refund query (with pagination only if a refund exceeds Shopify's per-request connection limit). This exception is provider-driven and should not reintroduce manual pagination for the whole order history.
+Historical datasets that are naturally large use Shopify Bulk Operations. JSONL results are streamed rather than loaded entirely into memory. Order/refund ingestion intentionally excludes direct customer PII and preserves channel/test-order metadata needed for analytics and ML quality.
 
-Order/refund ingestion intentionally excludes direct customer PII. Money is normalized in shop currency while presentment currency metadata and raw provider payloads remain available for traceability. Test-order and source metadata must be preserved so analytics and ML can exclude fake demand and distinguish sales channels.
+### Meta
 
-## Shopify webhook rule
+```text
+meta/
+  meta.routes.ts
+  meta.controller.ts
+  meta.service.ts
+  meta.repository.ts
+  meta.schema.ts
+  meta.types.ts
+  meta.utils.ts
 
-Shopify webhook delivery is a durable inbox, not request-thread business processing:
+  shared/
+    meta-api.service.ts
+    meta-auth.service.ts
 
-1. preserve the exact raw HTTP body before JSON parsing
-2. verify `X-Shopify-Hmac-Sha256` with the Shopify app client secret using a timing-safe comparison
-3. normalize the shop domain and parse the payload
-4. deduplicate with Shopify's `X-Shopify-Webhook-Id`
-5. persist the delivery as `QUEUED`
-6. acknowledge the HTTP request after durable persistence
-7. let the webhook worker claim and process queued deliveries with bounded retries and stale-claim recovery
+  ads/
+  catalog/
+  insights/
+  mapping/
+```
 
-Webhook payloads are event signals. For mutable Shopify resources, processing refetches the current Admin GraphQL resource and writes it through the same idempotent persistence paths used by reconciliation instead of relying on provider webhook payload shape as the canonical internal model.
+The provider transport/auth helpers are justified because token lifecycle, retries, pagination, throttling and identity checks are reused across several resource families. They are protocol boundaries, not generic abstraction layers.
 
-Operational webhook coverage includes products, locations, inventory levels, orders, refunds, app uninstall, and bulk-operation completion. Product updates reconcile the product and its full current variant set; missing variants are soft-deleted. Inventory updates append `WEBHOOK_RECONCILIATION` snapshots. Deletions remove or tombstone current state while preserving history where the data model supports it.
+TikTok should follow the same shape. Shared cross-platform abstractions are introduced only for behavior that is truly identical after both providers exist; provider API/persistence semantics remain local to the provider.
 
-`APP_UNINSTALLED` immediately marks the connection `UNINSTALLED` and does not require a working access token. `BULK_OPERATIONS_FINISH` finalizes a matching running order-history `SyncRun`; the explicit GET status endpoint remains a fallback if webhook delivery is delayed or missed.
+## Sync lifecycle
 
-Webhook subscriptions are application configuration, not runtime business logic. Shopify recommends app-specific subscriptions for uniform topics, so operational topics should be configured once in Shopify app configuration/Dev Dashboard and deployed to all installed shops. The backend only receives, verifies, queues, and processes deliveries; OAuth, manual sync, and backfill do not list/create/update webhook subscriptions through Admin GraphQL.
+Shared integration infrastructure owns provider-neutral operational records such as `SyncRun` and raw `ExternalPayload` persistence.
 
-Do not add runtime subscription-management code unless we later have a real per-shop requirement for different topics, URIs, or filters.
+Every provider sync must:
 
-The app configuration must cover the operational topics handled by this backend: product create/update/delete, inventory-level connect/update/disconnect, location create/update/delete/activate/deactivate, order create/update/delete, refund create, app uninstall, and bulk-operation finish. Mandatory privacy/compliance webhooks must also be configured before public App Store distribution.
+- be Store-scoped
+- be idempotent at persistence boundaries
+- record success/failure in its SyncRun
+- preserve useful provider evidence/raw payloads where required
+- validate that returned data belongs to the expected provider account/store
+- avoid deleting current data when a provider response is partial/incomplete
 
-Ongoing Store freshness is a separate concern from historical bootstrap. Webhooks provide near-real-time updates, while periodic reconciliation will later call a small set of resource-focused sync functions (catalog, commerce, inventory). Plan/billing policy decides when a Store is due for reconciliation; Shopify services do not contain plan-specific scheduling logic.
+## Webhooks
 
-Every provider sync must be idempotent at the resource persistence layer, use the Store as its tenant boundary, record failure state in its SyncRun, and preserve relevant raw provider payloads where the data architecture calls for them.
+Webhook HTTP handlers verify and durably persist first; business work happens after acknowledgement.
 
-## Tenancy rule
+For Shopify:
 
-`Store` is the operational tenant boundary and the default ML/data isolation boundary.
+1. preserve exact raw request body
+2. verify `X-Shopify-Hmac-Sha256` with timing-safe comparison
+3. normalize/validate shop identity
+4. deduplicate by provider webhook ID
+5. persist the delivery
+6. acknowledge HTTP request
+7. process asynchronously with bounded retries and stale-claim recovery
 
-There is no Organization layer in the current architecture.
+Mutable resources are refetched through the canonical provider API where appropriate instead of treating a webhook payload as the final internal model.
 
-All merchant-owned data and future ML features must remain explicitly Store-scoped unless a later product requirement deliberately introduces a broader aggregation level.
+TikTok/Meta webhook implementations should follow the same security and idempotency principles while respecting their provider-specific signature/event contracts.
+
+## Workers
+
+Background worker lifecycle is infrastructure and lives in `src/workers.ts`.
+
+Feature services expose the work operation; `workers.ts` only schedules/start/stops the workers. `server.ts` should remain concerned with HTTP process startup and graceful shutdown.
+
+## Tenancy
+
+`Store` is the operational tenant boundary and default data/ML isolation boundary.
+
+There is no Organization layer today. Merchant-owned data and future intelligence/ML features remain explicitly Store-scoped unless a real product requirement introduces a broader aggregation level.
+
+## Simplicity rule for future work
+
+Before adding a new abstraction, ask:
+
+1. Does it remove real duplicated behavior, or only rename it?
+2. Can a developer follow the request path without opening unrelated composition files?
+3. Does the abstraction preserve provider-specific correctness and security?
+4. Can the same result be achieved with one focused service/helper instead?
+
+Prefer the smallest design that remains secure, testable and explicit.

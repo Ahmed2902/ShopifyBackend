@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { shopifyOrderBackfillParamsSchema } from './order/shopify-order.schema.js';
 import { shopifyCallbackSchema, shopifyInstallSchema } from './shopify.schema.js';
-import type { ShopifyService } from './shopify.service.js';
+import { shopifyService, type ShopifyService } from './shopify.service.js';
 import {
   buildShopifySuccessRedirect,
   clearShopifyOAuthCookie,
@@ -82,3 +82,5 @@ export class ShopifyController {
     res.status(200).json(result);
   };
 }
+
+export const shopifyController = new ShopifyController(shopifyService);

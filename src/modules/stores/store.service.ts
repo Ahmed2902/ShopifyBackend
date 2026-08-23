@@ -1,5 +1,5 @@
 import { AppError } from '../../errors/app-error.js';
-import type { StoreRepository } from './store.repository.js';
+import { StoreRepository } from './store.repository.js';
 import { withMembershipRole } from './store.utils.js';
 
 export class StoreService {
@@ -16,3 +16,5 @@ export class StoreService {
     return store;
   }
 }
+
+export const storeService = new StoreService(new StoreRepository());

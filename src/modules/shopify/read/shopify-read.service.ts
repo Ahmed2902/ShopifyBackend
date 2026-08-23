@@ -1,6 +1,6 @@
 import { AppError } from '../../../errors/app-error.js';
-import type { ShopifyMetricsRepository } from './shopify-metrics.repository.js';
-import type { ShopifyReadRepository } from './shopify-read.repository.js';
+import { ShopifyMetricsRepository } from './shopify-metrics.repository.js';
+import { ShopifyReadRepository } from './shopify-read.repository.js';
 import type {
   ShopifyInventoryQuery,
   ShopifyOrdersQuery,
@@ -59,3 +59,8 @@ export class ShopifyReadService {
     return order;
   }
 }
+
+export const shopifyReadService = new ShopifyReadService(
+  new ShopifyReadRepository(),
+  new ShopifyMetricsRepository(),
+);

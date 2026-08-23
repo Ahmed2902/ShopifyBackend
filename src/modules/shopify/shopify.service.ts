@@ -1,11 +1,11 @@
 import { AppError } from '../../errors/app-error.js';
-import type { IntegrationService } from '../integrations/integration.service.js';
+import { integrationService, type IntegrationService } from '../integrations/integration.service.js';
 import { ShopifyBulkService } from './bulk/shopify-bulk.service.js';
 import { ShopifyCatalogService } from './catalog/shopify-catalog.service.js';
 import { ShopifyInventoryService } from './inventory/shopify-inventory.service.js';
 import { ShopifyOrderRepository } from './order/shopify-order.repository.js';
 import { ShopifyOrderService } from './order/shopify-order.service.js';
-import type { ShopifyRepository } from './shopify.repository.js';
+import { ShopifyRepository } from './shopify.repository.js';
 import { ShopifyApiService } from './shared/shopify-api.service.js';
 import { ShopifyAuthService } from './shared/shopify-auth.service.js';
 import type { ShopifyInventorySnapshotSource, ShopifySyncContext } from './shopify.types.js';
@@ -404,3 +404,10 @@ export class ShopifyService {
     });
   }
 }
+
+export const shopifyService = new ShopifyService(
+  new ShopifyRepository(),
+  integrationService,
+  new ShopifyOrderRepository(),
+  new ShopifyWebhookRepository(),
+);

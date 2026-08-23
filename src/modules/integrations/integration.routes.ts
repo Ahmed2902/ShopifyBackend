@@ -1,12 +1,9 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireStoreMembership } from '../../middleware/store.middleware.js';
-import { IntegrationController } from './integration.controller.js';
-import { integrationService } from './integration.module.js';
-
-const controller = new IntegrationController(integrationService);
+import { integrationController } from './integration.controller.js';
 
 export const integrationRouter = Router({ mergeParams: true });
 integrationRouter.use(requireAuth, requireStoreMembership);
-integrationRouter.get('/', controller.summary);
-integrationRouter.get('/sync-runs', controller.syncRuns);
+integrationRouter.get('/', integrationController.summary);
+integrationRouter.get('/sync-runs', integrationController.syncRuns);
