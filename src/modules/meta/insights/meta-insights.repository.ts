@@ -217,17 +217,24 @@ export class MetaInsightsRepository {
     });
   }
 
-  listDaily(
+  async listDaily(
     storeId: string,
     input: { from: Date; to: Date; adId?: string; page: number; limit: number },
   ) {
+    const connection = await prisma.metaConnection.findUnique({
+      where: { storeId },
+      select: { selectedAdAccountIds: true },
+    });
+    const selectedIds = connection?.selectedAdAccountIds ?? [];
+    if (selectedIds.length === 0) return { items: [], total: 0 };
+
     const where = {
-      adAccount: { storeId },
+      adAccount: { storeId, metaAccountId: { in: selectedIds } },
       level: 'AD' as const,
       date: { gte: input.from, lte: input.to },
       ...(input.adId ? { ad: { metaAdId: input.adId } } : {}),
     } satisfies Prisma.MetaInsightDailyWhereInput;
-    return prisma.$transaction([
+    const [items, total] = await prisma.$transaction([
       prisma.metaInsightDaily.findMany({
         where,
         select: {
@@ -270,6 +277,7 @@ export class MetaInsightsRepository {
         take: input.limit,
       }),
       prisma.metaInsightDaily.count({ where }),
-    ]).then(([items, total]) => ({ items, total }));
+    ]);
+    return { items, total };
   }
 }
