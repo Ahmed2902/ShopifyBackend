@@ -1,4 +1,5 @@
 import { AppError } from '../../errors/app-error.js';
+import type { StoreAccessClaim } from '../../types/auth.js';
 import type { AuthRepository } from './auth.repository.js';
 import type { LoginInput, RegisterInput } from './auth.schema.js';
 import {
@@ -9,7 +10,6 @@ import {
   normalizeEmail,
   refreshSessionExpiry,
   verifyPassword,
-  type StoreAccessClaim,
 } from './auth.utils.js';
 
 export class AuthService {
