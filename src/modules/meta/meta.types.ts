@@ -46,7 +46,19 @@ export interface MetaAdAccountAsset {
   raw: unknown;
 }
 
+export interface MetaCatalogAsset {
+  id: string;
+  name: string;
+  businessId: string | null;
+  ownerBusinessId: string | null;
+  vertical: string | null;
+  productCount: number | null;
+  feedCount: number | null;
+  raw: unknown;
+}
+
 export interface MetaDiscoveredAssets {
   businesses: MetaBusinessAsset[];
   adAccounts: MetaAdAccountAsset[];
+  catalogs: MetaCatalogAsset[];
 }
