@@ -514,7 +514,13 @@ export class MetaMappingRepository {
           },
         });
       }
-      const scope = deriveScopeFromMappings(mappings);
+      const scope = deriveScopeFromMappings(
+        mappings.map((mapping) => ({
+          productId: mapping.productId,
+          variantId: mapping.variantId ?? null,
+          granularity: mapping.granularity,
+        })),
+      );
       await tx.metaAd.update({
         where: { id: ad.id },
         data: {
