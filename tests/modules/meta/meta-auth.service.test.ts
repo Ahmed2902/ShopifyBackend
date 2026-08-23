@@ -107,7 +107,7 @@ describe('MetaAuthService', () => {
     expect(repository.upsertConnection).not.toHaveBeenCalled();
   });
 
-  it('rejects an active stored connection that no longer has every required permission', async () => {
+  it('marks an active stored connection for reauthorization if a required permission is missing', async () => {
     const { repository, service } = build();
     vi.mocked(repository.findConnectionForStore).mockResolvedValue({
       id: connectionId,
@@ -128,6 +128,7 @@ describe('MetaAuthService', () => {
     await expect(service.getApiContext(storeId)).rejects.toMatchObject({
       code: 'META_CATALOG_PERMISSION_REQUIRED',
     });
+    expect(repository.markConnectionReauthRequired).toHaveBeenCalledWith(connectionId);
   });
 
   it('marks an expired stored token for reauthorization before returning it', async () => {
