@@ -16,91 +16,31 @@ import {
 const PAGE_SIZE = '100';
 
 const CAMPAIGN_FIELDS = [
-  'id',
-  'name',
-  'status',
-  'configured_status',
-  'effective_status',
-  'objective',
-  'buying_type',
-  'bid_strategy',
-  'daily_budget',
-  'lifetime_budget',
-  'budget_remaining',
-  'spend_cap',
-  'start_time',
-  'stop_time',
-  'promoted_object',
-  'created_time',
-  'updated_time',
+  'id', 'name', 'status', 'configured_status', 'effective_status', 'objective', 'buying_type',
+  'bid_strategy', 'daily_budget', 'lifetime_budget', 'budget_remaining', 'spend_cap', 'start_time',
+  'stop_time', 'promoted_object', 'recommendations', 'issues_info', 'created_time', 'updated_time',
 ].join(',');
 
 const ADSET_FIELDS = [
-  'id',
-  'campaign_id',
-  'name',
-  'status',
-  'configured_status',
-  'effective_status',
-  'daily_budget',
-  'lifetime_budget',
-  'budget_remaining',
-  'daily_spend_cap',
-  'lifetime_spend_cap',
-  'bid_strategy',
-  'bid_amount',
-  'bid_constraints',
-  'billing_event',
-  'optimization_goal',
-  'destination_type',
-  'is_dynamic_creative',
-  'targeting',
-  'promoted_object',
-  'attribution_spec',
-  'start_time',
-  'end_time',
-  'learning_stage_info',
-  'created_time',
-  'updated_time',
+  'id', 'campaign_id', 'name', 'status', 'configured_status', 'effective_status', 'daily_budget',
+  'lifetime_budget', 'budget_remaining', 'daily_spend_cap', 'lifetime_spend_cap', 'bid_strategy',
+  'bid_amount', 'bid_constraints', 'billing_event', 'optimization_goal', 'destination_type',
+  'is_dynamic_creative', 'targeting', 'promoted_object', 'attribution_spec', 'start_time', 'end_time',
+  'learning_stage_info', 'recommendations', 'issues_info', 'created_time', 'updated_time',
 ].join(',');
 
 const CREATIVE_FIELDS = [
-  'id',
-  'name',
-  'title',
-  'body',
-  'call_to_action_type',
-  'image_url',
-  'thumbnail_url',
-  'effective_object_story_id',
-  'effective_instagram_media_id',
-  'instagram_permalink_url',
-  'object_story_spec',
-  'asset_feed_spec',
-  'degrees_of_freedom_spec',
-  'product_set_id',
-  'template_url',
-  'url_tags',
+  'id', 'name', 'title', 'body', 'call_to_action', 'call_to_action_type', 'image_url', 'thumbnail_url',
+  'video_id', 'link_url', 'link_deep_link_url', 'object_url', 'object_story_id',
+  'effective_object_story_id', 'effective_instagram_media_id', 'instagram_permalink_url',
+  'object_story_spec', 'product_set_id', 'product_data', 'asset_feed_spec', 'degrees_of_freedom_spec',
+  'template_url', 'template_url_spec', 'url_tags', 'created_time', 'updated_time',
 ].join(',');
 
 const AD_FIELDS = [
-  'id',
-  'campaign_id',
-  'adset_id',
-  'name',
-  'status',
-  'configured_status',
-  'effective_status',
-  'conversion_domain',
-  'source_ad_id',
-  'creative{id}',
-  'tracking_specs',
-  'conversion_specs',
-  'recommendations',
-  'issues_info',
-  'adlabels',
-  'created_time',
-  'updated_time',
+  'id', 'campaign_id', 'adset_id', 'name', 'status', 'configured_status', 'effective_status',
+  'conversion_domain', 'source_ad_id', 'creative{id}', 'placement', 'tracking_specs', 'conversion_specs',
+  'recommendations', 'issues_info', 'adlabels', 'created_time', 'updated_time',
 ].join(',');
 
 function parseOrThrow<T>(
@@ -145,11 +85,7 @@ export class MetaAdsService {
     context: MetaApiContext,
     metaAccountId: string,
   ): Promise<MetaAdsHierarchySyncResult> {
-    const account = await this.repository.findAccount(
-      context.storeId,
-      context.connectionId,
-      metaAccountId,
-    );
+    const account = await this.repository.findAccount(context.storeId, context.connectionId, metaAccountId);
     if (!account) {
       throw new AppError(
         'Selected Meta ad account is missing from local configuration',
@@ -158,6 +94,8 @@ export class MetaAdsService {
       );
     }
 
+    // Fetch a complete provider snapshot before mutating local current-state rows. This prevents a
+    // partially fetched account from being interpreted as provider deletions.
     const [accountProfile, campaigns, adSets, creatives, ads] = await Promise.all([
       this.apiService.getAdAccount(context, metaAccountId),
       this.fetchCampaigns(context, metaAccountId),
@@ -244,11 +182,9 @@ export class MetaAdsService {
 
     const recordsRead = 1 + campaigns.length + adSets.length + creatives.length + ads.length;
     const softDeleted = deleted.campaigns + deleted.adSets + deleted.creatives + deleted.ads;
-    const recordsWritten = recordsRead + softDeleted;
-
     return {
       recordsRead,
-      recordsWritten,
+      recordsWritten: recordsRead + softDeleted,
       breakdown: {
         adAccounts: 1,
         campaigns: campaigns.length,
