@@ -6,8 +6,10 @@ import type { MetaCatalogItemPayload } from './meta-catalog.schema.js';
 
 function currencyFractionDigits(currency: string): number {
   try {
-    return new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions()
-      .maximumFractionDigits;
+    return (
+      new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions()
+        .maximumFractionDigits ?? 2
+    );
   } catch {
     return 2;
   }
