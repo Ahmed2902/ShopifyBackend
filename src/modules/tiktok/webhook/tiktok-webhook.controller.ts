@@ -6,9 +6,11 @@ export class TikTokWebhookController {
 
   receive = async (req: Request, res: Response) => {
     const signatureHeader = req.header('TikTok-Signature') ?? req.header('tiktok-signature') ?? undefined;
+    const token = typeof req.query.token === 'string' ? req.query.token : undefined;
     const result = await this.service.receive({
       rawBody: req.rawBody,
       signature: signatureHeader,
+      token,
       payload: req.body,
     });
     res.status(200).json(result);
