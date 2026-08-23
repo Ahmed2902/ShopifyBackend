@@ -1,4 +1,4 @@
-import type { StoreAccessClaim, StoreRoleClaim } from '../modules/auth/auth.utils.js';
+import type { StoreAccessClaim, StoreRoleClaim } from './auth.js';
 
 declare module 'express-serve-static-core' {
   interface Request {
