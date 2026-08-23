@@ -1,6 +1,6 @@
 import { logger } from '../../lib/logger.js';
 import { PollingWorker } from '../../lib/polling-worker.js';
-import { integrationService } from '../integrations/integration.service.js';
+import { integrationService } from '../integrations/integration.module.js';
 import { ShopifyOrderRepository } from './order/shopify-order.repository.js';
 import { ShopifyMetricsRepository } from './read/shopify-metrics.repository.js';
 import { ShopifyReadRepository } from './read/shopify-read.repository.js';
