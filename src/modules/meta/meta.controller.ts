@@ -1,6 +1,14 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../../errors/app-error.js';
 import {
+  metaManualAdMappingsSchema,
+  metaManualCatalogMappingSchema,
+  metaMappingAdParamsSchema,
+  metaMappingCatalogItemParamsSchema,
+  metaMappingListQuerySchema,
+} from './mapping/meta-mapping.schema.js';
+import type { MetaMappingService } from './mapping/meta-mapping.service.js';
+import {
   metaAdListQuerySchema,
   metaAdParamsSchema,
   metaAdSetListQuerySchema,
@@ -17,21 +25,26 @@ import type { MetaService } from './meta.service.js';
 import { buildMetaSuccessRedirect } from './meta.utils.js';
 
 export class MetaController {
-  constructor(private readonly service: MetaService) {}
+  constructor(
+    private readonly service: MetaService,
+    private readonly mappings: MetaMappingService,
+  ) {}
 
   startInstall = async (req: Request, res: Response) => {
-    const result = await this.service.startOAuthInstall(req.context.userId!, req.context.storeId!);
-    res.status(200).json(result);
+    res.status(200).json(
+      await this.service.startOAuthInstall(req.context.userId!, req.context.storeId!),
+    );
   };
 
   completeInstall = async (req: Request, res: Response) => {
-    const providerError = typeof req.query.error === 'string' ? req.query.error : null;
-    if (providerError) {
-      const description =
+    if (typeof req.query.error === 'string') {
+      throw new AppError(
         typeof req.query.error_description === 'string'
           ? req.query.error_description
-          : 'Meta authorization was not completed';
-      throw new AppError(description, 400, 'META_OAUTH_DENIED');
+          : 'Meta authorization was not completed',
+        400,
+        'META_OAUTH_DENIED',
+      );
     }
 
     const query = metaCallbackSchema.parse({ code: req.query.code, state: req.query.state });
@@ -48,13 +61,17 @@ export class MetaController {
   };
 
   configure = async (req: Request, res: Response) => {
-    const input = metaConfigureAssetsSchema.parse(req.body);
-    res.status(200).json(await this.service.configureAssets(req.context.storeId!, input));
+    res.status(200).json(
+      await this.service.configureAssets(
+        req.context.storeId!,
+        metaConfigureAssetsSchema.parse(req.body),
+      ),
+    );
   };
 
   configureCatalogs = async (req: Request, res: Response) => {
-    const input = metaConfigureCatalogsSchema.parse(req.body);
-    res.status(200).json(await this.service.configureCatalogs(req.context.storeId!, input.catalogIds));
+    const { catalogIds } = metaConfigureCatalogsSchema.parse(req.body);
+    res.status(200).json(await this.service.configureCatalogs(req.context.storeId!, catalogIds));
   };
 
   sync = async (req: Request, res: Response) => {
@@ -66,8 +83,8 @@ export class MetaController {
   };
 
   syncInsights = async (req: Request, res: Response) => {
-    const input = metaInsightsSyncSchema.parse(req.body ?? {});
-    res.status(200).json(await this.service.syncInsights(req.context.storeId!, input.lookbackDays));
+    const { lookbackDays } = metaInsightsSyncSchema.parse(req.body ?? {});
+    res.status(200).json(await this.service.syncInsights(req.context.storeId!, lookbackDays));
   };
 
   adAccounts = async (req: Request, res: Response) => {
@@ -75,18 +92,24 @@ export class MetaController {
   };
 
   campaigns = async (req: Request, res: Response) => {
-    const input = metaCampaignListQuerySchema.parse(req.query);
-    res.status(200).json(await this.service.listCampaigns(req.context.storeId!, input));
+    res.status(200).json(
+      await this.service.listCampaigns(
+        req.context.storeId!,
+        metaCampaignListQuerySchema.parse(req.query),
+      ),
+    );
   };
 
   adSets = async (req: Request, res: Response) => {
-    const input = metaAdSetListQuerySchema.parse(req.query);
-    res.status(200).json(await this.service.listAdSets(req.context.storeId!, input));
+    res.status(200).json(
+      await this.service.listAdSets(req.context.storeId!, metaAdSetListQuerySchema.parse(req.query)),
+    );
   };
 
   ads = async (req: Request, res: Response) => {
-    const input = metaAdListQuerySchema.parse(req.query);
-    res.status(200).json(await this.service.listAds(req.context.storeId!, input));
+    res.status(200).json(
+      await this.service.listAds(req.context.storeId!, metaAdListQuerySchema.parse(req.query)),
+    );
   };
 
   ad = async (req: Request, res: Response) => {
@@ -101,11 +124,58 @@ export class MetaController {
   catalogItems = async (req: Request, res: Response) => {
     const { catalogId } = metaCatalogParamsSchema.parse(req.params);
     const { page, limit } = metaCatalogItemsQuerySchema.parse(req.query);
-    res.status(200).json(await this.service.listCatalogItems(req.context.storeId!, catalogId, page, limit));
+    res.status(200).json(
+      await this.service.listCatalogItems(req.context.storeId!, catalogId, page, limit),
+    );
   };
 
   insights = async (req: Request, res: Response) => {
-    const input = metaInsightsListQuerySchema.parse(req.query);
-    res.status(200).json(await this.service.listInsights(req.context.storeId!, input));
+    res.status(200).json(
+      await this.service.listInsights(
+        req.context.storeId!,
+        metaInsightsListQuerySchema.parse(req.query),
+      ),
+    );
+  };
+
+  mappingResolve = async (req: Request, res: Response) => {
+    res.status(200).json(await this.mappings.resolveStoreMappings(req.context.storeId!));
+  };
+
+  mappingSummary = async (req: Request, res: Response) => {
+    res.status(200).json(await this.mappings.mappingSummary(req.context.storeId!));
+  };
+
+  mappingAds = async (req: Request, res: Response) => {
+    const { page, limit } = metaMappingListQuerySchema.parse(req.query);
+    res.status(200).json(await this.mappings.listAdMappings(req.context.storeId!, page, limit));
+  };
+
+  mappingSuggestions = async (req: Request, res: Response) => {
+    const { adId } = metaMappingAdParamsSchema.parse(req.params);
+    res.status(200).json(await this.mappings.suggestions(req.context.storeId!, adId));
+  };
+
+  mappingReplaceAd = async (req: Request, res: Response) => {
+    const { adId } = metaMappingAdParamsSchema.parse(req.params);
+    const { mappings } = metaManualAdMappingsSchema.parse(req.body);
+    res.status(200).json(
+      await this.mappings.replaceManualAdMappings(req.context.storeId!, adId, mappings),
+    );
+  };
+
+  mappingConfirmAd = async (req: Request, res: Response) => {
+    const { adId } = metaMappingAdParamsSchema.parse(req.params);
+    res.status(200).json(
+      await this.mappings.confirmCurrentAdMappings(req.context.storeId!, adId),
+    );
+  };
+
+  mappingReplaceCatalogItem = async (req: Request, res: Response) => {
+    const { itemId } = metaMappingCatalogItemParamsSchema.parse(req.params);
+    const { variantIds } = metaManualCatalogMappingSchema.parse(req.body);
+    res.status(200).json(
+      await this.mappings.replaceManualCatalogMappings(req.context.storeId!, itemId, variantIds),
+    );
   };
 }
