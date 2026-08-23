@@ -15,12 +15,9 @@ import { MetaAuthService } from './shared/meta-auth.service.js';
 const metaRepository = new MetaRepository();
 const metaApiService = new MetaApiService(metaRepository);
 const metaAuthService = new MetaAuthService(metaRepository, metaApiService);
-const metaAdsRepository = new MetaAdsRepository();
-const metaAdsService = new MetaAdsService(metaAdsRepository, metaApiService);
-const metaCatalogRepository = new MetaCatalogRepository();
-const metaCatalogService = new MetaCatalogService(metaCatalogRepository, metaApiService);
-const metaInsightsRepository = new MetaInsightsRepository();
-const metaInsightsService = new MetaInsightsService(metaInsightsRepository, metaApiService);
+const metaAdsService = new MetaAdsService(new MetaAdsRepository(), metaApiService);
+const metaCatalogService = new MetaCatalogService(new MetaCatalogRepository(), metaApiService);
+const metaInsightsService = new MetaInsightsService(new MetaInsightsRepository(), metaApiService);
 
 export const metaMappingService = new MetaMappingService(
   new MetaMappingRepository(),
@@ -32,10 +29,7 @@ export const metaService = new MetaService(
   metaAuthService,
   metaApiService,
   metaAdsService,
-  metaAdsRepository,
   integrationService,
   metaCatalogService,
-  metaCatalogRepository,
   metaInsightsService,
-  metaInsightsRepository,
 );
