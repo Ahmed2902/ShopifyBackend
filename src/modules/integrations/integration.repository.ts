@@ -1,5 +1,6 @@
-import type { IntegrationProvider, Prisma } from '../../generated/prisma/client.js';
+import type { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
+import type { IntegrationProviderName } from './integration.schema.js';
 
 export class IntegrationRepository {
   findSummary(storeId: string) {
@@ -34,7 +35,7 @@ export class IntegrationRepository {
   }
 
   createSyncRun(input: {
-    provider: IntegrationProvider;
+    provider: IntegrationProviderName;
     connectionId: string;
     resourceType: string;
     mode: string | null;
@@ -122,7 +123,7 @@ export class IntegrationRepository {
   }
 
   createExternalPayload(input: {
-    provider: IntegrationProvider;
+    provider: IntegrationProviderName;
     resourceType: string;
     externalId: string | null;
     apiVersion: string;
@@ -146,7 +147,7 @@ export class IntegrationRepository {
   listSyncRuns(
     shopifyConnectionId: string | null,
     metaConnectionId: string | null,
-    provider: IntegrationProvider | undefined,
+    provider: IntegrationProviderName | undefined,
     limit: number,
   ) {
     const connections: Prisma.SyncRunWhereInput[] = [];
