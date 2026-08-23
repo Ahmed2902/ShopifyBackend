@@ -1,14 +1,6 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../../errors/app-error.js';
 import {
-  metaManualAdMappingsSchema,
-  metaManualCatalogMappingSchema,
-  metaMappingAdParamsSchema,
-  metaMappingCatalogItemParamsSchema,
-  metaMappingListQuerySchema,
-} from './mapping/meta-mapping.schema.js';
-import type { MetaMappingService } from './mapping/meta-mapping.service.js';
-import {
   metaAdListQuerySchema,
   metaAdParamsSchema,
   metaAdSetListQuerySchema,
@@ -25,10 +17,7 @@ import type { MetaService } from './meta.service.js';
 import { buildMetaSuccessRedirect } from './meta.utils.js';
 
 export class MetaController {
-  constructor(
-    private readonly service: MetaService,
-    private readonly mappings: MetaMappingService,
-  ) {}
+  constructor(private readonly service: MetaService) {}
 
   startInstall = async (req: Request, res: Response) => {
     res.status(200).json(
@@ -135,47 +124,6 @@ export class MetaController {
         req.context.storeId!,
         metaInsightsListQuerySchema.parse(req.query),
       ),
-    );
-  };
-
-  mappingResolve = async (req: Request, res: Response) => {
-    res.status(200).json(await this.mappings.resolveStoreMappings(req.context.storeId!));
-  };
-
-  mappingSummary = async (req: Request, res: Response) => {
-    res.status(200).json(await this.mappings.mappingSummary(req.context.storeId!));
-  };
-
-  mappingAds = async (req: Request, res: Response) => {
-    const { page, limit } = metaMappingListQuerySchema.parse(req.query);
-    res.status(200).json(await this.mappings.listAdMappings(req.context.storeId!, page, limit));
-  };
-
-  mappingSuggestions = async (req: Request, res: Response) => {
-    const { adId } = metaMappingAdParamsSchema.parse(req.params);
-    res.status(200).json(await this.mappings.suggestions(req.context.storeId!, adId));
-  };
-
-  mappingReplaceAd = async (req: Request, res: Response) => {
-    const { adId } = metaMappingAdParamsSchema.parse(req.params);
-    const { mappings } = metaManualAdMappingsSchema.parse(req.body);
-    res.status(200).json(
-      await this.mappings.replaceManualAdMappings(req.context.storeId!, adId, mappings),
-    );
-  };
-
-  mappingConfirmAd = async (req: Request, res: Response) => {
-    const { adId } = metaMappingAdParamsSchema.parse(req.params);
-    res.status(200).json(
-      await this.mappings.confirmCurrentAdMappings(req.context.storeId!, adId),
-    );
-  };
-
-  mappingReplaceCatalogItem = async (req: Request, res: Response) => {
-    const { itemId } = metaMappingCatalogItemParamsSchema.parse(req.params);
-    const { variantIds } = metaManualCatalogMappingSchema.parse(req.body);
-    res.status(200).json(
-      await this.mappings.replaceManualCatalogMappings(req.context.storeId!, itemId, variantIds),
     );
   };
 }
