@@ -29,6 +29,12 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function webhookCallbackUrl(): string {
+  const url = new URL(env.TIKTOK_WEBHOOK_URL);
+  url.searchParams.set('token', env.TIKTOK_WEBHOOK_TOKEN);
+  return url.toString();
+}
+
 export class TikTokApiService {
   private buildUrl(endpoint: string, query?: Record<string, unknown>): URL {
     const normalized = endpoint.replace(/^\/+|\/+$/g, '');
@@ -150,6 +156,36 @@ export class TikTokApiService {
       },
     });
     return (Array.isArray(data.list) ? data.list : []).map(asRecord);
+  }
+
+  async subscribeReportDataChanges(context: TikTokApiContext, advertiserIds: string[]) {
+    if (advertiserIds.length === 0) return null;
+    return this.execute<Record<string, unknown>>('subscription/subscribe', {
+      method: 'POST',
+      body: {
+        app_id: env.TIKTOK_APP_ID,
+        secret: env.TIKTOK_APP_SECRET,
+        subscribe_entity: 'REPORT_DATA_CHANGE',
+        callback_url: webhookCallbackUrl(),
+        subscription_detail: {
+          access_token: context.accessToken,
+          advertiser_ids: advertiserIds,
+          notify_frequency: '5_MINUTE',
+        },
+      },
+    });
+  }
+
+  listSubscriptions(subscribeEntity?: string) {
+    return this.execute<Record<string, unknown>>('subscription/get', {
+      query: {
+        app_id: env.TIKTOK_APP_ID,
+        secret: env.TIKTOK_APP_SECRET,
+        subscribe_entity: subscribeEntity,
+        page: 1,
+        page_size: 1000,
+      },
+    });
   }
 
   async paginate(
