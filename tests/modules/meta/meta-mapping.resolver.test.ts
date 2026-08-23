@@ -242,6 +242,60 @@ describe('Meta ad → Shopify resolver', () => {
     });
   });
 
+  it('keeps a shared catalog option at PRODUCT_OPTION granularity instead of inventing a size', () => {
+    const dataset = baseDataset();
+    dataset.catalogItems = [
+      catalog({
+        id: 'catalog-black-s',
+        metaProductItemId: 'meta-black-s',
+        retailerId: 'HOOD-BLK-S',
+        activeMappings: [
+          {
+            id: 'map-black-s',
+            variantId: 'black-s',
+            source: 'RETAILER_ID_SKU',
+            confidence: 1,
+            isMerchantConfirmed: false,
+          },
+        ],
+      }),
+      catalog({
+        id: 'catalog-black-m',
+        metaProductItemId: 'meta-black-m',
+        retailerId: 'HOOD-BLK-M',
+        activeMappings: [
+          {
+            id: 'map-black-m',
+            variantId: 'black-m',
+            source: 'RETAILER_ID_SKU',
+            confidence: 1,
+            isMerchantConfirmed: false,
+          },
+        ],
+      }),
+    ];
+
+    const result = resolveAd(
+      ad({
+        creative: {
+          ...ad().creative!,
+          productData: { content_ids: ['meta-black-s', 'meta-black-m'] },
+        },
+      }),
+      dataset,
+    );
+
+    expect(result.scope).toBe('PRODUCT_OPTION');
+    expect(result.mappings).toHaveLength(1);
+    expect(result.mappings[0]).toMatchObject({
+      productId: 'hoodie',
+      variantId: null,
+      granularity: 'PRODUCT_OPTION',
+      optionSelector: { Color: ['Black'] },
+      source: 'CATALOG_ITEM',
+    });
+  });
+
   it('classifies a product-set ad as MULTI_PRODUCT without pretending to know a product', () => {
     const dataset = baseDataset();
     const result = resolveAd(
@@ -269,10 +323,7 @@ describe('Meta ad → Shopify resolver', () => {
 
   it('keeps text-only product matches as review suggestions instead of auto-mapping', () => {
     const dataset = baseDataset();
-    const result = resolveAd(
-      ad({ name: 'Classic Hoodie prospecting' }),
-      dataset,
-    );
+    const result = resolveAd(ad({ name: 'Classic Hoodie prospecting' }), dataset);
 
     expect(result.scope).toBe('UNKNOWN');
     expect(result.mappings).toEqual([]);
