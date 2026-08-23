@@ -6,10 +6,9 @@ import { ShopifyInventoryService } from './inventory/shopify-inventory.service.j
 import { ShopifyOrderRepository } from './order/shopify-order.repository.js';
 import { ShopifyOrderService } from './order/shopify-order.service.js';
 import type { ShopifyRepository } from './shopify.repository.js';
-import type { ShopifyShopProfile } from './shopify.schema.js';
 import { ShopifyApiService } from './shared/shopify-api.service.js';
 import { ShopifyAuthService } from './shared/shopify-auth.service.js';
-import type { ShopifySyncContext } from './shopify.types.js';
+import type { ShopifyInventorySnapshotSource, ShopifySyncContext } from './shopify.types.js';
 import { normalizeShopDomain } from './shopify.utils.js';
 import { ShopifyWebhookRepository } from './webhook/shopify-webhook.repository.js';
 import { ShopifyWebhookService } from './webhook/shopify-webhook.service.js';
@@ -95,41 +94,17 @@ export class ShopifyService {
     const syncContext: ShopifySyncContext = { ...syncContextBase, syncRunId: syncRun.id };
 
     try {
-      await this.syncStoreProfile(syncContext);
-      const catalog = await this.catalogService.sync(syncContext);
-      const snapshotSource = connection.lastSyncedAt ? 'MANUAL_RECONCILIATION' : 'INITIAL_SYNC';
-      const inventory = await this.inventoryService.sync(syncContext, snapshotSource);
-
-      const breakdown = {
-        shop: 1,
-        products: catalog.products.written,
-        variants: catalog.variants.written,
-        locations: inventory.locations.written,
-        inventoryLevels: inventory.inventoryLevels.written,
-      };
-      const recordsRead =
-        1 +
-        catalog.products.read +
-        catalog.variants.read +
-        inventory.locations.read +
-        inventory.inventoryLevels.read;
-      const recordsWritten =
-        1 +
-        catalog.products.written +
-        catalog.variants.written +
-        inventory.locations.written +
-        inventory.inventoryLevels.written;
-
+      const result = await this.syncCatalogInventorySnapshot(
+        syncContext,
+        connection.lastSyncedAt ? 'MANUAL_RECONCILIATION' : 'INITIAL_SYNC',
+      );
       await this.repository.markConnectionSynced(connection.id);
-      await this.integrationService.completeSyncRun(syncRun.id, { recordsRead, recordsWritten });
-
+      await this.integrationService.completeSyncRun(syncRun.id, result);
       return {
         syncRunId: syncRun.id,
         status: 'SUCCEEDED' as const,
         resourceType: CATALOG_INVENTORY_RESOURCE,
-        recordsRead,
-        recordsWritten,
-        breakdown,
+        ...result,
       };
     } catch (error) {
       await this.integrationService.failSyncRun(syncRun.id, error).catch(() => undefined);
@@ -145,7 +120,6 @@ export class ShopifyService {
     );
     const since =
       previousRun?.finishedAt ?? new Date(Date.now() - FALLBACK_RECONCILIATION_LOOKBACK_MS);
-
     const syncRun = await this.integrationService.startSyncRun({
       provider: 'SHOPIFY',
       connectionId: connection.id,
@@ -156,54 +130,32 @@ export class ShopifyService {
     const syncContext: ShopifySyncContext = { ...syncContextBase, syncRunId: syncRun.id };
 
     try {
-      await this.syncStoreProfile(syncContext);
-      const catalog = await this.catalogService.sync(syncContext);
-      const inventory = await this.inventoryService.sync(
-        syncContext,
-        'PERIODIC_RECONCILIATION',
-      );
+      const base = await this.syncCatalogInventorySnapshot(syncContext, 'PERIODIC_RECONCILIATION');
       const commerce = this.canReadOrders(connection.scopes)
         ? await this.orderService.reconcileUpdatedOrders(syncContext, since)
         : null;
-
-      const recordsRead =
-        1 +
-        catalog.products.read +
-        catalog.variants.read +
-        inventory.locations.read +
-        inventory.inventoryLevels.read +
-        (commerce?.recordsRead ?? 0);
-      const recordsWritten =
-        1 +
-        catalog.products.written +
-        catalog.variants.written +
-        inventory.locations.written +
-        inventory.inventoryLevels.written +
-        (commerce?.recordsWritten ?? 0);
-      const breakdown = {
-        shop: 1,
-        products: catalog.products.written,
-        variants: catalog.variants.written,
-        locations: inventory.locations.written,
-        inventoryLevels: inventory.inventoryLevels.written,
-        ordersScanned: commerce?.ordersScanned ?? 0,
-        orders: commerce?.breakdown.orders ?? 0,
-        orderLineItems: commerce?.breakdown.lineItems ?? 0,
-        refunds: commerce?.breakdown.refunds ?? 0,
-        refundLineItems: commerce?.breakdown.refundLineItems ?? 0,
-        commerceSkipped: !commerce,
+      const result = {
+        recordsRead: base.recordsRead + (commerce?.recordsRead ?? 0),
+        recordsWritten: base.recordsWritten + (commerce?.recordsWritten ?? 0),
+        breakdown: {
+          ...base.breakdown,
+          ordersScanned: commerce?.ordersScanned ?? 0,
+          orders: commerce?.breakdown.orders ?? 0,
+          orderLineItems: commerce?.breakdown.lineItems ?? 0,
+          refunds: commerce?.breakdown.refunds ?? 0,
+          refundLineItems: commerce?.breakdown.refundLineItems ?? 0,
+          commerceSkipped: !commerce,
+        },
       };
 
       await this.repository.markConnectionSynced(connection.id);
-      await this.integrationService.completeSyncRun(syncRun.id, { recordsRead, recordsWritten });
+      await this.integrationService.completeSyncRun(syncRun.id, result);
       return {
         syncRunId: syncRun.id,
         status: 'SUCCEEDED' as const,
         resourceType: RECONCILIATION_RESOURCE,
         since,
-        recordsRead,
-        recordsWritten,
-        breakdown,
+        ...result,
       };
     } catch (error) {
       await this.integrationService.failSyncRun(syncRun.id, error).catch(() => undefined);
@@ -356,7 +308,6 @@ export class ShopifyService {
   private async loadSyncTarget(storeId: string) {
     const store = await this.repository.findConnectionForSync(storeId);
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
-
     const connection = store.shopifyConnection;
     if (!connection) {
       throw new AppError('Shopify is not connected for this store', 409, 'SHOPIFY_NOT_CONNECTED');
@@ -369,18 +320,12 @@ export class ShopifyService {
       );
     }
 
-    const accessToken = await this.authService.resolveAccessToken(
-      store.myshopifyDomain,
-      connection,
-    );
-
     return {
-      store,
       connection,
       syncContextBase: {
         storeId,
         shop: store.myshopifyDomain,
-        accessToken,
+        accessToken: await this.authService.resolveAccessToken(store.myshopifyDomain, connection),
         connectionId: connection.id,
         apiVersion: connection.apiVersion,
       },
@@ -405,7 +350,37 @@ export class ShopifyService {
     return scopes.includes('read_all_orders') ? ('ALL_ORDERS' as const) : ('LAST_60_DAYS' as const);
   }
 
-  private async syncStoreProfile(input: ShopifySyncContext): Promise<ShopifyShopProfile> {
+  private async syncCatalogInventorySnapshot(
+    input: ShopifySyncContext,
+    snapshotSource: ShopifyInventorySnapshotSource,
+  ) {
+    await this.syncStoreProfile(input);
+    const catalog = await this.catalogService.sync(input);
+    const inventory = await this.inventoryService.sync(input, snapshotSource);
+    return {
+      recordsRead:
+        1 +
+        catalog.products.read +
+        catalog.variants.read +
+        inventory.locations.read +
+        inventory.inventoryLevels.read,
+      recordsWritten:
+        1 +
+        catalog.products.written +
+        catalog.variants.written +
+        inventory.locations.written +
+        inventory.inventoryLevels.written,
+      breakdown: {
+        shop: 1,
+        products: catalog.products.written,
+        variants: catalog.variants.written,
+        locations: inventory.locations.written,
+        inventoryLevels: inventory.inventoryLevels.written,
+      },
+    };
+  }
+
+  private async syncStoreProfile(input: ShopifySyncContext): Promise<void> {
     const profile = await this.apiService.fetchShopProfile(
       input.shop,
       input.accessToken,
@@ -417,7 +392,7 @@ export class ShopifyService {
       throw new AppError('Shopify returned a different shop identity', 401, 'SHOP_IDENTITY_MISMATCH');
     }
 
-    const normalizedProfile: ShopifyShopProfile = { ...profile, myshopifyDomain: canonicalDomain };
+    const normalizedProfile = { ...profile, myshopifyDomain: canonicalDomain };
     await this.repository.updateStoreProfile(input.storeId, normalizedProfile);
     await this.integrationService.recordExternalPayload({
       provider: 'SHOPIFY',
@@ -427,6 +402,5 @@ export class ShopifyService {
       payload: normalizedProfile,
       syncRunId: input.syncRunId,
     });
-    return normalizedProfile;
   }
 }
