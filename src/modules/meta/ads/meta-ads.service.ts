@@ -1,6 +1,6 @@
 import { AppError } from '../../../errors/app-error.js';
 import type { MetaApiContext } from '../meta.types.js';
-import { toJsonSafe } from '../meta.utils.js';
+import { parseMetaRecord, toJsonSafe } from '../meta.utils.js';
 import type { MetaApiService } from '../shared/meta-api.service.js';
 import type { MetaAdsRepository } from './meta-ads.repository.js';
 import {
@@ -36,22 +36,6 @@ const AD_FIELDS = [
   'recommendations', 'issues_info', 'adlabels', 'created_time', 'updated_time',
 ].join(',');
 
-function parseOrThrow<T>(
-  schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } },
-  value: unknown,
-  resource: string,
-): T | null {
-  const parsed = schema.safeParse(value);
-  if (!parsed.success) {
-    throw new AppError(
-      `Meta ${resource} collection returned an unexpected record`,
-      502,
-      'META_BAD_RESPONSE',
-    );
-  }
-  return parsed.data;
-}
-
 export class MetaAdsService {
   constructor(
     private readonly repository: MetaAdsRepository,
@@ -80,25 +64,25 @@ export class MetaAdsService {
         context,
         `/${metaAccountId}/campaigns`,
         { fields: CAMPAIGN_FIELDS, limit: PAGE_SIZE },
-        (value) => parseOrThrow(metaCampaignSchema, value, 'campaign'),
+        (value) => parseMetaRecord(metaCampaignSchema, value, 'Meta campaign response was invalid'),
       ),
       this.apiService.collectGraphPages(
         context,
         `/${metaAccountId}/adsets`,
         { fields: ADSET_FIELDS, limit: PAGE_SIZE },
-        (value) => parseOrThrow(metaAdSetSchema, value, 'ad set'),
+        (value) => parseMetaRecord(metaAdSetSchema, value, 'Meta ad set response was invalid'),
       ),
       this.apiService.collectGraphPages(
         context,
         `/${metaAccountId}/adcreatives`,
         { fields: CREATIVE_FIELDS, limit: PAGE_SIZE },
-        (value) => parseOrThrow(metaCreativeSchema, value, 'creative'),
+        (value) => parseMetaRecord(metaCreativeSchema, value, 'Meta creative response was invalid'),
       ),
       this.apiService.collectGraphPages(
         context,
         `/${metaAccountId}/ads`,
         { fields: AD_FIELDS, limit: PAGE_SIZE },
-        (value) => parseOrThrow(metaAdSchema, value, 'ad'),
+        (value) => parseMetaRecord(metaAdSchema, value, 'Meta ad response was invalid'),
       ),
     ]);
 
