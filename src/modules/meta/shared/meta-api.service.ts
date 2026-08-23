@@ -16,7 +16,11 @@ import type {
   MetaTokenExchange,
   MetaTokenInspection,
 } from '../meta.types.js';
-import { computeMetaAppSecretProof, parseMetaMinorAmount } from '../meta.utils.js';
+import {
+  computeMetaAppSecretProof,
+  parseMetaMinorAmount,
+  parseMetaRecord,
+} from '../meta.utils.js';
 
 const MAX_ATTEMPTS = 3;
 const TRANSIENT_META_CODES = new Set([1, 2, 4, 17, 32, 613]);
@@ -88,23 +92,17 @@ export class MetaApiService {
   async inspectAccessToken(accessToken: string): Promise<MetaTokenInspection> {
     const url = this.graphUrl('/debug_token');
     url.searchParams.set('input_token', accessToken);
-
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${env.META_APP_ID}|${env.META_APP_SECRET}` },
     });
     const body = await this.parseResponseBody(response);
     if (!response.ok) throw this.toProviderError(body, response.status);
 
-    const parsed = metaTokenDebugSchema.safeParse(body);
-    if (!parsed.success) {
-      throw new AppError(
-        'Meta token debugger returned an unexpected response',
-        502,
-        'META_BAD_RESPONSE',
-      );
-    }
-
-    const data = parsed.data.data;
+    const data = parseMetaRecord(
+      metaTokenDebugSchema,
+      body,
+      'Meta token debugger returned an unexpected response',
+    ).data;
     return {
       appId: data.app_id,
       userId: data.user_id,
@@ -115,12 +113,11 @@ export class MetaApiService {
   }
 
   async fetchCurrentUser(context: MetaApiContext): Promise<{ id: string }> {
-    const payload = await this.requestGraph(context, '/me', { fields: 'id' });
-    const parsed = metaUserSchema.safeParse(payload);
-    if (!parsed.success) {
-      throw new AppError('Meta user response was invalid', 502, 'META_BAD_RESPONSE');
-    }
-    return parsed.data;
+    return parseMetaRecord(
+      metaUserSchema,
+      await this.requestGraph(context, '/me', { fields: 'id' }),
+      'Meta user response was invalid',
+    );
   }
 
   listBusinesses(context: MetaApiContext): Promise<MetaBusinessAsset[]> {
@@ -140,10 +137,9 @@ export class MetaApiService {
   }
 
   async getAdAccount(context: MetaApiContext, adAccountId: string): Promise<MetaAdAccountAsset> {
-    const payload = await this.requestGraph(context, `/${adAccountId}`, {
-      fields: AD_ACCOUNT_FIELDS,
-    });
-    const account = parseAdAccount(payload);
+    const account = parseAdAccount(
+      await this.requestGraph(context, `/${adAccountId}`, { fields: AD_ACCOUNT_FIELDS }),
+    );
     if (!account || account.id !== adAccountId) {
       throw new AppError('Meta ad account response was invalid', 502, 'META_BAD_RESPONSE');
     }
@@ -155,8 +151,6 @@ export class MetaApiService {
     path: string,
     params: Record<string, string> = {},
   ): Promise<unknown> {
-    let lastNetworkError: unknown;
-
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
       const url = this.graphUrl(path, context.apiVersion);
       for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
@@ -167,8 +161,7 @@ export class MetaApiService {
         response = await fetch(url, {
           headers: { Authorization: `Bearer ${context.accessToken}` },
         });
-      } catch (error) {
-        lastNetworkError = error;
+      } catch {
         if (attempt === MAX_ATTEMPTS) {
           throw new AppError('Meta API network request failed', 502, 'META_REQUEST_FAILED');
         }
@@ -198,11 +191,10 @@ export class MetaApiService {
           (graph.data.error.is_transient === true ||
             (code !== undefined && TRANSIENT_META_CODES.has(code))));
       if (!transient || attempt === MAX_ATTEMPTS) throw providerError;
-
       await sleep(250 * 2 ** (attempt - 1));
     }
 
-    throw lastNetworkError ?? new AppError('Meta API request failed', 502, 'META_REQUEST_FAILED');
+    throw new AppError('Meta API request failed', 502, 'META_REQUEST_FAILED');
   }
 
   async collectGraphPages<T>(
@@ -246,18 +238,18 @@ export class MetaApiService {
   private async requestToken(params: Record<string, string>): Promise<MetaTokenExchange> {
     const url = this.graphUrl('/oauth/access_token');
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
-
     const response = await fetch(url);
     const body = await this.parseResponseBody(response);
     if (!response.ok) throw this.toProviderError(body, response.status);
 
-    const parsed = metaTokenResponseSchema.safeParse(body);
-    if (!parsed.success) {
-      throw new AppError('Meta token exchange returned an unexpected response', 502, 'META_BAD_RESPONSE');
-    }
+    const token = parseMetaRecord(
+      metaTokenResponseSchema,
+      body,
+      'Meta token exchange returned an unexpected response',
+    );
     return {
-      accessToken: parsed.data.access_token,
-      expiresInSeconds: parsed.data.expires_in ?? null,
+      accessToken: token.access_token,
+      expiresInSeconds: token.expires_in ?? null,
     };
   }
 
