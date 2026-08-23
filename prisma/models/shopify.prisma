@@ -31,10 +31,11 @@ model Product {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  store          Store              @relation(fields: [storeId], references: [id], onDelete: Restrict)
-  variants       ProductVariant[]
-  orderLineItems OrderLineItem[]
-  adMappings     AdProductMapping[]
+  store             Store                    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  variants          ProductVariant[]
+  orderLineItems    OrderLineItem[]
+  adMappings        AdProductMapping[]
+  tiktokAdMappings  TikTokAdProductMapping[]
 
   @@unique([storeId, shopifyProductId])
   @@index([storeId, status])
@@ -43,9 +44,9 @@ model Product {
 }
 
 model ProductVariant {
-  id                String   @id @default(uuid()) @db.Uuid
-  storeId           String   @db.Uuid
-  productId         String   @db.Uuid
+  id                String    @id @default(uuid()) @db.Uuid
+  storeId           String    @db.Uuid
+  productId         String    @db.Uuid
   shopifyVariantId  String
   title             String
   displayName       String?
@@ -54,25 +55,27 @@ model ProductVariant {
   price              Decimal? @db.Decimal(20, 6)
   compareAtPrice     Decimal? @db.Decimal(20, 6)
   position           Int?
-  availableForSale  Boolean  @default(false)
+  availableForSale  Boolean   @default(false)
   inventoryQuantity Int?
   inventoryPolicy   String?
   shopifyCreatedAt  DateTime?
   shopifyUpdatedAt  DateTime?
   deletedAt         DateTime?
   rawJson           Json?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  store           Store                       @relation(fields: [storeId], references: [id], onDelete: Restrict)
-  product         Product                     @relation(fields: [productId], references: [id], onDelete: Restrict)
-  options         VariantOption[]
-  inventoryItem   InventoryItem?
-  costs           VariantCost[]
-  orderLineItems  OrderLineItem[]
-  restockLines    RestockLine[]
-  adMappings      AdProductMapping[]
-  catalogMappings CatalogItemVariantMapping[]
+  store                 Store                                 @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  product               Product                               @relation(fields: [productId], references: [id], onDelete: Restrict)
+  options               VariantOption[]
+  inventoryItem         InventoryItem?
+  costs                 VariantCost[]
+  orderLineItems        OrderLineItem[]
+  restockLines          RestockLine[]
+  adMappings            AdProductMapping[]
+  catalogMappings       CatalogItemVariantMapping[]
+  tiktokAdMappings      TikTokAdProductMapping[]
+  tiktokCatalogMappings TikTokCatalogItemVariantMapping[]
 
   @@unique([storeId, shopifyVariantId])
   @@index([productId, position])

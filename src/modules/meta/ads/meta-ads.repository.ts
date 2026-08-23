@@ -1,4 +1,4 @@
-import { Prisma, type MetaAdTargetScope } from '../../../generated/prisma/client.js';
+import { Prisma } from '../../../generated/prisma/client.js';
 import { AppError } from '../../../errors/app-error.js';
 import { prisma } from '../../../lib/prisma.js';
 import { parseMetaMinorAmount } from '../meta.utils.js';
@@ -190,8 +190,7 @@ export class MetaAdsRepository {
     creativeId: string | null,
     ad: MetaAdPayload,
   ) {
-    const targetScope: MetaAdTargetScope = 'UNKNOWN';
-    const data = {
+    const providerData = {
       campaignId,
       adSetId,
       creativeId,
@@ -200,9 +199,6 @@ export class MetaAdsRepository {
       effectiveStatus: ad.effective_status ?? null,
       conversionDomain: ad.conversion_domain ?? null,
       sourceAdId: ad.source_ad_id ?? null,
-      targetScope,
-      targetScopeConfidence: null,
-      targetScopeEvidence: Prisma.DbNull,
       placement: nullableJson(ad.placement),
       trackingSpec: nullableJson(ad.tracking_specs),
       conversionSpec: nullableJson(ad.conversion_specs),
@@ -217,8 +213,15 @@ export class MetaAdsRepository {
 
     return prisma.metaAd.upsert({
       where: { adAccountId_metaAdId: { adAccountId, metaAdId: ad.id } },
-      create: { adAccountId, metaAdId: ad.id, ...data },
-      update: data,
+      create: {
+        adAccountId,
+        metaAdId: ad.id,
+        targetScope: 'UNKNOWN',
+        targetScopeConfidence: null,
+        targetScopeEvidence: Prisma.DbNull,
+        ...providerData,
+      },
+      update: providerData,
       select: { id: true, metaAdId: true },
     });
   }

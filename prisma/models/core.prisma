@@ -68,8 +68,11 @@ model Store {
   memberships       StoreMembership[]
   shopifyConnection ShopifyConnection?
   metaConnection    MetaConnection?
+  tiktokConnection  TikTokConnection?
   metaAdAccounts    MetaAdAccount[]
   metaCatalogs      MetaProductCatalog[]
+  tiktokAdvertisers TikTokAdvertiser[]
+  tiktokCatalogs    TikTokCatalog[]
   products          Product[]
   variants          ProductVariant[]
   inventoryItems    InventoryItem[]
