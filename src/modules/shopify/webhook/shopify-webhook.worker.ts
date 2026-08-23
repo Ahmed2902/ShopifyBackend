@@ -34,7 +34,7 @@ export class ShopifyWebhookWorker {
     if (this.running || this.stopping) return;
     this.running = true;
     try {
-      const result = await this.service.processPendingWebhookDeliveries(BATCH_SIZE);
+      const result = await this.service.processWebhookQueue(BATCH_SIZE);
       if (result.claimed > 0) {
         logger.debug(result, 'Processed Shopify webhook queue batch');
       }
