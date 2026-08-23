@@ -35,13 +35,7 @@ export class MetaAuthService {
     if (!inspection.isValid || inspection.appId !== env.META_APP_ID) {
       throw new AppError('Meta returned an invalid access token', 401, 'INVALID_META_ACCESS_TOKEN');
     }
-    if (!inspection.scopes.includes('ads_read')) {
-      throw new AppError(
-        'Meta did not grant the required ads_read permission',
-        403,
-        'META_ADS_READ_REQUIRED',
-      );
-    }
+    this.assertRequiredPermissions(inspection.scopes);
 
     const expiresAt =
       inspection.expiresAt ??
@@ -87,6 +81,8 @@ export class MetaAuthService {
       throw new AppError('Meta access token requires reauthorization', 401, 'META_REAUTH_REQUIRED');
     }
 
+    this.assertRequiredPermissions(connection.scopes);
+
     return {
       storeId,
       connectionId: connection.id,
@@ -97,6 +93,30 @@ export class MetaAuthService {
       selectedAdAccountIds: connection.selectedAdAccountIds,
       selectedCatalogIds: connection.selectedCatalogIds,
     };
+  }
+
+  private assertRequiredPermissions(scopes: string[]): void {
+    if (!scopes.includes('ads_read')) {
+      throw new AppError(
+        'Meta did not grant the required ads_read permission',
+        403,
+        'META_ADS_READ_REQUIRED',
+      );
+    }
+    if (!scopes.includes('business_management')) {
+      throw new AppError(
+        'Meta did not grant the required business_management permission',
+        403,
+        'META_BUSINESS_PERMISSION_REQUIRED',
+      );
+    }
+    if (!scopes.includes('catalog_management')) {
+      throw new AppError(
+        'Meta did not grant the required catalog_management permission',
+        403,
+        'META_CATALOG_PERMISSION_REQUIRED',
+      );
+    }
   }
 
   private async assertCanManageStore(userId: string, storeId: string): Promise<void> {
