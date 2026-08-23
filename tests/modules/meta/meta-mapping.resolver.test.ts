@@ -304,6 +304,21 @@ describe('Meta ad → Shopify resolver', () => {
     );
 
     expect(result).toMatchObject({ scope: 'MULTI_PRODUCT', confidence: 0.95, mappings: [] });
+    expect(result.evidence).toMatchObject({ productSetIds: ['set_1'] });
+  });
+
+  it('detects a product set declared by promoted_object even when the creative omits it', () => {
+    const dataset = baseDataset();
+    const result = resolveAd(
+      ad({ adSetPromotedObject: { product_set_id: 'set_from_adset' } }),
+      dataset,
+    );
+
+    expect(result).toMatchObject({ scope: 'MULTI_PRODUCT', confidence: 0.95, mappings: [] });
+    expect(result.evidence).toMatchObject({
+      matchedBy: 'product_set',
+      productSetIds: ['set_from_adset'],
+    });
   });
 
   it('distinguishes collection and storefront destinations', () => {
