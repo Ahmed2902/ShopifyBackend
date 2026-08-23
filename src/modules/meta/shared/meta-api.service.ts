@@ -89,7 +89,7 @@ export class MetaApiService {
   }
 
   listBusinesses(context: MetaApiContext): Promise<MetaBusinessAsset[]> {
-    return this.collectPages(context, '/me/businesses', { fields: 'id,name', limit: '100' }, (item) => {
+    return this.collectGraphPages(context, '/me/businesses', { fields: 'id,name', limit: '100' }, (item) => {
       const parsed = metaBusinessSchema.safeParse(item);
       return parsed.success ? parsed.data : null;
     });
@@ -111,7 +111,7 @@ export class MetaApiService {
       'business',
     ].join(',');
 
-    return this.collectPages(context, '/me/adaccounts', { fields, limit: '100' }, (item) => {
+    return this.collectGraphPages(context, '/me/adaccounts', { fields, limit: '100' }, (item) => {
       const parsed = metaAdAccountSchema.safeParse(item);
       if (!parsed.success) return null;
       const account = parsed.data;
@@ -188,7 +188,7 @@ export class MetaApiService {
     throw lastNetworkError ?? new AppError('Meta API request failed', 502, 'META_REQUEST_FAILED');
   }
 
-  private async collectPages<T>(
+  async collectGraphPages<T>(
     context: MetaApiContext,
     path: string,
     baseParams: Record<string, string>,
