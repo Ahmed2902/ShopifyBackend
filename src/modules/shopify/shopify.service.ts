@@ -52,11 +52,11 @@ export class ShopifyService {
     );
   }
 
-  startOAuthInstall(userId: string, requestedShop: string) {
+  beginOAuth(userId: string, requestedShop: string) {
     return this.authService.beginOAuth(userId, requestedShop);
   }
 
-  completeOAuthInstall(input: {
+  completeOAuth(input: {
     code: string;
     shop: string;
     state: string;
@@ -65,7 +65,7 @@ export class ShopifyService {
     return this.authService.completeOAuth(input);
   }
 
-  receiveWebhookDelivery(
+  receiveWebhook(
     headers: {
       hmac?: string;
       topic?: string;
@@ -79,7 +79,7 @@ export class ShopifyService {
     return this.webhookService.receive(headers, rawBody);
   }
 
-  processPendingWebhookDeliveries(limit?: number) {
+  processWebhookQueue(limit?: number) {
     return this.webhookService.processDueDeliveries(limit);
   }
 
@@ -137,7 +137,7 @@ export class ShopifyService {
     }
   }
 
-  async reconcileStore(storeId: string) {
+  async refreshStoreData(storeId: string) {
     const { connection, syncContextBase } = await this.loadSyncTarget(storeId);
     const previousRun = await this.integrationService.getLastSuccessfulShopifySyncRun(
       connection.id,
@@ -211,7 +211,7 @@ export class ShopifyService {
     }
   }
 
-  async startOrderHistoryImport(storeId: string) {
+  async startOrderHistoryBackfill(storeId: string) {
     const { connection, syncContextBase } = await this.loadSyncTarget(storeId);
     this.assertOrderReadAccess(connection.scopes);
 
@@ -250,7 +250,7 @@ export class ShopifyService {
     }
   }
 
-  async getOrderHistoryImportStatus(storeId: string, syncRunId: string) {
+  async getOrderHistoryBackfill(storeId: string, syncRunId: string) {
     const syncRun = await this.integrationService.getShopifySyncRun(
       storeId,
       syncRunId,
