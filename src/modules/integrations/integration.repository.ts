@@ -20,9 +20,9 @@ function syncRunConnectionFilter(
   provider: IntegrationProviderName,
   connectionId: string,
 ): Prisma.SyncRunWhereInput {
-  if (provider === 'SHOPIFY') return { shopifyConnectionId: connectionId };
-  if (provider === 'META') return { metaConnectionId: connectionId };
-  return { tiktokConnectionId: connectionId };
+  if (provider === 'SHOPIFY') return { provider, shopifyConnectionId: connectionId };
+  if (provider === 'META') return { provider, metaConnectionId: connectionId };
+  return { provider, tiktokConnectionId: connectionId };
 }
 
 export class IntegrationRepository {
