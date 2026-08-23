@@ -5,25 +5,18 @@ import type {
   ManualAdMappingInput,
   MetaMappingRepository,
 } from './meta-mapping.repository.js';
-import type { AdResolution, MappingDataset } from './meta-mapping.types.js';
+import type { MappingDataset } from './meta-mapping.types.js';
 
 const MAPPING_RESOURCE = 'ShopifyMappings';
-
-function emptyAdResolution(): AdResolution {
-  return {
-    scope: 'UNKNOWN',
-    confidence: 0,
-    mappings: [],
-    evidence: { reason: 'merchant_confirmed_mapping_preserved' },
-    suggestions: [],
-  };
-}
-
-function numberOrNull(value: unknown): number | null {
-  if (value === null || value === undefined) return null;
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
-}
+const SCOPE_COUNTER = {
+  VARIANT: 'variant',
+  PRODUCT_OPTION: 'productOption',
+  PRODUCT: 'product',
+  MULTI_PRODUCT: 'multiProduct',
+  COLLECTION: 'collection',
+  STORE: 'store',
+  UNKNOWN: 'unknown',
+} as const;
 
 export class MetaMappingService {
   constructor(
@@ -92,17 +85,23 @@ export class MetaMappingService {
       for (const ad of dataset.ads) {
         const confirmed = ad.activeMappings.filter((mapping) => mapping.isMerchantConfirmed);
         if (confirmed.length > 0) {
-          const applied = await this.repository.applyAutomaticAdResolution(ad.id, emptyAdResolution());
+          const applied = await this.repository.applyAutomaticAdResolution(ad.id, {
+            scope: 'UNKNOWN',
+            confidence: 0,
+            mappings: [],
+            evidence: { reason: 'merchant_confirmed_mapping_preserved' },
+            suggestions: [],
+          });
           if (applied.changed) ads.changed += 1;
           ads.preservedConfirmed += 1;
-          this.incrementScope(ads, deriveScopeFromMappings(confirmed));
+          ads[SCOPE_COUNTER[deriveScopeFromMappings(confirmed)]] += 1;
           continue;
         }
 
         const resolution = resolveAd(ad, dataset);
         const applied = await this.repository.applyAutomaticAdResolution(ad.id, resolution);
         if (applied.changed) ads.changed += 1;
-        this.incrementScope(ads, resolution.scope);
+        ads[SCOPE_COUNTER[resolution.scope]] += 1;
         if (resolution.scope === 'UNKNOWN' && resolution.suggestions.length > 0) ads.needsReview += 1;
       }
 
@@ -139,7 +138,8 @@ export class MetaMappingService {
       limit,
       items: result.items.map((ad) => ({
         ...ad,
-        targetScopeConfidence: numberOrNull(ad.targetScopeConfidence),
+        targetScopeConfidence:
+          ad.targetScopeConfidence == null ? null : Number(ad.targetScopeConfidence),
         productMappings: ad.productMappings.map((mapping) => ({
           ...mapping,
           confidence: Number(mapping.confidence),
@@ -193,41 +193,5 @@ export class MetaMappingService {
     const dataset = await this.repository.loadDataset(storeId);
     if (!dataset) throw new AppError('Meta is not connected for this store', 409, 'META_NOT_CONNECTED');
     return dataset;
-  }
-
-  private incrementScope(
-    counters: {
-      variant: number;
-      productOption: number;
-      product: number;
-      multiProduct: number;
-      collection: number;
-      store: number;
-      unknown: number;
-    },
-    scope: ReturnType<typeof deriveScopeFromMappings>,
-  ): void {
-    switch (scope) {
-      case 'VARIANT':
-        counters.variant += 1;
-        break;
-      case 'PRODUCT_OPTION':
-        counters.productOption += 1;
-        break;
-      case 'PRODUCT':
-        counters.product += 1;
-        break;
-      case 'MULTI_PRODUCT':
-        counters.multiProduct += 1;
-        break;
-      case 'COLLECTION':
-        counters.collection += 1;
-        break;
-      case 'STORE':
-        counters.store += 1;
-        break;
-      default:
-        counters.unknown += 1;
-    }
   }
 }
