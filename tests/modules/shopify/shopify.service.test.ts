@@ -209,7 +209,7 @@ describe('Shopify catalog and inventory sync', () => {
     const { repository, integrationService, service } = buildService();
     const fetchMock = stubFullCatalogInventorySync();
 
-    const result = await service.syncStoreData(storeId);
+    const result = await service.syncCatalogAndInventory(storeId);
 
     expect(result).toEqual({
       syncRunId,
@@ -263,7 +263,7 @@ describe('Shopify catalog and inventory sync', () => {
     } as never);
     stubFullCatalogInventorySync();
 
-    const result = await service.reconcileStoreData(storeId);
+    const result = await service.reconcileStore(storeId);
 
     expect(result).toMatchObject({
       status: 'SUCCEEDED',
@@ -296,7 +296,7 @@ describe('Shopify catalog and inventory sync', () => {
     const { repository, integrationService, service } = buildService();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
 
-    await expect(service.syncStoreData(storeId)).rejects.toMatchObject({
+    await expect(service.syncCatalogAndInventory(storeId)).rejects.toMatchObject({
       code: 'SHOPIFY_REAUTH_REQUIRED',
     });
 
@@ -330,7 +330,7 @@ describe('Shopify catalog and inventory sync', () => {
       .mockResolvedValueOnce(jsonResponse({ data: { locations: emptyConnection } }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await service.syncStoreData(storeId);
+    await service.syncCatalogAndInventory(storeId);
 
     const tokenRequest = fetchMock.mock.calls[0];
     expect(tokenRequest?.[0]).toBe('https://example-store.myshopify.com/admin/oauth/access_token');
