@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireStoreMembership } from '../../middleware/store.middleware.js';
 import { IntegrationController } from './integration.controller.js';
-import { integrationService } from './integration.service.js';
+import { integrationService } from './integration.module.js';
 
 const controller = new IntegrationController(integrationService);
 
