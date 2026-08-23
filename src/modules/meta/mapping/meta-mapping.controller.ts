@@ -6,7 +6,7 @@ import {
   metaMappingCatalogItemParamsSchema,
   metaMappingListQuerySchema,
 } from './meta-mapping.schema.js';
-import type { MetaMappingService } from './meta-mapping.service.js';
+import { metaMappingService, type MetaMappingService } from './meta-mapping.service.js';
 
 export class MetaMappingController {
   constructor(private readonly service: MetaMappingService) {}
@@ -50,3 +50,5 @@ export class MetaMappingController {
     );
   };
 }
+
+export const metaMappingController = new MetaMappingController(metaMappingService);

@@ -1,5 +1,5 @@
-import type { ShopifyService } from '../shopify/shopify.service.js';
-import type { ReconciliationRepository } from './reconciliation.repository.js';
+import { shopifyService, type ShopifyService } from '../shopify/shopify.service.js';
+import { ReconciliationRepository } from './reconciliation.repository.js';
 
 const CLAIM_STALE_MS = 30 * 60_000;
 const FAILURE_RETRY_MS = 15 * 60_000;
@@ -38,3 +38,8 @@ export class ReconciliationService {
     return { claimed, succeeded, failed };
   }
 }
+
+export const reconciliationService = new ReconciliationService(
+  new ReconciliationRepository(),
+  shopifyService,
+);

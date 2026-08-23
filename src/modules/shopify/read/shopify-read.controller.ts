@@ -1,5 +1,4 @@
 import type { Request, Response } from 'express';
-import type { ShopifyReadService } from './shopify-read.service.js';
 import {
   shopifyInventoryQuerySchema,
   shopifyOrderParamsSchema,
@@ -9,6 +8,7 @@ import {
   shopifyProductsQuerySchema,
   shopifySummaryQuerySchema,
 } from './shopify-read.schema.js';
+import { shopifyReadService, type ShopifyReadService } from './shopify-read.service.js';
 
 export class ShopifyReadController {
   constructor(private readonly service: ShopifyReadService) {}
@@ -57,3 +57,5 @@ export class ShopifyReadController {
     res.status(200).json(await this.service.getOrder(req.context.storeId!, orderId));
   };
 }
+
+export const shopifyReadController = new ShopifyReadController(shopifyReadService);

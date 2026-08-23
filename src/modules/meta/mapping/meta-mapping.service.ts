@@ -1,9 +1,9 @@
 import { AppError } from '../../../errors/app-error.js';
-import type { IntegrationService } from '../../integrations/integration.service.js';
+import { integrationService, type IntegrationService } from '../../integrations/integration.service.js';
 import { deriveScopeFromMappings, resolveAd, resolveCatalogItem } from './meta-mapping.resolver.js';
-import type {
-  ManualAdMappingInput,
+import {
   MetaMappingRepository,
+  type ManualAdMappingInput,
 } from './meta-mapping.repository.js';
 import type { MappingDataset } from './meta-mapping.types.js';
 
@@ -208,3 +208,8 @@ export class MetaMappingService {
     return dataset;
   }
 }
+
+export const metaMappingService = new MetaMappingService(
+  new MetaMappingRepository(),
+  integrationService,
+);

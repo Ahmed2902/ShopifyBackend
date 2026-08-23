@@ -13,7 +13,7 @@ import {
   metaInsightsListQuerySchema,
   metaInsightsSyncSchema,
 } from './meta.schema.js';
-import type { MetaService } from './meta.service.js';
+import { metaService, type MetaService } from './meta.service.js';
 import { buildMetaSuccessRedirect } from './meta.utils.js';
 
 export class MetaController {
@@ -127,3 +127,5 @@ export class MetaController {
     );
   };
 }
+
+export const metaController = new MetaController(metaService);

@@ -1,11 +1,14 @@
 import { AppError } from '../../errors/app-error.js';
-import type { IntegrationService } from '../integrations/integration.service.js';
-import type { MetaAdsService } from './ads/meta-ads.service.js';
-import type { MetaCatalogService } from './catalog/meta-catalog.service.js';
-import type { MetaInsightsService } from './insights/meta-insights.service.js';
-import type { MetaRepository } from './meta.repository.js';
-import type { MetaApiService } from './shared/meta-api.service.js';
-import type { MetaAuthService } from './shared/meta-auth.service.js';
+import { integrationService, type IntegrationService } from '../integrations/integration.service.js';
+import { MetaAdsRepository } from './ads/meta-ads.repository.js';
+import { MetaAdsService } from './ads/meta-ads.service.js';
+import { MetaCatalogRepository } from './catalog/meta-catalog.repository.js';
+import { MetaCatalogService } from './catalog/meta-catalog.service.js';
+import { MetaInsightsRepository } from './insights/meta-insights.repository.js';
+import { MetaInsightsService } from './insights/meta-insights.service.js';
+import { MetaRepository } from './meta.repository.js';
+import { MetaApiService } from './shared/meta-api.service.js';
+import { MetaAuthService } from './shared/meta-auth.service.js';
 import { normalizeMetaAdAccountId } from './meta.utils.js';
 
 const ADS_HIERARCHY_RESOURCE = 'AdsHierarchy';
@@ -417,3 +420,19 @@ export class MetaService {
     };
   }
 }
+
+const metaRepository = new MetaRepository();
+const metaApiService = new MetaApiService(metaRepository);
+const metaAdsService = new MetaAdsService(new MetaAdsRepository(), metaApiService);
+const metaCatalogService = new MetaCatalogService(new MetaCatalogRepository(), metaApiService);
+const metaInsightsService = new MetaInsightsService(new MetaInsightsRepository(), metaApiService);
+
+export const metaService = new MetaService(
+  metaRepository,
+  new MetaAuthService(metaRepository, metaApiService),
+  metaApiService,
+  metaAdsService,
+  integrationService,
+  metaCatalogService,
+  metaInsightsService,
+);
