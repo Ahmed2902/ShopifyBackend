@@ -1,11 +1,6 @@
 import type { Request, Response } from 'express';
-import { z } from 'zod';
+import { syncRunQuerySchema } from './integration.schema.js';
 import type { IntegrationService } from './integration.service.js';
-
-const syncRunQuerySchema = z.object({
-  provider: z.enum(['SHOPIFY', 'META']).optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(25),
-});
 
 export class IntegrationController {
   constructor(private readonly service: IntegrationService) {}
