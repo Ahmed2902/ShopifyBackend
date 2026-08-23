@@ -5,7 +5,6 @@ import { deriveScopeFromMappings } from './meta-mapping.resolver.js';
 import type {
   AdResolution,
   CatalogResolution,
-  DesiredAdMapping,
   MappingDataset,
   MappingGranularity,
 } from './meta-mapping.types.js';
@@ -82,6 +81,7 @@ export class MetaMappingRepository {
     const connection = await prisma.metaConnection.findUnique({
       where: { storeId },
       select: {
+        id: true,
         selectedAdAccountIds: true,
         selectedCatalogIds: true,
         store: {
@@ -116,10 +116,7 @@ export class MetaMappingRepository {
       prisma.metaCatalogItem.findMany({
         where: {
           deletedAt: null,
-          catalog: {
-            storeId,
-            metaCatalogId: { in: connection.selectedCatalogIds },
-          },
+          catalog: { storeId, metaCatalogId: { in: connection.selectedCatalogIds } },
         },
         select: {
           id: true,
@@ -147,10 +144,7 @@ export class MetaMappingRepository {
       prisma.metaAd.findMany({
         where: {
           deletedAt: null,
-          adAccount: {
-            storeId,
-            metaAccountId: { in: connection.selectedAdAccountIds },
-          },
+          adAccount: { storeId, metaAccountId: { in: connection.selectedAdAccountIds } },
         },
         select: {
           id: true,
@@ -193,6 +187,7 @@ export class MetaMappingRepository {
     ]);
 
     return {
+      connectionId: connection.id,
       store: {
         myshopifyDomain: connection.store.myshopifyDomain,
         primaryDomainHost: connection.store.primaryDomainHost,
@@ -287,27 +282,35 @@ export class MetaMappingRepository {
 
   async applyAutomaticAdResolution(adId: string, resolution: AdResolution) {
     return prisma.$transaction(async (tx) => {
-      const active = await tx.adProductMapping.findMany({
-        where: { metaAdId: adId, validUntil: null },
-        select: {
-          id: true,
-          productId: true,
-          variantId: true,
-          catalogItemId: true,
-          granularity: true,
-          optionSelector: true,
-          source: true,
-          confidence: true,
-          isMerchantConfirmed: true,
-          landingUrl: true,
-          providerProductId: true,
-          providerProductGroupId: true,
-        },
-      });
+      const [ad, active] = await Promise.all([
+        tx.metaAd.findUnique({
+          where: { id: adId },
+          select: { targetScope: true, targetScopeConfidence: true },
+        }),
+        tx.adProductMapping.findMany({
+          where: { metaAdId: adId, validUntil: null },
+          select: {
+            id: true,
+            productId: true,
+            variantId: true,
+            catalogItemId: true,
+            granularity: true,
+            optionSelector: true,
+            source: true,
+            confidence: true,
+            isMerchantConfirmed: true,
+            landingUrl: true,
+            providerProductId: true,
+            providerProductGroupId: true,
+          },
+        }),
+      ]);
+      if (!ad) throw new AppError('Meta ad was not found', 404, 'META_AD_NOT_FOUND');
 
       const confirmed = active.filter((mapping) => mapping.isMerchantConfirmed);
       if (confirmed.length > 0) {
         const scope = deriveScopeFromMappings(confirmed);
+        const changed = ad.targetScope !== scope || Number(ad.targetScopeConfidence ?? 0) !== 1;
         await tx.metaAd.update({
           where: { id: adId },
           data: {
@@ -319,7 +322,7 @@ export class MetaMappingRepository {
             },
           },
         });
-        return { state: 'PRESERVED_CONFIRMED' as const, changed: false, scope };
+        return { state: 'PRESERVED_CONFIRMED' as const, changed, scope };
       }
 
       const existingSignature = adSignature(
@@ -336,8 +339,7 @@ export class MetaMappingRepository {
           providerProductGroupId: mapping.providerProductGroupId,
         })),
       );
-      const desiredSignature = adSignature(resolution.mappings);
-      const mappingChanged = existingSignature !== desiredSignature;
+      const mappingChanged = existingSignature !== adSignature(resolution.mappings);
       if (mappingChanged) {
         const now = new Date();
         await tx.adProductMapping.updateMany({
@@ -364,6 +366,9 @@ export class MetaMappingRepository {
         }
       }
 
+      const scopeChanged =
+        ad.targetScope !== resolution.scope ||
+        Number(ad.targetScopeConfidence ?? 0) !== resolution.confidence;
       await tx.metaAd.update({
         where: { id: adId },
         data: {
@@ -372,38 +377,36 @@ export class MetaMappingRepository {
           targetScopeEvidence: resolution.evidence as Prisma.InputJsonValue,
         },
       });
-      return { state: resolution.scope, changed: mappingChanged, scope: resolution.scope };
+      return {
+        state: resolution.scope,
+        changed: mappingChanged || scopeChanged,
+        scope: resolution.scope,
+      };
     });
   }
 
   async replaceManualCatalogMappings(storeId: string, metaProductItemId: string, variantIds: string[]) {
     return prisma.$transaction(async (tx) => {
-      const item = await tx.metaCatalogItem.findFirst({
-        where: {
-          metaProductItemId,
-          deletedAt: null,
-          catalog: {
-            storeId,
-            connection: { selectedCatalogIds: { has: undefined } },
-          },
-        },
-        select: { id: true, catalog: { select: { metaCatalogId: true } } },
-      });
-      if (!item) throw new AppError('Meta catalog item was not found', 404, 'META_CATALOG_ITEM_NOT_FOUND');
-
-      const connection = await tx.metaConnection.findUnique({
-        where: { storeId },
-        select: { selectedCatalogIds: true },
-      });
-      if (!connection?.selectedCatalogIds.includes(item.catalog.metaCatalogId)) {
+      const [connection, item] = await Promise.all([
+        tx.metaConnection.findUnique({
+          where: { storeId },
+          select: { selectedCatalogIds: true },
+        }),
+        tx.metaCatalogItem.findFirst({
+          where: { metaProductItemId, deletedAt: null, catalog: { storeId } },
+          select: { id: true, catalog: { select: { metaCatalogId: true } } },
+        }),
+      ]);
+      if (!item || !connection?.selectedCatalogIds.includes(item.catalog.metaCatalogId)) {
         throw new AppError('Meta catalog item was not found', 404, 'META_CATALOG_ITEM_NOT_FOUND');
       }
 
+      const uniqueVariantIds = [...new Set(variantIds)];
       const variants = await tx.productVariant.findMany({
-        where: { id: { in: variantIds }, storeId, deletedAt: null },
+        where: { id: { in: uniqueVariantIds }, storeId, deletedAt: null },
         select: { id: true },
       });
-      if (variants.length !== new Set(variantIds).size) {
+      if (variants.length !== uniqueVariantIds.length) {
         throw new AppError('One or more Shopify variants were not found', 400, 'SHOPIFY_VARIANT_NOT_FOUND');
       }
 
@@ -456,16 +459,13 @@ export class MetaMappingRepository {
         }
       }
       if (mapping.granularity === 'PRODUCT_OPTION') {
-        const selector = mapping.optionSelector ?? {};
-        const entries = Object.entries(selector);
-        if (entries.length === 0) {
+        const entries = Object.entries(mapping.optionSelector ?? {});
+        if (entries.length === 0 || entries.some(([, values]) => values.length === 0)) {
           throw new AppError('Product-option mapping requires options', 400, 'INVALID_OPTION_MAPPING');
         }
         const matches = product.variants.filter((variant) =>
           entries.every(([name, values]) =>
-            variant.options.some(
-              (option) => option.name === name && values.includes(option.value),
-            ),
+            variant.options.some((option) => option.name === name && values.includes(option.value)),
           ),
         );
         if (matches.length === 0) {
@@ -543,6 +543,7 @@ export class MetaMappingRepository {
       if (ad.productMappings.length === 0) {
         throw new AppError('Meta ad has no mapping to confirm', 409, 'META_MAPPING_NOT_FOUND');
       }
+
       await tx.adProductMapping.updateMany({
         where: { metaAdId: ad.id, validUntil: null },
         data: { isMerchantConfirmed: true, confidence: 1 },
@@ -563,8 +564,16 @@ export class MetaMappingRepository {
     });
   }
 
-  listAdMappings(storeId: string, page: number, limit: number) {
-    const where = { deletedAt: null, adAccount: { storeId } } satisfies Prisma.MetaAdWhereInput;
+  async listAdMappings(storeId: string, page: number, limit: number) {
+    const connection = await prisma.metaConnection.findUnique({
+      where: { storeId },
+      select: { selectedAdAccountIds: true },
+    });
+    const selected = connection?.selectedAdAccountIds ?? [];
+    const where = {
+      deletedAt: null,
+      adAccount: { storeId, metaAccountId: { in: selected } },
+    } satisfies Prisma.MetaAdWhereInput;
     return prisma.$transaction([
       prisma.metaAd.findMany({
         where,
@@ -588,12 +597,8 @@ export class MetaMappingRepository {
               landingUrl: true,
               isMerchantConfirmed: true,
               product: { select: { id: true, shopifyProductId: true, title: true, handle: true } },
-              variant: {
-                select: { id: true, shopifyVariantId: true, title: true, sku: true },
-              },
-              catalogItem: {
-                select: { metaProductItemId: true, retailerId: true, name: true },
-              },
+              variant: { select: { id: true, shopifyVariantId: true, title: true, sku: true } },
+              catalogItem: { select: { metaProductItemId: true, retailerId: true, name: true } },
             },
           },
         },
@@ -606,22 +611,32 @@ export class MetaMappingRepository {
   }
 
   async mappingSummary(storeId: string) {
-    const rows = await prisma.metaAd.groupBy({
-      by: ['targetScope'],
-      where: { deletedAt: null, adAccount: { storeId } },
-      _count: { _all: true },
+    const connection = await prisma.metaConnection.findUnique({
+      where: { storeId },
+      select: { selectedAdAccountIds: true },
     });
-    const confirmed = await prisma.adProductMapping.count({
-      where: {
-        validUntil: null,
-        isMerchantConfirmed: true,
-        ad: { deletedAt: null, adAccount: { storeId } },
-      },
-    });
-    const scopes = Object.fromEntries(rows.map((row) => [row.targetScope, row._count._all]));
+    const selected = connection?.selectedAdAccountIds ?? [];
+    const adWhere = {
+      deletedAt: null,
+      adAccount: { storeId, metaAccountId: { in: selected } },
+    } satisfies Prisma.MetaAdWhereInput;
+    const [rows, confirmed] = await Promise.all([
+      prisma.metaAd.groupBy({
+        by: ['targetScope'],
+        where: adWhere,
+        _count: { _all: true },
+      }),
+      prisma.adProductMapping.count({
+        where: {
+          validUntil: null,
+          isMerchantConfirmed: true,
+          ad: adWhere,
+        },
+      }),
+    ]);
     return {
       totalAds: rows.reduce((sum, row) => sum + row._count._all, 0),
-      scopes,
+      scopes: Object.fromEntries(rows.map((row) => [row.targetScope, row._count._all])),
       merchantConfirmedMappings: confirmed,
     };
   }
