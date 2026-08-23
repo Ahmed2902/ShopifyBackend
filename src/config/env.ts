@@ -18,6 +18,12 @@ const envSchema = z.object({
   SHOPIFY_REDIRECT_URI: z.string().url(),
   SHOPIFY_API_VERSION: z.string().regex(/^\d{4}-\d{2}$/).default('2026-07'),
   SHOPIFY_STATE_SECRET: z.string().min(32),
+  META_APP_ID: z.string().min(1),
+  META_APP_SECRET: z.string().min(1),
+  META_SCOPES: z.string().min(1).default('ads_read,business_management,catalog_management'),
+  META_REDIRECT_URI: z.string().url(),
+  META_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default('v26.0'),
+  META_STATE_SECRET: z.string().min(32),
 });
 
 export const env = envSchema.parse(process.env);

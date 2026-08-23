@@ -1,13 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
 
 export class StoreRepository {
-  findMembership(userId: string, storeId: string) {
-    return prisma.storeMembership.findUnique({
-      where: { userId_storeId: { userId, storeId } },
-      select: { storeId: true, role: true },
-    });
-  }
-
   listForUser(userId: string) {
     return prisma.store.findMany({
       where: { memberships: { some: { userId } } },

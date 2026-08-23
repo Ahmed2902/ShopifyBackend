@@ -63,24 +63,6 @@ export class IntegrationRepository {
     });
   }
 
-  updateSyncRunProgress(
-    syncRunId: string,
-    input: {
-      cursor: string | null;
-      recordsRead: number;
-      recordsWritten: number;
-    },
-  ) {
-    return prisma.syncRun.update({
-      where: { id: syncRunId },
-      data: {
-        cursor: input.cursor,
-        recordsRead: input.recordsRead,
-        recordsWritten: input.recordsWritten,
-      },
-    });
-  }
-
   completeSyncRun(
     syncRunId: string,
     input: { recordsRead: number; recordsWritten: number; partial: boolean },
@@ -162,26 +144,21 @@ export class IntegrationRepository {
     });
   }
 
-  listByShopifyConnection(connectionId: string, limit: number) {
-    return prisma.syncRun.findMany({
-      where: { shopifyConnectionId: connectionId },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
-  }
-
-  listByMetaConnection(connectionId: string, limit: number) {
-    return prisma.syncRun.findMany({
-      where: { metaConnectionId: connectionId },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
-  }
-
-  listByConnections(
-    connections: Array<{ shopifyConnectionId?: string; metaConnectionId?: string }>,
+  listSyncRuns(
+    shopifyConnectionId: string | null,
+    metaConnectionId: string | null,
+    provider: IntegrationProviderName | undefined,
     limit: number,
   ) {
+    const connections: Prisma.SyncRunWhereInput[] = [];
+    if ((!provider || provider === 'SHOPIFY') && shopifyConnectionId) {
+      connections.push({ shopifyConnectionId });
+    }
+    if ((!provider || provider === 'META') && metaConnectionId) {
+      connections.push({ metaConnectionId });
+    }
+    if (connections.length === 0) return Promise.resolve([]);
+
     return prisma.syncRun.findMany({
       where: { OR: connections },
       orderBy: { createdAt: 'desc' },

@@ -61,6 +61,8 @@ model MetaConnection {
   status                ConnectionStatus @default(ACTIVE)
   metaUserId            String?
   metaBusinessId        String?
+  selectedAdAccountIds  String[]         @default([])
+  selectedCatalogIds    String[]         @default([])
   accessTokenCiphertext String
   tokenExpiresAt        DateTime?
   scopes                String[]         @default([])
@@ -122,7 +124,7 @@ model WebhookDelivery {
   attempts            Int                 @default(0)
   lastError           String?
   payload             Json
-  updatedAt           DateTime            @updatedAt
+  updatedAt           DateTime             @updatedAt
 
   shopifyConnection ShopifyConnection? @relation(fields: [shopifyConnectionId], references: [id], onDelete: SetNull)
   metaConnection    MetaConnection?    @relation(fields: [metaConnectionId], references: [id], onDelete: SetNull)

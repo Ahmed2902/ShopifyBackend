@@ -1,4 +1,5 @@
 import { AppError } from '../../errors/app-error.js';
+import type { StoreAccessClaim } from '../../types/auth.js';
 import type { AuthRepository } from './auth.repository.js';
 import type { LoginInput, RegisterInput } from './auth.schema.js';
 import {
@@ -10,39 +11,20 @@ import {
   refreshSessionExpiry,
   verifyPassword,
 } from './auth.utils.js';
-import type { StoreAccessClaim } from '../../types/auth.js';
-
-interface SessionMetadata {
-  userAgent?: string;
-}
-
-interface PublicUser {
-  id: string;
-  email: string;
-  name: string | null;
-}
-
-interface SessionUser extends PublicUser {
-  memberships: StoreAccessClaim[];
-}
-
-export interface AuthResult {
-  user: PublicUser;
-  accessToken: string;
-  refreshToken: string;
-}
 
 export class AuthService {
   constructor(private readonly repository: AuthRepository) {}
 
-  private async createSession(user: SessionUser, metadata: SessionMetadata): Promise<AuthResult> {
+  private async createSession(
+    user: { id: string; email: string; name: string | null; memberships: StoreAccessClaim[] },
+    userAgent?: string,
+  ) {
     const refreshToken = createRefreshToken();
-
     await this.repository.createRefreshSession({
       userId: user.id,
       tokenHash: hashRefreshToken(refreshToken),
       expiresAt: refreshSessionExpiry(),
-      userAgent: metadata.userAgent ?? null,
+      userAgent: userAgent ?? null,
     });
 
     return {
@@ -52,10 +34,9 @@ export class AuthService {
     };
   }
 
-  async register(input: RegisterInput, metadata: SessionMetadata): Promise<AuthResult> {
+  async register(input: RegisterInput, userAgent?: string) {
     const email = normalizeEmail(input.email);
-    const existing = await this.repository.findUserByEmail(email);
-    if (existing) {
+    if (await this.repository.findUserByEmail(email)) {
       throw new AppError('An account with this email already exists', 409, 'EMAIL_IN_USE');
     }
 
@@ -64,32 +45,22 @@ export class AuthService {
       name: input.name?.trim() || null,
       passwordHash: await hashPassword(input.password),
     });
-
-    return this.createSession({ ...user, memberships: [] }, metadata);
+    return this.createSession({ ...user, memberships: [] }, userAgent);
   }
 
-  async login(input: LoginInput, metadata: SessionMetadata): Promise<AuthResult> {
+  async login(input: LoginInput, userAgent?: string) {
     const user = await this.repository.findUserByEmail(normalizeEmail(input.email));
-
     if (!user?.passwordHash || !(await verifyPassword(input.password, user.passwordHash))) {
       throw new AppError('Invalid email or password', 401, 'INVALID_CREDENTIALS');
     }
 
     return this.createSession(
-      {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        memberships: user.memberships,
-      },
-      metadata,
+      { id: user.id, email: user.email, name: user.name, memberships: user.memberships },
+      userAgent,
     );
   }
 
-  async rotateRefreshSession(
-    refreshToken: string,
-    metadata: SessionMetadata,
-  ): Promise<AuthResult> {
+  async rotateRefreshSession(refreshToken: string, userAgent?: string) {
     const session = await this.repository.findRefreshSession(hashRefreshToken(refreshToken));
     if (!session) throw new AppError('Invalid refresh session', 401, 'INVALID_SESSION');
 
@@ -104,15 +75,13 @@ export class AuthService {
     }
 
     const nextRefreshToken = createRefreshToken();
-    const nextTokenHash = hashRefreshToken(nextRefreshToken);
     const rotated = await this.repository.rotateSession({
       sessionId: session.id,
       userId: session.userId,
-      nextTokenHash,
+      nextTokenHash: hashRefreshToken(nextRefreshToken),
       expiresAt: refreshSessionExpiry(),
-      userAgent: metadata.userAgent ?? null,
+      userAgent: userAgent ?? null,
     });
-
     if (!rotated) {
       throw new AppError('Refresh session was already rotated', 401, 'SESSION_REUSED');
     }
@@ -125,8 +94,7 @@ export class AuthService {
   }
 
   async revokeRefreshSession(refreshToken: string | undefined): Promise<void> {
-    if (!refreshToken) return;
-    await this.repository.revokeSessionByTokenHash(hashRefreshToken(refreshToken));
+    if (refreshToken) await this.repository.revokeSessionByTokenHash(hashRefreshToken(refreshToken));
   }
 
   async getCurrentUser(userId: string) {

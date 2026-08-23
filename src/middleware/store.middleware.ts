@@ -10,10 +10,7 @@ export const requireStoreMembership: RequestHandler = (req, _res, next) => {
 
   const { storeId } = storeParamsSchema.parse(req.params);
   const membership = req.context.storeAccess?.find((entry) => entry.storeId === storeId);
-
-  if (!membership) {
-    throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
-  }
+  if (!membership) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
 
   req.context.storeId = storeId;
   req.context.role = membership.role;
@@ -26,11 +23,9 @@ export function requireRole(...allowedRoles: StoreRoleClaim[]): RequestHandler {
     if (!role) {
       throw new AppError('Store membership context missing', 500, 'STORE_CONTEXT_MISSING');
     }
-
     if (!allowedRoles.includes(role)) {
       throw new AppError('Insufficient store permissions', 403, 'FORBIDDEN');
     }
-
     next();
   };
 }

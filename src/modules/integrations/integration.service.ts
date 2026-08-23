@@ -10,11 +10,7 @@ export class IntegrationService {
   async getSummary(storeId: string) {
     const store = await this.repository.findSummary(storeId);
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
-
-    return {
-      shopify: store.shopifyConnection,
-      meta: store.metaConnection,
-    };
+    return { shopify: store.shopifyConnection, meta: store.metaConnection };
   }
 
   startSyncRun(input: {
@@ -29,17 +25,6 @@ export class IntegrationService {
 
   attachProviderOperation(syncRunId: string, providerOperationId: string) {
     return this.repository.attachProviderOperation(syncRunId, providerOperationId);
-  }
-
-  updateSyncRunProgress(
-    syncRunId: string,
-    input: {
-      cursor: string | null;
-      recordsRead: number;
-      recordsWritten: number;
-    },
-  ) {
-    return this.repository.updateSyncRunProgress(syncRunId, input);
   }
 
   completeSyncRun(
@@ -93,28 +78,11 @@ export class IntegrationService {
     const connections = await this.repository.findConnectionIds(storeId);
     if (!connections) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
 
-    if (provider === 'SHOPIFY') {
-      return connections.shopifyConnection
-        ? this.repository.listByShopifyConnection(connections.shopifyConnection.id, limit)
-        : [];
-    }
-
-    if (provider === 'META') {
-      return connections.metaConnection
-        ? this.repository.listByMetaConnection(connections.metaConnection.id, limit)
-        : [];
-    }
-
-    const connectionIds: Array<{ shopifyConnectionId?: string; metaConnectionId?: string }> = [];
-    if (connections.shopifyConnection) {
-      connectionIds.push({ shopifyConnectionId: connections.shopifyConnection.id });
-    }
-    if (connections.metaConnection) {
-      connectionIds.push({ metaConnectionId: connections.metaConnection.id });
-    }
-
-    return connectionIds.length > 0
-      ? this.repository.listByConnections(connectionIds, limit)
-      : [];
+    return this.repository.listSyncRuns(
+      connections.shopifyConnection?.id ?? null,
+      connections.metaConnection?.id ?? null,
+      provider,
+      limit,
+    );
   }
 }

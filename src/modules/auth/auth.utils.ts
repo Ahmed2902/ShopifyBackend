@@ -5,15 +5,17 @@ import { env } from '../../config/env.js';
 import { AppError } from '../../errors/app-error.js';
 import type { StoreAccessClaim, StoreRoleClaim } from '../../types/auth.js';
 
-// region Passwords
 const SCRYPT_KEY_LENGTH = 64;
 const PASSWORD_FORMAT = 'scrypt$v1';
+const accessSecret = new TextEncoder().encode(env.JWT_ACCESS_SECRET);
+const accessAudience = 'shopify-intelligence-web';
+const storeRoles: StoreRoleClaim[] = ['OWNER', 'ADMIN', 'MEMBER'];
 
 function derivePasswordKey(password: string, salt: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     scrypt(password, salt, SCRYPT_KEY_LENGTH, (error, derivedKey) => {
-      if (error) return reject(error);
-      resolve(derivedKey);
+      if (error) reject(error);
+      else resolve(derivedKey);
     });
   });
 }
@@ -30,20 +32,8 @@ export async function verifyPassword(password: string, encoded: string): Promise
 
   const expectedBuffer = Buffer.from(expected, 'base64url');
   const actualBuffer = await derivePasswordKey(password, salt);
-  if (actualBuffer.length !== expectedBuffer.length) return false;
-  return timingSafeEqual(actualBuffer, expectedBuffer);
+  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
 }
-// endregion
-
-// region Tokens
-export interface AccessTokenContext {
-  userId: string;
-  stores: StoreAccessClaim[];
-}
-
-const accessSecret = new TextEncoder().encode(env.JWT_ACCESS_SECRET);
-const accessAudience = 'shopify-intelligence-web';
-const storeRoles: StoreRoleClaim[] = ['OWNER', 'ADMIN', 'MEMBER'];
 
 function parseStoreAccessClaims(value: unknown): StoreAccessClaim[] {
   if (value === undefined) return [];
@@ -51,7 +41,6 @@ function parseStoreAccessClaims(value: unknown): StoreAccessClaim[] {
 
   return value.map((item) => {
     if (!item || typeof item !== 'object') throw new Error('Unexpected store access payload');
-
     const { storeId, role } = item as { storeId?: unknown; role?: unknown };
     if (
       typeof storeId !== 'string' ||
@@ -60,15 +49,11 @@ function parseStoreAccessClaims(value: unknown): StoreAccessClaim[] {
     ) {
       throw new Error('Unexpected store access payload');
     }
-
     return { storeId, role: role as StoreRoleClaim };
   });
 }
 
-export async function issueAccessToken(
-  userId: string,
-  stores: StoreAccessClaim[] = [],
-): Promise<string> {
+export function issueAccessToken(userId: string, stores: StoreAccessClaim[] = []): Promise<string> {
   return new SignJWT({ kind: 'access', stores })
     .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
     .setSubject(userId)
@@ -79,20 +64,15 @@ export async function issueAccessToken(
     .sign(accessSecret);
 }
 
-export async function verifyAccessToken(token: string): Promise<AccessTokenContext> {
+export async function verifyAccessToken(token: string) {
   try {
     const { payload } = await jwtVerify(token, accessSecret, {
       issuer: env.JWT_ISSUER,
       audience: accessAudience,
       algorithms: ['HS256'],
     });
-
     if (payload.kind !== 'access' || !payload.sub) throw new Error('Unexpected token payload');
-
-    return {
-      userId: payload.sub,
-      stores: parseStoreAccessClaims(payload.stores),
-    };
+    return { userId: payload.sub, stores: parseStoreAccessClaims(payload.stores) };
   } catch {
     throw new AppError('Invalid or expired access token', 401, 'UNAUTHORIZED');
   }
@@ -105,9 +85,7 @@ export function createRefreshToken(): string {
 export function hashRefreshToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
-// endregion
 
-// region Cookies and request metadata
 export const REFRESH_COOKIE_NAME = 'refresh_token';
 
 export function refreshCookieOptions(nodeEnv: string = env.NODE_ENV): CookieOptions {
@@ -132,7 +110,7 @@ export function clearRefreshCookie(res: Response): void {
 }
 
 export function sanitizeUserAgent(value: string | undefined): string | undefined {
-  return value ? value.slice(0, 512) : undefined;
+  return value?.slice(0, 512);
 }
 
 export function normalizeEmail(email: string): string {
@@ -142,4 +120,3 @@ export function normalizeEmail(email: string): string {
 export function refreshSessionExpiry(): Date {
   return new Date(Date.now() + env.REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
 }
-// endregion
