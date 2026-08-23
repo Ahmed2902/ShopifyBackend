@@ -1,6 +1,6 @@
 import { AppError } from '../../../errors/app-error.js';
 import type { MetaApiContext } from '../meta.types.js';
-import { toJsonSafe } from '../meta.utils.js';
+import { parseMetaRecord, toJsonSafe } from '../meta.utils.js';
 import type { MetaApiService } from '../shared/meta-api.service.js';
 import type { MetaInsightsRepository } from './meta-insights.repository.js';
 import { metaInsightRowSchema } from './meta-insights.schema.js';
@@ -87,18 +87,12 @@ export class MetaInsightsService {
           fields: INSIGHT_FIELDS,
           limit: '100',
         },
-        (value) => {
-          const parsed = metaInsightRowSchema.safeParse(value);
-          if (!parsed.success) {
-            throw new AppError('Meta Insights returned an invalid row', 502, 'META_BAD_RESPONSE');
-          }
-          return parsed.data;
-        },
+        (value) => parseMetaRecord(metaInsightRowSchema, value, 'Meta Insights returned an invalid row'),
       );
 
       const keys: string[] = [];
+      const expectedAccountId = metaAccountId.replace(/^act_/, '');
       for (const row of rows) {
-        const expectedAccountId = metaAccountId.replace(/^act_/, '');
         if (row.account_id !== expectedAccountId && row.account_id !== metaAccountId) {
           throw new AppError(
             'Meta Insights returned data for a different ad account',
