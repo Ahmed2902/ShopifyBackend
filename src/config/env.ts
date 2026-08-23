@@ -20,7 +20,7 @@ const envSchema = z.object({
   SHOPIFY_STATE_SECRET: z.string().min(32),
   META_APP_ID: z.string().min(1),
   META_APP_SECRET: z.string().min(1),
-  META_SCOPES: z.string().min(1).default('ads_read,business_management'),
+  META_SCOPES: z.string().min(1).default('ads_read,business_management,catalog_management'),
   META_REDIRECT_URI: z.string().url(),
   META_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default('v26.0'),
   META_STATE_SECRET: z.string().min(32),
