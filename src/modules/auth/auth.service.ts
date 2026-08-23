@@ -12,6 +12,20 @@ import {
   verifyPassword,
 } from './auth.utils.js';
 
+export type GoogleSignInProfile = {
+  googleId: string;
+  email: string;
+  name: string | null;
+};
+
+function googleEmailInUseError() {
+  return new AppError(
+    'An account with this email already exists. Sign in with your password.',
+    409,
+    'GOOGLE_EMAIL_IN_USE',
+  );
+}
+
 export class AuthService {
   constructor(private readonly repository: AuthRepository) {}
 
@@ -58,6 +72,28 @@ export class AuthService {
       { id: user.id, email: user.email, name: user.name, memberships: user.memberships },
       userAgent,
     );
+  }
+
+  async oauthSignIn(profile: GoogleSignInProfile, userAgent?: string) {
+    const existingGoogleUser = await this.repository.findUserByGoogleId(profile.googleId);
+    if (existingGoogleUser) return this.createSession(existingGoogleUser, userAgent);
+
+    const email = normalizeEmail(profile.email);
+    if (await this.repository.findUserByEmail(email)) throw googleEmailInUseError();
+
+    try {
+      const user = await this.repository.createGoogleUser({
+        email,
+        name: profile.name,
+        googleId: profile.googleId,
+      });
+      return this.createSession(user, userAgent);
+    } catch (error) {
+      const concurrentlyCreated = await this.repository.findUserByGoogleId(profile.googleId);
+      if (concurrentlyCreated) return this.createSession(concurrentlyCreated, userAgent);
+      if (await this.repository.findUserByEmail(email)) throw googleEmailInUseError();
+      throw error;
+    }
   }
 
   async rotateRefreshSession(refreshToken: string, userAgent?: string) {

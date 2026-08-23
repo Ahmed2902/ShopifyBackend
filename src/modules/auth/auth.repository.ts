@@ -5,6 +5,13 @@ const membershipSelect = {
   role: true,
 } as const;
 
+const sessionUserSelect = {
+  id: true,
+  email: true,
+  name: true,
+  memberships: { select: membershipSelect },
+} as const;
+
 export class AuthRepository {
   findUserByEmail(email: string) {
     return prisma.user.findUnique({
@@ -16,6 +23,13 @@ export class AuthRepository {
         passwordHash: true,
         memberships: { select: membershipSelect },
       },
+    });
+  }
+
+  findUserByGoogleId(googleId: string) {
+    return prisma.user.findUnique({
+      where: { googleId },
+      select: sessionUserSelect,
     });
   }
 
@@ -33,6 +47,18 @@ export class AuthRepository {
     });
   }
 
+  createGoogleUser(input: { email: string; name: string | null; googleId: string }) {
+    return prisma.user.create({
+      data: {
+        email: input.email,
+        name: input.name,
+        googleId: input.googleId,
+        emailVerifiedAt: new Date(),
+      },
+      select: sessionUserSelect,
+    });
+  }
+
   createRefreshSession(input: {
     userId: string;
     tokenHash: string;
@@ -46,14 +72,7 @@ export class AuthRepository {
     return prisma.refreshSession.findUnique({
       where: { tokenHash },
       include: {
-        user: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            memberships: { select: membershipSelect },
-          },
-        },
+        user: { select: sessionUserSelect },
       },
     });
   }
