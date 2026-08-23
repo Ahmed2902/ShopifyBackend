@@ -1,12 +1,9 @@
 import { AppError } from '../../../errors/app-error.js';
-import type { MetaCatalogAsset, MetaApiContext } from '../meta.types.js';
+import type { MetaApiContext, MetaCatalogAsset } from '../meta.types.js';
+import { toJsonSafe } from '../meta.utils.js';
 import type { MetaApiService } from '../shared/meta-api.service.js';
 import type { MetaCatalogRepository } from './meta-catalog.repository.js';
-import {
-  metaCatalogItemSchema,
-  metaProductCatalogSchema,
-  type MetaCatalogItemPayload,
-} from './meta-catalog.schema.js';
+import { metaCatalogItemSchema, metaProductCatalogSchema } from './meta-catalog.schema.js';
 
 const CATALOG_FIELDS = [
   'id',
@@ -17,7 +14,6 @@ const CATALOG_FIELDS = [
   'product_count',
   'feed_count',
 ].join(',');
-
 const ITEM_FIELDS = [
   'id',
   'retailer_id',
@@ -47,9 +43,7 @@ const ITEM_FIELDS = [
 
 function parseCatalog(value: unknown): MetaCatalogAsset | null {
   const parsed = metaProductCatalogSchema.safeParse(value);
-  if (!parsed.success) {
-    throw new AppError('Meta catalog response was invalid', 502, 'META_BAD_RESPONSE');
-  }
+  if (!parsed.success) throw new AppError('Meta catalog response was invalid', 502, 'META_BAD_RESPONSE');
   const catalog = parsed.data;
   return {
     id: catalog.id,
@@ -63,24 +57,13 @@ function parseCatalog(value: unknown): MetaCatalogAsset | null {
   };
 }
 
-function parseItem(value: unknown): MetaCatalogItemPayload | null {
-  const parsed = metaCatalogItemSchema.safeParse(value);
-  if (!parsed.success) {
-    throw new AppError('Meta catalog item response was invalid', 502, 'META_BAD_RESPONSE');
-  }
-  return parsed.data;
-}
-
 export class MetaCatalogService {
   constructor(
     private readonly repository: MetaCatalogRepository,
     private readonly apiService: MetaApiService,
   ) {}
 
-  async discoverOwnedCatalogs(
-    context: MetaApiContext,
-    businessIds: string[],
-  ): Promise<MetaCatalogAsset[]> {
+  async discoverOwnedCatalogs(context: MetaApiContext, businessIds: string[]) {
     const byId = new Map<string, MetaCatalogAsset>();
     for (const businessId of businessIds) {
       const catalogs = await this.apiService.collectGraphPages(
@@ -110,6 +93,7 @@ export class MetaCatalogService {
         'META_CATALOG_NOT_ACCESSIBLE',
       );
     }
+
     await this.repository.configureSelection(context.storeId, context.connectionId, selected);
     return selected.map((catalog) => ({
       id: catalog.id,
@@ -123,7 +107,7 @@ export class MetaCatalogService {
     let recordsRead = 0;
     let recordsWritten = 0;
     let softDeletedItems = 0;
-    const breakdown: Array<{ catalogId: string; items: number; softDeletedItems: number }> = [];
+    const byCatalog: Array<{ catalogId: string; items: number; softDeletedItems: number }> = [];
 
     for (const metaCatalogId of selectedCatalogIds) {
       const catalog = await this.repository.findCatalog(
@@ -143,7 +127,13 @@ export class MetaCatalogService {
         context,
         `/${metaCatalogId}/products`,
         { fields: ITEM_FIELDS, limit: '100' },
-        parseItem,
+        (value) => {
+          const parsed = metaCatalogItemSchema.safeParse(value);
+          if (!parsed.success) {
+            throw new AppError('Meta catalog item response was invalid', 502, 'META_BAD_RESPONSE');
+          }
+          return parsed.data;
+        },
       );
       for (const item of items) await this.repository.upsertItem(catalog.id, item);
       const deleted = await this.repository.softDeleteMissingItems(
@@ -155,7 +145,7 @@ export class MetaCatalogService {
       recordsRead += 1 + items.length;
       recordsWritten += 1 + items.length + deleted.count;
       softDeletedItems += deleted.count;
-      breakdown.push({ catalogId: metaCatalogId, items: items.length, softDeletedItems: deleted.count });
+      byCatalog.push({ catalogId: metaCatalogId, items: items.length, softDeletedItems: deleted.count });
     }
 
     return {
@@ -163,10 +153,19 @@ export class MetaCatalogService {
       recordsWritten,
       breakdown: {
         catalogs: selectedCatalogIds.length,
-        items: breakdown.reduce((sum, item) => sum + item.items, 0),
+        items: byCatalog.reduce((sum, catalog) => sum + catalog.items, 0),
         softDeletedItems,
-        byCatalog: breakdown,
+        byCatalog,
       },
     };
+  }
+
+  async listCatalogs(storeId: string, selectedCatalogIds: string[]) {
+    return toJsonSafe(await this.repository.listCatalogs(storeId, selectedCatalogIds));
+  }
+
+  async listItems(storeId: string, catalogId: string, page: number, limit: number) {
+    await this.repository.requireSelectedCatalog(storeId, catalogId);
+    return toJsonSafe(await this.repository.listItems(storeId, catalogId, page, limit));
   }
 }
