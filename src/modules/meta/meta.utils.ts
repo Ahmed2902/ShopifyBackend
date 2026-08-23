@@ -79,8 +79,7 @@ export function computeMetaAppSecretProof(accessToken: string): string {
 }
 
 export function normalizeMetaAdAccountId(input: string): string {
-  const value = input.trim();
-  const accountId = value.startsWith('act_') ? value.slice(4) : value;
+  const accountId = input.trim().replace(/^act_/, '');
   if (!/^\d+$/.test(accountId)) {
     throw new AppError('Invalid Meta ad account ID', 400, 'INVALID_META_AD_ACCOUNT_ID');
   }
@@ -95,6 +94,16 @@ export function parseMetaMinorAmount(value: unknown): bigint | null {
   } catch {
     return null;
   }
+}
+
+export function parseMetaRecord<T>(
+  schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } },
+  value: unknown,
+  message: string,
+): T {
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) throw new AppError(message, 502, 'META_BAD_RESPONSE');
+  return parsed.data;
 }
 
 export function toJsonSafe<T>(value: T): unknown {
