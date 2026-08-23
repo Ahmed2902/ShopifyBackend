@@ -1,6 +1,6 @@
 import { AppError } from '../../../errors/app-error.js';
 import type { MetaApiContext, MetaCatalogAsset } from '../meta.types.js';
-import { toJsonSafe } from '../meta.utils.js';
+import { parseMetaRecord, toJsonSafe } from '../meta.utils.js';
 import type { MetaApiService } from '../shared/meta-api.service.js';
 import type { MetaCatalogRepository } from './meta-catalog.repository.js';
 import { metaCatalogItemSchema, metaProductCatalogSchema } from './meta-catalog.schema.js';
@@ -41,10 +41,8 @@ const ITEM_FIELDS = [
   'visibility',
 ].join(',');
 
-function parseCatalog(value: unknown): MetaCatalogAsset | null {
-  const parsed = metaProductCatalogSchema.safeParse(value);
-  if (!parsed.success) throw new AppError('Meta catalog response was invalid', 502, 'META_BAD_RESPONSE');
-  const catalog = parsed.data;
+function parseCatalog(value: unknown): MetaCatalogAsset {
+  const catalog = parseMetaRecord(metaProductCatalogSchema, value, 'Meta catalog response was invalid');
   return {
     id: catalog.id,
     name: catalog.name,
@@ -127,13 +125,7 @@ export class MetaCatalogService {
         context,
         `/${metaCatalogId}/products`,
         { fields: ITEM_FIELDS, limit: '100' },
-        (value) => {
-          const parsed = metaCatalogItemSchema.safeParse(value);
-          if (!parsed.success) {
-            throw new AppError('Meta catalog item response was invalid', 502, 'META_BAD_RESPONSE');
-          }
-          return parsed.data;
-        },
+        (value) => parseMetaRecord(metaCatalogItemSchema, value, 'Meta catalog item response was invalid'),
       );
       for (const item of items) await this.repository.upsertItem(catalog.id, item);
       const deleted = await this.repository.softDeleteMissingItems(
