@@ -263,7 +263,7 @@ describe('Shopify catalog and inventory sync', () => {
     } as never);
     stubFullCatalogInventorySync();
 
-    const result = await service.reconcileStore(storeId);
+    const result = await service.refreshStoreData(storeId);
 
     expect(result).toMatchObject({
       status: 'SUCCEEDED',

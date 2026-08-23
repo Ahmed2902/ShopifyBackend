@@ -9,9 +9,9 @@ const controller = new ShopifyController(shopifyService);
 const readController = new ShopifyReadController(shopifyReadService);
 
 export const shopifyRouter = Router();
-shopifyRouter.post('/webhooks', controller.receiveWebhook);
-shopifyRouter.post('/install', requireAuth, controller.startInstall);
-shopifyRouter.get('/callback', controller.completeInstall);
+shopifyRouter.post('/webhooks', controller.webhook);
+shopifyRouter.post('/install', requireAuth, controller.install);
+shopifyRouter.get('/callback', controller.callback);
 
 export const shopifyStoreRouter = Router({ mergeParams: true });
 shopifyStoreRouter.use(requireAuth, requireStoreMembership);
@@ -26,18 +26,14 @@ shopifyStoreRouter.get('/locations', readController.locations);
 shopifyStoreRouter.get('/orders', readController.orders);
 shopifyStoreRouter.get('/orders/:orderId', readController.order);
 
-shopifyStoreRouter.post(
-  '/sync',
-  requireRole('OWNER', 'ADMIN'),
-  controller.syncCatalogAndInventory,
-);
+shopifyStoreRouter.post('/sync', requireRole('OWNER', 'ADMIN'), controller.sync);
 shopifyStoreRouter.post(
   '/orders/backfill',
   requireRole('OWNER', 'ADMIN'),
-  controller.startOrderHistoryImport,
+  controller.startOrderBackfill,
 );
 shopifyStoreRouter.get(
   '/orders/backfill/:syncRunId',
   requireRole('OWNER', 'ADMIN'),
-  controller.getOrderHistoryImportStatus,
+  controller.getOrderBackfill,
 );

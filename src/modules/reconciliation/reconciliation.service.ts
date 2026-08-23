@@ -24,7 +24,7 @@ export class ReconciliationService {
       claimed += 1;
 
       try {
-        await this.shopifyService.reconcileStore(claim.storeId);
+        await this.shopifyService.refreshStoreData(claim.storeId);
         succeeded += 1;
       } catch {
         failed += 1;
