@@ -24,6 +24,16 @@ function nullableJson(value: unknown) {
     : (value as Prisma.InputJsonValue);
 }
 
+function creativeDestinationUrls(creative: MetaCreativePayload): string[] {
+  const values = [
+    creative.link_url,
+    creative.link_deep_link_url,
+    creative.object_url,
+    creative.template_url,
+  ].filter((value): value is string => typeof value === 'string' && value.length > 0);
+  return [...new Set(values)];
+}
+
 export class MetaAdsRepository {
   findAccount(storeId: string, connectionId: string, metaAccountId: string) {
     return prisma.metaAdAccount.findFirst({
@@ -94,11 +104,7 @@ export class MetaAdsRepository {
     });
   }
 
-  upsertAdSet(
-    adAccountId: string,
-    campaignId: string,
-    adSet: MetaAdSetPayload,
-  ) {
+  upsertAdSet(adAccountId: string, campaignId: string, adSet: MetaAdSetPayload) {
     const data = {
       campaignId,
       name: adSet.name,
@@ -138,24 +144,33 @@ export class MetaAdsRepository {
   }
 
   upsertCreative(adAccountId: string, creative: MetaCreativePayload) {
-    const storySpec = creative.object_story_spec;
-    const assetFeedSpec = creative.asset_feed_spec;
     const data = {
       name: creative.name ?? null,
       title: creative.title ?? null,
       body: creative.body ?? null,
+      callToAction: nullableJson(creative.call_to_action),
       callToActionType: creative.call_to_action_type ?? null,
       imageUrl: creative.image_url ?? null,
       thumbnailUrl: creative.thumbnail_url ?? null,
+      videoId: creative.video_id ?? null,
+      linkUrl: creative.link_url ?? null,
+      linkDeepLinkUrl: creative.link_deep_link_url ?? null,
+      objectUrl: creative.object_url ?? null,
+      objectStoryId: creative.object_story_id ?? null,
       effectiveObjectStoryId: creative.effective_object_story_id ?? null,
       effectiveInstagramMediaId: creative.effective_instagram_media_id ?? null,
       instagramPermalinkUrl: creative.instagram_permalink_url ?? null,
-      objectStorySpec: nullableJson(storySpec),
+      objectStorySpec: nullableJson(creative.object_story_spec),
       productSetId: creative.product_set_id ?? null,
-      assetFeedSpec: nullableJson(assetFeedSpec),
+      productData: nullableJson(creative.product_data),
+      assetFeedSpec: nullableJson(creative.asset_feed_spec),
       degreesOfFreedomSpec: nullableJson(creative.degrees_of_freedom_spec),
+      resolvedDestinationUrls: nullableJson(creativeDestinationUrls(creative)),
       templateUrl: creative.template_url ?? null,
+      templateUrlSpec: nullableJson(creative.template_url_spec),
       urlTags: creative.url_tags ?? null,
+      metaCreatedAt: optionalDate(creative.created_time),
+      metaUpdatedAt: optionalDate(creative.updated_time),
       deletedAt: null,
       rawJson: creative as unknown as Prisma.InputJsonValue,
     };
@@ -186,7 +201,9 @@ export class MetaAdsRepository {
       conversionDomain: ad.conversion_domain ?? null,
       sourceAdId: ad.source_ad_id ?? null,
       targetScope,
-      placement: Prisma.DbNull,
+      targetScopeConfidence: null,
+      targetScopeEvidence: Prisma.DbNull,
+      placement: nullableJson(ad.placement),
       trackingSpec: nullableJson(ad.tracking_specs),
       conversionSpec: nullableJson(ad.conversion_specs),
       recommendations: nullableJson(ad.recommendations),
@@ -208,144 +225,241 @@ export class MetaAdsRepository {
 
   async softDeleteMissing(
     adAccountId: string,
-    snapshot: {
-      campaignIds: string[];
-      adSetIds: string[];
-      creativeIds: string[];
-      adIds: string[];
-    },
+    snapshot: { campaignIds: string[]; adSetIds: string[]; creativeIds: string[]; adIds: string[] },
   ) {
     const now = new Date();
     const [campaigns, adSets, creatives, ads] = await prisma.$transaction([
       prisma.metaCampaign.updateMany({
-        where: {
-          adAccountId,
-          deletedAt: null,
-          ...(snapshot.campaignIds.length > 0
-            ? { metaCampaignId: { notIn: snapshot.campaignIds } }
-            : {}),
-        },
+        where: { adAccountId, deletedAt: null, metaCampaignId: { notIn: snapshot.campaignIds } },
         data: { deletedAt: now },
       }),
       prisma.metaAdSet.updateMany({
-        where: {
-          adAccountId,
-          deletedAt: null,
-          ...(snapshot.adSetIds.length > 0 ? { metaAdSetId: { notIn: snapshot.adSetIds } } : {}),
-        },
+        where: { adAccountId, deletedAt: null, metaAdSetId: { notIn: snapshot.adSetIds } },
         data: { deletedAt: now },
       }),
       prisma.metaCreative.updateMany({
-        where: {
-          adAccountId,
-          deletedAt: null,
-          ...(snapshot.creativeIds.length > 0
-            ? { metaCreativeId: { notIn: snapshot.creativeIds } }
-            : {}),
-        },
+        where: { adAccountId, deletedAt: null, metaCreativeId: { notIn: snapshot.creativeIds } },
         data: { deletedAt: now },
       }),
       prisma.metaAd.updateMany({
-        where: {
-          adAccountId,
-          deletedAt: null,
-          ...(snapshot.adIds.length > 0 ? { metaAdId: { notIn: snapshot.adIds } } : {}),
-        },
+        where: { adAccountId, deletedAt: null, metaAdId: { notIn: snapshot.adIds } },
         data: { deletedAt: now },
       }),
     ]);
-
-    return {
-      campaigns: campaigns.count,
-      adSets: adSets.count,
-      creatives: creatives.count,
-      ads: ads.count,
-    };
+    return { campaigns: campaigns.count, adSets: adSets.count, creatives: creatives.count, ads: ads.count };
   }
 
   markAccountSynced(accountId: string, syncedAt = new Date()) {
-    return prisma.metaAdAccount.update({
-      where: { id: accountId },
-      data: { lastSyncedAt: syncedAt },
-    });
+    return prisma.metaAdAccount.update({ where: { id: accountId }, data: { lastSyncedAt: syncedAt } });
   }
 
   markConnectionSynced(connectionId: string, syncedAt = new Date()) {
-    return prisma.metaConnection.update({
-      where: { id: connectionId },
-      data: { lastSyncedAt: syncedAt },
-    });
+    return prisma.metaConnection.update({ where: { id: connectionId }, data: { lastSyncedAt: syncedAt } });
   }
 
-  listAdAccounts(storeId: string) {
+  private async selectedAccountIds(storeId: string): Promise<string[]> {
+    const connection = await prisma.metaConnection.findUnique({
+      where: { storeId },
+      select: { selectedAdAccountIds: true },
+    });
+    return connection?.selectedAdAccountIds ?? [];
+  }
+
+  async listAdAccounts(storeId: string) {
+    const selectedIds = await this.selectedAccountIds(storeId);
+    if (selectedIds.length === 0) return [];
     return prisma.metaAdAccount.findMany({
-      where: {
-        storeId,
-        connection: { selectedAdAccountIds: { has: prisma.metaAdAccount.fields.metaAccountId } },
+      where: { storeId, metaAccountId: { in: selectedIds } },
+      select: {
+        metaAccountId: true,
+        name: true,
+        status: true,
+        currency: true,
+        timezoneName: true,
+        timezoneId: true,
+        timezoneOffsetHours: true,
+        amountSpentMinor: true,
+        balanceMinor: true,
+        spendCapMinor: true,
+        lastSyncedAt: true,
       },
       orderBy: { name: 'asc' },
     });
   }
 
-  listCampaigns(storeId: string, input: { adAccountId?: string; status?: string; take: number }) {
-    return prisma.metaCampaign.findMany({
-      where: {
-        adAccount: {
-          storeId,
-          ...(input.adAccountId ? { metaAccountId: input.adAccountId } : {}),
-        },
-        deletedAt: null,
-        ...(input.status ? { effectiveStatus: input.status } : {}),
-      },
-      include: { adAccount: { select: { metaAccountId: true, name: true, currency: true } } },
-      orderBy: [{ metaUpdatedAt: 'desc' }, { name: 'asc' }],
-      take: input.take,
-    });
-  }
-
-  listAdSets(storeId: string, input: { campaignId?: string; status?: string; take: number }) {
-    return prisma.metaAdSet.findMany({
-      where: {
-        adAccount: { storeId },
-        deletedAt: null,
-        ...(input.campaignId ? { campaign: { metaCampaignId: input.campaignId } } : {}),
-        ...(input.status ? { effectiveStatus: input.status } : {}),
-      },
-      include: {
-        campaign: { select: { metaCampaignId: true, name: true } },
-        adAccount: { select: { metaAccountId: true, name: true, currency: true } },
-      },
-      orderBy: [{ metaUpdatedAt: 'desc' }, { name: 'asc' }],
-      take: input.take,
-    });
-  }
-
-  listAds(
+  async listCampaigns(
     storeId: string,
-    input: { campaignId?: string; adSetId?: string; status?: string; take: number },
+    input: { adAccountId?: string; status?: string; page: number; limit: number },
   ) {
-    return prisma.metaAd.findMany({
-      where: {
-        adAccount: { storeId },
-        deletedAt: null,
-        ...(input.campaignId ? { campaign: { metaCampaignId: input.campaignId } } : {}),
-        ...(input.adSetId ? { adSet: { metaAdSetId: input.adSetId } } : {}),
-        ...(input.status ? { effectiveStatus: input.status } : {}),
+    const selectedIds = await this.selectedAccountIds(storeId);
+    if (selectedIds.length === 0) return { items: [], total: 0 };
+    const where = {
+      adAccount: {
+        storeId,
+        metaAccountId: { in: selectedIds },
+        ...(input.adAccountId ? { metaAccountId: input.adAccountId } : {}),
       },
-      include: {
-        campaign: { select: { metaCampaignId: true, name: true } },
-        adSet: { select: { metaAdSetId: true, name: true } },
-        creative: true,
-        adAccount: { select: { metaAccountId: true, name: true, currency: true } },
-      },
-      orderBy: [{ metaUpdatedAt: 'desc' }, { name: 'asc' }],
-      take: input.take,
-    });
+      deletedAt: null,
+      ...(input.status ? { effectiveStatus: input.status } : {}),
+    } satisfies Prisma.MetaCampaignWhereInput;
+    const [items, total] = await prisma.$transaction([
+      prisma.metaCampaign.findMany({
+        where,
+        select: {
+          metaCampaignId: true,
+          name: true,
+          status: true,
+          configuredStatus: true,
+          effectiveStatus: true,
+          objective: true,
+          buyingType: true,
+          bidStrategy: true,
+          dailyBudgetMinor: true,
+          lifetimeBudgetMinor: true,
+          budgetRemainingMinor: true,
+          spendCapMinor: true,
+          startTime: true,
+          stopTime: true,
+          promotedObject: true,
+          metaCreatedAt: true,
+          metaUpdatedAt: true,
+          adAccount: { select: { metaAccountId: true, name: true, currency: true } },
+        },
+        orderBy: [{ metaUpdatedAt: 'desc' }, { name: 'asc' }],
+        skip: (input.page - 1) * input.limit,
+        take: input.limit,
+      }),
+      prisma.metaCampaign.count({ where }),
+    ]);
+    return { items, total };
   }
 
-  getAd(storeId: string, metaAdId: string) {
+  async listAdSets(
+    storeId: string,
+    input: { campaignId?: string; status?: string; page: number; limit: number },
+  ) {
+    const selectedIds = await this.selectedAccountIds(storeId);
+    if (selectedIds.length === 0) return { items: [], total: 0 };
+    const where = {
+      adAccount: { storeId, metaAccountId: { in: selectedIds } },
+      deletedAt: null,
+      ...(input.campaignId ? { campaign: { metaCampaignId: input.campaignId } } : {}),
+      ...(input.status ? { effectiveStatus: input.status } : {}),
+    } satisfies Prisma.MetaAdSetWhereInput;
+    const [items, total] = await prisma.$transaction([
+      prisma.metaAdSet.findMany({
+        where,
+        select: {
+          metaAdSetId: true,
+          name: true,
+          status: true,
+          configuredStatus: true,
+          effectiveStatus: true,
+          dailyBudgetMinor: true,
+          lifetimeBudgetMinor: true,
+          budgetRemainingMinor: true,
+          dailySpendCapMinor: true,
+          lifetimeSpendCapMinor: true,
+          bidStrategy: true,
+          bidAmountMinor: true,
+          bidConstraints: true,
+          billingEvent: true,
+          optimizationGoal: true,
+          destinationType: true,
+          isDynamicCreative: true,
+          targeting: true,
+          promotedObject: true,
+          attributionSpec: true,
+          startTime: true,
+          endTime: true,
+          learningStageInfo: true,
+          metaCreatedAt: true,
+          metaUpdatedAt: true,
+          campaign: { select: { metaCampaignId: true, name: true } },
+          adAccount: { select: { metaAccountId: true, name: true, currency: true } },
+        },
+        orderBy: [{ metaUpdatedAt: 'desc' }, { name: 'asc' }],
+        skip: (input.page - 1) * input.limit,
+        take: input.limit,
+      }),
+      prisma.metaAdSet.count({ where }),
+    ]);
+    return { items, total };
+  }
+
+  async listAds(
+    storeId: string,
+    input: { campaignId?: string; adSetId?: string; status?: string; page: number; limit: number },
+  ) {
+    const selectedIds = await this.selectedAccountIds(storeId);
+    if (selectedIds.length === 0) return { items: [], total: 0 };
+    const where = {
+      adAccount: { storeId, metaAccountId: { in: selectedIds } },
+      deletedAt: null,
+      ...(input.campaignId ? { campaign: { metaCampaignId: input.campaignId } } : {}),
+      ...(input.adSetId ? { adSet: { metaAdSetId: input.adSetId } } : {}),
+      ...(input.status ? { effectiveStatus: input.status } : {}),
+    } satisfies Prisma.MetaAdWhereInput;
+    const [items, total] = await prisma.$transaction([
+      prisma.metaAd.findMany({
+        where,
+        select: {
+          metaAdId: true,
+          name: true,
+          configuredStatus: true,
+          effectiveStatus: true,
+          conversionDomain: true,
+          sourceAdId: true,
+          targetScope: true,
+          targetScopeConfidence: true,
+          targetScopeEvidence: true,
+          placement: true,
+          recommendations: true,
+          issuesInfo: true,
+          metaCreatedAt: true,
+          metaUpdatedAt: true,
+          campaign: { select: { metaCampaignId: true, name: true } },
+          adSet: { select: { metaAdSetId: true, name: true, learningStageInfo: true } },
+          creative: {
+            select: {
+              metaCreativeId: true,
+              name: true,
+              title: true,
+              body: true,
+              callToActionType: true,
+              imageUrl: true,
+              thumbnailUrl: true,
+              videoId: true,
+              linkUrl: true,
+              linkDeepLinkUrl: true,
+              objectUrl: true,
+              productSetId: true,
+              productData: true,
+              resolvedDestinationUrls: true,
+              templateUrl: true,
+              urlTags: true,
+            },
+          },
+          adAccount: { select: { metaAccountId: true, name: true, currency: true } },
+        },
+        orderBy: [{ metaUpdatedAt: 'desc' }, { name: 'asc' }],
+        skip: (input.page - 1) * input.limit,
+        take: input.limit,
+      }),
+      prisma.metaAd.count({ where }),
+    ]);
+    return { items, total };
+  }
+
+  async getAd(storeId: string, metaAdId: string) {
+    const selectedIds = await this.selectedAccountIds(storeId);
+    if (selectedIds.length === 0) return null;
     return prisma.metaAd.findFirst({
-      where: { metaAdId, deletedAt: null, adAccount: { storeId } },
+      where: {
+        metaAdId,
+        deletedAt: null,
+        adAccount: { storeId, metaAccountId: { in: selectedIds } },
+      },
       include: {
         campaign: true,
         adSet: true,
