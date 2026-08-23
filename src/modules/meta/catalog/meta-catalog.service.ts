@@ -1,0 +1,156 @@
+import { AppError } from '../../../errors/app-error.js';
+import type { MetaCatalogAsset, MetaApiContext } from '../meta.types.js';
+import type { MetaApiService } from '../shared/meta-api.service.js';
+import type { MetaCatalogRepository } from './meta-catalog.repository.js';
+import {
+  metaCatalogItemSchema,
+  metaProductCatalogSchema,
+  type MetaCatalogItemPayload,
+} from './meta-catalog.schema.js';
+
+const CATALOG_FIELDS = [
+  'id',
+  'name',
+  'business{id,name}',
+  'owner_business{id,name}',
+  'vertical',
+  'product_count',
+  'feed_count',
+].join(',');
+
+const ITEM_FIELDS = [
+  'id',
+  'retailer_id',
+  'retailer_product_group_id',
+  'parent_product_id',
+  'name',
+  'brand',
+  'availability',
+  'price',
+  'sale_price',
+  'currency',
+  'size',
+  'color',
+  'pattern',
+  'url',
+  'product_type',
+  'custom_label_0',
+  'custom_label_1',
+  'custom_label_2',
+  'custom_label_3',
+  'custom_label_4',
+  'product_feed{id}',
+  'quantity_to_sell_on_facebook',
+  'status',
+  'visibility',
+].join(',');
+
+function parseCatalog(value: unknown): MetaCatalogAsset | null {
+  const parsed = metaProductCatalogSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new AppError('Meta catalog response was invalid', 502, 'META_BAD_RESPONSE');
+  }
+  const catalog = parsed.data;
+  return {
+    id: catalog.id,
+    name: catalog.name,
+    businessId: catalog.business?.id ?? null,
+    ownerBusinessId: catalog.owner_business?.id ?? null,
+    vertical: catalog.vertical ?? null,
+    productCount: catalog.product_count ?? null,
+    feedCount: catalog.feed_count ?? null,
+    raw: value,
+  };
+}
+
+function parseItem(value: unknown): MetaCatalogItemPayload | null {
+  const parsed = metaCatalogItemSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new AppError('Meta catalog item response was invalid', 502, 'META_BAD_RESPONSE');
+  }
+  return parsed.data;
+}
+
+export class MetaCatalogService {
+  constructor(
+    private readonly repository: MetaCatalogRepository,
+    private readonly apiService: MetaApiService,
+  ) {}
+
+  async discoverOwnedCatalogs(
+    context: MetaApiContext,
+    businessIds: string[],
+  ): Promise<MetaCatalogAsset[]> {
+    const byId = new Map<string, MetaCatalogAsset>();
+    for (const businessId of businessIds) {
+      const catalogs = await this.apiService.collectGraphPages(
+        context,
+        `/${businessId}/owned_product_catalogs`,
+        { fields: CATALOG_FIELDS, limit: '100' },
+        parseCatalog,
+      );
+      for (const catalog of catalogs) byId.set(catalog.id, catalog);
+    }
+    return [...byId.values()].sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  async persistSelectedCatalogs(
+    context: MetaApiContext,
+    selectedCatalogs: MetaCatalogAsset[],
+  ): Promise<void> {
+    for (const catalog of selectedCatalogs) {
+      await this.repository.upsertDiscoveredCatalog(context.storeId, context.connectionId, catalog);
+    }
+  }
+
+  async syncSelectedCatalogs(context: MetaApiContext, selectedCatalogIds: string[]) {
+    let recordsRead = 0;
+    let recordsWritten = 0;
+    let softDeletedItems = 0;
+    const breakdown: Array<{ catalogId: string; items: number; softDeletedItems: number }> = [];
+
+    for (const metaCatalogId of selectedCatalogIds) {
+      const catalog = await this.repository.findCatalog(
+        context.storeId,
+        context.connectionId,
+        metaCatalogId,
+      );
+      if (!catalog) {
+        throw new AppError(
+          'Selected Meta catalog is missing from local configuration',
+          409,
+          'META_CATALOG_NOT_CONFIGURED',
+        );
+      }
+
+      const items = await this.apiService.collectGraphPages(
+        context,
+        `/${metaCatalogId}/products`,
+        { fields: ITEM_FIELDS, limit: '100' },
+        parseItem,
+      );
+      for (const item of items) await this.repository.upsertItem(catalog.id, item);
+      const deleted = await this.repository.softDeleteMissingItems(
+        catalog.id,
+        items.map((item) => item.id),
+      );
+      await this.repository.markCatalogSynced(catalog.id);
+
+      recordsRead += 1 + items.length;
+      recordsWritten += 1 + items.length + deleted.count;
+      softDeletedItems += deleted.count;
+      breakdown.push({ catalogId: metaCatalogId, items: items.length, softDeletedItems: deleted.count });
+    }
+
+    return {
+      recordsRead,
+      recordsWritten,
+      breakdown: {
+        catalogs: selectedCatalogIds.length,
+        items: breakdown.reduce((sum, item) => sum + item.items, 0),
+        softDeletedItems,
+        byCatalog: breakdown,
+      },
+    };
+  }
+}
