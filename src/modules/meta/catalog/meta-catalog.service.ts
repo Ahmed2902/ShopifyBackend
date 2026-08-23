@@ -94,13 +94,29 @@ export class MetaCatalogService {
     return [...byId.values()].sort((left, right) => left.name.localeCompare(right.name));
   }
 
-  async persistSelectedCatalogs(
+  async configureCatalogs(
     context: MetaApiContext,
-    selectedCatalogs: MetaCatalogAsset[],
-  ): Promise<void> {
-    for (const catalog of selectedCatalogs) {
-      await this.repository.upsertDiscoveredCatalog(context.storeId, context.connectionId, catalog);
+    accessibleCatalogs: MetaCatalogAsset[],
+    requestedCatalogIds: string[],
+  ) {
+    const requested = new Set(requestedCatalogIds);
+    const selected = accessibleCatalogs.filter((catalog) => requested.has(catalog.id));
+    const selectedIds = new Set(selected.map((catalog) => catalog.id));
+    const missing = requestedCatalogIds.filter((id) => !selectedIds.has(id));
+    if (missing.length > 0) {
+      throw new AppError(
+        `Selected Meta catalogs are not accessible: ${missing.join(', ')}`,
+        400,
+        'META_CATALOG_NOT_ACCESSIBLE',
+      );
     }
+    await this.repository.configureSelection(context.storeId, context.connectionId, selected);
+    return selected.map((catalog) => ({
+      id: catalog.id,
+      name: catalog.name,
+      vertical: catalog.vertical,
+      productCount: catalog.productCount,
+    }));
   }
 
   async syncSelectedCatalogs(context: MetaApiContext, selectedCatalogIds: string[]) {
