@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { IntegrationService } from '../../../src/modules/integrations/integration.service.js';
-import type { MetaAdsRepository } from '../../../src/modules/meta/ads/meta-ads.repository.js';
 import type { MetaAdsService } from '../../../src/modules/meta/ads/meta-ads.service.js';
-import type { MetaCatalogRepository } from '../../../src/modules/meta/catalog/meta-catalog.repository.js';
 import type { MetaCatalogService } from '../../../src/modules/meta/catalog/meta-catalog.service.js';
-import type { MetaInsightsRepository } from '../../../src/modules/meta/insights/meta-insights.repository.js';
 import type { MetaInsightsService } from '../../../src/modules/meta/insights/meta-insights.service.js';
 import type { MetaRepository } from '../../../src/modules/meta/meta.repository.js';
 import { MetaService } from '../../../src/modules/meta/meta.service.js';
@@ -54,7 +51,7 @@ function build(options?: {
       connectionId,
       accessToken: 'token',
       apiVersion: 'v26.0',
-      scopes: ['ads_read', 'business_management'],
+      scopes: ['ads_read', 'business_management', 'catalog_management'],
       metaBusinessId: 'biz_1',
       selectedAdAccountIds,
       selectedCatalogIds,
@@ -77,13 +74,6 @@ function build(options?: {
           },
         }),
   } as unknown as MetaAdsService;
-  const adsRepository = {
-    listAdAccounts: vi.fn().mockResolvedValue([]),
-    listCampaigns: vi.fn().mockResolvedValue({ items: [], total: 0 }),
-    listAdSets: vi.fn().mockResolvedValue({ items: [], total: 0 }),
-    listAds: vi.fn().mockResolvedValue({ items: [], total: 0 }),
-    getAd: vi.fn().mockResolvedValue(null),
-  } as unknown as MetaAdsRepository;
   const integrationService = {
     startSyncRun: vi.fn().mockResolvedValue({ id: syncRunId }),
     completeSyncRun: vi.fn().mockResolvedValue(undefined),
@@ -99,11 +89,6 @@ function build(options?: {
       breakdown: { catalogs: 1, items: 20, softDeletedItems: 1, byCatalog: [] },
     }),
   } as unknown as MetaCatalogService;
-  const catalogRepository = {
-    listCatalogs: vi.fn().mockResolvedValue([]),
-    requireSelectedCatalog: vi.fn().mockResolvedValue(undefined),
-    listItems: vi.fn().mockResolvedValue({ items: [], total: 0 }),
-  } as unknown as MetaCatalogRepository;
   const insightsService = {
     syncAccount: vi.fn().mockResolvedValue({
       recordsRead: 12,
@@ -115,32 +100,23 @@ function build(options?: {
       attributionMode: 'UNIFIED_ADSET_SETTING',
     }),
   } as unknown as MetaInsightsService;
-  const insightsRepository = {
-    listDaily: vi.fn().mockResolvedValue({ items: [], total: 0 }),
-  } as unknown as MetaInsightsRepository;
 
   return {
     repository,
     authService,
     apiService,
     adsService,
-    adsRepository,
     integrationService,
     catalogService,
-    catalogRepository,
     insightsService,
-    insightsRepository,
     service: new MetaService(
       repository,
       authService,
       apiService,
       adsService,
-      adsRepository,
       integrationService,
       catalogService,
-      catalogRepository,
       insightsService,
-      insightsRepository,
     ),
   };
 }
