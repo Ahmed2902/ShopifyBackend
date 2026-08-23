@@ -76,8 +76,8 @@ function build(options?: { failAdWrite?: boolean; data?: MappingDataset | null }
       : vi.fn().mockResolvedValue({ state: 'VARIANT', changed: true, scope: 'VARIANT' }),
     listAdMappings: vi.fn(),
     mappingSummary: vi.fn(),
-    replaceManualAdMappings: vi.fn(),
-    confirmCurrentAdMappings: vi.fn(),
+    replaceManualAdMappings: vi.fn().mockResolvedValue({ metaAdId: 'meta-ad-1' }),
+    confirmCurrentAdMappings: vi.fn().mockResolvedValue({ metaAdId: 'meta-ad-1', confirmed: 1 }),
     replaceManualCatalogMappings: vi.fn(),
   } as unknown as MetaMappingRepository;
   const integrationService = {
@@ -175,5 +175,38 @@ describe('MetaMappingService', () => {
       code: 'META_NOT_CONNECTED',
     });
     expect(integrationService.startSyncRun).not.toHaveBeenCalled();
+  });
+
+  it('allows manual mapping changes only for ads in the currently selected Meta dataset', async () => {
+    const { repository, service } = build();
+    const mappings = [{ productId: 'product-1', variantId: 'variant-1', granularity: 'VARIANT' as const }];
+
+    await service.replaceManualAdMappings(storeId, 'meta-ad-1', mappings);
+
+    expect(repository.replaceManualAdMappings).toHaveBeenCalledWith(storeId, 'meta-ad-1', mappings);
+  });
+
+  it('rejects manual mapping changes for a deselected or stale Meta ad', async () => {
+    const data = dataset();
+    data.ads = [];
+    const { repository, service } = build({ data });
+
+    await expect(
+      service.replaceManualAdMappings(storeId, 'meta-ad-1', [
+        { productId: 'product-1', variantId: 'variant-1', granularity: 'VARIANT' },
+      ]),
+    ).rejects.toMatchObject({ code: 'META_AD_NOT_FOUND' });
+    expect(repository.replaceManualAdMappings).not.toHaveBeenCalled();
+  });
+
+  it('rejects mapping confirmation for a deselected or stale Meta ad', async () => {
+    const data = dataset();
+    data.ads = [];
+    const { repository, service } = build({ data });
+
+    await expect(service.confirmCurrentAdMappings(storeId, 'meta-ad-1')).rejects.toMatchObject({
+      code: 'META_AD_NOT_FOUND',
+    });
+    expect(repository.confirmCurrentAdMappings).not.toHaveBeenCalled();
   });
 });
