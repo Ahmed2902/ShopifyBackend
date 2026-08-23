@@ -25,4 +25,6 @@ process.env.TIKTOK_SCOPES ??= '';
 process.env.TIKTOK_REDIRECT_URI ??= 'http://localhost:3001/v1/integrations/tiktok/callback';
 process.env.TIKTOK_API_VERSION ??= 'v1.3';
 process.env.TIKTOK_STATE_SECRET ??= 'test-tiktok-state-secret-that-is-over-thirty-two-characters';
+process.env.TIKTOK_WEBHOOK_URL ??= 'http://localhost:3001/v1/integrations/tiktok/webhooks';
+process.env.TIKTOK_WEBHOOK_TOKEN ??= 'test-tiktok-webhook-token-that-is-over-thirty-two-characters';
 process.env.TIKTOK_WEBHOOK_MAX_AGE_SECONDS ??= '300';
