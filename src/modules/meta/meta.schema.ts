@@ -13,6 +13,34 @@ export const metaConfigureAssetsSchema = z.object({
   ),
 });
 
+const pagination = {
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(100).default(50),
+};
+
+export const metaCampaignListQuerySchema = z.object({
+  ...pagination,
+  adAccountId: z.string().min(1).optional(),
+  status: z.string().min(1).optional(),
+});
+
+export const metaAdSetListQuerySchema = z.object({
+  ...pagination,
+  campaignId: z.string().min(1).optional(),
+  status: z.string().min(1).optional(),
+});
+
+export const metaAdListQuerySchema = z.object({
+  ...pagination,
+  campaignId: z.string().min(1).optional(),
+  adSetId: z.string().min(1).optional(),
+  status: z.string().min(1).optional(),
+});
+
+export const metaAdParamsSchema = z.object({
+  adId: z.string().min(1),
+});
+
 export const metaTokenResponseSchema = z.object({
   access_token: z.string().min(1),
   token_type: z.string().optional(),
