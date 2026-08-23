@@ -74,7 +74,13 @@ export function buildTikTokSuccessRedirect(storeId: string): string {
 }
 
 export function parseTikTokDate(value: unknown): Date | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const millis = value < 10_000_000_000 ? value * 1000 : value;
+    const date = new Date(millis);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
   if (typeof value !== 'string' || value.trim() === '') return null;
+  if (/^\d{10,13}$/.test(value)) return parseTikTokDate(Number(value));
   const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
     ? `${value.replace(' ', 'T')}Z`
     : value;
@@ -109,28 +115,67 @@ export function asRecord(value: unknown): Record<string, unknown> {
 }
 
 export function toJsonSafe<T>(value: T): unknown {
-  return JSON.parse(JSON.stringify(value, (_key, current) => typeof current === 'bigint' ? current.toString() : current)) as unknown;
+  return JSON.parse(
+    JSON.stringify(value, (_key, current) => (typeof current === 'bigint' ? current.toString() : current)),
+  ) as unknown;
 }
 
 export function deriveTikTokDeliveryId(payload: unknown, rawBody: Buffer): string {
   const record = asRecord(payload);
-  const explicit = asString(record.event_id) ?? asString(record.eventId) ?? asString(record.request_id);
+  const explicit = asString(record.request_id) ?? asString(record.event_id) ?? asString(record.eventId);
   if (explicit) return explicit;
   return createHash('sha256').update(rawBody).digest('hex');
 }
 
 export function getTikTokWebhookTopic(payload: unknown): string {
   const record = asRecord(payload);
-  return asString(record.event) ?? asString(record.event_type) ?? asString(record.type) ?? 'UNKNOWN';
+  const explicit = asString(record.event) ?? asString(record.event_type) ?? asString(record.type);
+  if (explicit) return explicit;
+  const object = asNumber(record.object);
+  const topics: Record<number, string> = {
+    1: 'LEAD',
+    2: 'AD_GROUP_REVIEW',
+    3: 'AD_REVIEW',
+    4: 'TCM_ORDER',
+    8: 'CREATIVE_FATIGUE',
+    10: 'TCM_VIDEOS',
+    11: 'REPORT_DATA_CHANGE',
+  };
+  return object === null ? 'UNKNOWN' : topics[object] ?? `WEBHOOK_${object}`;
+}
+
+export function getTikTokWebhookAdvertiserIds(payload: unknown): string[] {
+  const record = asRecord(payload);
+  const data = asRecord(record.data);
+  const ids = new Set<string>();
+  for (const candidate of [record.advertiser_id, record.adv_id, data.advertiser_id, data.adv_id]) {
+    const id = asString(candidate);
+    if (id) ids.add(id);
+  }
+  if (Array.isArray(record.entry)) {
+    for (const rawEntry of record.entry) {
+      const entry = asRecord(rawEntry);
+      const id = asString(entry.adv_id) ?? asString(entry.advertiser_id);
+      if (id) ids.add(id);
+    }
+  }
+  return [...ids];
 }
 
 export function getTikTokWebhookAdvertiserId(payload: unknown): string | null {
-  const record = asRecord(payload);
-  const data = asRecord(record.data);
-  return asString(record.advertiser_id) ?? asString(data.advertiser_id);
+  return getTikTokWebhookAdvertiserIds(payload)[0] ?? null;
 }
 
-export function verifyTikTokWebhookSignature(rawBody: Buffer | undefined, signatureHeader: string | undefined): void {
+export function verifyTikTokWebhookToken(token: string | undefined): void {
+  if (!token || !safeEqual(token, env.TIKTOK_WEBHOOK_TOKEN)) {
+    throw new AppError('TikTok webhook token is invalid', 401, 'INVALID_TIKTOK_WEBHOOK_TOKEN');
+  }
+}
+
+export function verifyTikTokWebhookSignature(
+  rawBody: Buffer | undefined,
+  signatureHeader: string | undefined,
+): void {
   if (!rawBody || !signatureHeader) {
     throw new AppError('TikTok webhook signature is missing', 401, 'INVALID_TIKTOK_WEBHOOK_SIGNATURE');
   }
