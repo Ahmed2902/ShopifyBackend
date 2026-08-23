@@ -1,5 +1,4 @@
-import { IntegrationRepository } from '../integrations/integration.repository.js';
-import { IntegrationService } from '../integrations/integration.service.js';
+import { integrationService } from '../integrations/integration.service.js';
 import { MetaAdsRepository } from './ads/meta-ads.repository.js';
 import { MetaAdsService } from './ads/meta-ads.service.js';
 import { MetaCatalogRepository } from './catalog/meta-catalog.repository.js';
@@ -22,10 +21,11 @@ const metaCatalogRepository = new MetaCatalogRepository();
 const metaCatalogService = new MetaCatalogService(metaCatalogRepository, metaApiService);
 const metaInsightsRepository = new MetaInsightsRepository();
 const metaInsightsService = new MetaInsightsService(metaInsightsRepository, metaApiService);
-const metaMappingRepository = new MetaMappingRepository();
-const integrationService = new IntegrationService(new IntegrationRepository());
 
-export const metaMappingService = new MetaMappingService(metaMappingRepository, integrationService);
+export const metaMappingService = new MetaMappingService(
+  new MetaMappingRepository(),
+  integrationService,
+);
 
 export const metaService = new MetaService(
   metaRepository,
