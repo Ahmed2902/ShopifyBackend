@@ -1,5 +1,7 @@
 import { prisma } from '../../lib/prisma.js';
 
+export type AuthTokenKind = 'EMAIL_VERIFICATION' | 'PASSWORD_RESET';
+
 const membershipSelect = {
   storeId: true,
   role: true,
@@ -9,6 +11,7 @@ const sessionUserSelect = {
   id: true,
   email: true,
   name: true,
+  emailVerifiedAt: true,
   memberships: { select: membershipSelect },
 } as const;
 
@@ -21,6 +24,7 @@ export class AuthRepository {
         email: true,
         name: true,
         passwordHash: true,
+        emailVerifiedAt: true,
         memberships: { select: membershipSelect },
       },
     });
@@ -56,6 +60,120 @@ export class AuthRepository {
         emailVerifiedAt: new Date(),
       },
       select: sessionUserSelect,
+    });
+  }
+
+  replaceAuthToken(input: {
+    userId: string;
+    type: AuthTokenKind;
+    tokenHash: string;
+    expiresAt: Date;
+  }) {
+    return prisma.authToken.upsert({
+      where: {
+        userId_type: {
+          userId: input.userId,
+          type: input.type,
+        },
+      },
+      create: input,
+      update: {
+        tokenHash: input.tokenHash,
+        expiresAt: input.expiresAt,
+        usedAt: null,
+        createdAt: new Date(),
+      },
+    });
+  }
+
+  findLatestAuthToken(userId: string, type: AuthTokenKind) {
+    return prisma.authToken.findUnique({
+      where: { userId_type: { userId, type } },
+      select: { createdAt: true },
+    });
+  }
+
+  deleteAuthTokenByHash(tokenHash: string) {
+    return prisma.authToken.deleteMany({ where: { tokenHash } });
+  }
+
+  async hasValidAuthToken(tokenHash: string, type: AuthTokenKind, now = new Date()) {
+    const token = await prisma.authToken.findFirst({
+      where: {
+        tokenHash,
+        type,
+        usedAt: null,
+        expiresAt: { gt: now },
+      },
+      select: { id: true },
+    });
+    return Boolean(token);
+  }
+
+  async consumeEmailVerificationToken(tokenHash: string, now = new Date()) {
+    return prisma.$transaction(async (tx) => {
+      const token = await tx.authToken.findUnique({
+        where: { tokenHash },
+        select: {
+          id: true,
+          userId: true,
+          type: true,
+          expiresAt: true,
+          usedAt: true,
+          user: { select: { emailVerifiedAt: true } },
+        },
+      });
+
+      if (
+        !token ||
+        token.type !== 'EMAIL_VERIFICATION' ||
+        token.usedAt ||
+        token.expiresAt <= now
+      ) {
+        return null;
+      }
+
+      const claimed = await tx.authToken.updateMany({
+        where: { id: token.id, usedAt: null, expiresAt: { gt: now } },
+        data: { usedAt: now },
+      });
+      if (claimed.count !== 1) return null;
+
+      return tx.user.update({
+        where: { id: token.userId },
+        data: { emailVerifiedAt: token.user.emailVerifiedAt ?? now },
+        select: { id: true, email: true, name: true, emailVerifiedAt: true },
+      });
+    });
+  }
+
+  async resetPasswordWithToken(tokenHash: string, passwordHash: string, now = new Date()) {
+    return prisma.$transaction(async (tx) => {
+      const token = await tx.authToken.findUnique({
+        where: { tokenHash },
+        select: { id: true, userId: true, type: true, expiresAt: true, usedAt: true },
+      });
+
+      if (!token || token.type !== 'PASSWORD_RESET' || token.usedAt || token.expiresAt <= now) {
+        return false;
+      }
+
+      const claimed = await tx.authToken.updateMany({
+        where: { id: token.id, usedAt: null, expiresAt: { gt: now } },
+        data: { usedAt: now },
+      });
+      if (claimed.count !== 1) return false;
+
+      await tx.user.update({
+        where: { id: token.userId },
+        data: { passwordHash },
+      });
+      await tx.refreshSession.updateMany({
+        where: { userId: token.userId, revokedAt: null },
+        data: { revokedAt: now },
+      });
+
+      return true;
     });
   }
 
