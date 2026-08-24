@@ -3,6 +3,7 @@ import type {
   CandidateDecision,
   CreativeFatigue,
   EvidenceConfidence,
+  FinancialDecisionContext,
   InventoryRisk,
   MetricWindow,
   NormalizedDailyMetrics,
@@ -35,6 +36,7 @@ export function aggregateMetricWindow(
   const start = new Date(end);
   start.setUTCDate(start.getUTCDate() - days + 1);
   const selected = rows.filter((row) => row.date >= start && row.date <= end);
+  const observedDays = new Set(selected.map((row) => startOfUtcDay(row.date).getTime())).size;
 
   const spend = selected.reduce((sum, row) => sum + row.spend, 0);
   const impressions = selected.reduce((sum, row) => sum + row.impressions, 0);
@@ -47,19 +49,18 @@ export function aggregateMetricWindow(
   const conversionValue = selected.reduce((sum, row) => sum + row.conversionValue, 0);
   const reachRows = selected.filter((row) => row.reach !== null);
   const reach = reachRows.length ? reachRows.reduce((sum, row) => sum + (row.reach ?? 0), 0) : null;
-  const weightedFrequencyDenominator = selected.reduce(
+  const frequencyWeight = selected.reduce(
     (sum, row) => sum + (row.frequency !== null ? row.impressions : 0),
     0,
   );
-  const frequency = weightedFrequencyDenominator
-    ? selected.reduce(
-        (sum, row) => sum + (row.frequency ?? 0) * row.impressions,
-        0,
-      ) / weightedFrequencyDenominator
+  const frequency = frequencyWeight
+    ? selected.reduce((sum, row) => sum + (row.frequency ?? 0) * row.impressions, 0) /
+      frequencyWeight
     : null;
 
   return {
     days,
+    observedDays,
     spend: round(spend, 2) ?? 0,
     impressions,
     reach,
@@ -90,40 +91,45 @@ export function classifyCampaignRole(input: {
   catalogId?: string | null;
 }): { role: CampaignRole; evidence: string[] } {
   const text = `${input.name} ${input.objective ?? ''} ${input.optimizationGoal ?? ''}`.toLowerCase();
-  const evidence: string[] = [];
   const has = (terms: string[]) => terms.some((term) => text.includes(term));
 
   if (has(['retarget', 'remarket', 'rtg', 're-engage', 'reengage'])) {
-    evidence.push('name/objective contains retargeting signal');
-    return { role: 'RETARGETING', evidence };
+    return { role: 'RETARGETING', evidence: ['retargeting signal in name/objective'] };
   }
   if (has(['retention', 'loyalty', 'existing customer', 'repeat customer', 'customer list'])) {
-    evidence.push('name/objective contains retention signal');
-    return { role: 'RETENTION', evidence };
+    return { role: 'RETENTION', evidence: ['retention signal in name/objective'] };
   }
   if (input.catalogId || has(['catalog', 'product sales', 'product_sales', 'shopping'])) {
-    evidence.push(input.catalogId ? 'catalog is attached' : 'objective contains catalog signal');
-    return { role: 'CATALOG', evidence };
+    return {
+      role: 'CATALOG',
+      evidence: [input.catalogId ? 'catalog is attached' : 'catalog signal in objective'],
+    };
   }
   if (has(['launch', 'new product', 'new collection'])) {
-    evidence.push('name contains product-launch signal');
-    return { role: 'PRODUCT_LAUNCH', evidence };
+    return { role: 'PRODUCT_LAUNCH', evidence: ['product-launch signal in name'] };
   }
   if (has(['awareness', 'brand awareness', 'reach', 'video views'])) {
-    evidence.push('objective contains brand/reach signal');
-    return { role: 'BRAND', evidence };
+    return { role: 'BRAND', evidence: ['brand/reach signal in objective'] };
   }
   if (has(['sales', 'conversion', 'purchase', 'traffic', 'prospecting', 'acquisition'])) {
-    evidence.push('objective contains acquisition/performance signal');
-    return { role: 'PROSPECTING', evidence };
+    return { role: 'PROSPECTING', evidence: ['acquisition/performance signal in objective'] };
   }
   return { role: 'UNKNOWN', evidence: ['no reliable deterministic role signal'] };
 }
 
 export function evidenceConfidence(window: MetricWindow): EvidenceConfidence {
-  if (window.spend <= 0 || window.impressions < 1_000) return 'INSUFFICIENT';
-  if (window.conversions < 3) return 'LOW';
-  if (window.conversions < 10 || window.impressions < 10_000) return 'MODERATE';
+  const expectedCoverage = Math.min(window.days, 7);
+  if (window.observedDays < Math.min(3, expectedCoverage) || window.impressions < 1_000) {
+    return 'INSUFFICIENT';
+  }
+  if (window.conversions < 5) return 'LOW';
+  if (
+    window.observedDays < Math.min(6, expectedCoverage) ||
+    window.conversions < 15 ||
+    window.impressions < 5_000
+  ) {
+    return 'MODERATE';
+  }
   return 'HIGH';
 }
 
@@ -133,6 +139,7 @@ export function inventoryRisk(available: number, dailyVelocity: number): {
 } {
   if (available <= 0) return { risk: 'CRITICAL', runwayDays: 0 };
   if (dailyVelocity <= 0) return { risk: 'UNKNOWN', runwayDays: null };
+
   const runwayDays = available / dailyVelocity;
   if (runwayDays <= 7) return { risk: 'CRITICAL', runwayDays: round(runwayDays, 1) };
   if (runwayDays <= 14) return { risk: 'LOW', runwayDays: round(runwayDays, 1) };
@@ -148,14 +155,15 @@ export function creativeFatigue(
   }
 
   const ctrDrop =
-    recent.ctr !== null && previous.ctr && previous.ctr > 0
+    recent.ctr !== null && previous.ctr !== null && previous.ctr > 0
       ? (previous.ctr - recent.ctr) / previous.ctr
       : 0;
   const cpaIncrease =
-    recent.cpa !== null && previous.cpa && previous.cpa > 0
+    recent.cpa !== null && previous.cpa !== null && previous.cpa > 0
       ? (recent.cpa - previous.cpa) / previous.cpa
       : 0;
   const evidence: string[] = [];
+
   if (ctrDrop >= 0.2) evidence.push(`CTR fell ${Math.round(ctrDrop * 100)}%`);
   if (cpaIncrease >= 0.2) evidence.push(`CPA rose ${Math.round(cpaIncrease * 100)}%`);
   if ((recent.frequency ?? 0) >= 2.5) evidence.push(`frequency is ${recent.frequency}`);
@@ -163,7 +171,7 @@ export function creativeFatigue(
   if (ctrDrop >= 0.25 && cpaIncrease >= 0.2 && (recent.frequency ?? 0) >= 2.5) {
     return { level: 'HIGH', evidence };
   }
-  if (ctrDrop >= 0.2 || (recent.frequency ?? 0) >= 3.5) {
+  if (ctrDrop >= 0.2 || cpaIncrease >= 0.25) {
     return { level: 'MODERATE', evidence };
   }
   return { level: 'LOW', evidence: evidence.length ? evidence : ['no material fatigue signal'] };
@@ -178,98 +186,149 @@ export function previousSevenDayWindow(
   return aggregateMetricWindow(rows, 7, shifted);
 }
 
+function financialBlockers(
+  confidence: EvidenceConfidence,
+  context: FinancialDecisionContext,
+): string[] {
+  const blockers: string[] = [];
+
+  if (confidence !== 'HIGH') blockers.push('financial recommendation requires HIGH evidence confidence');
+  if (context.mappingConfidence === null || context.mappingConfidence < 0.9) {
+    blockers.push('product mapping confidence is below 0.90 or unavailable');
+  }
+  if (context.breakEvenRoas === null || context.breakEvenRoas <= 0) {
+    blockers.push('break-even ROAS is unavailable');
+  }
+  if (
+    context.contributionMarginRatio === null ||
+    context.contributionMarginRatio <= 0 ||
+    context.contributionMarginRatio > 1
+  ) {
+    blockers.push('reliable contribution margin is unavailable');
+  }
+  if (context.inventoryRisk === 'UNKNOWN') blockers.push('inventory runway is unknown');
+  if (context.commerceTrend === 'UNKNOWN') blockers.push('Shopify demand trend is unavailable');
+  if (context.dataFreshnessHours === null || context.dataFreshnessHours > 36) {
+    blockers.push('provider or commerce data is stale');
+  }
+  if (
+    context.hoursSinceMaterialCampaignChange === null ||
+    context.hoursSinceMaterialCampaignChange < 48
+  ) {
+    blockers.push('campaign has not had a stable 48-hour observation period');
+  }
+
+  return blockers;
+}
+
 export function candidateDecision(input: {
-  metrics: MetricWindow;
+  recent: MetricWindow;
   previous: MetricWindow;
   confidence: EvidenceConfidence;
   fatigue: CreativeFatigue;
-  mappingConfidence: number | null;
-  inventoryRisk: InventoryRisk;
+  context: FinancialDecisionContext;
 }): CandidateDecision {
-  const reasons: string[] = [];
-  const base = {
-    confidence: input.confidence,
-    guardrails: {
-      automaticExecutionAllowed: false as const,
-      maxSuggestedBudgetChangePercent: null as number | null,
-    },
-  };
-
-  if (input.mappingConfidence !== null && input.mappingConfidence < 0.7) {
+  if (input.context.mappingConfidence !== null && input.context.mappingConfidence < 0.7) {
     return {
       action: 'REVIEW_MAPPING',
-      ...base,
-      reasons: ['product mapping confidence is below 0.70'],
+      confidence: input.confidence,
+      reasons: ['mapping is too uncertain to connect ad performance to commerce outcomes'],
+      blockers: [],
+      financialAction: false,
     };
   }
 
-  if (input.confidence === 'INSUFFICIENT') {
+  if (input.confidence === 'INSUFFICIENT' || input.confidence === 'LOW') {
     return {
       action: 'COLLECT_MORE_DATA',
-      ...base,
-      reasons: ['insufficient impressions/spend for a decision'],
+      confidence: input.confidence,
+      reasons: ['there is not enough evidence for a money-impacting recommendation'],
+      blockers: [],
+      financialAction: false,
     };
-  }
-
-  if (input.inventoryRisk === 'CRITICAL') {
-    reasons.push('mapped product inventory runway is critical');
-    if ((input.metrics.roas ?? 0) >= 1.5) reasons.push('performance is useful but stock constrains scale');
-    return { action: 'REDUCE', ...base, reasons };
   }
 
   if (input.fatigue === 'HIGH') {
     return {
       action: 'REPLACE_CREATIVE',
-      ...base,
-      reasons: ['high deterministic creative-fatigue signal'],
+      confidence: input.confidence,
+      reasons: ['relative CTR/CPA/frequency evidence indicates material creative fatigue'],
+      blockers: [],
+      financialAction: false,
     };
   }
 
-  const ctr = input.metrics.ctr ?? 0;
-  const cvr = input.metrics.cvr ?? 0;
-  if (input.metrics.spend >= 25 && ctr >= 1.5 && cvr < 0.5) {
+  const blockers = financialBlockers(input.confidence, input.context);
+  if (blockers.length > 0) {
     return {
-      action: 'REVIEW_LANDING_PAGE',
-      ...base,
-      reasons: ['click-through is healthy while post-click conversion is weak'],
+      action: 'NO_RECOMMENDATION',
+      confidence: input.confidence,
+      reasons: ['the system abstained because a financially material input is missing or unstable'],
+      blockers,
+      financialAction: false,
     };
   }
 
-  if (input.metrics.spend >= 25 && ctr < 0.7) {
+  if (input.context.inventoryRisk === 'CRITICAL') {
     return {
-      action: 'REPLACE_CREATIVE',
-      ...base,
-      reasons: ['low CTR after meaningful spend'],
+      action: 'REDUCE',
+      confidence: input.confidence,
+      reasons: ['inventory runway is critical; additional paid demand risks stockout'],
+      blockers: [],
+      financialAction: true,
     };
   }
 
-  const priorRoas = input.previous.roas ?? 0;
+  const breakEvenRoas = input.context.breakEvenRoas!;
+  const recentRoas = input.recent.roas;
+  const previousRoas = input.previous.roas;
+  if (recentRoas === null || previousRoas === null) {
+    return {
+      action: 'NO_RECOMMENDATION',
+      confidence: input.confidence,
+      reasons: ['ROAS cannot be evaluated consistently across both observation windows'],
+      blockers: ['recent or previous attributed conversion value is unavailable'],
+      financialAction: false,
+    };
+  }
+
+  const profitableNow = recentRoas >= breakEvenRoas * 1.25;
+  const profitableBefore = previousRoas >= breakEvenRoas * 1.1;
   if (
-    (input.confidence === 'HIGH' || input.confidence === 'MODERATE') &&
-    input.inventoryRisk !== 'LOW' &&
-    (input.metrics.roas ?? 0) >= 2 &&
-    input.metrics.conversions >= 10 &&
-    (priorRoas === 0 || (input.metrics.roas ?? 0) >= priorRoas * 0.85)
+    profitableNow &&
+    profitableBefore &&
+    input.context.inventoryRisk === 'HEALTHY' &&
+    input.context.commerceTrend !== 'DOWN'
   ) {
     return {
       action: 'SCALE',
-      ...base,
-      reasons: ['ROAS and conversion evidence are strong enough for a guarded scale candidate'],
-      guardrails: { automaticExecutionAllowed: false, maxSuggestedBudgetChangePercent: 15 },
+      confidence: input.confidence,
+      reasons: [
+        'ROAS remains materially above break-even across independent windows',
+        'inventory is healthy and Shopify demand does not contradict the ad-platform signal',
+      ],
+      blockers: [],
+      financialAction: true,
     };
   }
 
-  if (input.metrics.spend >= 50 && (input.metrics.roas ?? 0) < 1 && input.metrics.conversions >= 3) {
+  const unprofitableNow = recentRoas <= breakEvenRoas * 0.8;
+  const unprofitableBefore = previousRoas <= breakEvenRoas * 0.9;
+  if (unprofitableNow && unprofitableBefore) {
     return {
-      action: 'PAUSE',
-      ...base,
-      reasons: ['sustained spend with sub-1 attributed ROAS'],
+      action: 'REDUCE',
+      confidence: input.confidence,
+      reasons: ['ROAS remains materially below break-even across both observation windows'],
+      blockers: [],
+      financialAction: true,
     };
   }
 
   return {
     action: 'HOLD',
-    ...base,
-    reasons: ['no deterministic rule justifies a stronger action'],
+    confidence: input.confidence,
+    reasons: ['evidence is financially complete but does not support a directional change'],
+    blockers: [],
+    financialAction: false,
   };
 }
