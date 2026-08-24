@@ -53,6 +53,14 @@ describe('IntelligenceService', () => {
     expect(result.engine.automaticMutations).toBe(false);
   });
 
+  it('requires Shopify sell-through evidence before scaling efficient paid demand', async () => {
+    const result = await serviceWith([
+      product({ unitsSold: 0, orderCount: 0 }),
+    ]).getRecommendations('store-id', { lookbackDays: 14, limit: 50 });
+    expect(result.recommendations[0]?.decision).toBe('MORE_DATA');
+    expect(result.recommendations[0]?.reasons.join(' ')).toMatch(/Shopify sell-through/i);
+  });
+
   it('pauses paid pressure when tracked inventory is out', async () => {
     const result = await serviceWith([product({ available: 0 })]).getRecommendations('store-id', { lookbackDays: 14, limit: 50 });
     expect(result.recommendations[0]?.decision).toBe('PAUSE');
