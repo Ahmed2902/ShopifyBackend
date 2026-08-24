@@ -193,8 +193,14 @@ function financialBlockers(
   const blockers: string[] = [];
 
   if (confidence !== 'HIGH') blockers.push('financial recommendation requires HIGH evidence confidence');
+  if (context.campaignRole === 'UNKNOWN' || context.campaignRole === 'BRAND') {
+    blockers.push('campaign role does not support direct-response financial evaluation');
+  }
   if (context.mappingConfidence === null || context.mappingConfidence < 0.9) {
     blockers.push('product mapping confidence is below 0.90 or unavailable');
+  }
+  if (context.attributionQuality !== 'HIGH') {
+    blockers.push('attribution quality is not HIGH');
   }
   if (context.breakEvenRoas === null || context.breakEvenRoas <= 0) {
     blockers.push('break-even ROAS is unavailable');
@@ -211,11 +217,8 @@ function financialBlockers(
   if (context.dataFreshnessHours === null || context.dataFreshnessHours > 36) {
     blockers.push('provider or commerce data is stale');
   }
-  if (
-    context.hoursSinceMaterialCampaignChange === null ||
-    context.hoursSinceMaterialCampaignChange < 48
-  ) {
-    blockers.push('campaign has not had a stable 48-hour observation period');
+  if (!context.stabilizationComplete) {
+    blockers.push('campaign has not completed its provider-specific stabilization period');
   }
 
   return blockers;
@@ -305,7 +308,7 @@ export function candidateDecision(input: {
       confidence: input.confidence,
       reasons: [
         'ROAS remains materially above break-even across independent windows',
-        'inventory is healthy and Shopify demand does not contradict the ad-platform signal',
+        'inventory is healthy and Shopify demand does not contradict the platform signal',
       ],
       blockers: [],
       financialAction: true,
