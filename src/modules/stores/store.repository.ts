@@ -18,6 +18,7 @@ export class StoreRepository {
         },
         shopifyConnection: { select: { status: true } },
         metaConnection: { select: { status: true } },
+        tiktokConnection: { select: { status: true } },
       },
     });
   }
@@ -38,6 +39,7 @@ export class StoreRepository {
         updatedAt: true,
         shopifyConnection: { select: { status: true, lastSyncedAt: true } },
         metaConnection: { select: { status: true, lastSyncedAt: true } },
+        tiktokConnection: { select: { status: true, lastSyncedAt: true } },
       },
     });
   }
