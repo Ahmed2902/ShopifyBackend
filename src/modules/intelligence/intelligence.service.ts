@@ -24,17 +24,23 @@ function paidTotals(providers: ProviderSignal[]) {
   const spending = providers.filter((provider) => provider.spend > 0);
   const currencies = [...new Set(spending.map((provider) => provider.currency).filter((currency): currency is string => Boolean(currency)))];
   const hasUnknownCurrencySpend = spending.some((provider) => !provider.currency);
-  const monetaryComparable = !hasUnknownCurrencySpend && currencies.length <= 1;
-  const spend = monetaryComparable ? spending.reduce((sum, provider) => sum + provider.spend, 0) : null;
-  const conversionValue = monetaryComparable ? spending.reduce((sum, provider) => sum + provider.conversionValue, 0) : null;
+  const currencyCompatible = !hasUnknownCurrencySpend && currencies.length <= 1;
+  const spend = currencyCompatible ? spending.reduce((sum, provider) => sum + provider.spend, 0) : null;
+  const conversionValue = currencyCompatible
+    ? spending.reduce((sum, provider) => sum + provider.conversionValue, 0)
+    : null;
+
   return {
     ...totals,
     hasSpend: spending.length > 0,
-    monetaryComparable,
-    currency: monetaryComparable ? currencies[0] ?? null : null,
+    currencyCompatible,
+    currency: currencyCompatible ? currencies[0] ?? null : null,
     spend,
     conversionValue,
-    roas: spend !== null && spend > 0 && conversionValue !== null && conversionValue > 0 ? conversionValue / spend : null,
+    roas:
+      spend !== null && spend > 0 && conversionValue !== null && conversionValue > 0
+        ? conversionValue / spend
+        : null,
   };
 }
 
@@ -82,8 +88,8 @@ function buildRecommendation(product: ProductSignal, lookbackDays: number, now: 
   } else if (runwayDays !== null && restockDays !== null && runwayDays + 1 < restockDays) {
     decision = 'REDUCE';
     reasons.push(`Projected stock runway ends before the next recorded restock in ${round(restockDays, 1)} days.`);
-  } else if (!paid.monetaryComparable) {
-    decision = 'HOLD';
+  } else if (!paid.currencyCompatible) {
+    decision = 'MORE_DATA';
     reasons.push('Mapped paid sources use different or unknown currencies, so Stride keeps monetary performance separate instead of inventing a combined spend or ROAS figure.');
   } else if (paid.conversions < 2 && paid.hasSpend) {
     decision = 'TEST';
@@ -142,7 +148,7 @@ function buildRecommendation(product: ProductSignal, lookbackDays: number, now: 
       },
       paid: {
         currency: paid.currency,
-        monetaryComparable: paid.monetaryComparable,
+        currencyCompatible: paid.currencyCompatible,
         spend: paid.spend === null ? null : round(paid.spend),
         impressions: Math.round(paid.impressions),
         clicks: Math.round(paid.clicks),
@@ -176,7 +182,10 @@ export class IntelligenceService {
     const dataset = await this.repository.load(storeId, from, to);
     if (!dataset) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
 
-    const recommendations = dataset.products
+    const candidates = query.productId
+      ? dataset.products.filter((product) => product.productId === query.productId)
+      : dataset.products;
+    const recommendations = candidates
       .map((product) => buildRecommendation(product, query.lookbackDays, now))
       .sort((left, right) => right.priority - left.priority)
       .slice(0, query.limit);
@@ -192,7 +201,7 @@ export class IntelligenceService {
       window: { from, to, lookbackDays: query.lookbackDays },
       readiness: {
         connections: dataset.connections,
-        joinedProducts: dataset.products.length,
+        joinedProducts: candidates.length,
         recommendations: recommendations.length,
       },
       counts,
