@@ -5,6 +5,7 @@ import type { IntelligenceDataset, ProductSignal } from '../../../src/modules/in
 
 const provider = {
   provider: 'META' as const,
+  currency: 'USD',
   ads: 1,
   activeAds: 1,
   spend: 100,
@@ -48,6 +49,7 @@ describe('IntelligenceService', () => {
     const result = await serviceWith([product()]).getRecommendations('store-id', { lookbackDays: 14, limit: 50 });
     expect(result.recommendations[0]?.decision).toBe('SCALE');
     expect(result.recommendations[0]?.evidence.paid.roas).toBe(3.5);
+    expect(result.recommendations[0]?.evidence.paid.currency).toBe('USD');
     expect(result.engine.automaticMutations).toBe(false);
   });
 
@@ -60,5 +62,19 @@ describe('IntelligenceService', () => {
     const result = await serviceWith([product({ sharedAdMapping: true })]).getRecommendations('store-id', { lookbackDays: 14, limit: 50 });
     expect(result.recommendations[0]?.decision).toBe('MORE_DATA');
     expect(result.recommendations[0]?.reasons.join(' ')).toMatch(/multiple products/i);
+  });
+
+  it('does not aggregate monetary performance across currencies', async () => {
+    const result = await serviceWith([
+      product({
+        providers: [
+          provider,
+          { ...provider, provider: 'TIKTOK', currency: 'EGP', spend: 3000, conversionValue: 12000, roas: 4 },
+        ],
+      }),
+    ]).getRecommendations('store-id', { lookbackDays: 14, limit: 50 });
+    expect(result.recommendations[0]?.decision).toBe('HOLD');
+    expect(result.recommendations[0]?.evidence.paid.monetaryComparable).toBe(false);
+    expect(result.recommendations[0]?.evidence.paid.spend).toBeNull();
   });
 });
