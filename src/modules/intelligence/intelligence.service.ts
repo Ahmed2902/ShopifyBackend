@@ -94,9 +94,12 @@ function buildRecommendation(product: ProductSignal, lookbackDays: number, now: 
   } else if (paid.conversions < 2 && paid.hasSpend) {
     decision = 'TEST';
     reasons.push('Paid delivery exists, but conversion evidence is still too thin for a scale or cut decision.');
-  } else if (paid.roas !== null && paid.roas >= 2 && (runwayDays === null || runwayDays >= 21)) {
+  } else if (paid.roas !== null && paid.roas >= 2 && (product.orderCount < 2 || dailyUnits <= 0)) {
+    decision = 'MORE_DATA';
+    reasons.push('Paid performance looks efficient, but Shopify sell-through is not established enough to safely recommend more demand yet.');
+  } else if (paid.roas !== null && paid.roas >= 2 && (!product.tracksInventory || (runwayDays !== null && runwayDays >= 21))) {
     decision = 'SCALE';
-    reasons.push(`Recent mapped paid demand is returning about ${round(paid.roas)}× while inventory has room to absorb more demand.`);
+    reasons.push(`Recent mapped paid demand is returning about ${round(paid.roas)}× while Shopify commerce evidence supports adding demand.`);
   } else if (paid.roas !== null && paid.roas < 0.8 && paid.conversions >= 3) {
     decision = 'REDUCE';
     reasons.push(`Recent mapped paid demand is returning about ${round(paid.roas)}× across enough conversions to justify reducing pressure.`);
