@@ -7,6 +7,8 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   CORS_ORIGIN: z.string().url().default('http://localhost:3000'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  REDIS_REST_URL: z.string().url(),
+  REDIS_REST_TOKEN: z.string().min(1),
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_ISSUER: z.string().min(1).default('shopify-intelligence-api'),
   ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(900),

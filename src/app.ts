@@ -7,6 +7,10 @@ import { pinoHttp } from 'pino-http';
 import { env } from './config/env.js';
 import { logger } from './lib/logger.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
+import {
+  apiRateLimit,
+  webhookRateLimit,
+} from './middleware/rate-limit.middleware.js';
 import { router } from './routes.js';
 
 const RAW_BODY_WEBHOOK_PATHS = [
@@ -18,12 +22,12 @@ export function createApp() {
   const app = express();
 
   app.disable('x-powered-by');
+  app.set('trust proxy', ['loopback', 'linklocal', 'uniquelocal']);
   app.use(
     pinoHttp({
       logger,
       genReqId(req, res) {
-        const incoming = req.headers['x-request-id'];
-        const id = typeof incoming === 'string' && incoming.length > 0 ? incoming : randomUUID();
+        const id = requestId(req.headers['x-request-id']);
         res.setHeader('x-request-id', id);
         return id;
       },
@@ -31,6 +35,7 @@ export function createApp() {
   );
   app.use(helmet());
   app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
+  app.use('/v1', webhookRateLimit, apiRateLimit);
   app.use(
     express.json({
       limit: '1mb',
