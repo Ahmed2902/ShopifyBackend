@@ -36,12 +36,15 @@ export class MetaService {
 
   async discoverAssets(storeId: string) {
     const context = await this.authService.getApiContext(storeId);
-    const businesses = context.scopes.includes('business_management')
+    const businessDiscoveryAvailable = context.scopes.includes('business_management');
+    const catalogDiscoveryAvailable =
+      businessDiscoveryAvailable && context.scopes.includes('catalog_management');
+    const businesses = businessDiscoveryAvailable
       ? await this.apiService.listBusinesses(context)
       : [];
     const [adAccounts, catalogs] = await Promise.all([
       this.apiService.listAdAccounts(context),
-      context.scopes.includes('business_management')
+      catalogDiscoveryAvailable
         ? this.catalogService.discoverOwnedCatalogs(
             context,
             businesses.map((business) => business.id),
@@ -87,8 +90,8 @@ export class MetaService {
       ),
       permissions: {
         granted: context.scopes,
-        businessDiscoveryAvailable: context.scopes.includes('business_management'),
-        catalogDiscoveryAvailable: context.scopes.includes('business_management'),
+        businessDiscoveryAvailable,
+        catalogDiscoveryAvailable,
       },
     };
   }
@@ -149,11 +152,22 @@ export class MetaService {
 
   async configureCatalogs(storeId: string, catalogIds: string[]) {
     const context = await this.authService.getApiContext(storeId);
+    if (catalogIds.length === 0) {
+      const selected = await this.catalogService.configureCatalogs(context, [], []);
+      return { storeId, selectedCatalogIds: [], catalogs: selected };
+    }
     if (!context.scopes.includes('business_management')) {
       throw new AppError(
         'Meta business_management permission is required to discover commerce catalogs',
         403,
         'META_BUSINESS_PERMISSION_REQUIRED',
+      );
+    }
+    if (!context.scopes.includes('catalog_management')) {
+      throw new AppError(
+        'Meta catalog_management permission is required to discover commerce catalogs',
+        403,
+        'META_CATALOG_PERMISSION_REQUIRED',
       );
     }
 
