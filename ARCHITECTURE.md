@@ -132,6 +132,8 @@ Readability must never be achieved by weakening boundaries. The backend keeps se
 - short-lived signed access tokens with strict issuer/audience/algorithm checks
 - opaque refresh tokens stored only as hashes, rotated on use, with reuse detection
 - HttpOnly/Secure cookie policy where applicable
+- random double-submit CSRF protection on cross-site refresh/logout cookie mutations
+- strict frontend-origin validation on cookie-authenticated mutations
 - Store-scoped authorization middleware
 - timing-safe OAuth/HMAC comparisons
 - OAuth state, PKCE and nonce validation where the provider supports them
@@ -140,9 +142,11 @@ Readability must never be achieved by weakening boundaries. The backend keeps se
 - raw-body webhook signature verification before processing
 - durable webhook idempotency and bounded retries
 - request-body size limits
-- Helmet, explicit CORS and request IDs
+- sanitized request IDs, Helmet and explicit CORS
 
-CSRF protection for cross-site cookie-authenticated mutations, rate limiting and common HTTP validation policy belong in shared middleware. They are intentionally handled in a separate security-hardening change so behavior changes are reviewed independently from structural refactors.
+Distributed abuse/rate limiting belongs at a shared edge or shared store. Do not implement security-sensitive production limits with a process-local in-memory map.
+
+Security middleware remains shared and explicit. Endpoint-specific business validation stays in controllers/services rather than becoming a generic policy framework.
 
 ## Provider modules
 
