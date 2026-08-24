@@ -13,19 +13,28 @@ function round(value: number, digits = 2) {
 function paidTotals(providers: ProviderSignal[]) {
   const totals = providers.reduce(
     (result, provider) => ({
-      spend: result.spend + provider.spend,
       impressions: result.impressions + provider.impressions,
       clicks: result.clicks + provider.clicks,
       conversions: result.conversions + provider.conversions,
-      conversionValue: result.conversionValue + provider.conversionValue,
       ads: result.ads + provider.ads,
       activeAds: result.activeAds + provider.activeAds,
     }),
-    { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0, ads: 0, activeAds: 0 },
+    { impressions: 0, clicks: 0, conversions: 0, ads: 0, activeAds: 0 },
   );
+  const spending = providers.filter((provider) => provider.spend > 0);
+  const currencies = [...new Set(spending.map((provider) => provider.currency).filter((currency): currency is string => Boolean(currency)))];
+  const hasUnknownCurrencySpend = spending.some((provider) => !provider.currency);
+  const monetaryComparable = !hasUnknownCurrencySpend && currencies.length <= 1;
+  const spend = monetaryComparable ? spending.reduce((sum, provider) => sum + provider.spend, 0) : null;
+  const conversionValue = monetaryComparable ? spending.reduce((sum, provider) => sum + provider.conversionValue, 0) : null;
   return {
     ...totals,
-    roas: totals.spend > 0 && totals.conversionValue > 0 ? totals.conversionValue / totals.spend : null,
+    hasSpend: spending.length > 0,
+    monetaryComparable,
+    currency: monetaryComparable ? currencies[0] ?? null : null,
+    spend,
+    conversionValue,
+    roas: spend !== null && spend > 0 && conversionValue !== null && conversionValue > 0 ? conversionValue / spend : null,
   };
 }
 
@@ -58,7 +67,7 @@ function buildRecommendation(product: ProductSignal, lookbackDays: number, now: 
   } else if (mappingConfidence < 0.6 && !product.mappingConfirmed) {
     decision = 'MORE_DATA';
     reasons.push('The paid-to-product mapping confidence is below the decision threshold.');
-  } else if (paid.spend <= 0 || paid.impressions < 500) {
+  } else if (!paid.hasSpend || paid.impressions < 500) {
     decision = 'MORE_DATA';
     reasons.push('There is not enough recent paid-delivery evidence to make a budget recommendation.');
   } else if (product.tracksInventory && product.available <= 0) {
@@ -73,7 +82,10 @@ function buildRecommendation(product: ProductSignal, lookbackDays: number, now: 
   } else if (runwayDays !== null && restockDays !== null && runwayDays + 1 < restockDays) {
     decision = 'REDUCE';
     reasons.push(`Projected stock runway ends before the next recorded restock in ${round(restockDays, 1)} days.`);
-  } else if (paid.conversions < 2 && paid.spend > 0) {
+  } else if (!paid.monetaryComparable) {
+    decision = 'HOLD';
+    reasons.push('Mapped paid sources use different or unknown currencies, so Stride keeps monetary performance separate instead of inventing a combined spend or ROAS figure.');
+  } else if (paid.conversions < 2 && paid.hasSpend) {
     decision = 'TEST';
     reasons.push('Paid delivery exists, but conversion evidence is still too thin for a scale or cut decision.');
   } else if (paid.roas !== null && paid.roas >= 2 && (runwayDays === null || runwayDays >= 21)) {
@@ -96,14 +108,10 @@ function buildRecommendation(product: ProductSignal, lookbackDays: number, now: 
   const confidence = round(Math.max(0.15, Math.min(0.99, dataScore + mappingScore + commerceScore)), 2);
 
   return {
-    product: {
-      id: product.productId,
-      title: product.title,
-      status: product.status,
-    },
+    product: { id: product.productId, title: product.title, status: product.status },
     decision,
     confidence,
-    priority: round(decisionPriority(decision, confidence, paid.spend), 1),
+    priority: round(decisionPriority(decision, confidence, paid.spend ?? 0), 1),
     headline:
       decision === 'SCALE' ? 'There is room to put more demand here.'
         : decision === 'HOLD' ? 'Keep the current pressure steady.'
@@ -133,11 +141,13 @@ function buildRecommendation(product: ProductSignal, lookbackDays: number, now: 
         sharedAdMapping: product.sharedAdMapping,
       },
       paid: {
-        spend: round(paid.spend),
+        currency: paid.currency,
+        monetaryComparable: paid.monetaryComparable,
+        spend: paid.spend === null ? null : round(paid.spend),
         impressions: Math.round(paid.impressions),
         clicks: Math.round(paid.clicks),
         conversions: round(paid.conversions, 1),
-        conversionValue: round(paid.conversionValue),
+        conversionValue: paid.conversionValue === null ? null : round(paid.conversionValue),
         roas: paid.roas === null ? null : round(paid.roas),
         ads: paid.ads,
         activeAds: paid.activeAds,
@@ -177,11 +187,7 @@ export class IntelligenceService {
     );
 
     return {
-      engine: {
-        id: 'RULES_V1',
-        label: 'Auditable decision engine',
-        automaticMutations: false,
-      },
+      engine: { id: 'RULES_V1', label: 'Auditable decision engine', automaticMutations: false },
       generatedAt: now,
       window: { from, to, lookbackDays: query.lookbackDays },
       readiness: {
