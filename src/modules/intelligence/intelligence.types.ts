@@ -3,6 +3,7 @@ export type IntelligenceDecision = 'SCALE' | 'HOLD' | 'REDUCE' | 'PAUSE' | 'TEST
 
 export type ProviderSignal = {
   provider: IntelligenceProvider;
+  currency: string | null;
   ads: number;
   activeAds: number;
   spend: number;
