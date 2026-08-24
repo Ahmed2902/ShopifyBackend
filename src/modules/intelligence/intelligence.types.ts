@@ -39,6 +39,7 @@ export interface NormalizedDailyMetrics {
 
 export interface MetricWindow {
   days: 1 | 3 | 7 | 14 | 30;
+  observedDays: number;
   spend: number;
   impressions: number;
   reach: number | null;
