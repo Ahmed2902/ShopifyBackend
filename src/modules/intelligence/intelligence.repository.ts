@@ -18,9 +18,10 @@ function purchaseMetric(
   return selected.reduce((max, action) => Math.max(max, numeric(action.value)), 0);
 }
 
-function emptyProvider(provider: ProviderSignal['provider']): ProviderSignal {
+function emptyProvider(provider: ProviderSignal['provider'], currency: string | null): ProviderSignal {
   return {
     provider,
+    currency,
     ads: 0,
     activeAds: 0,
     spend: 0,
@@ -54,10 +55,7 @@ export class IntelligenceRepository {
             where: {
               validUntil: null,
               product: { storeId, deletedAt: null },
-              ad: {
-                deletedAt: null,
-                adAccount: { storeId, metaAccountId: { in: metaAccountIds } },
-              },
+              ad: { deletedAt: null, adAccount: { storeId, metaAccountId: { in: metaAccountIds } } },
             },
             select: {
               productId: true,
@@ -68,6 +66,7 @@ export class IntelligenceRepository {
                   id: true,
                   metaAdId: true,
                   effectiveStatus: true,
+                  adAccount: { select: { currency: true } },
                   insights: {
                     where: { level: 'AD', date: { gte: from, lte: to } },
                     select: {
@@ -87,10 +86,7 @@ export class IntelligenceRepository {
             where: {
               validUntil: null,
               product: { storeId, deletedAt: null },
-              ad: {
-                deletedAt: null,
-                advertiser: { storeId, advertiserId: { in: tiktokAdvertiserIds } },
-              },
+              ad: { deletedAt: null, advertiser: { storeId, advertiserId: { in: tiktokAdvertiserIds } } },
             },
             select: {
               productId: true,
@@ -101,6 +97,7 @@ export class IntelligenceRepository {
                   id: true,
                   tiktokAdId: true,
                   operationStatus: true,
+                  advertiser: { select: { currency: true } },
                   insights: {
                     where: { level: 'AD', date: { gte: from, lte: to } },
                     select: {
@@ -230,19 +227,20 @@ export class IntelligenceRepository {
       });
     }
 
-    const providerByProduct = new Map<string, Map<ProviderSignal['provider'], ProviderSignal>>();
+    const providerByProduct = new Map<string, Map<string, ProviderSignal>>();
     const confidenceByProduct = new Map<string, number[]>();
 
-    const providerFor = (productId: string, provider: ProviderSignal['provider']) => {
+    const providerFor = (productId: string, provider: ProviderSignal['provider'], currency: string | null) => {
       let providers = providerByProduct.get(productId);
       if (!providers) {
         providers = new Map();
         providerByProduct.set(productId, providers);
       }
-      let result = providers.get(provider);
+      const key = `${provider}:${currency ?? 'UNKNOWN'}`;
+      let result = providers.get(key);
       if (!result) {
-        result = emptyProvider(provider);
-        providers.set(provider, result);
+        result = emptyProvider(provider, currency);
+        providers.set(key, result);
       }
       return result;
     };
@@ -250,7 +248,7 @@ export class IntelligenceRepository {
     for (const mapping of metaMappings) {
       const product = signals.get(mapping.productId);
       if (!product) continue;
-      const provider = providerFor(mapping.productId, 'META');
+      const provider = providerFor(mapping.productId, 'META', mapping.ad.adAccount.currency);
       provider.ads += 1;
       if ((mapping.ad.effectiveStatus ?? '').toUpperCase().includes('ACTIVE')) provider.activeAds += 1;
       for (const insight of mapping.ad.insights) {
@@ -269,7 +267,7 @@ export class IntelligenceRepository {
     for (const mapping of tiktokMappings) {
       const product = signals.get(mapping.productId);
       if (!product) continue;
-      const provider = providerFor(mapping.productId, 'TIKTOK');
+      const provider = providerFor(mapping.productId, 'TIKTOK', mapping.ad.advertiser.currency);
       provider.ads += 1;
       if ((mapping.ad.operationStatus ?? '').toUpperCase().includes('ENABLE')) provider.activeAds += 1;
       let reportedRoasWeighted = 0;
