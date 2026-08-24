@@ -188,9 +188,15 @@ export class IntelligenceRepository {
       sales.set(row.productId, current);
     }
 
-    const mappingCounts = new Map<string, number>();
-    for (const mapping of metaMappings) mappingCounts.set(`META:${mapping.ad.id}`, (mappingCounts.get(`META:${mapping.ad.id}`) ?? 0) + 1);
-    for (const mapping of tiktokMappings) mappingCounts.set(`TIKTOK:${mapping.ad.id}`, (mappingCounts.get(`TIKTOK:${mapping.ad.id}`) ?? 0) + 1);
+    const productsByAd = new Map<string, Set<string>>();
+    const registerAdProduct = (provider: ProviderSignal['provider'], adId: string, productId: string) => {
+      const key = `${provider}:${adId}`;
+      const products = productsByAd.get(key) ?? new Set<string>();
+      products.add(productId);
+      productsByAd.set(key, products);
+    };
+    for (const mapping of metaMappings) registerAdProduct('META', mapping.ad.id, mapping.productId);
+    for (const mapping of tiktokMappings) registerAdProduct('TIKTOK', mapping.ad.id, mapping.productId);
 
     const signals = new Map<string, ProductSignal>();
     for (const product of products) {
@@ -229,6 +235,7 @@ export class IntelligenceRepository {
 
     const providerByProduct = new Map<string, Map<string, ProviderSignal>>();
     const confidenceByProduct = new Map<string, number[]>();
+    const countedPaidPairs = new Set<string>();
 
     const providerFor = (productId: string, provider: ProviderSignal['provider'], currency: string | null) => {
       let providers = providerByProduct.get(productId);
@@ -248,6 +255,15 @@ export class IntelligenceRepository {
     for (const mapping of metaMappings) {
       const product = signals.get(mapping.productId);
       if (!product) continue;
+      const confidence = mapping.isMerchantConfirmed ? 1 : numeric(mapping.confidence);
+      confidenceByProduct.set(mapping.productId, [...(confidenceByProduct.get(mapping.productId) ?? []), confidence]);
+      product.mappingConfirmed ||= mapping.isMerchantConfirmed;
+      product.sharedAdMapping ||= (productsByAd.get(`META:${mapping.ad.id}`)?.size ?? 0) > 1;
+
+      const pairKey = `META:${mapping.productId}:${mapping.ad.id}`;
+      if (countedPaidPairs.has(pairKey)) continue;
+      countedPaidPairs.add(pairKey);
+
       const provider = providerFor(mapping.productId, 'META', mapping.ad.adAccount.currency);
       provider.ads += 1;
       if ((mapping.ad.effectiveStatus ?? '').toUpperCase().includes('ACTIVE')) provider.activeAds += 1;
@@ -258,15 +274,20 @@ export class IntelligenceRepository {
         provider.conversions += purchaseMetric(insight.actions, 'CONVERSION', 'ACTION');
         provider.conversionValue += purchaseMetric(insight.actions, 'CONVERSION_VALUE', 'ACTION_VALUE');
       }
-      const confidence = mapping.isMerchantConfirmed ? 1 : numeric(mapping.confidence);
-      confidenceByProduct.set(mapping.productId, [...(confidenceByProduct.get(mapping.productId) ?? []), confidence]);
-      product.mappingConfirmed ||= mapping.isMerchantConfirmed;
-      product.sharedAdMapping ||= (mappingCounts.get(`META:${mapping.ad.id}`) ?? 0) > 1;
     }
 
     for (const mapping of tiktokMappings) {
       const product = signals.get(mapping.productId);
       if (!product) continue;
+      const confidence = mapping.isMerchantConfirmed ? 1 : numeric(mapping.confidence);
+      confidenceByProduct.set(mapping.productId, [...(confidenceByProduct.get(mapping.productId) ?? []), confidence]);
+      product.mappingConfirmed ||= mapping.isMerchantConfirmed;
+      product.sharedAdMapping ||= (productsByAd.get(`TIKTOK:${mapping.ad.id}`)?.size ?? 0) > 1;
+
+      const pairKey = `TIKTOK:${mapping.productId}:${mapping.ad.id}`;
+      if (countedPaidPairs.has(pairKey)) continue;
+      countedPaidPairs.add(pairKey);
+
       const provider = providerFor(mapping.productId, 'TIKTOK', mapping.ad.advertiser.currency);
       provider.ads += 1;
       if ((mapping.ad.operationStatus ?? '').toUpperCase().includes('ENABLE')) provider.activeAds += 1;
@@ -285,10 +306,6 @@ export class IntelligenceRepository {
         }
       }
       if (provider.conversionValue <= 0 && reportedRoasSpend > 0) provider.roas = reportedRoasWeighted / reportedRoasSpend;
-      const confidence = mapping.isMerchantConfirmed ? 1 : numeric(mapping.confidence);
-      confidenceByProduct.set(mapping.productId, [...(confidenceByProduct.get(mapping.productId) ?? []), confidence]);
-      product.mappingConfirmed ||= mapping.isMerchantConfirmed;
-      product.sharedAdMapping ||= (mappingCounts.get(`TIKTOK:${mapping.ad.id}`) ?? 0) > 1;
     }
 
     for (const product of signals.values()) {
