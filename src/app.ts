@@ -13,12 +13,10 @@ import {
 } from './middleware/rate-limit.middleware.js';
 import { router } from './routes.js';
 
-const SHOPIFY_WEBHOOK_PATH = '/v1/integrations/shopify/webhooks';
-const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
-
-function requestId(value: unknown): string {
-  return typeof value === 'string' && REQUEST_ID_PATTERN.test(value) ? value : randomUUID();
-}
+const RAW_BODY_WEBHOOK_PATHS = [
+  '/v1/integrations/shopify/webhooks',
+  '/v1/integrations/tiktok/webhooks',
+];
 
 export function createApp() {
   const app = express();
@@ -43,7 +41,7 @@ export function createApp() {
       limit: '1mb',
       verify(req, _res, buffer) {
         const request = req as express.Request;
-        if (request.originalUrl.startsWith(SHOPIFY_WEBHOOK_PATH)) {
+        if (RAW_BODY_WEBHOOK_PATHS.some((path) => request.originalUrl.startsWith(path))) {
           request.rawBody = Buffer.from(buffer);
         }
       },

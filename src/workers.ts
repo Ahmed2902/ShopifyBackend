@@ -2,6 +2,7 @@ import { logger } from './lib/logger.js';
 import { PollingWorker } from './lib/polling-worker.js';
 import { reconciliationService } from './modules/reconciliation/reconciliation.service.js';
 import { shopifyService } from './modules/shopify/shopify.service.js';
+import { tiktokWebhookService } from './modules/tiktok/webhook/tiktok-webhook.service.js';
 
 const shopifyWebhookWorker = new PollingWorker(
   1_000,
@@ -10,6 +11,15 @@ const shopifyWebhookWorker = new PollingWorker(
     if (result.claimed > 0) logger.debug(result, 'Processed Shopify webhook queue batch');
   },
   'Shopify webhook worker failed',
+);
+
+const tiktokWebhookWorker = new PollingWorker(
+  2_000,
+  async () => {
+    const result = await tiktokWebhookService.processDue();
+    if (result.claimed > 0) logger.debug(result, 'Processed TikTok webhook queue batch');
+  },
+  'TikTok webhook worker failed',
 );
 
 const reconciliationWorker = new PollingWorker(
@@ -21,7 +31,7 @@ const reconciliationWorker = new PollingWorker(
   'Scheduled reconciliation worker failed',
 );
 
-const workers = [shopifyWebhookWorker, reconciliationWorker];
+const workers = [shopifyWebhookWorker, tiktokWebhookWorker, reconciliationWorker];
 
 export function startWorkers(): void {
   for (const worker of workers) worker.start();
