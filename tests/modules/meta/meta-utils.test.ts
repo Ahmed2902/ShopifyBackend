@@ -24,7 +24,7 @@ describe('Meta OAuth utilities', () => {
     );
   });
 
-  it('builds a read-only authorization URL from configured permissions', () => {
+  it('builds the initial read-only authorization URL with only the core ads permission', () => {
     const { authorizationUrl } = buildMetaAuthorizationUrl(userId, storeId);
     const url = new URL(authorizationUrl);
 
@@ -32,8 +32,10 @@ describe('Meta OAuth utilities', () => {
     expect(url.pathname).toBe(`/${env.META_API_VERSION}/dialog/oauth`);
     expect(url.searchParams.get('client_id')).toBe(env.META_APP_ID);
     expect(url.searchParams.get('redirect_uri')).toBe(env.META_REDIRECT_URI);
-    expect(url.searchParams.get('scope')).toBe('ads_read,business_management');
+    expect(url.searchParams.get('scope')).toBe('ads_read');
     expect(url.searchParams.get('scope')).not.toContain('ads_management');
+    expect(url.searchParams.get('scope')).not.toContain('business_management');
+    expect(url.searchParams.get('scope')).not.toContain('catalog_management');
     expect(verifyMetaOAuthState(url.searchParams.get('state') ?? '')).toMatchObject({
       userId,
       storeId,
