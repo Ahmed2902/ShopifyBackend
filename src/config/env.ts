@@ -32,6 +32,14 @@ const envSchema = z.object({
   META_REDIRECT_URI: z.string().url(),
   META_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default('v26.0'),
   META_STATE_SECRET: z.string().min(32),
+  TIKTOK_APP_ID: z.string().min(1),
+  TIKTOK_APP_SECRET: z.string().min(1),
+  TIKTOK_SCOPES: z.string().default(''),
+  TIKTOK_REDIRECT_URI: z.string().url(),
+  TIKTOK_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default('v1.3'),
+  TIKTOK_STATE_SECRET: z.string().min(32),
+  TIKTOK_WEBHOOK_URL: z.string().url(),
+  TIKTOK_WEBHOOK_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(300),
 });
 
 export const env = envSchema.parse(process.env);
