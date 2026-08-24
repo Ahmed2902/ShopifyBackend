@@ -13,16 +13,15 @@ export type CampaignRole =
 export type EvidenceConfidence = 'INSUFFICIENT' | 'LOW' | 'MODERATE' | 'HIGH';
 export type InventoryRisk = 'UNKNOWN' | 'HEALTHY' | 'LOW' | 'CRITICAL';
 export type CreativeFatigue = 'INSUFFICIENT' | 'LOW' | 'MODERATE' | 'HIGH';
+export type CommerceTrend = 'UP' | 'STABLE' | 'DOWN' | 'UNKNOWN';
 
 export type CandidateAction =
+  | 'NO_RECOMMENDATION'
   | 'HOLD'
   | 'SCALE'
   | 'REDUCE'
-  | 'PAUSE'
   | 'COLLECT_MORE_DATA'
   | 'REVIEW_MAPPING'
-  | 'RESTART_CAMPAIGN'
-  | 'REALLOCATE_BUDGET'
   | 'REPLACE_CREATIVE'
   | 'REVIEW_LANDING_PAGE';
 
@@ -56,14 +55,22 @@ export interface MetricWindow {
   frequency: number | null;
 }
 
+export interface FinancialDecisionContext {
+  mappingConfidence: number | null;
+  inventoryRisk: InventoryRisk;
+  breakEvenRoas: number | null;
+  contributionMarginRatio: number | null;
+  commerceTrend: CommerceTrend;
+  dataFreshnessHours: number | null;
+  hoursSinceMaterialCampaignChange: number | null;
+}
+
 export interface CandidateDecision {
   action: CandidateAction;
   confidence: EvidenceConfidence;
   reasons: string[];
-  guardrails: {
-    automaticExecutionAllowed: false;
-    maxSuggestedBudgetChangePercent: number | null;
-  };
+  blockers: string[];
+  financialAction: boolean;
 }
 
 export interface NormalizedCampaignIdentity {
