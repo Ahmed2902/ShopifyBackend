@@ -73,8 +73,19 @@ describe('IntelligenceService', () => {
         ],
       }),
     ]).getRecommendations('store-id', { lookbackDays: 14, limit: 50 });
-    expect(result.recommendations[0]?.decision).toBe('HOLD');
-    expect(result.recommendations[0]?.evidence.paid.monetaryComparable).toBe(false);
+    expect(result.recommendations[0]?.decision).toBe('MORE_DATA');
+    expect(result.recommendations[0]?.evidence.paid.currencyCompatible).toBe(false);
     expect(result.recommendations[0]?.evidence.paid.spend).toBeNull();
+  });
+
+  it('can scope the decision response to one product', async () => {
+    const targetId = '22222222-2222-4222-8222-222222222222';
+    const result = await serviceWith([
+      product(),
+      product({ productId: targetId, title: 'Cloud Runner' }),
+    ]).getRecommendations('store-id', { lookbackDays: 14, limit: 50, productId: targetId });
+    expect(result.readiness.joinedProducts).toBe(1);
+    expect(result.recommendations).toHaveLength(1);
+    expect(result.recommendations[0]?.product.id).toBe(targetId);
   });
 });
