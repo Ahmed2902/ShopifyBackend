@@ -14,6 +14,7 @@ export type EvidenceConfidence = 'INSUFFICIENT' | 'LOW' | 'MODERATE' | 'HIGH';
 export type InventoryRisk = 'UNKNOWN' | 'HEALTHY' | 'LOW' | 'CRITICAL';
 export type CreativeFatigue = 'INSUFFICIENT' | 'LOW' | 'MODERATE' | 'HIGH';
 export type CommerceTrend = 'UP' | 'STABLE' | 'DOWN' | 'UNKNOWN';
+export type AttributionQuality = 'UNKNOWN' | 'LOW' | 'MODERATE' | 'HIGH';
 
 export type CandidateAction =
   | 'NO_RECOMMENDATION'
@@ -57,13 +58,15 @@ export interface MetricWindow {
 }
 
 export interface FinancialDecisionContext {
+  campaignRole: CampaignRole;
   mappingConfidence: number | null;
+  attributionQuality: AttributionQuality;
   inventoryRisk: InventoryRisk;
   breakEvenRoas: number | null;
   contributionMarginRatio: number | null;
   commerceTrend: CommerceTrend;
   dataFreshnessHours: number | null;
-  hoursSinceMaterialCampaignChange: number | null;
+  stabilizationComplete: boolean;
 }
 
 export interface CandidateDecision {
