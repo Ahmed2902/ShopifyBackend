@@ -1,6 +1,9 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
+  buildTikTokAuthorizationUrl,
+  buildTikTokErrorRedirect,
+  buildTikTokSuccessRedirect,
   createTikTokOAuthState,
   getTikTokWebhookAdvertiserIds,
   getTikTokWebhookTopic,
@@ -24,6 +27,33 @@ describe('TikTok OAuth state', () => {
   it('rejects tampered state', () => {
     const state = createTikTokOAuthState('user', 'store');
     expect(() => verifyTikTokOAuthState(`${state}x`)).toThrow();
+  });
+
+  it('builds one advertiser authorization URL with the configured callback', () => {
+    const { authorizationUrl } = buildTikTokAuthorizationUrl('user', 'store');
+    const url = new URL(authorizationUrl);
+
+    expect(url.origin + url.pathname).toBe('https://ads.tiktok.com/marketing_api/auth');
+    expect(url.searchParams.get('app_id')).toBe('test-tiktok-app-id');
+    expect(url.searchParams.get('redirect_uri')).toBe(
+      'http://localhost:3001/v1/integrations/tiktok/callback',
+    );
+    expect(verifyTikTokOAuthState(url.searchParams.get('state') ?? '')).toMatchObject({
+      userId: 'user',
+      storeId: 'store',
+    });
+  });
+
+  it('returns success and failure to the integrations screen', () => {
+    const success = new URL(buildTikTokSuccessRedirect('store-1'));
+    expect(success.pathname).toBe('/app/integrations');
+    expect(success.searchParams.get('tiktok')).toBe('connected');
+    expect(success.searchParams.get('storeId')).toBe('store-1');
+
+    const failure = new URL(buildTikTokErrorRedirect('store-1', 'TIKTOK_OAUTH_FAILED'));
+    expect(failure.pathname).toBe('/app/integrations');
+    expect(failure.searchParams.get('tiktok')).toBe('error');
+    expect(failure.searchParams.get('tiktokError')).toBe('TIKTOK_OAUTH_FAILED');
   });
 });
 
