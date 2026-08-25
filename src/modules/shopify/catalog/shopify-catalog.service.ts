@@ -17,14 +17,16 @@ import type {
 import { paginateShopifyConnection } from '../shopify.utils.js';
 import type { ShopifyApiService } from '../shared/shopify-api.service.js';
 import { PRODUCT_BY_ID_QUERY, PRODUCT_VARIANTS_BY_ID_QUERY } from './shopify-catalog.queries.js';
+import { ShopifyCatalogRepository } from './shopify-catalog.repository.js';
 
-const SHOPIFY_PAGE_SIZE = 100;
+const SHOPIFY_PAGE_SIZE = 250;
 
 export class ShopifyCatalogService {
   constructor(
     private readonly repository: ShopifyRepository,
     private readonly integrationService: IntegrationService,
     private readonly apiService: ShopifyApiService,
+    private readonly syncRepository: ShopifyCatalogRepository = new ShopifyCatalogRepository(),
   ) {}
 
   async sync(input: ShopifySyncContext): Promise<{
@@ -139,11 +141,9 @@ export class ShopifyCatalogService {
 
     for await (const products of pages) {
       read += products.length;
-      for (const product of products) {
-        await this.repository.upsertProduct(input.storeId, product);
-        ids.push(product.id);
-        written += 1;
-      }
+      await this.syncRepository.persistProducts(input.storeId, products);
+      ids.push(...products.map((product) => product.id));
+      written += products.length;
     }
 
     return { read, written, ids };
@@ -173,18 +173,16 @@ export class ShopifyCatalogService {
 
     for await (const variants of pages) {
       read += variants.length;
-      for (const variant of variants) {
-        const persisted = await this.repository.upsertVariant(input.storeId, variant);
-        if (!persisted) {
-          throw new AppError(
-            'Shopify variant references a product that was not synchronized',
-            502,
-            'SHOPIFY_CATALOG_INCONSISTENT',
-          );
-        }
-        ids.push(variant.id);
-        written += 1;
+      const persisted = await this.syncRepository.persistVariants(input.storeId, variants);
+      if (!persisted) {
+        throw new AppError(
+          'Shopify variant references catalog data that was not synchronized',
+          502,
+          'SHOPIFY_CATALOG_INCONSISTENT',
+        );
       }
+      ids.push(...variants.map((variant) => variant.id));
+      written += variants.length;
     }
 
     return { read, written, ids };

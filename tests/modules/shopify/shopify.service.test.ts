@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encryptSecret } from '../../../src/modules/integrations/integration.utils.js';
 import type { IntegrationService } from '../../../src/modules/integrations/integration.service.js';
+import type { ShopifyCatalogRepository } from '../../../src/modules/shopify/catalog/shopify-catalog.repository.js';
+import type { ShopifyInventoryRepository } from '../../../src/modules/shopify/inventory/shopify-inventory.repository.js';
 import type { ShopifyRepository } from '../../../src/modules/shopify/shopify.repository.js';
 import { ShopifyService } from '../../../src/modules/shopify/shopify.service.js';
 
@@ -141,6 +143,7 @@ function jsonResponse(body: unknown, status = 200) {
 
 function buildService(connectionOverrides: Record<string, unknown> = {}) {
   const repository = {
+    connectStore: vi.fn().mockResolvedValue({ id: storeId }),
     findConnectionForSync: vi.fn().mockResolvedValue({
       id: storeId,
       myshopifyDomain: 'example-store.myshopify.com',
@@ -175,16 +178,36 @@ function buildService(connectionOverrides: Record<string, unknown> = {}) {
 
   const integrationService = {
     startSyncRun: vi.fn().mockResolvedValue({ id: syncRunId }),
+    attachProviderOperation: vi.fn().mockResolvedValue(undefined),
+    getLatestShopifySyncRun: vi.fn().mockResolvedValue(null),
     getLastSuccessfulShopifySyncRun: vi.fn().mockResolvedValue(null),
     recordExternalPayload: vi.fn().mockResolvedValue(undefined),
     completeSyncRun: vi.fn().mockResolvedValue(undefined),
     failSyncRun: vi.fn().mockResolvedValue(undefined),
   } as unknown as IntegrationService;
 
+  const catalogSyncRepository = {
+    persistProducts: vi.fn().mockResolvedValue(undefined),
+    persistVariants: vi.fn().mockResolvedValue(true),
+  } as unknown as ShopifyCatalogRepository;
+  const inventorySyncRepository = {
+    persistLocations: vi.fn().mockResolvedValue(undefined),
+    persistInventoryLevels: vi.fn().mockResolvedValue(true),
+  } as unknown as ShopifyInventoryRepository;
+
   return {
     repository,
     integrationService,
-    service: new ShopifyService(repository, integrationService),
+    catalogSyncRepository,
+    inventorySyncRepository,
+    service: new ShopifyService(
+      repository,
+      integrationService,
+      undefined,
+      undefined,
+      catalogSyncRepository,
+      inventorySyncRepository,
+    ),
   };
 }
 
@@ -202,11 +225,18 @@ function stubFullCatalogInventorySync() {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe('Shopify catalog and inventory sync', () => {
-  it('synchronizes shop, products, variants, locations and all inventory states', async () => {
-    const { repository, integrationService, service } = buildService();
+  it('synchronizes shop, products, variants, locations and all inventory states in batches', async () => {
+    const {
+      repository,
+      integrationService,
+      catalogSyncRepository,
+      inventorySyncRepository,
+      service,
+    } = buildService();
     const fetchMock = stubFullCatalogInventorySync();
 
     const result = await service.syncCatalogAndInventory(storeId);
@@ -226,6 +256,23 @@ describe('Shopify catalog and inventory sync', () => {
       },
     });
     expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(catalogSyncRepository.persistProducts).toHaveBeenCalledWith(
+      storeId,
+      expect.arrayContaining([expect.objectContaining({ id: 'gid://shopify/Product/1' })]),
+    );
+    expect(catalogSyncRepository.persistVariants).toHaveBeenCalledWith(
+      storeId,
+      expect.arrayContaining([expect.objectContaining({ id: 'gid://shopify/ProductVariant/1' })]),
+    );
+    expect(inventorySyncRepository.persistLocations).toHaveBeenCalledWith(
+      storeId,
+      expect.arrayContaining([expect.objectContaining({ id: 'gid://shopify/Location/1' })]),
+    );
+    expect(inventorySyncRepository.persistInventoryLevels).toHaveBeenCalledWith(
+      storeId,
+      expect.arrayContaining([expect.objectContaining({ id: 'gid://shopify/InventoryLevel/1' })]),
+      'INITIAL_SYNC',
+    );
     expect(repository.markMissingCatalogDeleted).toHaveBeenCalledWith(storeId, [
       'gid://shopify/Product/1',
     ], ['gid://shopify/ProductVariant/1']);
@@ -237,11 +284,6 @@ describe('Shopify catalog and inventory sync', () => {
       'gid://shopify/Location/1',
       ['gid://shopify/InventoryItem/1'],
     );
-    expect(repository.upsertInventoryLevel).toHaveBeenCalledWith(
-      storeId,
-      expect.objectContaining({ id: 'gid://shopify/InventoryLevel/1' }),
-      'INITIAL_SYNC',
-    );
     expect(integrationService.startSyncRun).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: 'SHOPIFY',
@@ -252,9 +294,31 @@ describe('Shopify catalog and inventory sync', () => {
     );
   });
 
+  it('requests Shopify connection pages at the 250-node maximum', async () => {
+    const { service } = buildService();
+    const fetchMock = stubFullCatalogInventorySync();
+
+    await service.syncCatalogAndInventory(storeId);
+
+    const graphQlBodies = fetchMock.mock.calls
+      .map((call) => (call[1] as RequestInit | undefined)?.body)
+      .filter((body): body is string => typeof body === 'string')
+      .map((body) => JSON.parse(body) as { variables?: { first?: number } });
+    const pageSizes = graphQlBodies
+      .map((body) => body.variables?.first)
+      .filter((value): value is number => typeof value === 'number');
+
+    expect(pageSizes).toEqual([250, 250, 250, 250]);
+  });
+
   it('uses the last successful periodic run as the commerce watermark', async () => {
     const watermark = new Date('2026-08-20T00:00:00.000Z');
-    const { repository, integrationService, service } = buildService({
+    const {
+      repository,
+      integrationService,
+      inventorySyncRepository,
+      service,
+    } = buildService({
       lastSyncedAt: new Date('2026-08-20T23:00:00.000Z'),
       lastReconciledAt: new Date('2026-08-20T23:00:00.000Z'),
     });
@@ -277,7 +341,7 @@ describe('Shopify catalog and inventory sync', () => {
         commerceSkipped: true,
       },
     });
-    expect(repository.upsertInventoryLevel).toHaveBeenCalledWith(
+    expect(inventorySyncRepository.persistInventoryLevels).toHaveBeenCalledWith(
       storeId,
       expect.anything(),
       'PERIODIC_RECONCILIATION',
@@ -352,5 +416,87 @@ describe('Shopify catalog and inventory sync', () => {
       string
     >;
     expect(firstGraphqlHeaders['X-Shopify-Access-Token']).toBe('rotated-access-token');
+  });
+});
+
+describe('Shopify OAuth history bootstrap', () => {
+  it('starts order history automatically after a new Shopify connection', async () => {
+    const { repository, integrationService, service } = buildService({ scopes: ['read_orders'] });
+    const oauth = service.beginOAuth('user-1', 'example-store.myshopify.com');
+    const state = new URL(oauth.authorizationUrl).searchParams.get('state')!;
+    const historySpy = vi.spyOn(service, 'startOrderHistoryBackfill').mockResolvedValue({
+      syncRunId,
+      status: 'RUNNING',
+      resourceType: 'OrdersRefunds',
+      providerOperationId: 'bulk-1',
+      providerStatus: 'CREATED',
+      historyAccess: 'LAST_60_DAYS',
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse({
+            access_token: 'oauth-access-token',
+            expires_in: 3600,
+            refresh_token: 'oauth-refresh-token',
+            refresh_token_expires_in: 7_776_000,
+            scope: 'read_products,read_inventory,read_locations,read_orders',
+          }),
+        )
+        .mockResolvedValueOnce(jsonResponse(shopResponse)),
+    );
+
+    await service.completeOAuth({
+      code: 'authorization-code',
+      shop: 'example-store.myshopify.com',
+      state,
+      oauthContextCookie: oauth.cookieValue,
+    });
+
+    expect(repository.connectStore).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user-1', canonicalDomain: 'example-store.myshopify.com' }),
+    );
+    expect(integrationService.getLatestShopifySyncRun).toHaveBeenCalledWith(
+      storeId,
+      'OrdersRefunds',
+    );
+    expect(historySpy).toHaveBeenCalledWith(storeId);
+  });
+
+  it('does not duplicate a history import that is already running', async () => {
+    const { integrationService, service } = buildService();
+    vi.mocked(integrationService.getLatestShopifySyncRun).mockResolvedValue({
+      id: syncRunId,
+      status: 'RUNNING',
+    } as never);
+    const oauth = service.beginOAuth('user-1', 'example-store.myshopify.com');
+    const state = new URL(oauth.authorizationUrl).searchParams.get('state')!;
+    const historySpy = vi.spyOn(service, 'startOrderHistoryBackfill');
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse({
+            access_token: 'oauth-access-token',
+            expires_in: 3600,
+            refresh_token: 'oauth-refresh-token',
+            refresh_token_expires_in: 7_776_000,
+            scope: 'read_products,read_inventory,read_locations,read_orders',
+          }),
+        )
+        .mockResolvedValueOnce(jsonResponse(shopResponse)),
+    );
+
+    await service.completeOAuth({
+      code: 'authorization-code',
+      shop: 'example-store.myshopify.com',
+      state,
+      oauthContextCookie: oauth.cookieValue,
+    });
+
+    expect(historySpy).not.toHaveBeenCalled();
   });
 });

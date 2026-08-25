@@ -1,7 +1,10 @@
 import { AppError } from '../../errors/app-error.js';
+import { logger } from '../../lib/logger.js';
 import { integrationService, type IntegrationService } from '../integrations/integration.service.js';
 import { ShopifyBulkService } from './bulk/shopify-bulk.service.js';
+import { ShopifyCatalogRepository } from './catalog/shopify-catalog.repository.js';
 import { ShopifyCatalogService } from './catalog/shopify-catalog.service.js';
+import { ShopifyInventoryRepository } from './inventory/shopify-inventory.repository.js';
 import { ShopifyInventoryService } from './inventory/shopify-inventory.service.js';
 import { ShopifyOrderRepository } from './order/shopify-order.repository.js';
 import { ShopifyOrderService } from './order/shopify-order.service.js';
@@ -31,11 +34,23 @@ export class ShopifyService {
     private readonly integrationService: IntegrationService,
     orderRepository: ShopifyOrderRepository = new ShopifyOrderRepository(),
     webhookRepository: ShopifyWebhookRepository = new ShopifyWebhookRepository(),
+    catalogSyncRepository: ShopifyCatalogRepository = new ShopifyCatalogRepository(),
+    inventorySyncRepository: ShopifyInventoryRepository = new ShopifyInventoryRepository(),
   ) {
     this.apiService = new ShopifyApiService(repository);
     this.authService = new ShopifyAuthService(repository, this.apiService);
-    this.catalogService = new ShopifyCatalogService(repository, integrationService, this.apiService);
-    this.inventoryService = new ShopifyInventoryService(repository, integrationService, this.apiService);
+    this.catalogService = new ShopifyCatalogService(
+      repository,
+      integrationService,
+      this.apiService,
+      catalogSyncRepository,
+    );
+    this.inventoryService = new ShopifyInventoryService(
+      repository,
+      integrationService,
+      this.apiService,
+      inventorySyncRepository,
+    );
     this.orderService = new ShopifyOrderService(
       orderRepository,
       this.apiService,
@@ -55,13 +70,31 @@ export class ShopifyService {
     return this.authService.beginOAuth(userId, requestedShop);
   }
 
-  completeOAuth(input: {
+  async completeOAuth(input: {
     code: string;
     shop: string;
     state: string;
     oauthContextCookie: string | undefined;
   }) {
-    return this.authService.completeOAuth(input);
+    const result = await this.authService.completeOAuth(input);
+
+    try {
+      const latestHistory = await this.integrationService.getLatestShopifySyncRun(
+        result.storeId,
+        ORDER_HISTORY_RESOURCE,
+      );
+      if (!latestHistory || !['RUNNING', 'SUCCEEDED'].includes(latestHistory.status)) {
+        await this.startOrderHistoryBackfill(result.storeId);
+      }
+    } catch (error) {
+      // Connecting the store must remain successful even when the optional history import
+      // cannot start. The integrations screen keeps the manual retry path visible.
+      if (!(error instanceof AppError && error.code === 'SHOPIFY_ORDER_SCOPE_REQUIRED')) {
+        logger.warn({ err: error, storeId: result.storeId }, 'Shopify order history did not auto-start');
+      }
+    }
+
+    return result;
   }
 
   receiveWebhook(
@@ -354,8 +387,10 @@ export class ShopifyService {
     input: ShopifySyncContext,
     snapshotSource: ShopifyInventorySnapshotSource,
   ) {
-    await this.syncStoreProfile(input);
-    const catalog = await this.catalogService.sync(input);
+    const [, catalog] = await Promise.all([
+      this.syncStoreProfile(input),
+      this.catalogService.sync(input),
+    ]);
     const inventory = await this.inventoryService.sync(input, snapshotSource);
     return {
       recordsRead:

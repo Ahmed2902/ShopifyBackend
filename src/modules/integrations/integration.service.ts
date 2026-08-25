@@ -50,6 +50,10 @@ export class IntegrationService {
     return this.repository.findShopifySyncRun(storeId, syncRunId, resourceType);
   }
 
+  getLatestShopifySyncRun(storeId: string, resourceType: string) {
+    return this.repository.findLatestShopifySyncRun(storeId, resourceType);
+  }
+
   getLastSuccessfulShopifySyncRun(connectionId: string, resourceType: string) {
     return this.repository.findLastSuccessfulShopifySyncRun(connectionId, resourceType);
   }
