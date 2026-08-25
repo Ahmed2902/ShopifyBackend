@@ -23,8 +23,9 @@ import {
   INVENTORY_LEVEL_BY_ITEM_LOCATION_QUERY,
   LOCATION_BY_ID_QUERY,
 } from './shopify-inventory.queries.js';
+import { ShopifyInventoryRepository } from './shopify-inventory.repository.js';
 
-const SHOPIFY_PAGE_SIZE = 100;
+const SHOPIFY_PAGE_SIZE = 250;
 const REQUIRED_INVENTORY_STATES = [
   'available',
   'incoming',
@@ -41,6 +42,7 @@ export class ShopifyInventoryService {
     private readonly repository: ShopifyRepository,
     private readonly integrationService: IntegrationService,
     private readonly apiService: ShopifyApiService,
+    private readonly syncRepository: ShopifyInventoryRepository = new ShopifyInventoryRepository(),
   ) {}
 
   async sync(
@@ -163,11 +165,9 @@ export class ShopifyInventoryService {
 
     for await (const locations of pages) {
       read += locations.length;
-      for (const location of locations) {
-        await this.repository.upsertLocation(input.storeId, location);
-        ids.push(location.id);
-        written += 1;
-      }
+      await this.syncRepository.persistLocations(input.storeId, locations);
+      ids.push(...locations.map((location) => location.id));
+      written += locations.length;
     }
 
     return { read, written, ids };
@@ -214,21 +214,21 @@ export class ShopifyInventoryService {
       read += levels.length;
       for (const level of levels) {
         this.assertInventoryQuantities(level.quantities.map((quantity) => quantity.name));
-        const persisted = await this.repository.upsertInventoryLevel(
-          input.storeId,
-          level,
-          snapshotSource,
-        );
-        if (!persisted) {
-          throw new AppError(
-            'Shopify inventory references catalog data that was not synchronized',
-            502,
-            'SHOPIFY_CATALOG_INCONSISTENT',
-          );
-        }
-        inventoryItemIds.push(level.item.id);
-        written += 1;
       }
+      const persisted = await this.syncRepository.persistInventoryLevels(
+        input.storeId,
+        levels,
+        snapshotSource,
+      );
+      if (!persisted) {
+        throw new AppError(
+          'Shopify inventory references catalog data that was not synchronized',
+          502,
+          'SHOPIFY_CATALOG_INCONSISTENT',
+        );
+      }
+      inventoryItemIds.push(...levels.map((level) => level.item.id));
+      written += levels.length;
     }
 
     await this.repository.deleteMissingInventoryLevelsForLocation(

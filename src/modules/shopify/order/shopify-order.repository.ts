@@ -46,7 +46,8 @@ export class ShopifyOrderRepository {
 
       const productIds = this.uniqueIds(order.lineItems, (line) => line.product?.id);
       const variantIds = this.uniqueIds(order.lineItems, (line) => line.variant?.id);
-      const [products, variants] = await Promise.all([
+      const lineItemIds = order.lineItems.map((lineItem) => lineItem.id);
+      const [products, variants, existingLineItems] = await Promise.all([
         productIds.length
           ? tx.product.findMany({
               where: { storeId, shopifyProductId: { in: productIds } },
@@ -59,42 +60,62 @@ export class ShopifyOrderRepository {
               select: { id: true, shopifyVariantId: true },
             })
           : [],
+        lineItemIds.length
+          ? tx.orderLineItem.findMany({
+              where: { orderId: savedOrder.id, shopifyLineItemId: { in: lineItemIds } },
+              select: { id: true, shopifyLineItemId: true },
+            })
+          : [],
       ]);
 
       const productMap = new Map(products.map((product) => [product.shopifyProductId, product.id]));
       const variantMap = new Map(variants.map((variant) => [variant.shopifyVariantId, variant.id]));
-      const persistedLineItems: PersistedShopifyOrder['lineItems'] = [];
-
-      for (const lineItem of order.lineItems) {
+      const existingMap = new Map(
+        existingLineItems.map((lineItem) => [lineItem.shopifyLineItemId, lineItem.id]),
+      );
+      const rows = order.lineItems.map((lineItem) => {
         const shopifyProductId = lineItem.product?.id ?? null;
         const shopifyVariantId = lineItem.variant?.id ?? null;
-        const data = this.lineItemData(
+        return {
           lineItem,
-          shopifyProductId ? (productMap.get(shopifyProductId) ?? null) : null,
-          shopifyVariantId ? (variantMap.get(shopifyVariantId) ?? null) : null,
-        );
+          data: this.lineItemData(
+            lineItem,
+            shopifyProductId ? (productMap.get(shopifyProductId) ?? null) : null,
+            shopifyVariantId ? (variantMap.get(shopifyVariantId) ?? null) : null,
+          ),
+        };
+      });
 
-        const savedLineItem = await tx.orderLineItem.upsert({
-          where: {
-            orderId_shopifyLineItemId: {
-              orderId: savedOrder.id,
-              shopifyLineItemId: lineItem.id,
-            },
-          },
-          create: {
+      const newRows = rows.filter((row) => !existingMap.has(row.lineItem.id));
+      if (newRows.length > 0) {
+        await tx.orderLineItem.createMany({
+          data: newRows.map((row) => ({
             orderId: savedOrder.id,
-            shopifyLineItemId: lineItem.id,
-            ...data,
-          },
-          update: data,
-          select: { id: true },
-        });
-
-        persistedLineItems.push({
-          id: savedLineItem.id,
-          shopifyLineItemId: lineItem.id,
+            shopifyLineItemId: row.lineItem.id,
+            ...row.data,
+          })),
+          skipDuplicates: true,
         });
       }
+
+      // Reconciliation updates are normally a small set. Keep different row values explicit
+      // rather than introducing raw SQL solely to collapse these updates.
+      for (const row of rows) {
+        const id = existingMap.get(row.lineItem.id);
+        if (!id) continue;
+        await tx.orderLineItem.update({
+          where: { id },
+          data: row.data,
+          select: { id: true },
+        });
+      }
+
+      const persistedLineItems = lineItemIds.length
+        ? await tx.orderLineItem.findMany({
+            where: { orderId: savedOrder.id, shopifyLineItemId: { in: lineItemIds } },
+            select: { id: true, shopifyLineItemId: true },
+          })
+        : [];
 
       return { id: savedOrder.id, lineItems: persistedLineItems };
     });
