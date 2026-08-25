@@ -32,11 +32,11 @@ export type GoogleSignInProfile = {
   name: string | null;
 };
 
-function googleEmailInUseError() {
+function googleAccountConflictError() {
   return new AppError(
-    'An account with this email already exists. Sign in with your password.',
+    'This email is already linked to a different Google account.',
     409,
-    'GOOGLE_EMAIL_IN_USE',
+    'GOOGLE_ACCOUNT_CONFLICT',
   );
 }
 
@@ -71,6 +71,30 @@ export class AuthService {
       accessToken: await issueAccessToken(user.id, user.memberships),
       refreshToken,
     };
+  }
+
+  private async linkGoogleAccount(
+    user: NonNullable<Awaited<ReturnType<AuthRepository['findUserByEmail']>>>,
+    googleId: string,
+    userAgent?: string,
+  ) {
+    if (user.googleId) throw googleAccountConflictError();
+
+    try {
+      if (await this.repository.linkGoogleAccount({ userId: user.id, googleId })) {
+        const linkedUser = await this.repository.findUserByGoogleId(googleId);
+        if (linkedUser) return this.createSession(linkedUser, userAgent);
+      }
+    } catch {
+      // Another callback may have claimed the unique Google subject first.
+    }
+
+    const googleUser = await this.repository.findUserByGoogleId(googleId);
+    if (googleUser) return this.createSession(googleUser, userAgent);
+
+    const currentUser = await this.repository.findUserByEmail(user.email);
+    if (currentUser?.googleId) throw googleAccountConflictError();
+    return null;
   }
 
   private async deliverAuthEmail(input: {
@@ -213,7 +237,15 @@ export class AuthService {
     if (existingGoogleUser) return this.createSession(existingGoogleUser, userAgent);
 
     const email = normalizeEmail(profile.email);
-    if (await this.repository.findUserByEmail(email)) throw googleEmailInUseError();
+    const existingEmailUser = await this.repository.findUserByEmail(email);
+    if (existingEmailUser) {
+      const linkedSession = await this.linkGoogleAccount(
+        existingEmailUser,
+        profile.googleId,
+        userAgent,
+      );
+      if (linkedSession) return linkedSession;
+    }
 
     try {
       const user = await this.repository.createGoogleUser({
@@ -225,7 +257,15 @@ export class AuthService {
     } catch (error) {
       const concurrentlyCreated = await this.repository.findUserByGoogleId(profile.googleId);
       if (concurrentlyCreated) return this.createSession(concurrentlyCreated, userAgent);
-      if (await this.repository.findUserByEmail(email)) throw googleEmailInUseError();
+      const concurrentEmailUser = await this.repository.findUserByEmail(email);
+      if (concurrentEmailUser) {
+        const linkedSession = await this.linkGoogleAccount(
+          concurrentEmailUser,
+          profile.googleId,
+          userAgent,
+        );
+        if (linkedSession) return linkedSession;
+      }
       throw error;
     }
   }
@@ -269,7 +309,8 @@ export class AuthService {
   }
 
   async revokeRefreshSession(refreshToken: string | undefined): Promise<void> {
-    if (refreshToken) await this.repository.revokeSessionByTokenHash(hashRefreshToken(refreshToken));
+    if (refreshToken)
+      await this.repository.revokeSessionByTokenHash(hashRefreshToken(refreshToken));
   }
 
   async getCurrentUser(userId: string) {

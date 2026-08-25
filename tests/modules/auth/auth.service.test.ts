@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthRepository } from '../../../src/modules/auth/auth.repository.js';
 import { AuthService } from '../../../src/modules/auth/auth.service.js';
+import { hashPassword } from '../../../src/modules/auth/auth.utils.js';
 
 function createService() {
   const repository = {
     findUserByGoogleId: vi.fn(),
     findUserByEmail: vi.fn(),
+    linkGoogleAccount: vi.fn(),
     createGoogleUser: vi.fn(),
     createRefreshSession: vi.fn().mockResolvedValue({}),
   };
@@ -37,7 +39,7 @@ describe('AuthService Google sign-in', () => {
     expect(repository.createRefreshSession).toHaveBeenCalledOnce();
   });
 
-  it('does not silently merge a Google login into an existing password account', async () => {
+  it('links a verified Google identity to an existing password account', async () => {
     const { repository, service } = createService();
     repository.findUserByGoogleId.mockResolvedValue(null);
     repository.findUserByEmail.mockResolvedValue({
@@ -45,18 +47,85 @@ describe('AuthService Google sign-in', () => {
       email: 'owner@example.com',
       name: 'Owner',
       passwordHash: 'hash',
+      googleId: null,
+      memberships: [],
+    });
+    repository.linkGoogleAccount.mockResolvedValue(true);
+    repository.findUserByGoogleId.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: '22222222-2222-4222-8222-222222222222',
+      email: 'owner@example.com',
+      name: 'Owner',
       memberships: [],
     });
 
+    const result = await service.oauthSignIn({
+      googleId: 'google-subject-2',
+      email: 'Owner@Example.com',
+      name: 'Owner',
+    });
+
+    expect(result.user.id).toBe('22222222-2222-4222-8222-222222222222');
+    expect(repository.linkGoogleAccount).toHaveBeenCalledWith({
+      userId: '22222222-2222-4222-8222-222222222222',
+      googleId: 'google-subject-2',
+    });
+    expect(repository.createGoogleUser).not.toHaveBeenCalled();
+  });
+
+  it('rejects a matching email that is linked to a different Google subject', async () => {
+    const { repository, service } = createService();
+    repository.findUserByGoogleId.mockResolvedValue(null);
+    repository.findUserByEmail.mockResolvedValue({
+      id: '22222222-2222-4222-8222-222222222222',
+      email: 'owner@example.com',
+      name: 'Owner',
+      passwordHash: 'hash',
+      googleId: 'google-subject-1',
+      memberships: [],
+    });
     await expect(
       service.oauthSignIn({
         googleId: 'google-subject-2',
-        email: 'Owner@Example.com',
+        email: 'owner@example.com',
         name: 'Owner',
       }),
-    ).rejects.toMatchObject({ code: 'GOOGLE_EMAIL_IN_USE', statusCode: 409 });
+    ).rejects.toMatchObject({ code: 'GOOGLE_ACCOUNT_CONFLICT', statusCode: 409 });
 
     expect(repository.createGoogleUser).not.toHaveBeenCalled();
+  });
+
+  it('continues to allow password login after Google linking', async () => {
+    const { repository, service } = createService();
+    const passwordHash = await hashPassword('correct horse battery staple');
+    repository.findUserByGoogleId.mockResolvedValue(null);
+    repository.findUserByEmail.mockResolvedValue({
+      id: '22222222-2222-4222-8222-222222222222',
+      email: 'owner@example.com',
+      name: 'Owner',
+      passwordHash,
+      googleId: null,
+      emailVerifiedAt: new Date(),
+      memberships: [],
+    });
+    repository.linkGoogleAccount.mockResolvedValue(true);
+    repository.findUserByGoogleId.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: '22222222-2222-4222-8222-222222222222',
+      email: 'owner@example.com',
+      name: 'Owner',
+      memberships: [],
+    });
+
+    await service.oauthSignIn({
+      googleId: 'google-subject-2',
+      email: 'owner@example.com',
+      name: 'Owner',
+    });
+    const passwordResult = await service.login({
+      email: 'owner@example.com',
+      password: 'correct horse battery staple',
+    });
+
+    expect(passwordResult.user.id).toBe('22222222-2222-4222-8222-222222222222');
   });
 
   it('creates a verified passwordless user for a new Google identity', async () => {
@@ -84,26 +153,34 @@ describe('AuthService Google sign-in', () => {
     expect(result.user.email).toBe('new@example.com');
   });
 
-  it('returns the same clean conflict when the email is claimed during creation', async () => {
+  it('links safely when a password account is created while Google sign-in is in progress', async () => {
     const { repository, service } = createService();
-    repository.findUserByGoogleId.mockResolvedValue(null);
-    repository.findUserByEmail
+    repository.findUserByGoogleId
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
         id: '44444444-4444-4444-8444-444444444444',
         email: 'race@example.com',
         name: 'Race Winner',
-        passwordHash: 'hash',
         memberships: [],
       });
+    repository.findUserByEmail.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: '44444444-4444-4444-8444-444444444444',
+      email: 'race@example.com',
+      name: 'Race Winner',
+      passwordHash: 'hash',
+      googleId: null,
+      memberships: [],
+    });
     repository.createGoogleUser.mockRejectedValue(new Error('unique constraint'));
+    repository.linkGoogleAccount.mockResolvedValue(true);
 
-    await expect(
-      service.oauthSignIn({
-        googleId: 'google-subject-4',
-        email: 'race@example.com',
-        name: 'Google User',
-      }),
-    ).rejects.toMatchObject({ code: 'GOOGLE_EMAIL_IN_USE', statusCode: 409 });
+    const result = await service.oauthSignIn({
+      googleId: 'google-subject-4',
+      email: 'race@example.com',
+      name: 'Google User',
+    });
+
+    expect(result.user.id).toBe('44444444-4444-4444-8444-444444444444');
   });
 });

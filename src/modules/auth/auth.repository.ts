@@ -24,6 +24,7 @@ export class AuthRepository {
         email: true,
         name: true,
         passwordHash: true,
+        googleId: true,
         emailVerifiedAt: true,
         memberships: { select: membershipSelect },
       },
@@ -61,6 +62,21 @@ export class AuthRepository {
       },
       select: sessionUserSelect,
     });
+  }
+
+  async linkGoogleAccount(input: { userId: string; googleId: string }): Promise<boolean> {
+    const now = new Date();
+    const unverifiedUser = await prisma.user.updateMany({
+      where: { id: input.userId, googleId: null, emailVerifiedAt: null },
+      data: { googleId: input.googleId, emailVerifiedAt: now },
+    });
+    if (unverifiedUser.count === 1) return true;
+
+    const verifiedUser = await prisma.user.updateMany({
+      where: { id: input.userId, googleId: null },
+      data: { googleId: input.googleId },
+    });
+    return verifiedUser.count === 1;
   }
 
   replaceAuthToken(input: {
@@ -124,12 +140,7 @@ export class AuthRepository {
         },
       });
 
-      if (
-        !token ||
-        token.type !== 'EMAIL_VERIFICATION' ||
-        token.usedAt ||
-        token.expiresAt <= now
-      ) {
+      if (!token || token.type !== 'EMAIL_VERIFICATION' || token.usedAt || token.expiresAt <= now) {
         return null;
       }
 
