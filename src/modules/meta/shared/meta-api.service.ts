@@ -1,4 +1,5 @@
 import { env } from '../../../config/env.js';
+import { metaCallbackUrl } from '../../../config/public-urls.js';
 import { AppError } from '../../../errors/app-error.js';
 import type { MetaRepository } from '../meta.repository.js';
 import {
@@ -77,7 +78,7 @@ export class MetaApiService {
     const shortLived = await this.requestToken({
       client_id: env.META_APP_ID,
       client_secret: env.META_APP_SECRET,
-      redirect_uri: env.META_REDIRECT_URI,
+      redirect_uri: metaCallbackUrl(),
       code,
     });
 
