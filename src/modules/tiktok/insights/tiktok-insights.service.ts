@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { Prisma } from '../../../generated/prisma/client.js';
 import type { TikTokApiService } from '../shared/tiktok-api.service.js';
 import type { TikTokApiContext } from '../tiktok.types.js';
 import { asNumber, asRecord, asString } from '../tiktok.utils.js';
@@ -121,9 +122,11 @@ export class TikTokInsightsService {
             videoViewsP50: metrics.video_views_p50 == null ? null : BigInt(asString(metrics.video_views_p50) ?? '0'),
             videoViewsP75: metrics.video_views_p75 == null ? null : BigInt(asString(metrics.video_views_p75) ?? '0'),
             videoViewsP100: metrics.video_views_p100 == null ? null : BigInt(asString(metrics.video_views_p100) ?? '0'),
-            dimensionsJson: dimensions,
-            metricsJson: metrics,
-            rawJson: row,
+            // TikTok API responses are parsed JSON. Narrow the untyped API records
+            // to Prisma's JSON input type at this persistence boundary.
+            dimensionsJson: dimensions as Prisma.InputJsonValue,
+            metricsJson: metrics as Prisma.InputJsonValue,
+            rawJson: row as Prisma.InputJsonValue,
             syncedAt: new Date(),
           });
           recordsWritten += 1;

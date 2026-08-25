@@ -1,7 +1,6 @@
 import { env } from '../../../config/env.js';
 import { AppError } from '../../../errors/app-error.js';
-import { tiktokService } from '../tiktok.controller.js';
-import type { TikTokService } from '../tiktok.service.js';
+import { tiktokService, type TikTokService } from '../tiktok.service.js';
 import {
   asRecord,
   deriveTikTokDeliveryId,

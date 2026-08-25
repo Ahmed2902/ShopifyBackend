@@ -4,6 +4,7 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { env } from '../../config/env.js';
 import { googleCallbackUrl, googleFrontendCallbackUrl } from '../../config/public-urls.js';
 import { AppError } from '../../errors/app-error.js';
+import { logger } from '../../lib/logger.js';
 import type { AuthService } from './auth.service.js';
 import { sanitizeUserAgent, setRefreshCookie } from './auth.utils.js';
 
@@ -14,6 +15,24 @@ const OAUTH_TTL_MS = 10 * 60 * 1000;
 
 const STATE_COOKIE = 'google_oauth_state';
 const VERIFIER_COOKIE = 'google_oauth_verifier';
+
+type GoogleTokenError = {
+  error?: unknown;
+  error_description?: unknown;
+};
+
+function tokenExchangeErrorCode(providerError: string): string {
+  switch (providerError) {
+    case 'invalid_grant':
+      return 'GOOGLE_OAUTH_CODE_INVALID';
+    case 'invalid_client':
+      return 'GOOGLE_OAUTH_CLIENT_INVALID';
+    case 'unauthorized_client':
+      return 'GOOGLE_OAUTH_CLIENT_UNAUTHORIZED';
+    default:
+      return 'GOOGLE_OAUTH_FAILED';
+  }
+}
 
 function oauthCookieOptions(nodeEnv: string = env.NODE_ENV): CookieOptions {
   return {
@@ -136,7 +155,19 @@ export function googleCallback(service: AuthService) {
       }
 
       if (!tokenResponse.ok) {
-        throw new AppError('Google rejected the authorization code', 401, 'GOOGLE_OAUTH_FAILED');
+        const tokenError = (await tokenResponse.json().catch(() => null)) as GoogleTokenError | null;
+        const providerError = typeof tokenError?.error === 'string' ? tokenError.error : 'unknown';
+        const providerDescription =
+          typeof tokenError?.error_description === 'string' ? tokenError.error_description : undefined;
+        logger.warn(
+          { status: tokenResponse.status, providerError, providerDescription },
+          'Google OAuth token exchange was rejected',
+        );
+        throw new AppError(
+          'Google rejected the authorization code',
+          401,
+          tokenExchangeErrorCode(providerError),
+        );
       }
 
       const tokenBody = (await tokenResponse.json()) as { id_token?: unknown };
@@ -151,13 +182,17 @@ export function googleCallback(service: AuthService) {
           audience: clientId,
           algorithms: ['RS256'],
         }));
-      } catch {
-        throw new AppError('Google returned an invalid identity token', 401, 'GOOGLE_OAUTH_FAILED');
+      } catch (error) {
+        logger.warn(
+          { err: error },
+          'Google OAuth returned an invalid identity token',
+        );
+        throw new AppError('Google returned an invalid identity token', 401, 'GOOGLE_OAUTH_ID_TOKEN_INVALID');
       }
 
       const expectedNonce = nonceForVerifier(verifier);
       if (typeof claims.nonce !== 'string' || !secureEqual(claims.nonce, expectedNonce)) {
-        throw new AppError('Google identity nonce does not match', 401, 'GOOGLE_OAUTH_FAILED');
+        throw new AppError('Google identity nonce does not match', 401, 'GOOGLE_OAUTH_NONCE_INVALID');
       }
 
       if (
@@ -190,4 +225,5 @@ export const googleOAuthInternals = {
   oauthCookieOptions,
   nonceForVerifier,
   sha256Base64Url,
+  tokenExchangeErrorCode,
 };

@@ -14,6 +14,7 @@ interface RateLimitOptions {
 type RedisResult = { result?: unknown; error?: string };
 
 const hash = (value: string) => createHash('sha256').update(value).digest('base64url');
+const localBuckets = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_SCRIPT = `
 local count = redis.call('INCR', KEYS[1])
 if count == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end
@@ -58,6 +59,20 @@ export function authIdentity(req: Request): string {
 }
 
 async function consume(key: string, windowMs: number): Promise<{ count: number; ttlMs: number }> {
+  if (!env.REDIS_REST_URL || !env.REDIS_REST_TOKEN) {
+    if (env.NODE_ENV !== 'development') {
+      throw new AppError('Rate limiter unavailable', 503, 'RATE_LIMIT_UNAVAILABLE');
+    }
+
+    const now = Date.now();
+    const current = localBuckets.get(key);
+    const bucket =
+      current && current.resetAt > now ? current : { count: 0, resetAt: now + windowMs };
+    bucket.count += 1;
+    localBuckets.set(key, bucket);
+    return { count: bucket.count, ttlMs: Math.max(1, bucket.resetAt - now) };
+  }
+
   let response: Response;
   try {
     response = await fetch(env.REDIS_REST_URL, {
@@ -124,7 +139,7 @@ export const apiRateLimit = rateLimit({
   name: 'api',
   max: 600,
   windowMs: 5 * 60_000,
-  skip: (req) => AUTH_COOKIE_PATHS.has(req.path) || isWebhook(req),
+  skip: (req) => env.NODE_ENV === 'test' || AUTH_COOKIE_PATHS.has(req.path) || isWebhook(req),
 });
 
 export const webhookRateLimit = rateLimit({
@@ -132,7 +147,7 @@ export const webhookRateLimit = rateLimit({
   max: 3_000,
   windowMs: 5 * 60_000,
   key: sourceIdentity,
-  skip: (req) => !isWebhook(req),
+  skip: (req) => env.NODE_ENV === 'test' || !isWebhook(req),
 });
 
 export const authRateLimit = rateLimit({
@@ -169,3 +184,7 @@ export const csrfRateLimit = rateLimit({
   windowMs: 15 * 60_000,
   key: sourceIdentity,
 });
+
+//3shan bokraaaaa ehna hna hateeenn buckets bdl redis
+//el oauth bayz msh fahm leehh
+//ui el login wel dashboard msh gy m3aha el akhdar el feh dah 3ayz ashelo w akhleh zy systemly

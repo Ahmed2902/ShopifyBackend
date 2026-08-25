@@ -73,19 +73,19 @@ export class MetaAuthService {
         'META_CONNECTION_INACTIVE',
       );
     }
+    try {
+      this.assertBasePermissions(connection.scopes);
+    } catch (error) {
+      await this.repository.markConnectionReauthRequired(connection.id);
+      throw error;
+    }
+
     if (
       connection.tokenExpiresAt &&
       connection.tokenExpiresAt.getTime() <= Date.now() + TOKEN_EXPIRY_SKEW_MS
     ) {
       await this.repository.markConnectionReauthRequired(connection.id);
       throw new AppError('Meta access token requires reauthorization', 401, 'META_REAUTH_REQUIRED');
-    }
-
-    try {
-      this.assertBasePermissions(connection.scopes);
-    } catch (error) {
-      await this.repository.markConnectionReauthRequired(connection.id);
-      throw error;
     }
 
     return {

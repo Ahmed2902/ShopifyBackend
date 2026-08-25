@@ -7,16 +7,18 @@ import { pinoHttp } from 'pino-http';
 import { env } from './config/env.js';
 import { logger } from './lib/logger.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
-import {
-  apiRateLimit,
-  webhookRateLimit,
-} from './middleware/rate-limit.middleware.js';
+import { apiRateLimit, webhookRateLimit } from './middleware/rate-limit.middleware.js';
 import { router } from './routes.js';
 
 const RAW_BODY_WEBHOOK_PATHS = [
   '/v1/integrations/shopify/webhooks',
   '/v1/integrations/tiktok/webhooks',
 ];
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+
+function requestId(value: unknown): string {
+  return typeof value === 'string' && REQUEST_ID_PATTERN.test(value) ? value : randomUUID();
+}
 
 export function createApp() {
   const app = express();

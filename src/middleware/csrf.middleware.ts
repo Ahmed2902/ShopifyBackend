@@ -29,7 +29,9 @@ function cookieOptions(): CookieOptions {
     httpOnly: true,
     secure: production,
     sameSite: production ? 'none' : 'lax',
-    path: '/v1/auth',
+    // The token is issued by /v1/auth but is verified on protected mutations
+    // throughout the API, so the cookie must be available to all API routes.
+    path: '/',
     maxAge: CSRF_TTL_MS,
   };
 }
