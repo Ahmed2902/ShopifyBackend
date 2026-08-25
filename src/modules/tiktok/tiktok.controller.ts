@@ -6,17 +6,20 @@ import {
   tiktokAdParamsSchema,
   tiktokCampaignListQuerySchema,
 } from './ads/tiktok-ads.schema.js';
-import { tiktokCatalogItemsQuerySchema, tiktokCatalogParamsSchema } from './catalog/tiktok-catalog.schema.js';
-import { tiktokInsightsListQuerySchema, tiktokInsightsSyncSchema } from './insights/tiktok-insights.schema.js';
+import {
+  tiktokCatalogItemsQuerySchema,
+  tiktokCatalogParamsSchema,
+} from './catalog/tiktok-catalog.schema.js';
+import {
+  tiktokInsightsListQuerySchema,
+  tiktokInsightsSyncSchema,
+} from './insights/tiktok-insights.schema.js';
 import {
   tiktokCallbackSchema,
   tiktokConfigureAssetsSchema,
   tiktokConfigureCatalogsSchema,
 } from './tiktok.schema.js';
 import { tiktokService, type TikTokService } from './tiktok.service.js';
-import { buildTikTokSuccessRedirect, toJsonSafe, verifyTikTokOAuthState } from './tiktok.utils.js';
-import { TikTokRepository } from './tiktok.repository.js';
-import { TikTokService } from './tiktok.service.js';
 import {
   buildTikTokErrorRedirect,
   buildTikTokSuccessRedirect,
@@ -55,13 +58,6 @@ export class TikTokController {
       const code = error instanceof AppError ? error.code : 'TIKTOK_OAUTH_FAILED';
       res.redirect(303, buildTikTokErrorRedirect(context.storeId, code));
     }
-    const query = tiktokCallbackSchema.parse({
-      auth_code: req.query.auth_code,
-      code: req.query.code,
-      state: req.query.state,
-    });
-    const result = await this.service.completeOAuthInstall(query.auth_code ?? query.code!, query.state);
-    res.redirect(303, buildTikTokSuccessRedirect(result.storeId));
   };
 
   status = async (req: Request, res: Response) => {
@@ -135,7 +131,9 @@ export class TikTokController {
   catalogItems = async (req: Request, res: Response) => {
     const { catalogId } = tiktokCatalogParamsSchema.parse(req.params);
     const { page, limit } = tiktokCatalogItemsQuerySchema.parse(req.query);
-    res.status(200).json(await this.service.listCatalogItems(req.context.storeId!, catalogId, page, limit));
+    res.status(200).json(
+      await this.service.listCatalogItems(req.context.storeId!, catalogId, page, limit),
+    );
   };
 
   insights = async (req: Request, res: Response) => {
