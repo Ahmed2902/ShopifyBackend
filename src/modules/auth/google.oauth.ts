@@ -2,6 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { CookieOptions, NextFunction, Request, Response } from 'express';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { env } from '../../config/env.js';
+import { googleCallbackUrl, googleFrontendCallbackUrl } from '../../config/public-urls.js';
 import { AppError } from '../../errors/app-error.js';
 import type { AuthService } from './auth.service.js';
 import { sanitizeUserAgent, setRefreshCookie } from './auth.utils.js';
@@ -19,7 +20,7 @@ function oauthCookieOptions(nodeEnv: string = env.NODE_ENV): CookieOptions {
     httpOnly: true,
     secure: nodeEnv === 'production',
     sameSite: 'lax',
-    path: '/v1/auth/google',
+    path: '/',
     maxAge: OAUTH_TTL_MS,
   };
 }
@@ -31,18 +32,11 @@ function clearOauthCookies(res: Response): void {
 }
 
 function requireGoogleConfig() {
-  const {
-    GOOGLE_CLIENT_ID: clientId,
-    GOOGLE_CLIENT_SECRET: clientSecret,
-    GOOGLE_REDIRECT_URI: redirectUri,
-    GOOGLE_FRONTEND_REDIRECT_URI: frontendRedirectUri,
-  } = env;
-
-  if (!clientId || !clientSecret || !redirectUri || !frontendRedirectUri) {
+  const { GOOGLE_CLIENT_ID: clientId, GOOGLE_CLIENT_SECRET: clientSecret } = env;
+  if (!clientId || !clientSecret) {
     throw new AppError('Google OAuth is not configured', 503, 'GOOGLE_OAUTH_NOT_CONFIGURED');
   }
-
-  return { clientId, clientSecret, redirectUri, frontendRedirectUri };
+  return { clientId, clientSecret, redirectUri: googleCallbackUrl() };
 }
 
 function randomBase64Url(bytes = 32): string {
@@ -63,30 +57,16 @@ function secureEqual(left: string, right: string): boolean {
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-function frontendRedirect(status: 'success' | 'error', errorCode?: string): string {
-  const { frontendRedirectUri } = requireGoogleConfig();
-  const url = new URL(frontendRedirectUri);
-  url.searchParams.set('provider', 'google');
-  url.searchParams.set('status', status);
-  if (errorCode) url.searchParams.set('error', errorCode);
-  return url.toString();
-}
-
-function validateState(req: Request): { state: string; verifier: string } {
+function validateState(req: Request): { verifier: string } {
   const returnedState = typeof req.query.state === 'string' ? req.query.state : '';
   const storedState = req.cookies?.[STATE_COOKIE] as string | undefined;
   const verifier = req.cookies?.[VERIFIER_COOKIE] as string | undefined;
 
-  if (
-    !returnedState ||
-    !storedState ||
-    !verifier ||
-    !secureEqual(returnedState, storedState)
-  ) {
+  if (!returnedState || !storedState || !verifier || !secureEqual(returnedState, storedState)) {
     throw new AppError('Invalid Google OAuth state', 400, 'GOOGLE_OAUTH_STATE_INVALID');
   }
 
-  return { state: returnedState, verifier };
+  return { verifier };
 }
 
 export function googleRedirect(_req: Request, res: Response): void {
@@ -117,22 +97,20 @@ export function googleCallback(service: AuthService) {
     try {
       ({ verifier } = validateState(req));
     } catch (error) {
-      // Do not clear a legitimate in-progress flow when a forged callback has bad state.
       next(error);
       return;
     }
 
-    // State is valid. Consume the one-time browser state before doing network or DB work.
     clearOauthCookies(res);
 
     if (typeof req.query.error === 'string') {
-      res.redirect(302, frontendRedirect('error', 'GOOGLE_OAUTH_DENIED'));
+      res.redirect(302, googleFrontendCallbackUrl('GOOGLE_OAUTH_DENIED'));
       return;
     }
 
     const code = typeof req.query.code === 'string' ? req.query.code : '';
     if (!code) {
-      res.redirect(302, frontendRedirect('error', 'GOOGLE_OAUTH_MISSING_CODE'));
+      res.redirect(302, googleFrontendCallbackUrl('GOOGLE_OAUTH_MISSING_CODE'));
       return;
     }
 
@@ -200,10 +178,10 @@ export function googleCallback(service: AuthService) {
       );
 
       setRefreshCookie(res, result.refreshToken);
-      res.redirect(302, frontendRedirect('success'));
+      res.redirect(302, googleFrontendCallbackUrl());
     } catch (error) {
       const errorCode = error instanceof AppError ? error.code : 'GOOGLE_OAUTH_FAILED';
-      res.redirect(302, frontendRedirect('error', errorCode));
+      res.redirect(302, googleFrontendCallbackUrl(errorCode));
     }
   };
 }
