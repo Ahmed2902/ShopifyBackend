@@ -1,9 +1,11 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { env } from '../../config/env.js';
+import { frontendUrl, metaCallbackUrl } from '../../config/public-urls.js';
 import { AppError } from '../../errors/app-error.js';
 import type { MetaOAuthContext } from './meta.types.js';
 
 const META_OAUTH_CONTEXT_TTL_MS = 10 * 60 * 1000;
+const META_BASE_SCOPES = ['ads_read'] as const;
 
 function safeEqual(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left, 'utf8');
@@ -52,26 +54,31 @@ export function verifyMetaOAuthState(state: string | undefined): MetaOAuthContex
   }
 }
 
-export function configuredMetaScopes(): string[] {
-  return [...new Set(env.META_SCOPES.split(',').map((scope) => scope.trim()).filter(Boolean))];
-}
-
 export function buildMetaAuthorizationUrl(userId: string, storeId: string) {
   const state = createMetaOAuthState(userId, storeId);
   const url = new URL(`https://www.facebook.com/${env.META_API_VERSION}/dialog/oauth`);
   url.searchParams.set('client_id', env.META_APP_ID);
-  url.searchParams.set('redirect_uri', env.META_REDIRECT_URI);
+  url.searchParams.set('redirect_uri', metaCallbackUrl());
   url.searchParams.set('state', state);
-  url.searchParams.set('scope', configuredMetaScopes().join(','));
+  url.searchParams.set('scope', META_BASE_SCOPES.join(','));
   url.searchParams.set('response_type', 'code');
   return { authorizationUrl: url.toString(), state };
 }
 
-export function buildMetaSuccessRedirect(storeId: string): string {
-  const destination = new URL('/app/integrations', env.CORS_ORIGIN);
-  destination.searchParams.set('meta', 'connected');
+function metaFrontendRedirect(storeId: string, status: 'connected' | 'error', errorCode?: string): string {
+  const destination = new URL(frontendUrl('/app/integrations'));
+  destination.searchParams.set('meta', status);
   destination.searchParams.set('storeId', storeId);
+  if (errorCode) destination.searchParams.set('metaError', errorCode);
   return destination.toString();
+}
+
+export function buildMetaSuccessRedirect(storeId: string): string {
+  return metaFrontendRedirect(storeId, 'connected');
+}
+
+export function buildMetaErrorRedirect(storeId: string, errorCode: string): string {
+  return metaFrontendRedirect(storeId, 'error', errorCode);
 }
 
 export function computeMetaAppSecretProof(accessToken: string): string {

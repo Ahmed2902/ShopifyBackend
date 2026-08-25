@@ -15,6 +15,14 @@ import {
 } from './tiktok.schema.js';
 import { tiktokService, type TikTokService } from './tiktok.service.js';
 import { buildTikTokSuccessRedirect, toJsonSafe, verifyTikTokOAuthState } from './tiktok.utils.js';
+import { TikTokRepository } from './tiktok.repository.js';
+import { TikTokService } from './tiktok.service.js';
+import {
+  buildTikTokErrorRedirect,
+  buildTikTokSuccessRedirect,
+  toJsonSafe,
+  verifyTikTokOAuthState,
+} from './tiktok.utils.js';
 
 export class TikTokController {
   constructor(private readonly service: TikTokService) {}
@@ -24,16 +32,28 @@ export class TikTokController {
   };
 
   completeInstall = async (req: Request, res: Response) => {
-    const state = typeof req.query.state === 'string' ? req.query.state : undefined;
+    const rawState = typeof req.query.state === 'string' ? req.query.state : undefined;
+    const context = verifyTikTokOAuthState(rawState);
+
     if (typeof req.query.error === 'string') {
-      verifyTikTokOAuthState(state);
-      throw new AppError(
-        typeof req.query.error_description === 'string'
-          ? req.query.error_description
-          : 'TikTok authorization was not completed',
-        400,
-        'TIKTOK_OAUTH_DENIED',
+      res.redirect(303, buildTikTokErrorRedirect(context.storeId, 'TIKTOK_OAUTH_DENIED'));
+      return;
+    }
+
+    try {
+      const query = tiktokCallbackSchema.parse({
+        auth_code: req.query.auth_code,
+        code: req.query.code,
+        state: rawState,
+      });
+      const result = await this.service.completeOAuthInstall(
+        query.auth_code ?? query.code!,
+        query.state,
       );
+      res.redirect(303, buildTikTokSuccessRedirect(result.storeId));
+    } catch (error) {
+      const code = error instanceof AppError ? error.code : 'TIKTOK_OAUTH_FAILED';
+      res.redirect(303, buildTikTokErrorRedirect(context.storeId, code));
     }
     const query = tiktokCallbackSchema.parse({
       auth_code: req.query.auth_code,

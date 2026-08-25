@@ -35,7 +35,7 @@ export class MetaAuthService {
     if (!inspection.isValid || inspection.appId !== env.META_APP_ID) {
       throw new AppError('Meta returned an invalid access token', 401, 'INVALID_META_ACCESS_TOKEN');
     }
-    this.assertRequiredPermissions(inspection.scopes);
+    this.assertBasePermissions(inspection.scopes);
 
     const expiresAt =
       inspection.expiresAt ??
@@ -82,7 +82,7 @@ export class MetaAuthService {
     }
 
     try {
-      this.assertRequiredPermissions(connection.scopes);
+      this.assertBasePermissions(connection.scopes);
     } catch (error) {
       await this.repository.markConnectionReauthRequired(connection.id);
       throw error;
@@ -100,26 +100,12 @@ export class MetaAuthService {
     };
   }
 
-  private assertRequiredPermissions(scopes: string[]): void {
+  private assertBasePermissions(scopes: string[]): void {
     if (!scopes.includes('ads_read')) {
       throw new AppError(
         'Meta did not grant the required ads_read permission',
         403,
         'META_ADS_READ_REQUIRED',
-      );
-    }
-    if (!scopes.includes('business_management')) {
-      throw new AppError(
-        'Meta did not grant the required business_management permission',
-        403,
-        'META_BUSINESS_PERMISSION_REQUIRED',
-      );
-    }
-    if (!scopes.includes('catalog_management')) {
-      throw new AppError(
-        'Meta did not grant the required catalog_management permission',
-        403,
-        'META_CATALOG_PERMISSION_REQUIRED',
       );
     }
   }

@@ -14,7 +14,11 @@ import {
   metaInsightsSyncSchema,
 } from './meta.schema.js';
 import { metaService, type MetaService } from './meta.service.js';
-import { buildMetaSuccessRedirect } from './meta.utils.js';
+import {
+  buildMetaErrorRedirect,
+  buildMetaSuccessRedirect,
+  verifyMetaOAuthState,
+} from './meta.utils.js';
 
 export class MetaController {
   constructor(private readonly service: MetaService) {}
@@ -26,19 +30,22 @@ export class MetaController {
   };
 
   completeInstall = async (req: Request, res: Response) => {
+    const rawState = typeof req.query.state === 'string' ? req.query.state : undefined;
+    const context = verifyMetaOAuthState(rawState);
+
     if (typeof req.query.error === 'string') {
-      throw new AppError(
-        typeof req.query.error_description === 'string'
-          ? req.query.error_description
-          : 'Meta authorization was not completed',
-        400,
-        'META_OAUTH_DENIED',
-      );
+      res.redirect(303, buildMetaErrorRedirect(context.storeId, 'META_OAUTH_DENIED'));
+      return;
     }
 
-    const query = metaCallbackSchema.parse({ code: req.query.code, state: req.query.state });
-    const result = await this.service.completeOAuthInstall(query.code, query.state);
-    res.redirect(303, buildMetaSuccessRedirect(result.storeId));
+    try {
+      const query = metaCallbackSchema.parse({ code: req.query.code, state: rawState });
+      const result = await this.service.completeOAuthInstall(query.code, query.state);
+      res.redirect(303, buildMetaSuccessRedirect(result.storeId));
+    } catch (error) {
+      const code = error instanceof AppError ? error.code : 'META_OAUTH_FAILED';
+      res.redirect(303, buildMetaErrorRedirect(context.storeId, code));
+    }
   };
 
   status = async (req: Request, res: Response) => {
@@ -122,8 +129,7 @@ export class MetaController {
     res.status(200).json(
       await this.service.listInsights(
         req.context.storeId!,
-        metaInsightsListQuerySchema.parse(req.query),
-      ),
+        metaInsightsListQuerySchema.parse(req.query)),
     );
   };
 }
