@@ -39,7 +39,7 @@ describe('Google OAuth protocol', () => {
       googleOAuthInternals.sha256Base64Url(verifier),
     );
     expect(url.searchParams.get('nonce')).toBe(googleOAuthInternals.nonceForVerifier(verifier));
-    expect(cookieOptions).toMatchObject({ httpOnly: true, sameSite: 'lax', path: '/v1/auth/google' });
+    expect(cookieOptions).toMatchObject({ httpOnly: true, sameSite: 'lax', path: '/' });
   });
 
   it('does not clear a legitimate pending flow when callback state is forged', async () => {
@@ -63,7 +63,7 @@ describe('Google OAuth protocol', () => {
     expect(redirect).not.toHaveBeenCalled();
   });
 
-  it('validates state before accepting a Google denial callback', async () => {
+  it('validates state before returning a Google denial to the frontend callback', async () => {
     const handler = googleCallback({} as AuthService);
     const req = {
       query: { error: 'access_denied', state: 'real-state' },
@@ -81,7 +81,8 @@ describe('Google OAuth protocol', () => {
     expect(clearCookie).toHaveBeenCalledTimes(2);
     const location = redirect.mock.calls[0]?.[1] as string;
     const url = new URL(location);
-    expect(url.searchParams.get('status')).toBe('error');
+    expect(url.pathname).toBe('/auth/callback');
+    expect(url.searchParams.get('status')).toBeNull();
     expect(url.searchParams.get('error')).toBe('GOOGLE_OAUTH_DENIED');
   });
 
@@ -90,7 +91,7 @@ describe('Google OAuth protocol', () => {
       httpOnly: true,
       secure: true,
       sameSite: 'lax',
-      path: '/v1/auth/google',
+      path: '/',
       maxAge: 10 * 60 * 1000,
     });
   });
