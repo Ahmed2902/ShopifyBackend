@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { env } from '../../config/env.js';
+import { frontendUrl, tiktokCallbackUrl } from '../../config/public-urls.js';
 import { AppError } from '../../errors/app-error.js';
 import type { TikTokOAuthContext } from './tiktok.types.js';
 
@@ -59,18 +60,27 @@ export function buildTikTokAuthorizationUrl(userId: string, storeId: string) {
   const state = createTikTokOAuthState(userId, storeId);
   const url = new URL('https://ads.tiktok.com/marketing_api/auth');
   url.searchParams.set('app_id', env.TIKTOK_APP_ID);
-  url.searchParams.set('redirect_uri', env.TIKTOK_REDIRECT_URI);
+  url.searchParams.set('redirect_uri', tiktokCallbackUrl());
   url.searchParams.set('state', state);
   const scopes = configuredTikTokScopes();
   if (scopes.length > 0) url.searchParams.set('scope', scopes.join(','));
   return { authorizationUrl: url.toString(), state };
 }
 
-export function buildTikTokSuccessRedirect(storeId: string): string {
-  const destination = new URL('/app/integrations', env.CORS_ORIGIN);
-  destination.searchParams.set('tiktok', 'connected');
+function tiktokFrontendRedirect(storeId: string, status: 'connected' | 'error', errorCode?: string): string {
+  const destination = new URL(frontendUrl('/app/integrations'));
+  destination.searchParams.set('tiktok', status);
   destination.searchParams.set('storeId', storeId);
+  if (errorCode) destination.searchParams.set('tiktokError', errorCode);
   return destination.toString();
+}
+
+export function buildTikTokSuccessRedirect(storeId: string): string {
+  return tiktokFrontendRedirect(storeId, 'connected');
+}
+
+export function buildTikTokErrorRedirect(storeId: string, errorCode: string): string {
+  return tiktokFrontendRedirect(storeId, 'error', errorCode);
 }
 
 export function parseTikTokDate(value: unknown): Date | null {
