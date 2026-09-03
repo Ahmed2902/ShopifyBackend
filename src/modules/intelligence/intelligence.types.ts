@@ -70,6 +70,7 @@ export type RecommendationCategory =
   | 'DATA_QUALITY';
 
 export type RecommendationSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+export type RecommendationStatus = 'CREATED' | 'VIEWED' | 'ACCEPTED' | 'DISMISSED' | 'RESOLVED';
 export type RecommendationEntityType =
   | 'STORE'
   | 'CAMPAIGN'
