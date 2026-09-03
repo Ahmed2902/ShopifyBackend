@@ -249,6 +249,7 @@ interface ProductAggregate {
   revenue: number;
   refunds: number;
   units: number;
+  cogsUnits: number;
   cogs: number;
   costCoveredUnits: number;
 }
@@ -305,7 +306,12 @@ export function buildProductEvidence(input: {
     if (!row.product || !row.productId || row.order.currencyCode !== input.storeCurrency) continue;
     const refunds = row.refundLines.reduce((sum, refund) => sum + number(refund.subtotal), 0);
     const refundedUnits = row.refundLines.reduce((sum, refund) => sum + refund.quantity, 0);
+    const restockedUnits = row.refundLines.reduce(
+      (sum, refund) => sum + (refund.restocked ? refund.quantity : 0),
+      0,
+    );
     const netUnits = Math.max(0, row.quantity - refundedUnits);
+    const cogsUnits = Math.max(0, row.quantity - restockedUnits);
     const revenue = number(row.discountedTotal);
     const aggregate = products.get(row.productId) ?? {
       entityId: row.product.id,
@@ -314,18 +320,25 @@ export function buildProductEvidence(input: {
       revenue: 0,
       refunds: 0,
       units: 0,
+      cogsUnits: 0,
       cogs: 0,
       costCoveredUnits: 0,
     };
     aggregate.revenue += revenue;
     aggregate.refunds += refunds;
     aggregate.units += netUnits;
+    aggregate.cogsUnits += cogsUnits;
 
-    if (row.variantId && netUnits > 0) {
-      const unitCost = costAt(input.costRows, row.variantId, row.order.shopifyCreatedAt, input.storeCurrency);
+    if (row.variantId && cogsUnits > 0) {
+      const unitCost = costAt(
+        input.costRows,
+        row.variantId,
+        row.order.shopifyCreatedAt,
+        input.storeCurrency,
+      );
       if (unitCost !== null) {
-        aggregate.cogs += unitCost * netUnits;
-        aggregate.costCoveredUnits += netUnits;
+        aggregate.cogs += unitCost * cogsUnits;
+        aggregate.costCoveredUnits += cogsUnits;
       }
     }
     products.set(row.productId, aggregate);
@@ -400,12 +413,13 @@ export function buildProductEvidence(input: {
         : confidenceValues.length > 0
           ? Math.max(...confidenceValues)
           : 0;
-    const costCoverage = product.units > 0 ? product.costCoveredUnits / product.units : 0;
+    const costCoverage = product.cogsUnits > 0 ? product.costCoveredUnits / product.cogsUnits : 0;
     const contributionBeforeAds = costCoverage >= 0.8 ? netRevenue - product.cogs : null;
     const contributionAfterAds =
       contributionBeforeAds === null ? null : contributionBeforeAds - paid.spend;
     const stockAvailable = stockByProduct.get(product.entityId) ?? null;
-    const recentUnitsPerDay = product.units > 0 ? product.units / Math.max(1, input.windowDays) : null;
+    const recentUnitsPerDay =
+      product.cogsUnits > 0 ? product.cogsUnits / Math.max(1, input.windowDays) : null;
     const daysCover =
       stockAvailable !== null && recentUnitsPerDay !== null && recentUnitsPerDay > 0
         ? Math.max(0, stockAvailable) / recentUnitsPerDay
