@@ -17,7 +17,6 @@ export class IntelligenceRepository {
           select: {
             status: true,
             selectedAdAccountIds: true,
-            lastSyncedAt: true,
           },
         },
       },
@@ -40,6 +39,7 @@ export class IntelligenceRepository {
       },
       select: {
         date: true,
+        syncedAt: true,
         accountCurrency: true,
         spend: true,
         impressions: true,
@@ -93,7 +93,7 @@ export class IntelligenceRepository {
           select: { id: true, shopifyProductId: true, title: true },
         },
         refundLines: {
-          select: { quantity: true, subtotal: true },
+          select: { quantity: true, subtotal: true, restocked: true },
         },
       },
       orderBy: { order: { shopifyCreatedAt: 'asc' } },
