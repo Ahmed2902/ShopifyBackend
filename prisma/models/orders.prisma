@@ -35,6 +35,10 @@ model Order {
   currentTotalTaxAmount            Decimal?  @db.Decimal(20, 6)
   currentTotalAmount               Decimal?  @db.Decimal(20, 6)
   discountCodes                    String[]   @default([])
+  customerOrderIndex               Int?
+  daysToConversion                 Int?
+  customerJourneyReady             Boolean?
+  customerJourneyJson              Json?
   rawJson                          Json?
   createdAt                        DateTime   @default(now())
   updatedAt                        DateTime   @updatedAt
@@ -47,6 +51,7 @@ model Order {
   @@index([storeId, shopifyCreatedAt])
   @@index([storeId, isTest, shopifyCreatedAt])
   @@index([storeId, sourceName, shopifyCreatedAt])
+  @@index([storeId, customerOrderIndex, shopifyCreatedAt])
   @@index([storeId, cancelledAt])
 }
 
