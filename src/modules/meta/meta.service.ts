@@ -2,7 +2,6 @@ import { AppError } from '../../errors/app-error.js';
 import { integrationService, type IntegrationService } from '../integrations/integration.service.js';
 import { MetaAdsRepository } from './ads/meta-ads.repository.js';
 import { MetaAdsService } from './ads/meta-ads.service.js';
-import { MetaStateRepository } from './ads/meta-state.repository.js';
 import { MetaCatalogRepository } from './catalog/meta-catalog.repository.js';
 import { MetaCatalogService } from './catalog/meta-catalog.service.js';
 import { MetaInsightsRepository } from './insights/meta-insights.repository.js';
@@ -208,7 +207,6 @@ export class MetaService {
         adSets: 0,
         creatives: 0,
         ads: 0,
-        stateSnapshots: 0,
         softDeletedCampaigns: 0,
         softDeletedAdSets: 0,
         softDeletedCreatives: 0,
@@ -435,11 +433,7 @@ export class MetaService {
 
 const metaRepository = new MetaRepository();
 const metaApiService = new MetaApiService(metaRepository);
-const metaAdsService = new MetaAdsService(
-  new MetaAdsRepository(),
-  metaApiService,
-  new MetaStateRepository(),
-);
+const metaAdsService = new MetaAdsService(new MetaAdsRepository(), metaApiService);
 const metaCatalogService = new MetaCatalogService(new MetaCatalogRepository(), metaApiService);
 const metaInsightsService = new MetaInsightsService(new MetaInsightsRepository(), metaApiService);
 
