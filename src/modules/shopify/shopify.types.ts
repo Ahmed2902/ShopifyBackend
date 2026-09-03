@@ -10,6 +10,14 @@ export interface ShopifyVariantsQueryData {
   productVariants: unknown;
 }
 
+export interface ShopifyCollectionsQueryData {
+  collections: unknown;
+}
+
+export interface ShopifyCollectionProductsQueryData {
+  collection: { id: string; products: unknown } | null;
+}
+
 export interface ShopifyLocationsQueryData {
   locations: unknown;
 }
