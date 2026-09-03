@@ -14,14 +14,7 @@ import {
   paidCommerceMismatchRule,
   underexposedProductRule,
 } from './intelligence.rules.js';
-import type {
-  DataQualityEvidence,
-  RecommendationCategory,
-  RecommendationDraft,
-  RecommendationEntityType,
-  RecommendationSeverity,
-  RecommendationStatus,
-} from './intelligence.types.js';
+import type { DataQualityEvidence, RecommendationDraft } from './intelligence.types.js';
 
 const DECISION_WINDOW_DAYS = 7;
 const PRODUCT_WINDOW_DAYS = 28;
@@ -34,70 +27,17 @@ function ageHours(value: Date | null | undefined, now: Date): number | null {
   return Math.max(0, (now.getTime() - value.getTime()) / 3_600_000);
 }
 
-function qualityRecommendation(
-  storeId: string,
-  item: DataQualityEvidence,
-  window: { start: Date; end: Date },
-): RecommendationDraft | null {
-  if (item.status === 'HEALTHY') return null;
-
-  const suggestedAction = (() => {
-    switch (item.code) {
-      case 'SHOPIFY_HISTORY_LIMITED':
-        return 'Keep the history limitation visible until extended Shopify order access is available.';
-      case 'SHOPIFY_SYNC_STALE':
-        return 'Refresh the Shopify connection before relying on recent commerce comparisons.';
-      case 'META_SYNC_STALE':
-      case 'META_INSIGHTS_MISSING':
-        return 'Refresh Meta insights before relying on recent advertising comparisons.';
-      case 'PRODUCT_AD_MAPPING_LOW':
-        return 'Review Product × Ads mappings before using cross-channel product recommendations.';
-      case 'PRODUCT_COST_COVERAGE_LOW':
-        return 'Add or correct product costs before relying on contribution-after-ads recommendations.';
-      case 'INVENTORY_DATA_MISSING':
-        return 'Reconcile Shopify inventory before using inventory-aware advertising recommendations.';
-      default:
-        return 'Review the affected integration or data source before acting on dependent recommendations.';
-    }
-  })();
-
-  const blocked = item.status === 'BLOCKED';
-  return {
-    ruleId: `data_quality_${item.code.toLowerCase()}`,
-    ruleVersion: '1',
-    category: 'DATA_QUALITY',
-    severity: blocked ? 'HIGH' : 'LOW',
-    entityType: 'STORE',
-    entityId: storeId,
-    externalEntityId: null,
-    title: item.message,
-    summary: `Stride reduced or blocked dependent intelligence because ${item.message.toLowerCase()}`,
-    suggestedAction,
-    impactScore: blocked ? 0.8 : 0.35,
-    confidenceScore: 1,
-    urgencyScore: blocked ? 0.8 : 0.35,
-    observationStart: window.start,
-    observationEnd: window.end,
-    comparisonStart: null,
-    comparisonEnd: null,
-    evidence: {
-      source: 'STRIDE_DATA_QUALITY',
-      code: item.code,
-      surface: item.surface,
-      status: item.status,
-      metrics: item.metrics ?? {},
-    },
-  };
+function priority(recommendation: RecommendationDraft): number {
+  return recommendation.impactScore * recommendation.confidenceScore * recommendation.urgencyScore;
 }
 
 export class IntelligenceService {
   constructor(private readonly repository: IntelligenceRepository = new IntelligenceRepository()) {}
 
-  async evaluate(storeId: string, now = new Date()) {
+  async snapshot(storeId: string, now = new Date()) {
     const store = await this.repository.getStoreContext(storeId);
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
 
-    const settings = store.intelligenceSettings ?? (await this.repository.getOrCreateSettings(storeId));
     const current = completedWindow(now, store.ianaTimezone, DECISION_WINDOW_DAYS);
     const comparison = completedWindow(
       now,
@@ -107,13 +47,13 @@ export class IntelligenceService {
     );
     const productWindow = completedWindow(now, store.ianaTimezone, PRODUCT_WINDOW_DAYS);
 
-    const [metaRows, commerceRows, mappings, inventoryRows, freshness] = await Promise.all([
+    const [metaRows, commerceRows, mappings, inventoryRows] = await Promise.all([
       this.repository.getMetaEvidenceRows(storeId, productWindow.metaFrom, current.metaTo),
       this.repository.getCommerceRows(storeId, productWindow.instantFrom, productWindow.instantTo),
       this.repository.getActiveProductMappings(storeId),
       this.repository.getInventoryLevels(storeId),
-      this.repository.getFreshness(storeId),
     ]);
+
     const variantIds = [
       ...new Set(
         commerceRows
@@ -149,51 +89,38 @@ export class IntelligenceService {
       inventoryRows,
       metaRows,
       storeCurrency: store.currencyCode,
-      inventoryTrusted: settings.inventoryMode === 'TRUSTED',
+      inventoryTrusted: store.inventoryIntelligenceMode === 'TRUSTED',
       windowDays: PRODUCT_WINDOW_DAYS,
     });
 
-    const drafts: RecommendationDraft[] = [];
+    const recommendations: RecommendationDraft[] = [];
     for (const campaign of campaigns) {
-      const recommendation = campaignEfficiencyRule(campaign);
-      if (recommendation) drafts.push(recommendation);
+      const result = campaignEfficiencyRule(campaign);
+      if (result) recommendations.push(result);
     }
     for (const creative of creatives) {
-      const recommendation = creativeFatigueRule(creative);
-      if (recommendation) drafts.push(recommendation);
+      const result = creativeFatigueRule(creative);
+      if (result) recommendations.push(result);
     }
-    const productRuleWindow = {
-      start: productWindow.metaFrom,
-      end: productWindow.metaTo,
-    };
+
+    const productRuleWindow = { start: productWindow.metaFrom, end: productWindow.metaTo };
     for (const product of productResult.products) {
-      const productDrafts = [
+      const results = [
         underexposedProductRule(product, productRuleWindow),
         paidCommerceMismatchRule(product, productRuleWindow),
         marginTrapRule(product, productRuleWindow),
         inventorySpendConflictRule(product, productRuleWindow),
       ];
-      for (const draft of productDrafts) if (draft) drafts.push(draft);
+      for (const result of results) if (result) recommendations.push(result);
     }
 
     const dataQuality = this.buildDataQuality({
       store,
-      settings,
       metaRowsCount: metaRows.length,
       inventoryRowsCount: inventoryRows.length,
       productResult,
-      freshness,
       now,
     });
-    for (const item of dataQuality) {
-      const recommendation = qualityRecommendation(storeId, item, productRuleWindow);
-      if (recommendation) drafts.push(recommendation);
-    }
-
-    const [recommendations, qualitySnapshots] = await Promise.all([
-      this.repository.syncRecommendations(storeId, drafts),
-      this.repository.recordDataQualitySnapshots(storeId, dataQuality),
-    ]);
 
     return {
       evaluatedAt: now,
@@ -211,54 +138,23 @@ export class IntelligenceService {
         mappingCoverage: productResult.mappingCoverage,
         costCoverage: this.overallCostCoverage(productResult.products),
       },
-      recommendations,
-      dataQualitySnapshots: qualitySnapshots,
+      recommendations: recommendations
+        .map((recommendation) => ({ ...recommendation, priority: priority(recommendation) }))
+        .sort((left, right) => right.priority - left.priority),
+      dataQuality,
     };
   }
 
-  listRecommendations(
-    storeId: string,
-    input: {
-      status?: RecommendationStatus;
-      category?: RecommendationCategory;
-      severity?: RecommendationSeverity;
-      entityType?: RecommendationEntityType;
-      page: number;
-      limit: number;
-    },
-  ) {
-    return this.repository.listRecommendations(storeId, input);
+  async getSettings(storeId: string) {
+    const settings = await this.repository.getSettings(storeId);
+    if (!settings) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
+    return settings;
   }
 
-  async getRecommendation(storeId: string, id: string) {
-    const recommendation = await this.repository.getRecommendation(storeId, id);
-    if (!recommendation) {
-      throw new AppError('Recommendation not found', 404, 'RECOMMENDATION_NOT_FOUND');
-    }
-    return recommendation;
-  }
-
-  async setRecommendationStatus(
-    storeId: string,
-    id: string,
-    status: RecommendationStatus,
-    actorUserId: string,
-  ) {
-    const updated = await this.repository.setRecommendationStatus(storeId, id, status, actorUserId);
-    if (!updated) throw new AppError('Recommendation not found', 404, 'RECOMMENDATION_NOT_FOUND');
-    return updated;
-  }
-
-  getSettings(storeId: string) {
-    return this.repository.getOrCreateSettings(storeId);
-  }
-
-  updateInventoryMode(storeId: string, mode: 'DISABLED' | 'TRUSTED' | 'UNRELIABLE') {
+  async updateInventoryMode(storeId: string, mode: 'DISABLED' | 'TRUSTED' | 'UNRELIABLE') {
+    const settings = await this.repository.getSettings(storeId);
+    if (!settings) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
     return this.repository.updateInventoryMode(storeId, mode);
-  }
-
-  listDataQuality(storeId: string, limit = 100) {
-    return this.repository.listRecentDataQuality(storeId, limit);
   }
 
   private overallCostCoverage(products: Array<{ units: number; costCoverage: number }>): number {
@@ -271,13 +167,9 @@ export class IntelligenceService {
 
   private buildDataQuality(input: {
     store: NonNullable<Awaited<ReturnType<IntelligenceRepository['getStoreContext']>>>;
-    settings: NonNullable<
-      NonNullable<Awaited<ReturnType<IntelligenceRepository['getStoreContext']>>>['intelligenceSettings']
-    >;
     metaRowsCount: number;
     inventoryRowsCount: number;
     productResult: ReturnType<typeof buildProductEvidence>;
-    freshness: Awaited<ReturnType<IntelligenceRepository['getFreshness']>>;
     now: Date;
   }): DataQualityEvidence[] {
     const evidence: DataQualityEvidence[] = [];
@@ -336,8 +228,7 @@ export class IntelligenceService {
       });
     }
 
-    const metaFreshness = input.freshness.latestInsight?.syncedAt ?? meta?.lastSyncedAt ?? null;
-    const metaStaleHours = ageHours(metaFreshness, input.now);
+    const metaStaleHours = ageHours(meta?.lastSyncedAt, input.now);
     if (meta && meta.status === 'ACTIVE' && metaStaleHours !== null && metaStaleHours > STALE_SYNC_HOURS) {
       evidence.push({
         code: 'META_SYNC_STALE',
@@ -385,14 +276,14 @@ export class IntelligenceService {
       });
     }
 
-    if (input.settings.inventoryMode === 'TRUSTED' && input.inventoryRowsCount === 0) {
+    if (input.store.inventoryIntelligenceMode === 'TRUSTED' && input.inventoryRowsCount === 0) {
       evidence.push({
         code: 'INVENTORY_DATA_MISSING',
         status: 'BLOCKED',
         surface: 'SHOPIFY_INVENTORY',
         message: 'Inventory is marked trusted but no current Shopify inventory levels are available.',
       });
-    } else if (input.settings.inventoryMode === 'UNRELIABLE') {
+    } else if (input.store.inventoryIntelligenceMode === 'UNRELIABLE') {
       evidence.push({
         code: 'INVENTORY_DATA_UNRELIABLE',
         status: 'WARNING',
