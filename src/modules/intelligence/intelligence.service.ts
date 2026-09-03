@@ -114,9 +114,14 @@ export class IntelligenceService {
       for (const result of results) if (result) recommendations.push(result);
     }
 
+    const latestMetaSyncedAt = metaRows.reduce<Date | null>(
+      (latest, row) => (!latest || row.syncedAt > latest ? row.syncedAt : latest),
+      null,
+    );
     const dataQuality = this.buildDataQuality({
       store,
       metaRowsCount: metaRows.length,
+      latestMetaSyncedAt,
       inventoryRowsCount: inventoryRows.length,
       productResult,
       now,
@@ -168,6 +173,7 @@ export class IntelligenceService {
   private buildDataQuality(input: {
     store: NonNullable<Awaited<ReturnType<IntelligenceRepository['getStoreContext']>>>;
     metaRowsCount: number;
+    latestMetaSyncedAt: Date | null;
     inventoryRowsCount: number;
     productResult: ReturnType<typeof buildProductEvidence>;
     now: Date;
@@ -228,13 +234,13 @@ export class IntelligenceService {
       });
     }
 
-    const metaStaleHours = ageHours(meta?.lastSyncedAt, input.now);
+    const metaStaleHours = ageHours(input.latestMetaSyncedAt, input.now);
     if (meta && meta.status === 'ACTIVE' && metaStaleHours !== null && metaStaleHours > STALE_SYNC_HOURS) {
       evidence.push({
         code: 'META_SYNC_STALE',
         status: 'WARNING',
         surface: 'META_ADVERTISING',
-        message: 'Meta advertising synchronization is older than the freshness window.',
+        message: 'Meta Insights synchronization is older than the freshness window.',
         metrics: { ageHours: metaStaleHours, thresholdHours: STALE_SYNC_HOURS },
       });
     }
