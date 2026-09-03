@@ -9,8 +9,7 @@ import {
   metaCampaignSchema,
   metaCreativeSchema,
 } from './meta-ads.schema.js';
-import type { MetaStateCandidate } from './meta-state.repository.js';
-import type { MetaStateRepository } from './meta-state.repository.js';
+import { MetaStateRepository, type MetaStateCandidate } from './meta-state.repository.js';
 
 const PAGE_SIZE = '100';
 const CAMPAIGN_FIELDS = [
@@ -42,7 +41,7 @@ export class MetaAdsService {
   constructor(
     private readonly repository: MetaAdsRepository,
     private readonly apiService: MetaApiService,
-    private readonly stateRepository: MetaStateRepository,
+    private readonly stateRepository: MetaStateRepository = new MetaStateRepository(),
   ) {}
 
   async syncSelectedAccount(context: MetaApiContext, metaAccountId: string) {
