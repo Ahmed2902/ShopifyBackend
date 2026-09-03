@@ -39,12 +39,11 @@ ALTER TABLE "Collection" ADD CONSTRAINT "Collection_storeId_fkey" FOREIGN KEY ("
 ALTER TABLE "ProductCollection" ADD CONSTRAINT "ProductCollection_collectionId_fkey" FOREIGN KEY ("collectionId") REFERENCES "Collection"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "ProductCollection" ADD CONSTRAINT "ProductCollection_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
--- Customer-journey evidence without storing customer PII.
+-- Customer-journey evidence without storing customer PII or duplicate raw journey payloads.
 ALTER TABLE "Order"
     ADD COLUMN "customerOrderIndex" INTEGER,
     ADD COLUMN "daysToConversion" INTEGER,
-    ADD COLUMN "customerJourneyReady" BOOLEAN,
-    ADD COLUMN "customerJourneyJson" JSONB;
+    ADD COLUMN "customerJourneyReady" BOOLEAN;
 
 CREATE INDEX "Order_storeId_customerOrderIndex_shopifyCreatedAt_idx" ON "Order"("storeId", "customerOrderIndex", "shopifyCreatedAt");
 
