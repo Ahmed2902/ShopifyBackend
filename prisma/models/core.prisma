@@ -87,18 +87,23 @@ model Store {
   createdAt                    DateTime @default(now())
   updatedAt                    DateTime @updatedAt
 
-  memberships       StoreMembership[]
-  shopifyConnection ShopifyConnection?
-  metaConnection    MetaConnection?
-  tiktokConnection  TikTokConnection?
-  metaAdAccounts    MetaAdAccount[]
-  metaCatalogs      MetaProductCatalog[]
-  tiktokAdvertisers TikTokAdvertiser[]
-  tiktokCatalogs    TikTokCatalog[]
-  products          Product[]
-  variants          ProductVariant[]
-  inventoryItems    InventoryItem[]
-  locations         Location[]
-  orders            Order[]
-  restocks          Restock[]
+  memberships                 StoreMembership[]
+  shopifyConnection           ShopifyConnection?
+  metaConnection              MetaConnection?
+  tiktokConnection            TikTokConnection?
+  metaAdAccounts              MetaAdAccount[]
+  metaCatalogs                MetaProductCatalog[]
+  tiktokAdvertisers           TikTokAdvertiser[]
+  tiktokCatalogs              TikTokCatalog[]
+  products                    Product[]
+  variants                    ProductVariant[]
+  collections                 Collection[]
+  inventoryItems              InventoryItem[]
+  locations                   Location[]
+  orders                      Order[]
+  restocks                    Restock[]
+  intelligenceSettings        StoreIntelligenceSettings?
+  recommendations             Recommendation[]
+  dataQualitySnapshots        DataQualitySnapshot[]
+  metaEntityStateSnapshots    MetaEntityStateSnapshot[]
 }
