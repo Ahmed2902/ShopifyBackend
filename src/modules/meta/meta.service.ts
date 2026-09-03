@@ -2,6 +2,7 @@ import { AppError } from '../../errors/app-error.js';
 import { integrationService, type IntegrationService } from '../integrations/integration.service.js';
 import { MetaAdsRepository } from './ads/meta-ads.repository.js';
 import { MetaAdsService } from './ads/meta-ads.service.js';
+import { MetaStateRepository } from './ads/meta-state.repository.js';
 import { MetaCatalogRepository } from './catalog/meta-catalog.repository.js';
 import { MetaCatalogService } from './catalog/meta-catalog.service.js';
 import { MetaInsightsRepository } from './insights/meta-insights.repository.js';
@@ -39,9 +40,7 @@ export class MetaService {
     const businessDiscoveryAvailable = context.scopes.includes('business_management');
     const catalogDiscoveryAvailable =
       businessDiscoveryAvailable && context.scopes.includes('catalog_management');
-    const businesses = businessDiscoveryAvailable
-      ? await this.apiService.listBusinesses(context)
-      : [];
+    const businesses = businessDiscoveryAvailable ? await this.apiService.listBusinesses(context) : [];
     const [adAccounts, catalogs] = await Promise.all([
       this.apiService.listAdAccounts(context),
       catalogDiscoveryAvailable
@@ -174,9 +173,7 @@ export class MetaService {
     const businesses = await this.apiService.listBusinesses(context);
     const catalogs = await this.catalogService.discoverOwnedCatalogs(
       context,
-      context.metaBusinessId
-        ? [context.metaBusinessId]
-        : businesses.map((business) => business.id),
+      context.metaBusinessId ? [context.metaBusinessId] : businesses.map((business) => business.id),
     );
     const selected = await this.catalogService.configureCatalogs(context, catalogs, catalogIds);
     return {
@@ -211,6 +208,7 @@ export class MetaService {
         adSets: 0,
         creatives: 0,
         ads: 0,
+        stateSnapshots: 0,
         softDeletedCampaigns: 0,
         softDeletedAdSets: 0,
         softDeletedCreatives: 0,
@@ -437,7 +435,11 @@ export class MetaService {
 
 const metaRepository = new MetaRepository();
 const metaApiService = new MetaApiService(metaRepository);
-const metaAdsService = new MetaAdsService(new MetaAdsRepository(), metaApiService);
+const metaAdsService = new MetaAdsService(
+  new MetaAdsRepository(),
+  metaApiService,
+  new MetaStateRepository(),
+);
 const metaCatalogService = new MetaCatalogService(new MetaCatalogRepository(), metaApiService);
 const metaInsightsService = new MetaInsightsService(new MetaInsightsRepository(), metaApiService);
 
