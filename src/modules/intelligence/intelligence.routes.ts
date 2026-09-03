@@ -8,16 +8,8 @@ const ownerOrAdmin = requireRole('OWNER', 'ADMIN');
 export const intelligenceRouter = Router({ mergeParams: true });
 intelligenceRouter.use(requireAuth, requireStoreMembership);
 
-intelligenceRouter.get('/recommendations', intelligenceController.recommendations);
-intelligenceRouter.get('/recommendations/:id', intelligenceController.recommendation);
-intelligenceRouter.patch(
-  '/recommendations/:id/status',
-  intelligenceController.updateRecommendationStatus,
-);
+intelligenceRouter.get('/snapshot', intelligenceController.snapshot);
 intelligenceRouter.get('/settings', intelligenceController.settings);
-intelligenceRouter.get('/data-quality', intelligenceController.dataQuality);
-
-intelligenceRouter.post('/evaluate', ownerOrAdmin, intelligenceController.evaluate);
 intelligenceRouter.patch(
   '/settings/inventory',
   ownerOrAdmin,
