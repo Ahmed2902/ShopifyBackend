@@ -1,13 +1,22 @@
 import { AppError } from '../../../errors/app-error.js';
 import type { IntegrationService } from '../../integrations/integration.service.js';
 import type { ShopifyRepository } from '../shopify.repository.js';
-import { PRODUCTS_QUERY, PRODUCT_VARIANTS_QUERY } from '../shopify.queries.js';
 import {
+  COLLECTION_PRODUCTS_QUERY,
+  COLLECTIONS_QUERY,
+  PRODUCTS_QUERY,
+  PRODUCT_VARIANTS_QUERY,
+} from '../shopify.queries.js';
+import {
+  shopifyCollectionConnectionSchema,
+  shopifyCollectionProductConnectionSchema,
   shopifyProductConnectionSchema,
   shopifyProductSchema,
   shopifyVariantConnectionSchema,
 } from '../shopify.schema.js';
 import type {
+  ShopifyCollectionProductsQueryData,
+  ShopifyCollectionsQueryData,
   ShopifyProductsQueryData,
   ShopifyRequestContext,
   ShopifyResourceSyncStats,
@@ -32,11 +41,16 @@ export class ShopifyCatalogService {
   async sync(input: ShopifySyncContext): Promise<{
     products: ShopifyResourceSyncStats;
     variants: ShopifyResourceSyncStats;
+    collections: ShopifyResourceSyncStats;
   }> {
     const products = await this.syncProducts(input);
     const variants = await this.syncVariants(input);
-    await this.repository.markMissingCatalogDeleted(input.storeId, products.ids, variants.ids);
-    return { products, variants };
+    const collections = await this.syncCollections(input);
+    await Promise.all([
+      this.repository.markMissingCatalogDeleted(input.storeId, products.ids, variants.ids),
+      this.syncRepository.markMissingCollectionsDeleted(input.storeId, collections.ids),
+    ]);
+    return { products, variants, collections };
   }
 
   async reconcileProduct(
@@ -112,6 +126,7 @@ export class ShopifyCatalogService {
         }
         variantIds.push(variant.id);
       }
+      await this.syncRepository.persistShopifyCosts(input.storeId, variants);
     }
 
     return { found: true, variantIds };
@@ -186,6 +201,99 @@ export class ShopifyCatalogService {
     }
 
     return { read, written, ids };
+  }
+
+  private async syncCollections(input: ShopifySyncContext): Promise<ShopifyResourceSyncStats> {
+    let read = 0;
+    let written = 0;
+    const ids: string[] = [];
+
+    const pages = paginateShopifyConnection(async (cursor) => {
+      const data = await this.apiService.requestAdminGraphql<ShopifyCollectionsQueryData>({
+        shop: input.shop,
+        accessToken: input.accessToken,
+        apiVersion: input.apiVersion,
+        connectionId: input.connectionId,
+        query: COLLECTIONS_QUERY,
+        variables: { first: SHOPIFY_PAGE_SIZE, after: cursor },
+      });
+      const connection = shopifyCollectionConnectionSchema.safeParse(data.collections);
+      if (!connection.success) {
+        throw new AppError(
+          'Shopify collections query returned an unexpected shape',
+          502,
+          'SHOPIFY_BAD_RESPONSE',
+        );
+      }
+      await this.recordPagePayload(input, 'CollectionsPage', connection.data);
+      return connection.data;
+    });
+
+    for await (const collections of pages) {
+      read += collections.length;
+      await this.syncRepository.persistCollections(input.storeId, collections);
+      for (const collection of collections) {
+        const productIds = await this.loadCollectionProductIds(input, collection.id);
+        const persisted = await this.syncRepository.replaceCollectionProducts(
+          input.storeId,
+          collection.id,
+          productIds,
+        );
+        if (!persisted) {
+          throw new AppError(
+            'Shopify collection references catalog products that were not synchronized',
+            502,
+            'SHOPIFY_CATALOG_INCONSISTENT',
+          );
+        }
+      }
+      ids.push(...collections.map((collection) => collection.id));
+      written += collections.length;
+    }
+
+    return { read, written, ids };
+  }
+
+  private async loadCollectionProductIds(
+    input: ShopifySyncContext,
+    collectionId: string,
+  ): Promise<string[]> {
+    const ids: string[] = [];
+    const pages = paginateShopifyConnection(async (cursor) => {
+      const data = await this.apiService.requestAdminGraphql<ShopifyCollectionProductsQueryData>({
+        shop: input.shop,
+        accessToken: input.accessToken,
+        apiVersion: input.apiVersion,
+        connectionId: input.connectionId,
+        query: COLLECTION_PRODUCTS_QUERY,
+        variables: {
+          id: collectionId,
+          first: SHOPIFY_PAGE_SIZE,
+          after: cursor,
+        },
+      });
+      if (!data.collection || data.collection.id !== collectionId) {
+        throw new AppError(
+          'Shopify collection disappeared during product membership sync',
+          502,
+          'SHOPIFY_CATALOG_INCONSISTENT',
+        );
+      }
+      const connection = shopifyCollectionProductConnectionSchema.safeParse(data.collection.products);
+      if (!connection.success) {
+        throw new AppError(
+          'Shopify collection products query returned an unexpected shape',
+          502,
+          'SHOPIFY_BAD_RESPONSE',
+        );
+      }
+      return connection.data;
+    });
+
+    for await (const products of pages) {
+      ids.push(...products.map((product) => product.id));
+    }
+    return ids;
   }
 
   private recordPagePayload(
