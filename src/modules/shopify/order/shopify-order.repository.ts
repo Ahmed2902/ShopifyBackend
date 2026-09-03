@@ -209,7 +209,6 @@ export class ShopifyOrderRepository {
       customerOrderIndex: journey?.customerOrderIndex ?? null,
       daysToConversion: journey?.daysToConversion ?? null,
       customerJourneyReady: journey?.ready ?? null,
-      customerJourneyJson: journey ? asJson(journey) : undefined,
       rawJson: asJson(order),
     };
   }
