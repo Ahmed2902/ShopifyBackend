@@ -1,0 +1,182 @@
+enum InventoryIntelligenceMode {
+  DISABLED
+  TRUSTED
+  UNRELIABLE
+}
+
+enum RecommendationCategory {
+  CAMPAIGN_EFFICIENCY
+  CREATIVE_FATIGUE
+  UNDEREXPOSED_PRODUCT
+  PAID_COMMERCE_MISMATCH
+  MARGIN_TRAP
+  INVENTORY_SPEND_CONFLICT
+  DATA_QUALITY
+}
+
+enum RecommendationSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum RecommendationStatus {
+  CREATED
+  VIEWED
+  ACCEPTED
+  DISMISSED
+  RESOLVED
+}
+
+enum RecommendationEntityType {
+  STORE
+  CAMPAIGN
+  AD_SET
+  AD
+  CREATIVE
+  PRODUCT
+  VARIANT
+  COLLECTION
+}
+
+enum DataQualityStatus {
+  HEALTHY
+  WARNING
+  BLOCKED
+}
+
+enum MetaObservedEntityType {
+  CAMPAIGN
+  AD_SET
+  AD
+}
+
+model StoreIntelligenceSettings {
+  id                  String                    @id @default(uuid()) @db.Uuid
+  storeId             String                    @unique @db.Uuid
+  inventoryMode       InventoryIntelligenceMode @default(DISABLED)
+  targetRoas          Decimal?                  @db.Decimal(20, 8)
+  targetCpa           Decimal?                  @db.Decimal(20, 8)
+  inventoryReviewedAt DateTime?
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+}
+
+model MetaEntityStateSnapshot {
+  id                    String                 @id @default(uuid()) @db.Uuid
+  storeId               String                 @db.Uuid
+  adAccountId           String                 @db.Uuid
+  entityType            MetaObservedEntityType
+  localEntityId         String?                @db.Uuid
+  externalEntityId      String
+  observedAt            DateTime               @default(now())
+  configuredStatus      String?
+  effectiveStatus       String?
+  objective             String?
+  optimizationGoal      String?
+  bidStrategy           String?
+  dailyBudgetMinor      BigInt?
+  lifetimeBudgetMinor   BigInt?
+  budgetRemainingMinor  BigInt?
+  spendCapMinor         BigInt?
+  stateJson             Json?
+  createdAt             DateTime               @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, entityType, externalEntityId, observedAt])
+  @@index([adAccountId, observedAt])
+}
+
+model DataQualitySnapshot {
+  id         String            @id @default(uuid()) @db.Uuid
+  storeId    String            @db.Uuid
+  provider   IntegrationProvider?
+  surface    String
+  status     DataQualityStatus
+  code       String
+  metricsJson Json?
+  message    String?
+  observedAt DateTime          @default(now())
+  createdAt  DateTime          @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, surface, observedAt])
+  @@index([storeId, status, observedAt])
+  @@index([provider, observedAt])
+}
+
+model Recommendation {
+  id                    String                   @id @default(uuid()) @db.Uuid
+  storeId               String                   @db.Uuid
+  ruleId                String
+  ruleVersion           String
+  category              RecommendationCategory
+  severity              RecommendationSeverity
+  status                RecommendationStatus     @default(CREATED)
+  entityType            RecommendationEntityType
+  entityId              String?
+  externalEntityId      String?
+  title                 String
+  summary               String
+  suggestedAction       String
+  priority              Float
+  impactScore           Float
+  confidenceScore       Float
+  urgencyScore          Float
+  observationStart      DateTime
+  observationEnd        DateTime
+  comparisonStart       DateTime?
+  comparisonEnd         DateTime?
+  evidenceJson          Json
+  blockersJson          Json?
+  dedupeKey             String
+  generatedAt           DateTime                 @default(now())
+  validUntil            DateTime?
+  resolvedAt            DateTime?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+
+  store    Store                    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  events   RecommendationEvent[]
+  outcomes RecommendationOutcome[]
+
+  @@unique([storeId, dedupeKey])
+  @@index([storeId, status, priority])
+  @@index([storeId, category, generatedAt])
+  @@index([storeId, entityType, entityId])
+}
+
+model RecommendationEvent {
+  id               String               @id @default(uuid()) @db.Uuid
+  recommendationId String               @db.Uuid
+  status           RecommendationStatus
+  actorUserId      String?              @db.Uuid
+  metadataJson     Json?
+  occurredAt       DateTime             @default(now())
+  createdAt        DateTime             @default(now())
+
+  recommendation Recommendation @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+
+  @@index([recommendationId, occurredAt])
+  @@index([actorUserId, occurredAt])
+}
+
+model RecommendationOutcome {
+  id               String   @id @default(uuid()) @db.Uuid
+  recommendationId String   @db.Uuid
+  horizonDays      Int
+  observedAt       DateTime
+  metricsJson      Json
+  stateJson        Json?
+  createdAt        DateTime @default(now())
+
+  recommendation Recommendation @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+
+  @@unique([recommendationId, horizonDays])
+  @@index([observedAt])
+}
