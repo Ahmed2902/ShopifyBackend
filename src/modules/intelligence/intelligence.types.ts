@@ -66,13 +66,10 @@ export type RecommendationCategory =
   | 'UNDEREXPOSED_PRODUCT'
   | 'PAID_COMMERCE_MISMATCH'
   | 'MARGIN_TRAP'
-  | 'INVENTORY_SPEND_CONFLICT'
-  | 'DATA_QUALITY';
+  | 'INVENTORY_SPEND_CONFLICT';
 
 export type RecommendationSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-export type RecommendationStatus = 'CREATED' | 'VIEWED' | 'ACCEPTED' | 'DISMISSED' | 'RESOLVED';
 export type RecommendationEntityType =
-  | 'STORE'
   | 'CAMPAIGN'
   | 'AD_SET'
   | 'AD'
