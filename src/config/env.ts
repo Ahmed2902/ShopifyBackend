@@ -21,6 +21,8 @@ const envSchema = z.object({
   GOOGLE_FRONTEND_REDIRECT_URI: z.string().url().optional(),
   RESEND_API_KEY: z.string().min(1).optional(),
   RESEND_FROM: z.string().min(3).optional(),
+  EMAIL_VERIFICATION_URL: z.string().url(),
+  PASSWORD_RESET_URL: z.string().url(),
   SHOPIFY_CLIENT_ID: z.string().min(1),
   SHOPIFY_CLIENT_SECRET: z.string().min(1),
   SHOPIFY_SCOPES: z.string().min(1),
