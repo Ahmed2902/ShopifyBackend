@@ -9,6 +9,12 @@ enum AuthTokenType {
   PASSWORD_RESET
 }
 
+enum InventoryIntelligenceMode {
+  DISABLED
+  TRUSTED
+  UNRELIABLE
+}
+
 model User {
   id              String   @id @default(uuid()) @db.Uuid
   email           String   @unique
@@ -74,36 +80,34 @@ model StoreMembership {
 }
 
 model Store {
-  id                           String   @id @default(uuid()) @db.Uuid
-  shopifyShopId                String   @unique
+  id                           String                    @id @default(uuid()) @db.Uuid
+  shopifyShopId                String                    @unique
   name                         String
-  myshopifyDomain              String   @unique
+  myshopifyDomain              String                    @unique
   currencyCode                 String
   ianaTimezone                 String
   primaryDomainHost            String?
   primaryDomainUrl             String?
-  enabledPresentmentCurrencies String[] @default([])
+  enabledPresentmentCurrencies String[]                  @default([])
   shopifyCreatedAt             DateTime?
-  createdAt                    DateTime @default(now())
-  updatedAt                    DateTime @updatedAt
+  inventoryIntelligenceMode    InventoryIntelligenceMode @default(DISABLED)
+  inventoryReviewedAt          DateTime?
+  createdAt                    DateTime                  @default(now())
+  updatedAt                    DateTime                  @updatedAt
 
-  memberships                 StoreMembership[]
-  shopifyConnection           ShopifyConnection?
-  metaConnection              MetaConnection?
-  tiktokConnection            TikTokConnection?
-  metaAdAccounts              MetaAdAccount[]
-  metaCatalogs                MetaProductCatalog[]
-  tiktokAdvertisers           TikTokAdvertiser[]
-  tiktokCatalogs              TikTokCatalog[]
-  products                    Product[]
-  variants                    ProductVariant[]
-  collections                 Collection[]
-  inventoryItems              InventoryItem[]
-  locations                   Location[]
-  orders                      Order[]
-  restocks                    Restock[]
-  intelligenceSettings        StoreIntelligenceSettings?
-  recommendations             Recommendation[]
-  dataQualitySnapshots        DataQualitySnapshot[]
-  metaEntityStateSnapshots    MetaEntityStateSnapshot[]
+  memberships       StoreMembership[]
+  shopifyConnection ShopifyConnection?
+  metaConnection    MetaConnection?
+  tiktokConnection  TikTokConnection?
+  metaAdAccounts    MetaAdAccount[]
+  metaCatalogs      MetaProductCatalog[]
+  tiktokAdvertisers TikTokAdvertiser[]
+  tiktokCatalogs    TikTokCatalog[]
+  products          Product[]
+  variants          ProductVariant[]
+  collections       Collection[]
+  inventoryItems    InventoryItem[]
+  locations         Location[]
+  orders            Order[]
+  restocks          Restock[]
 }
