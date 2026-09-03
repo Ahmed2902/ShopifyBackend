@@ -1,6 +1,6 @@
 import { AppError } from '../../../errors/app-error.js';
 import type { MetaApiContext } from '../meta.types.js';
-import { parseMetaRecord, toJsonSafe } from '../meta.utils.js';
+import { parseMetaMinorAmount, parseMetaRecord, toJsonSafe } from '../meta.utils.js';
 import type { MetaApiService } from '../shared/meta-api.service.js';
 import type { MetaAdsRepository } from './meta-ads.repository.js';
 import {
@@ -9,6 +9,8 @@ import {
   metaCampaignSchema,
   metaCreativeSchema,
 } from './meta-ads.schema.js';
+import type { MetaStateCandidate } from './meta-state.repository.js';
+import type { MetaStateRepository } from './meta-state.repository.js';
 
 const PAGE_SIZE = '100';
 const CAMPAIGN_FIELDS = [
@@ -40,6 +42,7 @@ export class MetaAdsService {
   constructor(
     private readonly repository: MetaAdsRepository,
     private readonly apiService: MetaApiService,
+    private readonly stateRepository: MetaStateRepository,
   ) {}
 
   async syncSelectedAccount(context: MetaApiContext, metaAccountId: string) {
@@ -104,6 +107,8 @@ export class MetaAdsService {
       );
     }
 
+    const baseline = await this.stateRepository.loadBaseline(account.id);
+
     await this.repository.updateAccountProfile(account.id, {
       name: accountProfile.name,
       status: accountProfile.accountStatus,
@@ -139,6 +144,7 @@ export class MetaAdsService {
       creativeMap.set(saved.metaCreativeId, saved.id);
     }
 
+    const adMap = new Map<string, string>();
     for (const ad of ads) {
       const campaignId = campaignMap.get(ad.campaign_id);
       const adSetId = adSetMap.get(ad.adset_id);
@@ -146,14 +152,67 @@ export class MetaAdsService {
         throw new AppError('Meta ad parent was not persisted', 500, 'META_HIERARCHY_INCONSISTENT');
       }
       const externalCreativeId = ad.creative?.id;
-      await this.repository.upsertAd(
+      const saved = await this.repository.upsertAd(
         account.id,
         campaignId,
         adSetId,
         externalCreativeId ? creativeMap.get(externalCreativeId) ?? null : null,
         ad,
       );
+      adMap.set(saved.metaAdId, saved.id);
     }
+
+    const stateCandidates: MetaStateCandidate[] = [
+      ...campaigns.map((campaign) => ({
+        entityType: 'CAMPAIGN' as const,
+        localEntityId: campaignMap.get(campaign.id)!,
+        externalEntityId: campaign.id,
+        configuredStatus: campaign.configured_status ?? campaign.status ?? null,
+        effectiveStatus: campaign.effective_status ?? null,
+        objective: campaign.objective ?? null,
+        optimizationGoal: null,
+        bidStrategy: campaign.bid_strategy ?? null,
+        dailyBudgetMinor: parseMetaMinorAmount(campaign.daily_budget),
+        lifetimeBudgetMinor: parseMetaMinorAmount(campaign.lifetime_budget),
+        budgetRemainingMinor: parseMetaMinorAmount(campaign.budget_remaining),
+        spendCapMinor: parseMetaMinorAmount(campaign.spend_cap),
+      })),
+      ...adSets.map((adSet) => ({
+        entityType: 'AD_SET' as const,
+        localEntityId: adSetMap.get(adSet.id)!,
+        externalEntityId: adSet.id,
+        configuredStatus: adSet.configured_status ?? adSet.status ?? null,
+        effectiveStatus: adSet.effective_status ?? null,
+        objective: null,
+        optimizationGoal: adSet.optimization_goal ?? null,
+        bidStrategy: adSet.bid_strategy ?? null,
+        dailyBudgetMinor: parseMetaMinorAmount(adSet.daily_budget),
+        lifetimeBudgetMinor: parseMetaMinorAmount(adSet.lifetime_budget),
+        budgetRemainingMinor: parseMetaMinorAmount(adSet.budget_remaining),
+        spendCapMinor:
+          parseMetaMinorAmount(adSet.lifetime_spend_cap) ?? parseMetaMinorAmount(adSet.daily_spend_cap),
+      })),
+      ...ads.map((ad) => ({
+        entityType: 'AD' as const,
+        localEntityId: adMap.get(ad.id)!,
+        externalEntityId: ad.id,
+        configuredStatus: ad.configured_status ?? ad.status ?? null,
+        effectiveStatus: ad.effective_status ?? null,
+        objective: null,
+        optimizationGoal: null,
+        bidStrategy: null,
+        dailyBudgetMinor: null,
+        lifetimeBudgetMinor: null,
+        budgetRemainingMinor: null,
+        spendCapMinor: null,
+      })),
+    ];
+    const stateSnapshotsWritten = await this.stateRepository.recordChanges(
+      context.storeId,
+      account.id,
+      baseline,
+      stateCandidates,
+    );
 
     const deleted = await this.repository.softDeleteMissing(account.id, {
       campaignIds: campaigns.map((campaign) => campaign.id),
@@ -167,13 +226,14 @@ export class MetaAdsService {
     const softDeleted = deleted.campaigns + deleted.adSets + deleted.creatives + deleted.ads;
     return {
       recordsRead,
-      recordsWritten: recordsRead + softDeleted,
+      recordsWritten: recordsRead + softDeleted + stateSnapshotsWritten,
       breakdown: {
         adAccounts: 1,
         campaigns: campaigns.length,
         adSets: adSets.length,
         creatives: creatives.length,
         ads: ads.length,
+        stateSnapshots: stateSnapshotsWritten,
         softDeletedCampaigns: deleted.campaigns,
         softDeletedAdSets: deleted.adSets,
         softDeletedCreatives: deleted.creatives,
