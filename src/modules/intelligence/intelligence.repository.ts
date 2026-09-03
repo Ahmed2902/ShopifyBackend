@@ -2,7 +2,10 @@ import { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
 import type {
   DataQualityEvidence,
+  RecommendationCategory,
   RecommendationDraft,
+  RecommendationEntityType,
+  RecommendationSeverity,
   RecommendationStatus,
 } from './intelligence.types.js';
 
@@ -123,7 +126,6 @@ export class IntelligenceRepository {
           select: { quantity: true, subtotal: true },
         },
       },
-      orderBy: { order: { shopifyCreatedAt: 'asc' } },
     });
   }
 
@@ -223,11 +225,7 @@ export class IntelligenceRepository {
   async syncRecommendations(storeId: string, drafts: RecommendationDraft[]) {
     const existing = await prisma.recommendation.findMany({
       where: { storeId },
-      select: {
-        id: true,
-        dedupeKey: true,
-        status: true,
-      },
+      select: { id: true, dedupeKey: true, status: true },
     });
     const byKey = new Map(existing.map((item) => [item.dedupeKey, item]));
     const emitted = new Set(drafts.map(dedupeKey));
@@ -319,13 +317,13 @@ export class IntelligenceRepository {
     });
   }
 
-  listRecommendations(
+  async listRecommendations(
     storeId: string,
     input: {
       status?: RecommendationStatus;
-      category?: string;
-      severity?: string;
-      entityType?: string;
+      category?: RecommendationCategory;
+      severity?: RecommendationSeverity;
+      entityType?: RecommendationEntityType;
       page: number;
       limit: number;
     },
@@ -333,48 +331,46 @@ export class IntelligenceRepository {
     const where = {
       storeId,
       ...(input.status ? { status: input.status } : {}),
-      ...(input.category ? { category: input.category as never } : {}),
-      ...(input.severity ? { severity: input.severity as never } : {}),
-      ...(input.entityType ? { entityType: input.entityType as never } : {}),
+      ...(input.category ? { category: input.category } : {}),
+      ...(input.severity ? { severity: input.severity } : {}),
+      ...(input.entityType ? { entityType: input.entityType } : {}),
     } satisfies Prisma.RecommendationWhereInput;
-    return prisma.$transaction(async (tx) => {
-      const [items, total] = await Promise.all([
-        tx.recommendation.findMany({
-          where,
-          select: {
-            id: true,
-            ruleId: true,
-            ruleVersion: true,
-            category: true,
-            severity: true,
-            status: true,
-            entityType: true,
-            entityId: true,
-            externalEntityId: true,
-            title: true,
-            summary: true,
-            suggestedAction: true,
-            priority: true,
-            impactScore: true,
-            confidenceScore: true,
-            urgencyScore: true,
-            observationStart: true,
-            observationEnd: true,
-            comparisonStart: true,
-            comparisonEnd: true,
-            evidenceJson: true,
-            blockersJson: true,
-            generatedAt: true,
-            resolvedAt: true,
-          },
-          orderBy: [{ status: 'asc' }, { priority: 'desc' }, { generatedAt: 'desc' }],
-          skip: (input.page - 1) * input.limit,
-          take: input.limit,
-        }),
-        tx.recommendation.count({ where }),
-      ]);
-      return { items, total };
-    });
+    const [items, total] = await Promise.all([
+      prisma.recommendation.findMany({
+        where,
+        select: {
+          id: true,
+          ruleId: true,
+          ruleVersion: true,
+          category: true,
+          severity: true,
+          status: true,
+          entityType: true,
+          entityId: true,
+          externalEntityId: true,
+          title: true,
+          summary: true,
+          suggestedAction: true,
+          priority: true,
+          impactScore: true,
+          confidenceScore: true,
+          urgencyScore: true,
+          observationStart: true,
+          observationEnd: true,
+          comparisonStart: true,
+          comparisonEnd: true,
+          evidenceJson: true,
+          blockersJson: true,
+          generatedAt: true,
+          resolvedAt: true,
+        },
+        orderBy: [{ priority: 'desc' }, { generatedAt: 'desc' }],
+        skip: (input.page - 1) * input.limit,
+        take: input.limit,
+      }),
+      prisma.recommendation.count({ where }),
+    ]);
+    return { items, total };
   }
 
   getRecommendation(storeId: string, id: string) {
@@ -416,7 +412,7 @@ export class IntelligenceRepository {
     });
   }
 
-  async replaceDataQualitySnapshots(storeId: string, evidence: DataQualityEvidence[]) {
+  async recordDataQualitySnapshots(storeId: string, evidence: DataQualityEvidence[]) {
     if (evidence.length === 0) return 0;
     await prisma.dataQualitySnapshot.createMany({
       data: evidence.map((item) => ({
@@ -452,7 +448,7 @@ export class IntelligenceRepository {
     });
   }
 
-  async getOrCreateSettings(storeId: string) {
+  getOrCreateSettings(storeId: string) {
     return prisma.storeIntelligenceSettings.upsert({
       where: { storeId },
       create: { storeId },
@@ -469,15 +465,8 @@ export class IntelligenceRepository {
   updateInventoryMode(storeId: string, inventoryMode: 'DISABLED' | 'TRUSTED' | 'UNRELIABLE') {
     return prisma.storeIntelligenceSettings.upsert({
       where: { storeId },
-      create: {
-        storeId,
-        inventoryMode,
-        inventoryReviewedAt: new Date(),
-      },
-      update: {
-        inventoryMode,
-        inventoryReviewedAt: new Date(),
-      },
+      create: { storeId, inventoryMode, inventoryReviewedAt: new Date() },
+      update: { inventoryMode, inventoryReviewedAt: new Date() },
       select: {
         inventoryMode: true,
         targetRoas: true,
