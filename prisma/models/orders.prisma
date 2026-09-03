@@ -38,7 +38,6 @@ model Order {
   customerOrderIndex               Int?
   daysToConversion                 Int?
   customerJourneyReady             Boolean?
-  customerJourneyJson              Json?
   rawJson                          Json?
   createdAt                        DateTime   @default(now())
   updatedAt                        DateTime   @updatedAt
