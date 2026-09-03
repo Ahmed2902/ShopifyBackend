@@ -1,3 +1,4 @@
+import { env } from '../../../config/env.js';
 import { AppError } from '../../../errors/app-error.js';
 import type { MetaApiContext } from '../meta.types.js';
 import { parseMetaRecord, toJsonSafe } from '../meta.utils.js';
@@ -5,8 +6,6 @@ import type { MetaApiService } from '../shared/meta-api.service.js';
 import type { MetaInsightsRepository } from './meta-insights.repository.js';
 import { metaInsightRowSchema } from './meta-insights.schema.js';
 
-const INITIAL_LOOKBACK_DAYS = 90;
-const REFRESH_LOOKBACK_DAYS = 35;
 const CHUNK_DAYS = 28;
 const ACTION_REPORT_TIME = 'impression';
 const INSIGHT_FIELDS = [
@@ -58,7 +57,8 @@ export class MetaInsightsService {
 
     const hasExistingInsights = await this.repository.hasInsights(account.id);
     const lookbackDays =
-      requestedLookbackDays ?? (hasExistingInsights ? REFRESH_LOOKBACK_DAYS : INITIAL_LOOKBACK_DAYS);
+      requestedLookbackDays ??
+      (hasExistingInsights ? env.META_REFRESH_LOOKBACK_DAYS : env.META_INITIAL_LOOKBACK_DAYS);
     if (!Number.isInteger(lookbackDays) || lookbackDays < 1 || lookbackDays > 365) {
       throw new AppError('Meta Insights lookback must be between 1 and 365 days', 400, 'INVALID_LOOKBACK');
     }
