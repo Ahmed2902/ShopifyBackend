@@ -10,7 +10,6 @@ export class PixelRepository {
       select: {
         id: true,
         storeId: true,
-        collectorTokenHash: true,
         collectorTokenPrefix: true,
         shopifyWebPixelId: true,
         status: true,
