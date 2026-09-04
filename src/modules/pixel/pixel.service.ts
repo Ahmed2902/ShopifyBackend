@@ -96,18 +96,23 @@ export class PixelService {
         requiredShopifyScopes: ['write_pixels', 'read_customer_events'] as const,
       };
     } catch (error) {
-      await this.repository
-        .upsertInstallation({
-          id: installationId,
-          storeId,
-          collectorTokenHash,
-          collectorTokenPrefix,
-          shopifyWebPixelId: existing?.shopifyWebPixelId ?? null,
-          status: 'ERROR',
-          installedAt: existing?.installedAt ?? null,
-          lastError: errorMessage(error),
-        })
-        .catch(() => undefined);
+      const message = errorMessage(error);
+      if (existing) {
+        await this.repository.recordInstallationError(existing.id, message).catch(() => undefined);
+      } else {
+        await this.repository
+          .upsertInstallation({
+            id: installationId,
+            storeId,
+            collectorTokenHash,
+            collectorTokenPrefix,
+            shopifyWebPixelId: null,
+            status: 'ERROR',
+            installedAt: null,
+            lastError: message,
+          })
+          .catch(() => undefined);
+      }
       throw error;
     }
   }
