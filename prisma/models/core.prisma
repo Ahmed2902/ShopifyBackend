@@ -99,6 +99,7 @@ model Store {
   shopifyConnection ShopifyConnection?
   metaConnection    MetaConnection?
   tiktokConnection  TikTokConnection?
+  pixelInstallation PixelInstallation?
   metaAdAccounts    MetaAdAccount[]
   metaCatalogs      MetaProductCatalog[]
   tiktokAdvertisers TikTokAdvertiser[]
