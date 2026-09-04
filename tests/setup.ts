@@ -1,4 +1,5 @@
 process.env.NODE_ENV = 'test';
+process.env.APP_URL ??= 'http://localhost:3001';
 process.env.DATABASE_URL ??= 'postgresql://postgres:postgres@localhost:5432/shopify_intelligence_test';
 process.env.CORS_ORIGIN ??= 'http://localhost:3000';
 process.env.LOG_LEVEL ??= 'silent';
@@ -19,10 +20,13 @@ process.env.EMAIL_VERIFICATION_URL ??= 'http://localhost:3000/auth/verify-email'
 process.env.PASSWORD_RESET_URL ??= 'http://localhost:3000/auth/reset-password';
 process.env.SHOPIFY_CLIENT_ID ??= 'test-shopify-client-id';
 process.env.SHOPIFY_CLIENT_SECRET ??= 'test-shopify-client-secret';
-process.env.SHOPIFY_SCOPES ??= 'read_products,read_inventory,read_locations,read_orders';
+process.env.SHOPIFY_SCOPES ??=
+  'read_products,read_inventory,read_locations,read_orders,write_pixels,read_customer_events';
 process.env.SHOPIFY_REDIRECT_URI ??= 'http://localhost:3001/v1/integrations/shopify/callback';
 process.env.SHOPIFY_API_VERSION ??= '2026-07';
 process.env.SHOPIFY_STATE_SECRET ??= 'test-shopify-state-secret-that-is-over-thirty-two-characters';
+process.env.PIXEL_COLLECTOR_URL ??= 'http://localhost:3001/v1/pixel/events';
+process.env.PIXEL_RAW_EVENT_RETENTION_DAYS ??= '90';
 process.env.META_APP_ID ??= 'test-meta-app-id';
 process.env.META_APP_SECRET ??= 'test-meta-app-secret';
 process.env.META_SCOPES ??= 'ads_read,business_management,catalog_management';
