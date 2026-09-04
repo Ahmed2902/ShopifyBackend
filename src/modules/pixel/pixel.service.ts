@@ -9,7 +9,11 @@ import {
   sanitizeStorefrontUrl,
 } from './pixel.privacy.js';
 import { PixelRepository } from './pixel.repository.js';
-import type { PixelDebugBatchInput, PixelIngestBatchInput, StorefrontEventInput } from './pixel.schema.js';
+import type {
+  PixelDebugBatchInput,
+  PixelIngestBatchInput,
+  StorefrontEventInput,
+} from './pixel.schema.js';
 import { ShopifyPixelProvisioner } from './pixel.shopify.js';
 import {
   PIXEL_CLEANUP_BATCH_SIZE,
@@ -19,6 +23,7 @@ import {
 
 const COLLECTOR_PATH = '/v1/pixel/events';
 const TOKEN_PREFIX_LENGTH = 8;
+type StoreScopedEventInput = Omit<Prisma.StorefrontEventCreateManyInput, 'storeId'>;
 
 function hashCollectorToken(token: string): Buffer {
   return createHash('sha256').update(token).digest();
@@ -39,9 +44,7 @@ function errorMessage(error: unknown): string {
   return 'Pixel installation failed';
 }
 
-function mergeAttribution(
-  event: StorefrontEventInput,
-): StorefrontAttributionInput {
+function mergeAttribution(event: StorefrontEventInput): StorefrontAttributionInput {
   return {
     ...extractStorefrontAttribution(event.pageUrl),
     ...extractStorefrontAttribution(event.landingPageUrl),
@@ -183,7 +186,7 @@ export class PixelService {
   private normalizeEvent(
     event: StorefrontEventInput,
     receivedAt: Date,
-  ): Prisma.StorefrontEventCreateManyInput {
+  ): StoreScopedEventInput {
     const attribution = mergeAttribution(event);
 
     return {
