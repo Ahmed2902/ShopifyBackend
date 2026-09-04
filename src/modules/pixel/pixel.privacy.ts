@@ -18,6 +18,9 @@ const ATTRIBUTION_QUERY_KEYS: ReadonlyArray<[string, AttributionKey]> = [
   ['fbclid', 'metaClickId'],
   ['gclid', 'googleClickId'],
   ['ttclid', 'tiktokClickId'],
+  ['stride_meta_campaign_id', 'metaCampaignExternalId'],
+  ['stride_meta_adset_id', 'metaAdSetExternalId'],
+  ['stride_meta_ad_id', 'metaAdExternalId'],
 ];
 
 function truncate(value: string | null, maxLength: number): string | undefined {
