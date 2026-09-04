@@ -46,6 +46,7 @@ export interface ProductEvidence {
   units: number;
   revenueShare: number;
   mappedMetaSpend: number;
+  mappedImpressions: number;
   mappedSpendShare: number;
   mappedProviderValue: number;
   providerRoas: number | null;

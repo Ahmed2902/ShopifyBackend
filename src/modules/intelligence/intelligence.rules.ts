@@ -234,8 +234,10 @@ export function paidCommerceMismatchRule(
   evidence: ProductEvidence,
   window: { start: Date; end: Date },
 ): RecommendationDraft | null {
+  const hasCommerceSupport = evidence.units >= 2;
+  const hasPaidSupport = evidence.mappedImpressions >= MIN_PERIOD_IMPRESSIONS;
   if (
-    evidence.units < 2 ||
+    (!hasCommerceSupport && !hasPaidSupport) ||
     evidence.mappingConfidence < 0.7 ||
     evidence.mappingCoverage < 0.6 ||
     evidence.mappedSpendShare < 0.08 ||
@@ -245,9 +247,10 @@ export function paidCommerceMismatchRule(
   }
 
   const gap = evidence.mappedSpendShare - evidence.revenueShare;
+  const impressionSupport = clamp01(evidence.mappedImpressions / 10_000);
   const parts = priorityParts(
     Math.max(evidence.mappedSpendShare, 0.1),
-    0.55 + evidence.mappingConfidence * 0.25 + evidence.mappingCoverage * 0.2,
+    0.5 + evidence.mappingConfidence * 0.2 + evidence.mappingCoverage * 0.2 + impressionSupport * 0.1,
     clamp01(gap * 3),
   );
 
@@ -274,6 +277,7 @@ export function paidCommerceMismatchRule(
       units: evidence.units,
       revenueShare: round(evidence.revenueShare),
       mappedMetaSpend: round(evidence.mappedMetaSpend, 2),
+      mappedImpressions: evidence.mappedImpressions,
       mappedSpendShare: round(evidence.mappedSpendShare),
       mappingConfidence: round(evidence.mappingConfidence),
       mappingCoverage: round(evidence.mappingCoverage),

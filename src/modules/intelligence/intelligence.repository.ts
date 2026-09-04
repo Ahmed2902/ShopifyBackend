@@ -23,6 +23,23 @@ export class IntelligenceRepository {
     });
   }
 
+  getLatestOrderHistorySync(storeId: string) {
+    return prisma.syncRun.findFirst({
+      where: {
+        provider: 'SHOPIFY',
+        resourceType: 'OrdersRefunds',
+        shopifyConnection: { is: { storeId } },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        status: true,
+        recordsRead: true,
+        recordsWritten: true,
+        finishedAt: true,
+      },
+    });
+  }
+
   async getMetaEvidenceRows(storeId: string, from: Date, to: Date) {
     const connection = await prisma.metaConnection.findUnique({
       where: { storeId },
@@ -120,11 +137,20 @@ export class IntelligenceRepository {
     });
   }
 
-  getActiveProductMappings(storeId: string) {
+  async getActiveProductMappings(storeId: string) {
+    const connection = await prisma.metaConnection.findUnique({
+      where: { storeId },
+      select: { selectedAdAccountIds: true },
+    });
+    const selectedAccountIds = connection?.selectedAdAccountIds ?? [];
+    if (selectedAccountIds.length === 0) return [];
+
     return prisma.adProductMapping.findMany({
       where: {
         validUntil: null,
-        ad: { adAccount: { storeId }, deletedAt: null },
+        ad: {
+          adAccount: { storeId, metaAccountId: { in: selectedAccountIds } },
+        },
         product: { storeId, deletedAt: null },
       },
       select: {
@@ -134,6 +160,9 @@ export class IntelligenceRepository {
         confidence: true,
         source: true,
         isMerchantConfirmed: true,
+        product: {
+          select: { id: true, shopifyProductId: true, title: true },
+        },
       },
     });
   }

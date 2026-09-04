@@ -254,6 +254,12 @@ interface ProductAggregate {
   costCoveredUnits: number;
 }
 
+interface ExactProductMapping {
+  productId: string;
+  confidence: number;
+  product: MappingRow['product'];
+}
+
 function costAt(costs: CostRow[], variantId: string, at: Date, currency: string): number | null {
   const matching = costs
     .filter(
@@ -267,25 +273,32 @@ function costAt(costs: CostRow[], variantId: string, at: Date, currency: string)
   return matching.length > 0 ? number(matching[0]!.amount) : null;
 }
 
-function exactProductMappings(mappings: MappingRow[]): Map<string, { productId: string; confidence: number }> {
+function exactProductMappings(mappings: MappingRow[]): Map<string, ExactProductMapping> {
   const byAd = new Map<string, MappingRow[]>();
   for (const mapping of mappings) {
-    if (!mapping.isMerchantConfirmed && number(mapping.confidence) < 0.7) continue;
     const rows = byAd.get(mapping.metaAdId) ?? [];
     rows.push(mapping);
     byAd.set(mapping.metaAdId, rows);
   }
 
-  const exact = new Map<string, { productId: string; confidence: number }>();
+  const exact = new Map<string, ExactProductMapping>();
   for (const [adId, rows] of byAd) {
-    const productIds = new Set(rows.map((row) => row.productId));
+    const confirmed = rows.filter((row) => row.isMerchantConfirmed);
+    const candidates =
+      confirmed.length > 0
+        ? confirmed
+        : rows.filter((row) => number(row.confidence) >= 0.7);
+    if (candidates.length === 0) continue;
+
+    const productIds = new Set(candidates.map((row) => row.productId));
     if (productIds.size !== 1) continue;
-    const productId = rows[0]!.productId;
+
     exact.set(adId, {
-      productId,
-      confidence: rows.some((row) => row.isMerchantConfirmed)
+      productId: candidates[0]!.productId,
+      confidence: confirmed.length > 0
         ? 1
-        : Math.max(...rows.map((row) => number(row.confidence))),
+        : Math.max(...candidates.map((row) => number(row.confidence))),
+      product: candidates[0]!.product,
     });
   }
   return exact;
@@ -344,11 +357,26 @@ export function buildProductEvidence(input: {
     products.set(row.productId, aggregate);
   }
 
+  const exactMappings = exactProductMappings(input.mappings);
+  for (const mapping of exactMappings.values()) {
+    if (products.has(mapping.productId)) continue;
+    products.set(mapping.productId, {
+      entityId: mapping.product.id,
+      externalEntityId: mapping.product.shopifyProductId,
+      name: mapping.product.title,
+      revenue: 0,
+      refunds: 0,
+      units: 0,
+      cogsUnits: 0,
+      cogs: 0,
+      costCoveredUnits: 0,
+    });
+  }
+
   const totalRevenue = [...products.values()].reduce(
     (sum, product) => sum + Math.max(0, product.revenue - product.refunds),
     0,
   );
-  const exactMappings = exactProductMappings(input.mappings);
   const productMappingConfidence = new Map<string, number[]>();
   for (const mapping of exactMappings.values()) {
     const values = productMappingConfidence.get(mapping.productId) ?? [];
@@ -374,7 +402,7 @@ export function buildProductEvidence(input: {
 
   const paidByProduct = new Map<
     string,
-    { spend: number; providerValue: number; weightedConfidence: number }
+    { spend: number; impressions: number; providerValue: number; weightedConfidence: number }
   >();
   let exactMappedSpend = 0;
   for (const [adId, metrics] of adMetrics) {
@@ -383,10 +411,12 @@ export function buildProductEvidence(input: {
     exactMappedSpend += metrics.spend;
     const current = paidByProduct.get(mapping.productId) ?? {
       spend: 0,
+      impressions: 0,
       providerValue: 0,
       weightedConfidence: 0,
     };
     current.spend += metrics.spend;
+    current.impressions += metrics.impressions;
     current.providerValue += metrics.purchaseValue;
     current.weightedConfidence += metrics.spend * mapping.confidence;
     paidByProduct.set(mapping.productId, current);
@@ -403,6 +433,7 @@ export function buildProductEvidence(input: {
     const netRevenue = Math.max(0, product.revenue - product.refunds);
     const paid = paidByProduct.get(product.entityId) ?? {
       spend: 0,
+      impressions: 0,
       providerValue: 0,
       weightedConfidence: 0,
     };
@@ -435,6 +466,7 @@ export function buildProductEvidence(input: {
       units: product.units,
       revenueShare: totalRevenue > 0 ? netRevenue / totalRevenue : 0,
       mappedMetaSpend: paid.spend,
+      mappedImpressions: paid.impressions,
       mappedSpendShare: totalMetaSpend > 0 ? paid.spend / totalMetaSpend : 0,
       mappedProviderValue: paid.providerValue,
       providerRoas: paid.spend > 0 ? paid.providerValue / paid.spend : null,

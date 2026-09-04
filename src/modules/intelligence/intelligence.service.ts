@@ -47,11 +47,12 @@ export class IntelligenceService {
     );
     const productWindow = completedWindow(now, store.ianaTimezone, PRODUCT_WINDOW_DAYS);
 
-    const [metaRows, commerceRows, mappings, inventoryRows] = await Promise.all([
+    const [metaRows, commerceRows, mappings, inventoryRows, orderHistorySync] = await Promise.all([
       this.repository.getMetaEvidenceRows(storeId, productWindow.metaFrom, current.metaTo),
       this.repository.getCommerceRows(storeId, productWindow.instantFrom, productWindow.instantTo),
       this.repository.getActiveProductMappings(storeId),
       this.repository.getInventoryLevels(storeId),
+      this.repository.getLatestOrderHistorySync(storeId),
     ]);
 
     const variantIds = [
@@ -103,11 +104,14 @@ export class IntelligenceService {
       if (result) recommendations.push(result);
     }
 
+    const shopifyCommerceUsable =
+      store.shopifyConnection?.status === 'ACTIVE' &&
+      (commerceRows.length > 0 || orderHistorySync?.status === 'SUCCEEDED');
     const productRuleWindow = { start: productWindow.metaFrom, end: productWindow.metaTo };
     for (const product of productResult.products) {
       const results = [
         underexposedProductRule(product, productRuleWindow),
-        paidCommerceMismatchRule(product, productRuleWindow),
+        shopifyCommerceUsable ? paidCommerceMismatchRule(product, productRuleWindow) : null,
         marginTrapRule(product, productRuleWindow),
         inventorySpendConflictRule(product, productRuleWindow),
       ];
@@ -140,6 +144,7 @@ export class IntelligenceService {
         products: productResult.products.length,
         metaRows: metaRows.length,
         commerceRows: commerceRows.length,
+        shopifyCommerceUsable,
         mappingCoverage: productResult.mappingCoverage,
         costCoverage: this.overallCostCoverage(productResult.products),
       },
