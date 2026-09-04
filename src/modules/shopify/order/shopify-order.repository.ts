@@ -1,21 +1,13 @@
 import type { Prisma } from '../../../generated/prisma/client.js';
 import { prisma } from '../../../lib/prisma.js';
-import type {
-  ShopifyOrderLineItem,
-  ShopifyRefund,
-} from './shopify-order.schema.js';
-import type {
-  PersistedShopifyOrder,
-  ShopifyImportedOrder,
-} from './shopify-order.types.js';
+import type { ShopifyOrderLineItem, ShopifyRefund } from './shopify-order.schema.js';
+import type { PersistedShopifyOrder, ShopifyImportedOrder } from './shopify-order.types.js';
 
 function optionalDate(value: string | null | undefined): Date | null {
   return value ? new Date(value) : null;
 }
 
-function moneyAmount(
-  value: { shopMoney: { amount: string } } | null | undefined,
-): string | null {
+function moneyAmount(value: { shopMoney: { amount: string } } | null | undefined): string | null {
   return value?.shopMoney.amount ?? null;
 }
 
@@ -98,8 +90,6 @@ export class ShopifyOrderRepository {
         });
       }
 
-      // Reconciliation updates are normally a small set. Keep different row values explicit
-      // rather than introducing raw SQL solely to collapse these updates.
       for (const row of rows) {
         const id = existingMap.get(row.lineItem.id);
         if (!id) continue;
@@ -130,9 +120,7 @@ export class ShopifyOrderRepository {
       order.lineItems.map((lineItem) => [lineItem.shopifyLineItemId, lineItem.id]),
     );
     if (
-      refund.refundLineItems.nodes.some(
-        (lineItem) => !lineItemMap.has(lineItem.lineItem.id),
-      )
+      refund.refundLineItems.nodes.some((lineItem) => !lineItemMap.has(lineItem.lineItem.id))
     ) {
       return false;
     }
@@ -196,6 +184,7 @@ export class ShopifyOrderRepository {
   }
 
   private orderData(order: ShopifyImportedOrder) {
+    const journey = order.customerJourneySummary;
     return {
       shopifyOrderId: order.id,
       name: order.name,
@@ -217,6 +206,9 @@ export class ShopifyOrderRepository {
       currentTotalTaxAmount: moneyAmount(order.currentTotalTaxSet),
       currentTotalAmount: moneyAmount(order.currentTotalPriceSet),
       discountCodes: order.discountCodes,
+      customerOrderIndex: journey?.customerOrderIndex ?? null,
+      daysToConversion: journey?.daysToConversion ?? null,
+      customerJourneyReady: journey?.ready ?? null,
       rawJson: asJson(order),
     };
   }
@@ -263,10 +255,7 @@ export class ShopifyOrderRepository {
     };
   }
 
-  private uniqueIds<T>(
-    items: T[],
-    select: (item: T) => string | null | undefined,
-  ): string[] {
+  private uniqueIds<T>(items: T[], select: (item: T) => string | null | undefined): string[] {
     return [...new Set(items.map(select).filter((id): id is string => Boolean(id)))];
   }
 }

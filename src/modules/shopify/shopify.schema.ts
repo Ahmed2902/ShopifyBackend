@@ -46,11 +46,17 @@ export const shopifyProductSchema = z.object({
   updatedAt: z.string().datetime().nullable().optional(),
 });
 
+const shopifyMoneyV2Schema = z.object({
+  amount: z.string(),
+  currencyCode: z.string().min(1),
+});
+
 export const shopifyInventoryItemSchema = z.object({
   id: z.string().min(1),
   sku: z.string().nullable().optional(),
   tracked: z.boolean(),
   requiresShipping: z.boolean(),
+  unitCost: shopifyMoneyV2Schema.nullable().optional(),
   createdAt: z.string().datetime().nullable().optional(),
   updatedAt: z.string().datetime().nullable().optional(),
 });
@@ -77,6 +83,20 @@ export const shopifyVariantSchema = z.object({
   selectedOptions: z.array(shopifySelectedOptionSchema).default([]),
   product: z.object({ id: z.string().min(1) }),
   inventoryItem: shopifyInventoryItemSchema,
+});
+
+export const shopifyCollectionSchema = z.object({
+  id: z.string().min(1),
+  title: z.string(),
+  handle: z.string().nullable().optional(),
+  descriptionHtml: z.string().nullable().optional(),
+  sortOrder: z.string().nullable().optional(),
+  image: z.object({ url: z.string().url() }).nullable().optional(),
+  updatedAt: z.string().datetime().nullable().optional(),
+});
+
+export const shopifyCollectionProductSchema = z.object({
+  id: z.string().min(1),
 });
 
 export const shopifyLocationSchema = z.object({
@@ -134,6 +154,16 @@ export const shopifyVariantConnectionSchema = z.object({
   pageInfo: pageInfoSchema,
 });
 
+export const shopifyCollectionConnectionSchema = z.object({
+  nodes: z.array(shopifyCollectionSchema),
+  pageInfo: pageInfoSchema,
+});
+
+export const shopifyCollectionProductConnectionSchema = z.object({
+  nodes: z.array(shopifyCollectionProductSchema),
+  pageInfo: pageInfoSchema,
+});
+
 export const shopifyLocationConnectionSchema = z.object({
   nodes: z.array(shopifyLocationSchema),
   pageInfo: pageInfoSchema,
@@ -188,6 +218,7 @@ export type ShopifyAccessTokenResponse = z.infer<typeof shopifyAccessTokenSchema
 export type ShopifyShopProfile = z.infer<typeof shopifyProfileSchema>;
 export type ShopifyProduct = z.infer<typeof shopifyProductSchema>;
 export type ShopifyVariant = z.infer<typeof shopifyVariantSchema>;
+export type ShopifyCollection = z.infer<typeof shopifyCollectionSchema>;
 export type ShopifyLocation = z.infer<typeof shopifyLocationSchema>;
 export type ShopifyInventoryLevel = z.infer<typeof shopifyInventoryLevelSchema>;
 export type ShopifyGraphqlResponse = z.infer<typeof shopifyGraphqlResponseSchema>;

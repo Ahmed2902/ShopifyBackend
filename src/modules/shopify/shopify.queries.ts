@@ -59,11 +59,41 @@ export const PRODUCT_VARIANTS_QUERY = `#graphql
           sku
           tracked
           requiresShipping
+          unitCost { amount currencyCode }
           createdAt
           updatedAt
         }
       }
       pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
+export const COLLECTIONS_QUERY = `#graphql
+  query CatalogCollections($first: Int!, $after: String) {
+    collections(first: $first, after: $after) {
+      nodes {
+        id
+        title
+        handle
+        descriptionHtml
+        sortOrder
+        image { url }
+        updatedAt
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
+export const COLLECTION_PRODUCTS_QUERY = `#graphql
+  query CatalogCollectionProducts($id: ID!, $first: Int!, $after: String) {
+    collection(id: $id) {
+      id
+      products(first: $first, after: $after) {
+        nodes { id }
+        pageInfo { hasNextPage endCursor }
+      }
     }
   }
 `;

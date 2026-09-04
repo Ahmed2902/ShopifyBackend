@@ -23,6 +23,11 @@ export const ORDER_HISTORY_BULK_QUERY = `#graphql
           currentTotalTaxSet { ...MoneyBagFields }
           currentTotalPriceSet { ...MoneyBagFields }
           discountCodes
+          customerJourneySummary {
+            customerOrderIndex
+            daysToConversion
+            ready
+          }
 
           refunds {
             id
@@ -103,6 +108,11 @@ export const ORDER_DETAILS_QUERY = `#graphql
       currentTotalTaxSet { ...MoneyBagFields }
       currentTotalPriceSet { ...MoneyBagFields }
       discountCodes
+      customerJourneySummary {
+        customerOrderIndex
+        daysToConversion
+        ready
+      }
       refunds {
         id
         createdAt

@@ -33,6 +33,7 @@ model Product {
 
   store             Store                    @relation(fields: [storeId], references: [id], onDelete: Restrict)
   variants          ProductVariant[]
+  collections       ProductCollection[]
   orderLineItems    OrderLineItem[]
   adMappings        AdProductMapping[]
   tiktokAdMappings  TikTokAdProductMapping[]
@@ -95,6 +96,43 @@ model VariantOption {
 
   @@unique([variantId, name])
   @@index([name, value])
+}
+
+model Collection {
+  id                  String   @id @default(uuid()) @db.Uuid
+  storeId             String   @db.Uuid
+  shopifyCollectionId String
+  title               String
+  handle              String?
+  descriptionHtml     String?
+  sortOrder           String?
+  imageUrl            String?
+  shopifyUpdatedAt    DateTime?
+  deletedAt           DateTime?
+  rawJson             Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  store    Store               @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  products ProductCollection[]
+
+  @@unique([storeId, shopifyCollectionId])
+  @@index([storeId, handle])
+  @@index([deletedAt])
+}
+
+model ProductCollection {
+  collectionId String @db.Uuid
+  productId    String @db.Uuid
+  position     Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, productId])
+  @@index([productId])
 }
 
 model InventoryItem {

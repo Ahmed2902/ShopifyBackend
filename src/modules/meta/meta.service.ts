@@ -39,9 +39,7 @@ export class MetaService {
     const businessDiscoveryAvailable = context.scopes.includes('business_management');
     const catalogDiscoveryAvailable =
       businessDiscoveryAvailable && context.scopes.includes('catalog_management');
-    const businesses = businessDiscoveryAvailable
-      ? await this.apiService.listBusinesses(context)
-      : [];
+    const businesses = businessDiscoveryAvailable ? await this.apiService.listBusinesses(context) : [];
     const [adAccounts, catalogs] = await Promise.all([
       this.apiService.listAdAccounts(context),
       catalogDiscoveryAvailable
@@ -174,9 +172,7 @@ export class MetaService {
     const businesses = await this.apiService.listBusinesses(context);
     const catalogs = await this.catalogService.discoverOwnedCatalogs(
       context,
-      context.metaBusinessId
-        ? [context.metaBusinessId]
-        : businesses.map((business) => business.id),
+      context.metaBusinessId ? [context.metaBusinessId] : businesses.map((business) => business.id),
     );
     const selected = await this.catalogService.configureCatalogs(context, catalogs, catalogIds);
     return {

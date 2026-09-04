@@ -83,6 +83,12 @@ export const shopifyRefundQuerySchema = z.object({
   refund: shopifyRefundSchema.nullable(),
 });
 
+export const shopifyCustomerJourneySummarySchema = z.object({
+  customerOrderIndex: z.number().int().nullable().optional(),
+  daysToConversion: z.number().int().nullable().optional(),
+  ready: z.boolean(),
+});
+
 export const shopifyOrderHeaderSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -104,6 +110,7 @@ export const shopifyOrderHeaderSchema = z.object({
   currentTotalTaxSet: shopifyMoneyBagSchema,
   currentTotalPriceSet: shopifyMoneyBagSchema,
   discountCodes: z.array(z.string()).default([]),
+  customerJourneySummary: shopifyCustomerJourneySummarySchema.nullable().optional(),
   refunds: z.array(shopifyRefundHeaderSchema).default([]),
 });
 

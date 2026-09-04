@@ -42,6 +42,7 @@ export const PRODUCT_VARIANTS_BY_ID_QUERY = `#graphql
             sku
             tracked
             requiresShipping
+            unitCost { amount currencyCode }
             createdAt
             updatedAt
           }

@@ -57,13 +57,13 @@ afterEach(() => {
 });
 
 describe('MetaInsightsService', () => {
-  it('uses a 90-day first import split into bounded daily chunks', async () => {
-    const { apiService, repository, service } = build(false, [[], [], [], []]);
+  it('uses the configured 365-day first import split into bounded daily chunks', async () => {
+    const { apiService, repository, service } = build(false, []);
 
     const result = await service.syncAccount(context, 'act_101');
 
-    expect(result).toMatchObject({ lookbackDays: 90, initialBackfill: true });
-    expect(apiService.collectGraphPages).toHaveBeenCalledTimes(4);
+    expect(result).toMatchObject({ lookbackDays: 365, initialBackfill: true });
+    expect(apiService.collectGraphPages).toHaveBeenCalledTimes(14);
     expect(apiService.collectGraphPages).toHaveBeenNthCalledWith(
       1,
       context,
@@ -71,13 +71,13 @@ describe('MetaInsightsService', () => {
       expect.objectContaining({
         level: 'ad',
         time_increment: '1',
-        time_range: JSON.stringify({ since: '2026-05-26', until: '2026-06-22' }),
+        time_range: JSON.stringify({ since: '2025-08-24', until: '2025-09-20' }),
         use_unified_attribution_setting: 'true',
         action_report_time: 'impression',
       }),
       expect.any(Function),
     );
-    expect(repository.deleteMissingRange).toHaveBeenCalledTimes(4);
+    expect(repository.deleteMissingRange).toHaveBeenCalledTimes(14);
   });
 
   it('refreshes a 35-day overlap after history already exists', async () => {
@@ -99,10 +99,12 @@ describe('MetaInsightsService', () => {
   });
 
   it('maps known hierarchy IDs while preserving rows whose historical ad is no longer current', async () => {
-    const { repository, service } = build(false, [[
-      insightRow(),
-      insightRow({ ad_id: 'old_ad', campaign_id: 'old_cmp', adset_id: 'old_set' }),
-    ], [], [], []]);
+    const { repository, service } = build(false, [
+      [
+        insightRow(),
+        insightRow({ ad_id: 'old_ad', campaign_id: 'old_cmp', adset_id: 'old_set' }),
+      ],
+    ]);
 
     await service.syncAccount(context, 'act_101');
 
