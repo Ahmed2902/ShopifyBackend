@@ -134,12 +134,17 @@ export function rateLimit(options: RateLimitOptions): RequestHandler {
 
 const AUTH_COOKIE_PATHS = new Set(['/auth/csrf', '/auth/refresh', '/auth/logout']);
 const isWebhook = (req: Request) => req.path.endsWith('/webhooks');
+const isPixelIngress = (req: Request) => req.originalUrl.startsWith('/v1/pixel/events');
 
 export const apiRateLimit = rateLimit({
   name: 'api',
   max: 600,
   windowMs: 5 * 60_000,
-  skip: (req) => env.NODE_ENV === 'test' || AUTH_COOKIE_PATHS.has(req.path) || isWebhook(req),
+  skip: (req) =>
+    env.NODE_ENV === 'test' ||
+    AUTH_COOKIE_PATHS.has(req.path) ||
+    isWebhook(req) ||
+    isPixelIngress(req),
 });
 
 export const webhookRateLimit = rateLimit({
@@ -148,6 +153,14 @@ export const webhookRateLimit = rateLimit({
   windowMs: 5 * 60_000,
   key: sourceIdentity,
   skip: (req) => env.NODE_ENV === 'test' || !isWebhook(req),
+});
+
+export const pixelIngressRateLimit = rateLimit({
+  name: 'pixel-ingress',
+  max: 6_000,
+  windowMs: 5 * 60_000,
+  key: sourceIdentity,
+  skip: (req) => env.NODE_ENV === 'test' || !isPixelIngress(req),
 });
 
 export const authRateLimit = rateLimit({
