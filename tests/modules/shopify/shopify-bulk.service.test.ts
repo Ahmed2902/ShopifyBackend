@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 describe('ShopifyBulkService', () => {
-  it('starts and inspects Shopify bulk queries through the shared API transport', async () => {
+  it('starts grouped bulk queries because the streaming order importer requires parent-child adjacency', async () => {
     const requestAdminGraphql = vi
       .fn()
       .mockResolvedValueOnce({
@@ -44,6 +44,10 @@ describe('ShopifyBulkService', () => {
     expect(started).toEqual({ id: 'gid://shopify/BulkOperation/1', status: 'CREATED' });
     expect(status?.objectCount).toBe('42');
     expect(requestAdminGraphql).toHaveBeenCalledTimes(2);
+    expect(requestAdminGraphql.mock.calls[0]?.[0]).toMatchObject({
+      variables: { query: '{ orders { edges { node { id } } } }' },
+    });
+    expect(requestAdminGraphql.mock.calls[0]?.[0]?.query).toContain('groupObjects: true');
   });
 
   it('streams JSONL without loading the whole result into memory', async () => {
