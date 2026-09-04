@@ -8,7 +8,7 @@ const base = {
 };
 
 describe('Stride Pixel checkout linkage contract', () => {
-  it('accepts Shopify checkout token and order id only on checkout completion evidence', () => {
+  it('accepts Shopify checkout token and exact order GID on checkout completion evidence', () => {
     expect(
       storefrontEventSchema.parse({
         ...base,
@@ -20,6 +20,16 @@ describe('Stride Pixel checkout linkage contract', () => {
       shopifyCheckoutToken: 'checkout-token-1',
       shopifyOrderExternalId: 'gid://shopify/Order/9000',
     });
+  });
+
+  it('rejects malformed order identities instead of creating pending-link noise', () => {
+    expect(() =>
+      storefrontEventSchema.parse({
+        ...base,
+        eventName: 'CHECKOUT_COMPLETED',
+        shopifyOrderExternalId: 'order-9000',
+      }),
+    ).toThrow();
   });
 
   it('rejects order identity on non-completion events', () => {
