@@ -65,7 +65,9 @@ export function extractStorefrontAttribution(
     for (const [queryKey, outputKey] of ATTRIBUTION_QUERY_KEYS) {
       const maxLength = outputKey.endsWith('ClickId') ? 512 : 255;
       const normalized = truncate(url.searchParams.get(queryKey), maxLength);
-      if (normalized) attribution[outputKey] = normalized;
+      if (!normalized) continue;
+      if (outputKey.endsWith('ExternalId') && !/^\d+$/.test(normalized)) continue;
+      attribution[outputKey] = normalized;
     }
 
     return attribution;
