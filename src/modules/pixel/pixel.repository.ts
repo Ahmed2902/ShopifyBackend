@@ -1,6 +1,8 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
 
+type StoreScopedEventInput = Omit<Prisma.StorefrontEventCreateManyInput, 'storeId'>;
+
 export class PixelRepository {
   findInstallationByStoreId(storeId: string) {
     return prisma.pixelInstallation.findUnique({
@@ -68,7 +70,7 @@ export class PixelRepository {
     });
   }
 
-  async insertEvents(storeId: string, events: Prisma.StorefrontEventCreateManyInput[]) {
+  async insertEvents(storeId: string, events: StoreScopedEventInput[]) {
     if (events.length === 0) return 0;
 
     const result = await prisma.storefrontEvent.createMany({
