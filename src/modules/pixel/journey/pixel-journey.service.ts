@@ -18,6 +18,18 @@ type JourneyEvent = Awaited<
 type JourneySession = NonNullable<
   Awaited<ReturnType<PixelJourneyRepository['getSession']>>
 >;
+type SessionProductAggregate = SessionProductInput & {
+  viewCount: number;
+  addToCartCount: number;
+  removeFromCartCount: number;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+};
+type SessionCollectionAggregate = SessionCollectionInput & {
+  viewCount: number;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+};
 
 function nonEmpty(values: Array<string | null>): string[] {
   return values.filter((value): value is string => Boolean(value));
@@ -108,8 +120,8 @@ function productIdentity(event: JourneyEvent): string | null {
   return null;
 }
 
-function buildRawProducts(events: JourneyEvent[]): SessionProductInput[] {
-  const aggregates = new Map<string, SessionProductInput>();
+function buildRawProducts(events: JourneyEvent[]): SessionProductAggregate[] {
+  const aggregates = new Map<string, SessionProductAggregate>();
   for (const event of events) {
     if (
       event.eventName !== 'PRODUCT_VIEW' &&
@@ -122,7 +134,7 @@ function buildRawProducts(events: JourneyEvent[]): SessionProductInput[] {
     if (!identityKey) continue;
 
     const existing = aggregates.get(identityKey);
-    const row: SessionProductInput = existing ?? {
+    const row: SessionProductAggregate = existing ?? {
       identityKey,
       shopifyProductExternalId: event.productExternalId,
       shopifyVariantExternalId: event.variantExternalId,
@@ -149,12 +161,12 @@ function buildRawProducts(events: JourneyEvent[]): SessionProductInput[] {
   return [...aggregates.values()].sort((a, b) => a.firstSeenAt.getTime() - b.firstSeenAt.getTime());
 }
 
-function buildRawCollections(events: JourneyEvent[]): SessionCollectionInput[] {
-  const aggregates = new Map<string, SessionCollectionInput>();
+function buildRawCollections(events: JourneyEvent[]): SessionCollectionAggregate[] {
+  const aggregates = new Map<string, SessionCollectionAggregate>();
   for (const event of events) {
     if (event.eventName !== 'COLLECTION_VIEW' || !event.collectionExternalId) continue;
     const existing = aggregates.get(event.collectionExternalId);
-    const row: SessionCollectionInput = existing ?? {
+    const row: SessionCollectionAggregate = existing ?? {
       shopifyCollectionExternalId: event.collectionExternalId,
       collectionId: null,
       resolutionStatus: 'NONE',
