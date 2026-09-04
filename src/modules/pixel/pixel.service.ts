@@ -220,6 +220,9 @@ export class PixelService {
     };
   }
 
+  private getCollectorUrl(): string;
+  private getCollectorUrl(required: true): string;
+  private getCollectorUrl(required: false): string | null;
   private getCollectorUrl(required = true): string | null {
     if (env.PIXEL_COLLECTOR_URL) return env.PIXEL_COLLECTOR_URL;
     if (env.APP_URL) return new URL(COLLECTOR_PATH, env.APP_URL).toString();
