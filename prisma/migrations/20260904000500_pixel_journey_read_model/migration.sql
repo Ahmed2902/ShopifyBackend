@@ -125,7 +125,7 @@ CREATE INDEX "StorefrontSession_storeId_startedAt_idx"
   ON "StorefrontSession"("storeId", "startedAt");
 CREATE INDEX "StorefrontSession_storeId_anonymousVisitorId_startedAt_idx"
   ON "StorefrontSession"("storeId", "anonymousVisitorId", "startedAt");
-CREATE INDEX "StorefrontSession_storeId_orderLinkStatus_checkoutCompletedAt_idx"
+CREATE INDEX "StorefrontSession_storeId_orderLinkStatus_checkoutCompleted_idx"
   ON "StorefrontSession"("storeId", "orderLinkStatus", "checkoutCompletedAt");
 CREATE INDEX "StorefrontSession_orderId_idx"
   ON "StorefrontSession"("orderId");
@@ -150,7 +150,7 @@ CREATE INDEX "StorefrontSessionProduct_productId_firstSeenAt_idx"
 CREATE INDEX "StorefrontSessionProduct_variantId_firstSeenAt_idx"
   ON "StorefrontSessionProduct"("variantId", "firstSeenAt");
 
-CREATE UNIQUE INDEX "StorefrontSessionCollection_sessionId_shopifyCollectionExternalId_key"
+CREATE UNIQUE INDEX "StorefrontSessionCollection_sessionId_shopifyCollectionExte_key"
   ON "StorefrontSessionCollection"("sessionId", "shopifyCollectionExternalId");
 CREATE INDEX "StorefrontSessionCollection_collectionId_firstSeenAt_idx"
   ON "StorefrontSessionCollection"("collectionId", "firstSeenAt");
