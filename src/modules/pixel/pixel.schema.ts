@@ -14,6 +14,7 @@ const opaqueIdSchema = z
   .regex(/^[A-Za-z0-9_-]+$/);
 
 const externalIdSchema = z.string().trim().min(1).max(128);
+const checkoutTokenSchema = z.string().trim().min(1).max(255);
 const providerNumericIdSchema = z.string().trim().regex(/^\d+$/).max(128);
 const attributionValueSchema = z.string().trim().min(1).max(255);
 const clickIdSchema = z.string().trim().min(1).max(512);
@@ -57,11 +58,17 @@ export const storefrontEventSchema = z
     variantExternalId: externalIdSchema.optional(),
     collectionExternalId: externalIdSchema.optional(),
     quantity: z.number().int().min(1).max(100_000).optional(),
+    shopifyCheckoutToken: checkoutTokenSchema.optional(),
+    shopifyOrderExternalId: externalIdSchema.optional(),
     attribution: storefrontAttributionSchema.optional(),
   })
   .strict()
   .superRefine((event, ctx) => {
     const hasProductTarget = Boolean(event.productExternalId || event.variantExternalId);
+    const isCheckoutEvent =
+      event.eventName === 'BEGIN_CHECKOUT' ||
+      event.eventName === 'CHECKOUT_PROGRESS' ||
+      event.eventName === 'CHECKOUT_COMPLETED';
 
     if (event.eventName === 'PRODUCT_VIEW' && !hasProductTarget) {
       ctx.addIssue({
@@ -99,6 +106,22 @@ export const storefrontEventSchema = z
         code: 'custom',
         message: 'quantity is only valid for cart mutation events',
         path: ['quantity'],
+      });
+    }
+
+    if (event.shopifyCheckoutToken && !isCheckoutEvent) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'shopifyCheckoutToken is only valid for checkout events',
+        path: ['shopifyCheckoutToken'],
+      });
+    }
+
+    if (event.shopifyOrderExternalId && event.eventName !== 'CHECKOUT_COMPLETED') {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'shopifyOrderExternalId is only valid for CHECKOUT_COMPLETED',
+        path: ['shopifyOrderExternalId'],
       });
     }
   });
