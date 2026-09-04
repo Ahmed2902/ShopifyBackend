@@ -9,6 +9,8 @@ analyticsRouter.use(requireAuth, requireStoreMembership);
 analyticsRouter.get('/overview', analyticsController.overview);
 analyticsRouter.get('/products', analyticsController.products);
 analyticsRouter.get('/products/:productId', analyticsController.product);
+analyticsRouter.get('/product-ads', analyticsController.productAds);
+analyticsRouter.get('/product-ads/:productId', analyticsController.productAdsProduct);
 analyticsRouter.get('/collections', analyticsController.collections);
 analyticsRouter.get('/customers', analyticsController.customers);
 analyticsRouter.get('/inventory', analyticsController.inventory);

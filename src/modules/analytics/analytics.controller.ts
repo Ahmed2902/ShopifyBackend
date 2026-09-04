@@ -6,13 +6,17 @@ import {
   analyticsRangeQuerySchema,
 } from './analytics.schema.js';
 import { analyticsWorkspace, type AnalyticsWorkspace } from './analytics.workspace.js';
+import { productAdsWorkspace, type ProductAdsWorkspace } from './product-ads.workspace.js';
 
 function entityId(req: Request, key: string): string {
   return analyticsEntityParamsSchema.parse({ entityId: req.params[key] }).entityId;
 }
 
 export class AnalyticsController {
-  constructor(private readonly workspace: AnalyticsWorkspace) {}
+  constructor(
+    private readonly workspace: AnalyticsWorkspace,
+    private readonly productAdsWorkspace: ProductAdsWorkspace,
+  ) {}
 
   overview = async (req: Request, res: Response) => {
     res.status(200).json(
@@ -40,6 +44,29 @@ export class AnalyticsController {
     res.status(200).json(
       toJsonSafe(
         await this.workspace.product(
+          req.context.storeId!,
+          entityId(req, 'productId'),
+          analyticsRangeQuerySchema.parse(req.query),
+        ),
+      ),
+    );
+  };
+
+  productAds = async (req: Request, res: Response) => {
+    res.status(200).json(
+      toJsonSafe(
+        await this.productAdsWorkspace.list(
+          req.context.storeId!,
+          analyticsListQuerySchema.parse(req.query),
+        ),
+      ),
+    );
+  };
+
+  productAdsProduct = async (req: Request, res: Response) => {
+    res.status(200).json(
+      toJsonSafe(
+        await this.productAdsWorkspace.detail(
           req.context.storeId!,
           entityId(req, 'productId'),
           analyticsRangeQuerySchema.parse(req.query),
@@ -185,4 +212,4 @@ export class AnalyticsController {
   };
 }
 
-export const analyticsController = new AnalyticsController(analyticsWorkspace);
+export const analyticsController = new AnalyticsController(analyticsWorkspace, productAdsWorkspace);

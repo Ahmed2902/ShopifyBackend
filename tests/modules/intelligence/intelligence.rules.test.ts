@@ -76,6 +76,7 @@ function product(overrides: Partial<ProductEvidence> = {}): ProductEvidence {
     units: 100,
     revenueShare: 0.25,
     mappedMetaSpend: 600,
+    mappedImpressions: 12_000,
     mappedSpendShare: 0.05,
     mappedProviderValue: 2_400,
     providerRoas: 4,
@@ -148,6 +149,31 @@ describe('V1 deterministic intelligence rules', () => {
     expect(paidCommerceMismatchRule(mismatch, { start, end })).not.toBeNull();
     expect(
       paidCommerceMismatchRule({ ...mismatch, mappingCoverage: 0.4 }, { start, end }),
+    ).toBeNull();
+  });
+
+  it('can flag meaningful paid exposure with zero observed Shopify sales', () => {
+    const mismatch = product({
+      revenue: 0,
+      netRevenue: 0,
+      units: 0,
+      revenueShare: 0,
+      mappedMetaSpend: 2_400,
+      mappedImpressions: 20_000,
+      mappedSpendShare: 0.3,
+      mappedProviderValue: 0,
+      providerRoas: 0,
+      contributionBeforeAds: null,
+      contributionAfterAds: null,
+      costCoverage: 0,
+    });
+
+    expect(paidCommerceMismatchRule(mismatch, { start, end })).toMatchObject({
+      ruleId: 'paid_commerce_exposure_mismatch',
+      category: 'PAID_COMMERCE_MISMATCH',
+    });
+    expect(
+      paidCommerceMismatchRule({ ...mismatch, mappedImpressions: 200 }, { start, end }),
     ).toBeNull();
   });
 
