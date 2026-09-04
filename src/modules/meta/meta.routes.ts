@@ -3,6 +3,7 @@ import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireRole, requireStoreMembership } from '../../middleware/store.middleware.js';
 import { metaMappingController } from './mapping/meta-mapping.controller.js';
 import { metaController } from './meta.controller.js';
+import { metaTrackingController } from './tracking/meta-tracking.controller.js';
 
 const ownerOrAdmin = requireRole('OWNER', 'ADMIN');
 
@@ -25,6 +26,8 @@ metaStoreRouter.get('/insights', metaController.insights);
 metaStoreRouter.get('/mappings/summary', metaMappingController.summary);
 metaStoreRouter.get('/mappings/ads', metaMappingController.ads);
 metaStoreRouter.get('/mappings/ads/:adId/suggestions', metaMappingController.suggestions);
+metaStoreRouter.get('/tracking', ownerOrAdmin, metaTrackingController.audit);
+metaStoreRouter.get('/tracking/manual', ownerOrAdmin, metaTrackingController.manualConfiguration);
 
 metaStoreRouter.post('/install', ownerOrAdmin, metaController.startInstall);
 metaStoreRouter.post('/configure', ownerOrAdmin, metaController.configure);
@@ -33,6 +36,8 @@ metaStoreRouter.post('/sync', ownerOrAdmin, metaController.sync);
 metaStoreRouter.post('/catalogs/sync', ownerOrAdmin, metaController.syncCatalogs);
 metaStoreRouter.post('/insights/sync', ownerOrAdmin, metaController.syncInsights);
 metaStoreRouter.post('/mappings/resolve', ownerOrAdmin, metaMappingController.resolve);
+metaStoreRouter.post('/tracking/permission', ownerOrAdmin, metaTrackingController.permissionUpgrade);
+metaStoreRouter.post('/tracking/apply', ownerOrAdmin, metaTrackingController.apply);
 metaStoreRouter.put('/mappings/ads/:adId', ownerOrAdmin, metaMappingController.replaceAd);
 metaStoreRouter.post('/mappings/ads/:adId/confirm', ownerOrAdmin, metaMappingController.confirmAd);
 metaStoreRouter.put(
