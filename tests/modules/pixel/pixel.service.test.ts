@@ -17,10 +17,7 @@ function buildService(input?: {
   installation?: Record<string, unknown> | null;
   inserted?: number;
 }) {
-  const installation =
-    input?.installation === undefined
-      ? null
-      : input.installation;
+  const installation = input?.installation === undefined ? null : input.installation;
 
   const repository = {
     findInstallationByStoreId: vi.fn().mockResolvedValue(installation),
@@ -36,6 +33,7 @@ function buildService(input?: {
       lastError: value.lastError,
       updatedAt: fixedNow,
     })),
+    recordInstallationError: vi.fn().mockResolvedValue({ id: installationId, status: 'ACTIVE' }),
     insertEvents: vi.fn().mockResolvedValue(input?.inserted ?? 1),
     touchInstallation: vi.fn().mockResolvedValue({ id: installationId }),
     findExpiredEventIds: vi.fn().mockResolvedValue(['event-db-id']),
@@ -74,6 +72,31 @@ describe('PixelService', () => {
       shopifyWebPixelId: 'gid://shopify/WebPixel/1',
       collectorUrl: 'http://localhost:3001/v1/pixel/events',
     });
+  });
+
+  it('does not rotate or disable a working installation when Shopify reprovision fails', async () => {
+    const existing = {
+      id: installationId,
+      storeId,
+      collectorTokenPrefix: 'OLDTOKEN',
+      shopifyWebPixelId: 'gid://shopify/WebPixel/42',
+      status: 'ACTIVE',
+      installedAt: new Date('2026-09-01T12:00:00.000Z'),
+      lastEventAt: new Date('2026-09-04T11:00:00.000Z'),
+      lastError: null,
+      createdAt: new Date('2026-09-01T12:00:00.000Z'),
+      updatedAt: new Date('2026-09-04T11:00:00.000Z'),
+    };
+    const { repository, shopifyProvisioner, service } = buildService({ installation: existing });
+    vi.mocked(shopifyProvisioner.upsert).mockRejectedValue(new Error('provider failed'));
+
+    await expect(service.installShopifyPixel(storeId)).rejects.toThrow('provider failed');
+
+    expect(repository.recordInstallationError).toHaveBeenCalledWith(
+      installationId,
+      'provider failed',
+    );
+    expect(repository.upsertInstallation).not.toHaveBeenCalled();
   });
 
   it('suppresses denied events and stores only privacy-normalized allowlisted attribution', async () => {
