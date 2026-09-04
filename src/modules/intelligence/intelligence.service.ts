@@ -12,9 +12,15 @@ import {
   inventorySpendConflictRule,
   marginTrapRule,
   paidCommerceMismatchRule,
+  sharedExposureInventoryRule,
   underexposedProductRule,
 } from './intelligence.rules.js';
-import type { DataQualityEvidence, RecommendationDraft } from './intelligence.types.js';
+import { buildSharedExposureEvidence } from './shared-exposure.metrics.js';
+import type {
+  DataQualityEvidence,
+  RecommendationDraft,
+  RecommendationLimitation,
+} from './intelligence.types.js';
 
 const DECISION_WINDOW_DAYS = 7;
 const PRODUCT_WINDOW_DAYS = 28;
@@ -29,6 +35,22 @@ function ageHours(value: Date | null | undefined, now: Date): number | null {
 
 function priority(recommendation: RecommendationDraft): number {
   return recommendation.impactScore * recommendation.confidenceScore * recommendation.urgencyScore;
+}
+
+function evidenceQuality(confidenceScore: number, limitations: RecommendationLimitation[]) {
+  const severe = limitations.some((limitation) =>
+    [
+      'MAPPING_COVERAGE_VERY_LOW',
+      'META_ACCOUNTS_NOT_SELECTED',
+      'META_CONNECTION_BLOCKED',
+      'META_INSIGHTS_MISSING',
+      'META_SYNC_STALE',
+      'SHOPIFY_CONNECTION_BLOCKED',
+    ].includes(limitation.code),
+  );
+  if (!severe && confidenceScore >= 0.82) return 'HIGH' as const;
+  if (confidenceScore >= 0.58) return 'MEDIUM' as const;
+  return 'LOW' as const;
 }
 
 export class IntelligenceService {
@@ -63,6 +85,15 @@ export class IntelligenceService {
       this.repository.getLatestOrderHistorySync(storeId),
       this.repository.getLatestMetaInsightSyncedAt(storeId, selectedMetaAccounts),
     ]);
+
+    const observedAdIds = [
+      ...new Set(
+        metaRows
+          .map((row) => row.ad?.id ?? null)
+          .filter((adId): adId is string => adId !== null),
+      ),
+    ];
+    const sharedTargets = await this.repository.getSharedExposureTargets(storeId, observedAdIds);
 
     const variantIds = [
       ...new Set(
@@ -102,6 +133,14 @@ export class IntelligenceService {
       inventoryTrusted: store.inventoryIntelligenceMode === 'TRUSTED',
       windowDays: PRODUCT_WINDOW_DAYS,
     });
+    const sharedExposure = buildSharedExposureEvidence({
+      targets: sharedTargets,
+      metaRows,
+      commerceRows,
+      inventoryRows,
+      inventoryTrusted: store.inventoryIntelligenceMode === 'TRUSTED',
+      windowDays: PRODUCT_WINDOW_DAYS,
+    });
 
     const recommendations: RecommendationDraft[] = [];
     for (const campaign of campaigns) {
@@ -126,6 +165,10 @@ export class IntelligenceService {
       ];
       for (const result of results) if (result) recommendations.push(result);
     }
+    for (const exposure of sharedExposure) {
+      const result = sharedExposureInventoryRule(exposure, productRuleWindow);
+      if (result) recommendations.push(result);
+    }
 
     const latestMetaSyncedAt = latestMetaInsightSync?.syncedAt ?? null;
     const dataQuality = this.buildDataQuality({
@@ -136,6 +179,7 @@ export class IntelligenceService {
       productResult,
       now,
     });
+    const contextualRecommendations = this.applyDataQualityContext(recommendations, dataQuality);
 
     return {
       evaluatedAt: now,
@@ -148,13 +192,14 @@ export class IntelligenceService {
         campaigns: campaigns.length,
         creatives: creatives.length,
         products: productResult.products.length,
+        sharedExposures: sharedExposure.length,
         metaRows: metaRows.length,
         commerceRows: commerceRows.length,
         shopifyCommerceUsable,
         mappingCoverage: productResult.mappingCoverage,
         costCoverage: this.overallCostCoverage(productResult.products),
       },
-      recommendations: recommendations
+      recommendations: contextualRecommendations
         .map((recommendation) => ({ ...recommendation, priority: priority(recommendation) }))
         .sort((left, right) => right.priority - left.priority),
       dataQuality,
@@ -171,6 +216,57 @@ export class IntelligenceService {
     const settings = await this.repository.getSettings(storeId);
     if (!settings) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
     return this.repository.updateInventoryMode(storeId, mode);
+  }
+
+  private applyDataQualityContext(
+    recommendations: RecommendationDraft[],
+    dataQuality: DataQualityEvidence[],
+  ): RecommendationDraft[] {
+    const warningByCode = new Map(
+      dataQuality
+        .filter((item) => item.status !== 'HEALTHY')
+        .map((item) => [item.code, item] as const),
+    );
+
+    return recommendations.map((recommendation) => {
+      const additions: RecommendationLimitation[] = [];
+      const add = (code: string) => {
+        const warning = warningByCode.get(code);
+        if (!warning || recommendation.limitations.some((item) => item.code === code)) return;
+        additions.push({ code, message: warning.message });
+      };
+
+      add('META_CONNECTION_BLOCKED');
+      add('META_ACCOUNTS_NOT_SELECTED');
+      add('META_INSIGHTS_MISSING');
+      add('META_SYNC_STALE');
+
+      const usesShopify = recommendation.attributionPrecision !== 'META_PROVIDER';
+      if (usesShopify) {
+        add('SHOPIFY_CONNECTION_BLOCKED');
+        add('SHOPIFY_HISTORY_LIMITED');
+        add('SHOPIFY_SYNC_STALE');
+      }
+
+      if (recommendation.attributionPrecision === 'EXACT_PRODUCT') {
+        add('PRODUCT_AD_MAPPING_LOW');
+        add('META_CURRENCY_MISMATCH');
+      }
+
+      if (additions.length === 0) return recommendation;
+
+      const limitations = [...recommendation.limitations, ...additions];
+      const confidenceScore = Math.max(
+        0,
+        Math.min(1, recommendation.confidenceScore * 0.92 ** additions.length),
+      );
+      return {
+        ...recommendation,
+        confidenceScore,
+        evidenceQuality: evidenceQuality(confidenceScore, limitations),
+        limitations,
+      };
+    });
   }
 
   private overallCostCoverage(products: Array<{ units: number; costCoverage: number }>): number {
@@ -264,10 +360,10 @@ export class IntelligenceService {
         code: 'PRODUCT_AD_MAPPING_LOW',
         status: 'WARNING',
         surface: 'CROSS_CHANNEL_PRODUCT_ADS',
-        message: 'Product × Ads mapping coverage is too low for broad cross-channel conclusions.',
+        message: 'Product × Ads mapping coverage is partial; broad cross-channel comparisons may be incomplete.',
         metrics: {
           mappingCoverage: input.productResult.mappingCoverage,
-          requiredCoverage: MIN_MAPPING_COVERAGE,
+          referenceCoverage: MIN_MAPPING_COVERAGE,
         },
       });
     }

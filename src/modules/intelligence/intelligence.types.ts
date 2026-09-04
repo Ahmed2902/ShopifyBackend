@@ -61,6 +61,39 @@ export interface ProductEvidence {
   daysCover: number | null;
 }
 
+export interface SharedExposureProductEvidence {
+  entityId: string;
+  externalEntityId: string;
+  name: string;
+  stockAvailable: number | null;
+  recentUnitsPerDay: number | null;
+  daysCover: number | null;
+}
+
+export interface SharedExposureEvidence {
+  entityId: string;
+  externalEntityId: string;
+  name: string;
+  currency: string;
+  scope: 'MULTI_PRODUCT' | 'COLLECTION';
+  scopeConfidence: number;
+  merchantConfirmed: boolean;
+  sharedAdSpend: number;
+  impressions: number;
+  inventoryTrusted: boolean;
+  products: SharedExposureProductEvidence[];
+  collectionMembershipTruncated: boolean;
+  collections: Array<{
+    id: string;
+    shopifyCollectionId: string;
+    title: string;
+    handle: string | null;
+    productCount: number;
+    evaluatedProductCount: number;
+    membershipTruncated: boolean;
+  }>;
+}
+
 export type RecommendationCategory =
   | 'CAMPAIGN_EFFICIENCY'
   | 'CREATIVE_FATIGUE'
@@ -79,6 +112,20 @@ export type RecommendationEntityType =
   | 'VARIANT'
   | 'COLLECTION';
 
+export type RecommendationEvidenceQuality = 'HIGH' | 'MEDIUM' | 'LOW';
+export type RecommendationAttributionPrecision =
+  | 'META_PROVIDER'
+  | 'EXACT_PRODUCT'
+  | 'SHARED_MULTI_PRODUCT'
+  | 'COLLECTION'
+  | 'STORE'
+  | 'UNKNOWN';
+
+export interface RecommendationLimitation {
+  code: string;
+  message: string;
+}
+
 export interface RecommendationDraft {
   ruleId: string;
   ruleVersion: string;
@@ -93,6 +140,9 @@ export interface RecommendationDraft {
   impactScore: number;
   confidenceScore: number;
   urgencyScore: number;
+  evidenceQuality: RecommendationEvidenceQuality;
+  attributionPrecision: RecommendationAttributionPrecision;
+  limitations: RecommendationLimitation[];
   observationStart: Date;
   observationEnd: Date;
   comparisonStart: Date | null;

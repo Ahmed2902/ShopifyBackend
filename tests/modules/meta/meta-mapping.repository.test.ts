@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { prisma } from '../../../src/lib/prisma.js';
+import { MetaCollectionMappingRepository } from '../../../src/modules/meta/mapping/meta-collection-mapping.repository.js';
 import { MetaMappingRepository } from '../../../src/modules/meta/mapping/meta-mapping.repository.js';
 import type { AdResolution } from '../../../src/modules/meta/mapping/meta-mapping.types.js';
 
@@ -105,6 +106,7 @@ async function cleanupStore(storeId: string) {
 
   await prisma.$transaction([
     prisma.adProductMapping.deleteMany({ where: { metaAdId: { in: adIds } } }),
+    prisma.adCollectionMapping.deleteMany({ where: { metaAdId: { in: adIds } } }),
     prisma.catalogItemVariantMapping.deleteMany({ where: { variantId: { in: variantIds } } }),
     prisma.metaInsightAction.deleteMany({
       where: { insight: { adAccountId: { in: accountIds } } },
@@ -214,5 +216,45 @@ describeDatabase('MetaMappingRepository', () => {
     const ad = await prisma.metaAd.findUnique({ where: { id: fixture.ad.id } });
     expect(ad).toMatchObject({ targetScope: 'VARIANT' });
     expect(Number(ad?.targetScopeConfidence)).toBe(1);
+  });
+
+  it('releases merchant-confirmed variant precedence after the Shopify variant is deleted', async () => {
+    const fixture = await createFixture();
+    const repository = new MetaCollectionMappingRepository();
+
+    await repository.replaceManualProductMappings(fixture.store.id, fixture.ad.metaAdId, [
+      {
+        productId: fixture.product.id,
+        variantId: fixture.variant.id,
+        granularity: 'VARIANT',
+      },
+    ]);
+    await prisma.productVariant.update({
+      where: { id: fixture.variant.id },
+      data: { deletedAt: new Date('2026-09-04T11:20:00.000Z') },
+    });
+
+    const automatic: AdResolution = {
+      scope: 'UNKNOWN',
+      confidence: 0,
+      mappings: [],
+      evidence: { reason: 'no_current_deterministic_target' },
+      suggestions: [],
+    };
+    const result = await repository.applyAutomaticAdResolution({
+      adId: fixture.ad.id,
+      resolution: automatic,
+      collection: null,
+      landingUrl: null,
+    });
+
+    expect(result).toMatchObject({ state: 'UNKNOWN', scope: 'UNKNOWN', changed: true });
+    await expect(
+      prisma.adProductMapping.findMany({
+        where: { metaAdId: fixture.ad.id, validUntil: null },
+      }),
+    ).resolves.toEqual([]);
+    const ad = await prisma.metaAd.findUnique({ where: { id: fixture.ad.id } });
+    expect(ad).toMatchObject({ targetScope: 'UNKNOWN' });
   });
 });

@@ -1,13 +1,15 @@
 import { AppError } from '../../../errors/app-error.js';
 import { integrationService, type IntegrationService } from '../../integrations/integration.service.js';
+import { MetaCollectionMappingRepository } from './meta-collection-mapping.repository.js';
 import { deriveScopeFromMappings, resolveAd, resolveCatalogItem } from './meta-mapping.resolver.js';
 import {
   MetaMappingRepository,
   type ManualAdMappingInput,
 } from './meta-mapping.repository.js';
-import type { MappingDataset } from './meta-mapping.types.js';
+import type { AdResolution, MappingDataset } from './meta-mapping.types.js';
 
 const MAPPING_RESOURCE = 'ShopifyMappings';
+const COLLECTION_PATH = /(?:^|\/)collections\/([^/?#]+)/i;
 const SCOPE_COUNTER = {
   VARIANT: 'variant',
   PRODUCT_OPTION: 'productOption',
@@ -18,14 +20,45 @@ const SCOPE_COUNTER = {
   UNKNOWN: 'unknown',
 } as const;
 
+function collectionHandle(resolution: AdResolution): string | null {
+  if (resolution.scope !== 'COLLECTION') return null;
+  const raw = resolution.evidence.landingUrl;
+  if (typeof raw !== 'string') return null;
+  try {
+    const url = new URL(raw);
+    const match = url.pathname.match(COLLECTION_PATH);
+    return match?.[1] ? decodeURIComponent(match[1]).toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
 export class MetaMappingService {
   constructor(
     private readonly repository: MetaMappingRepository,
     private readonly integrationService: IntegrationService,
+    private readonly collectionRepository: MetaCollectionMappingRepository =
+      new MetaCollectionMappingRepository(),
   ) {}
 
   async resolveStoreMappings(storeId: string) {
     const dataset = await this.requireDataset(storeId);
+    const [collections, activeCollectionMappings] = await Promise.all([
+      this.collectionRepository.getStoreCollections(storeId),
+      this.collectionRepository.getActiveForAds(dataset.ads.map((ad) => ad.id)),
+    ]);
+    const collectionByHandle = new Map(
+      collections
+        .filter((collection) => collection.handle)
+        .map((collection) => [collection.handle!.toLowerCase(), collection] as const),
+    );
+    const collectionMappingsByAd = new Map<string, typeof activeCollectionMappings>();
+    for (const mapping of activeCollectionMappings) {
+      const values = collectionMappingsByAd.get(mapping.metaAdId) ?? [];
+      values.push(mapping);
+      collectionMappingsByAd.set(mapping.metaAdId, values);
+    }
+
     const syncRun = await this.integrationService.startSyncRun({
       provider: 'META',
       connectionId: dataset.connectionId,
@@ -83,14 +116,46 @@ export class MetaMappingService {
       };
 
       for (const ad of dataset.ads) {
+        const confirmedCollections = (collectionMappingsByAd.get(ad.id) ?? []).filter(
+          (mapping) => mapping.isMerchantConfirmed,
+        );
+        if (confirmedCollections.length > 0) {
+          const resolution: AdResolution = {
+            scope: 'COLLECTION',
+            confidence: 1,
+            mappings: [],
+            evidence: {
+              source: 'merchant_confirmation',
+              collectionIds: confirmedCollections.map((mapping) => mapping.collectionId),
+              mappingIds: confirmedCollections.map((mapping) => mapping.id),
+            },
+            suggestions: [],
+          };
+          const applied = await this.collectionRepository.applyAutomaticAdResolution({
+            adId: ad.id,
+            resolution,
+            collection: null,
+            landingUrl: null,
+          });
+          if (applied.changed) ads.changed += 1;
+          ads.preservedConfirmed += 1;
+          ads.collection += 1;
+          continue;
+        }
+
         const confirmed = ad.activeMappings.filter((mapping) => mapping.isMerchantConfirmed);
         if (confirmed.length > 0) {
-          const applied = await this.repository.applyAutomaticAdResolution(ad.id, {
-            scope: 'UNKNOWN',
-            confidence: 0,
-            mappings: [],
-            evidence: { reason: 'merchant_confirmed_mapping_preserved' },
-            suggestions: [],
+          const applied = await this.collectionRepository.applyAutomaticAdResolution({
+            adId: ad.id,
+            resolution: {
+              scope: 'UNKNOWN',
+              confidence: 0,
+              mappings: [],
+              evidence: { reason: 'merchant_confirmed_mapping_preserved' },
+              suggestions: [],
+            },
+            collection: null,
+            landingUrl: null,
           });
           if (applied.changed) ads.changed += 1;
           ads.preservedConfirmed += 1;
@@ -98,8 +163,39 @@ export class MetaMappingService {
           continue;
         }
 
-        const resolution = resolveAd(ad, dataset);
-        const applied = await this.repository.applyAutomaticAdResolution(ad.id, resolution);
+        let resolution = resolveAd(ad, dataset);
+        let linkedCollection = null as (typeof collections)[number] | null;
+        let landingUrl: string | null = null;
+        if (resolution.scope === 'COLLECTION') {
+          landingUrl =
+            typeof resolution.evidence.landingUrl === 'string'
+              ? resolution.evidence.landingUrl
+              : null;
+          const handle = collectionHandle(resolution);
+          linkedCollection = handle ? (collectionByHandle.get(handle) ?? null) : null;
+          resolution = {
+            ...resolution,
+            evidence: {
+              ...resolution.evidence,
+              collectionLinkage: linkedCollection ? 'LINKED' : 'UNRESOLVED',
+              collection: linkedCollection
+                ? {
+                    id: linkedCollection.id,
+                    shopifyCollectionId: linkedCollection.shopifyCollectionId,
+                    title: linkedCollection.title,
+                    handle: linkedCollection.handle,
+                  }
+                : null,
+            },
+          };
+        }
+
+        const applied = await this.collectionRepository.applyAutomaticAdResolution({
+          adId: ad.id,
+          resolution,
+          collection: linkedCollection,
+          landingUrl,
+        });
         if (applied.changed) ads.changed += 1;
         ads[SCOPE_COUNTER[resolution.scope]] += 1;
         if (resolution.scope === 'UNKNOWN' && resolution.suggestions.length > 0) ads.needsReview += 1;
@@ -132,6 +228,17 @@ export class MetaMappingService {
 
   async listAdMappings(storeId: string, page: number, limit: number) {
     const result = await this.repository.listAdMappings(storeId, page, limit);
+    const collectionMappings = await this.collectionRepository.getActiveForExternalAds(
+      storeId,
+      result.items.map((ad) => ad.metaAdId),
+    );
+    const byExternalAd = new Map<string, typeof collectionMappings>();
+    for (const mapping of collectionMappings) {
+      const values = byExternalAd.get(mapping.ad.metaAdId) ?? [];
+      values.push(mapping);
+      byExternalAd.set(mapping.ad.metaAdId, values);
+    }
+
     return {
       ...result,
       page,
@@ -144,18 +251,41 @@ export class MetaMappingService {
           ...mapping,
           confidence: Number(mapping.confidence),
         })),
+        collectionMappings: (byExternalAd.get(ad.metaAdId) ?? []).map(({ ad: _ad, ...mapping }) => ({
+          ...mapping,
+          confidence: Number(mapping.confidence),
+        })),
       })),
     };
   }
 
-  mappingSummary(storeId: string) {
-    return this.repository.mappingSummary(storeId);
+  async mappingSummary(storeId: string) {
+    const [summary, confirmedCollections] = await Promise.all([
+      this.repository.mappingSummary(storeId),
+      this.collectionRepository.countConfirmedForStore(storeId),
+    ]);
+    return {
+      ...summary,
+      merchantConfirmedCollectionMappings: confirmedCollections,
+    };
   }
 
   async suggestions(storeId: string, metaAdId: string) {
     const dataset = await this.requireDataset(storeId);
     const ad = dataset.ads.find((candidate) => candidate.metaAdId === metaAdId);
     if (!ad) throw new AppError('Meta ad was not found', 404, 'META_AD_NOT_FOUND');
+    const activeCollections = await this.collectionRepository.getActiveForAds([ad.id]);
+    const confirmedCollections = activeCollections.filter((mapping) => mapping.isMerchantConfirmed);
+    if (confirmedCollections.length > 0) {
+      return {
+        metaAdId,
+        currentScope: 'COLLECTION' as const,
+        merchantConfirmed: true,
+        collections: confirmedCollections.map((mapping) => mapping.collection),
+        suggestions: [],
+      };
+    }
+
     const confirmed = ad.activeMappings.filter((mapping) => mapping.isMerchantConfirmed);
     if (confirmed.length > 0) {
       return {
@@ -165,7 +295,24 @@ export class MetaMappingService {
         suggestions: [],
       };
     }
-    const resolution = resolveAd(ad, dataset);
+
+    let resolution = resolveAd(ad, dataset);
+    if (resolution.scope === 'COLLECTION') {
+      const collections = await this.collectionRepository.getStoreCollections(storeId);
+      const handle = collectionHandle(resolution);
+      const linked = handle
+        ? collections.find((collection) => collection.handle?.toLowerCase() === handle) ?? null
+        : null;
+      resolution = {
+        ...resolution,
+        evidence: {
+          ...resolution.evidence,
+          collectionLinkage: linked ? 'LINKED' : 'UNRESOLVED',
+          collection: linked,
+        },
+      };
+    }
+
     return {
       metaAdId,
       currentScope: resolution.scope,
@@ -183,11 +330,23 @@ export class MetaMappingService {
     mappings: ManualAdMappingInput[],
   ) {
     await this.requireSelectedAd(storeId, metaAdId);
-    return this.repository.replaceManualAdMappings(storeId, metaAdId, mappings);
+    await this.repository.validateManualAdMappings(storeId, mappings);
+    return this.collectionRepository.replaceManualProductMappings(storeId, metaAdId, mappings);
+  }
+
+  async replaceManualCollectionMappings(
+    storeId: string,
+    metaAdId: string,
+    collectionIds: string[],
+  ) {
+    await this.requireSelectedAd(storeId, metaAdId);
+    return this.collectionRepository.replaceManualMappings(storeId, metaAdId, collectionIds);
   }
 
   async confirmCurrentAdMappings(storeId: string, metaAdId: string) {
     await this.requireSelectedAd(storeId, metaAdId);
+    const collection = await this.collectionRepository.confirmCurrentMappings(storeId, metaAdId);
+    if (collection) return collection;
     return this.repository.confirmCurrentAdMappings(storeId, metaAdId);
   }
 
@@ -212,4 +371,5 @@ export class MetaMappingService {
 export const metaMappingService = new MetaMappingService(
   new MetaMappingRepository(),
   integrationService,
+  new MetaCollectionMappingRepository(),
 );

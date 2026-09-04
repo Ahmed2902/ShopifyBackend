@@ -47,9 +47,29 @@ const manualMappingSchema = z
     }
   });
 
-export const metaManualAdMappingsSchema = z.object({
-  mappings: z.array(manualMappingSchema).min(1).max(20),
-});
+const manualProductTargetSchema = z
+  .object({
+    mappings: z.array(manualMappingSchema).min(1).max(20),
+  })
+  .strict();
+
+const manualCollectionTargetSchema = z
+  .object({
+    collectionIds: z
+      .array(z.string().uuid())
+      .min(1)
+      .max(20)
+      .refine((values) => new Set(values).size === values.length, 'collectionIds must be unique'),
+  })
+  .strict();
+
+export const metaManualAdTargetSchema = z.union([
+  manualProductTargetSchema,
+  manualCollectionTargetSchema,
+]);
+
+// Compatibility export for callers/tests that still validate product-only bodies directly.
+export const metaManualAdMappingsSchema = manualProductTargetSchema;
 
 export const metaManualCatalogMappingSchema = z.object({
   variantIds: z

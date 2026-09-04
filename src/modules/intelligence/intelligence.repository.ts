@@ -1,5 +1,7 @@
 import { prisma } from '../../lib/prisma.js';
 
+const SHARED_COLLECTION_MEMBER_LIMIT = 50;
+
 function demandDateWhere(from: Date, to: Date) {
   return {
     OR: [
@@ -188,6 +190,83 @@ export class IntelligenceRepository {
           select: { id: true, shopifyProductId: true, title: true },
         },
       },
+    });
+  }
+
+  async getSharedExposureTargets(storeId: string, adIds: string[]) {
+    const uniqueAdIds = [...new Set(adIds)];
+    if (uniqueAdIds.length === 0) return [];
+    const connection = await prisma.metaConnection.findUnique({
+      where: { storeId },
+      select: { selectedAdAccountIds: true },
+    });
+    const selectedAccountIds = connection?.selectedAdAccountIds ?? [];
+    if (selectedAccountIds.length === 0) return [];
+
+    return prisma.metaAd.findMany({
+      where: {
+        id: { in: uniqueAdIds },
+        deletedAt: null,
+        targetScope: { in: ['MULTI_PRODUCT', 'COLLECTION'] },
+        adAccount: { storeId, metaAccountId: { in: selectedAccountIds } },
+      },
+      select: {
+        id: true,
+        metaAdId: true,
+        name: true,
+        targetScope: true,
+        targetScopeConfidence: true,
+        adAccount: { select: { currency: true } },
+        productMappings: {
+          where: { validUntil: null },
+          select: {
+            productId: true,
+            confidence: true,
+            isMerchantConfirmed: true,
+            product: {
+              select: {
+                id: true,
+                shopifyProductId: true,
+                title: true,
+                deletedAt: true,
+              },
+            },
+          },
+        },
+        collectionMappings: {
+          where: { validUntil: null, collection: { deletedAt: null } },
+          select: {
+            confidence: true,
+            isMerchantConfirmed: true,
+            collection: {
+              select: {
+                id: true,
+                shopifyCollectionId: true,
+                title: true,
+                handle: true,
+                deletedAt: true,
+                _count: { select: { products: true } },
+                products: {
+                  where: { product: { deletedAt: null } },
+                  take: SHARED_COLLECTION_MEMBER_LIMIT,
+                  orderBy: [{ position: 'asc' }, { productId: 'asc' }],
+                  select: {
+                    product: {
+                      select: {
+                        id: true,
+                        shopifyProductId: true,
+                        title: true,
+                        deletedAt: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ metaUpdatedAt: 'desc' }, { name: 'asc' }],
     });
   }
 

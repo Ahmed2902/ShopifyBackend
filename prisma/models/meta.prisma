@@ -234,12 +234,13 @@ model MetaAd {
   createdAt             DateTime          @default(now())
   updatedAt             DateTime          @updatedAt
 
-  adAccount       MetaAdAccount       @relation(fields: [adAccountId], references: [id], onDelete: Restrict)
-  campaign        MetaCampaign        @relation(fields: [campaignId], references: [id], onDelete: Restrict)
-  adSet           MetaAdSet           @relation(fields: [adSetId], references: [id], onDelete: Restrict)
-  creative        MetaCreative?       @relation(fields: [creativeId], references: [id], onDelete: SetNull)
-  insights        MetaInsightDaily[]
-  productMappings AdProductMapping[]
+  adAccount          MetaAdAccount          @relation(fields: [adAccountId], references: [id], onDelete: Restrict)
+  campaign           MetaCampaign           @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  adSet              MetaAdSet              @relation(fields: [adSetId], references: [id], onDelete: Restrict)
+  creative           MetaCreative?          @relation(fields: [creativeId], references: [id], onDelete: SetNull)
+  insights           MetaInsightDaily[]
+  productMappings    AdProductMapping[]
+  collectionMappings AdCollectionMapping[]
 
   @@unique([adAccountId, metaAdId])
   @@index([adSetId, effectiveStatus])
@@ -359,6 +360,28 @@ model AdProductMapping {
   @@index([variantId, validUntil])
   @@index([catalogItemId, validUntil])
   @@index([granularity, source, confidence])
+}
+
+model AdCollectionMapping {
+  id                  String                 @id @default(uuid()) @db.Uuid
+  metaAdId            String                 @db.Uuid
+  collectionId        String                 @db.Uuid
+  source              AdProductMappingSource
+  confidence          Decimal                @db.Decimal(5, 4)
+  evidenceJson        Json?
+  landingUrl          String?
+  isMerchantConfirmed Boolean                @default(false)
+  validFrom           DateTime               @default(now())
+  validUntil          DateTime?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  ad         MetaAd      @relation(fields: [metaAdId], references: [id], onDelete: Restrict)
+  collection Collection  @relation(fields: [collectionId], references: [id], onDelete: Restrict)
+
+  @@index([metaAdId, validUntil])
+  @@index([collectionId, validUntil])
+  @@index([source, confidence])
 }
 
 model MetaInsightDaily {
