@@ -53,7 +53,17 @@ function safeUrl(value) {
     const attribution = {};
     for (const [queryKey, outputKey] of ATTRIBUTION_KEYS) {
       const queryValue = parsed.searchParams.get(queryKey)?.trim();
-      if (queryValue) attribution[outputKey] = queryValue.slice(0, 512);
+      if (!queryValue) continue;
+
+      if (outputKey.endsWith('ExternalId')) {
+        if (queryValue.length <= 128 && /^\d+$/.test(queryValue)) {
+          attribution[outputKey] = queryValue;
+        }
+        continue;
+      }
+
+      const maxLength = outputKey.endsWith('ClickId') ? 512 : 255;
+      attribution[outputKey] = queryValue.slice(0, maxLength);
     }
 
     parsed.username = '';
