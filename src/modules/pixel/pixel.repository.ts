@@ -69,6 +69,14 @@ export class PixelRepository {
     });
   }
 
+  recordInstallationError(id: string, lastError: string) {
+    return prisma.pixelInstallation.update({
+      where: { id },
+      data: { lastError },
+      select: { id: true, status: true },
+    });
+  }
+
   async insertEvents(storeId: string, events: StoreScopedEventInput[]) {
     if (events.length === 0) return 0;
 
