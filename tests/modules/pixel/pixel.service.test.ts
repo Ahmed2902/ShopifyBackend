@@ -121,7 +121,7 @@ describe('PixelService', () => {
           eventAt: '2026-09-04T11:59:00.000Z',
           consentState: 'GRANTED',
           pageUrl:
-            'https://shop.example/products/shirt?utm_source=meta&fbclid=click-1&email=private@example.com#details',
+            'https://shop.example/products/shirt?utm_source=meta&fbclid=click-1&stride_meta_campaign_id=1001&stride_meta_adset_id=2002&stride_meta_ad_id=3003&email=private@example.com#details',
           landingPageUrl:
             'https://shop.example/?utm_campaign=launch&utm_medium=paid-social&secret=do-not-store',
         },
@@ -154,6 +154,9 @@ describe('PixelService', () => {
       utmMedium: 'paid-social',
       utmCampaign: 'launch',
       metaClickId: 'click-1',
+      metaCampaignExternalId: '1001',
+      metaAdSetExternalId: '2002',
+      metaAdExternalId: '3003',
       retentionExpiresAt: new Date('2026-12-03T12:00:00.000Z'),
     });
     expect(JSON.stringify(events[0])).not.toContain('private@example.com');
@@ -162,6 +165,42 @@ describe('PixelService', () => {
       installationId,
       new Date('2026-09-04T11:59:00.000Z'),
     );
+  });
+
+  it('ignores unresolved or non-numeric Meta IDs extracted from URLs', async () => {
+    const collectorToken = 'E'.repeat(43);
+    const { repository, service } = buildService({
+      installation: {
+        id: installationId,
+        storeId,
+        collectorTokenHash: tokenHash(collectorToken),
+        status: 'ACTIVE',
+      },
+      inserted: 1,
+    });
+
+    const batch = pixelIngestBatchSchema.parse({
+      installationId,
+      collectorToken,
+      events: [
+        {
+          eventId: 'event_unresolved',
+          eventName: 'PAGE_VIEW',
+          eventAt: '2026-09-04T11:59:00.000Z',
+          consentState: 'GRANTED',
+          pageUrl:
+            'https://shop.example/?stride_meta_campaign_id=%7B%7Bcampaign.id%7D%7D&stride_meta_ad_id=not-an-id',
+        },
+      ],
+    });
+
+    await service.ingest(batch);
+    const [, events] = vi.mocked(repository.insertEvents).mock.calls[0]!;
+    expect(events[0]).toMatchObject({
+      metaCampaignExternalId: null,
+      metaAdSetExternalId: null,
+      metaAdExternalId: null,
+    });
   });
 
   it('reports durable duplicate outcomes from createMany skipDuplicates', async () => {
