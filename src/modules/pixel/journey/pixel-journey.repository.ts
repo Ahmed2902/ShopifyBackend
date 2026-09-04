@@ -350,18 +350,21 @@ export class PixelJourneyRepository {
     });
   }
 
-  findDisplayEntities(input: {
-    orderIds: string[];
-    metaAdIds: string[];
-    productIds: string[];
-    variantIds: string[];
-    collectionIds: string[];
-  }) {
+  findDisplayEntities(
+    storeId: string,
+    input: {
+      orderIds: string[];
+      metaAdIds: string[];
+      productIds: string[];
+      variantIds: string[];
+      collectionIds: string[];
+    },
+  ) {
     return Promise.all([
       input.orderIds.length === 0
         ? Promise.resolve([])
         : prisma.order.findMany({
-            where: { id: { in: input.orderIds } },
+            where: { storeId, id: { in: input.orderIds } },
             select: {
               id: true,
               shopifyOrderId: true,
@@ -376,7 +379,7 @@ export class PixelJourneyRepository {
       input.metaAdIds.length === 0
         ? Promise.resolve([])
         : prisma.metaAd.findMany({
-            where: { id: { in: input.metaAdIds } },
+            where: { id: { in: input.metaAdIds }, adAccount: { storeId } },
             select: {
               id: true,
               metaAdId: true,
@@ -389,19 +392,19 @@ export class PixelJourneyRepository {
       input.productIds.length === 0
         ? Promise.resolve([])
         : prisma.product.findMany({
-            where: { id: { in: input.productIds } },
+            where: { storeId, id: { in: input.productIds } },
             select: { id: true, shopifyProductId: true, title: true, handle: true },
           }),
       input.variantIds.length === 0
         ? Promise.resolve([])
         : prisma.productVariant.findMany({
-            where: { id: { in: input.variantIds } },
+            where: { storeId, id: { in: input.variantIds } },
             select: { id: true, shopifyVariantId: true, title: true, sku: true, productId: true },
           }),
       input.collectionIds.length === 0
         ? Promise.resolve([])
         : prisma.collection.findMany({
-            where: { id: { in: input.collectionIds } },
+            where: { storeId, id: { in: input.collectionIds } },
             select: { id: true, shopifyCollectionId: true, title: true, handle: true },
           }),
     ]);
