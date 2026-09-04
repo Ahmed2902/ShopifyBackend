@@ -21,6 +21,18 @@ export const STOREFRONT_CONSENT_STATES = [
 
 export type StorefrontConsentState = (typeof STOREFRONT_CONSENT_STATES)[number];
 
+export const STOREFRONT_JOURNEY_SOURCES = [
+  'META',
+  'GOOGLE',
+  'TIKTOK',
+  'UTM',
+  'REFERRER',
+  'DIRECT',
+  'UNKNOWN',
+] as const;
+
+export type StorefrontJourneySource = (typeof STOREFRONT_JOURNEY_SOURCES)[number];
+
 export const PIXEL_EVENT_VERSION = 1 as const;
 export const PIXEL_DEFAULT_RETENTION_DAYS = 90;
 export const PIXEL_MAX_RETENTION_DAYS = 365;
