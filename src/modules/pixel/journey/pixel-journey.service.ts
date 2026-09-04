@@ -1,4 +1,5 @@
 import { AppError } from '../../../errors/app-error.js';
+import type { StorefrontJourneySource } from '../pixel.types.js';
 import {
   PixelJourneyRepository,
   type SessionCollectionInput,
@@ -17,8 +18,6 @@ type JourneyEvent = Awaited<
 type JourneySession = NonNullable<
   Awaited<ReturnType<PixelJourneyRepository['getSession']>>
 >;
-type ResolutionStatus = 'NONE' | 'EXACT' | 'PARTIAL' | 'UNRESOLVED' | 'CONFLICT';
-type JourneySource = 'META' | 'GOOGLE' | 'TIKTOK' | 'UTM' | 'REFERRER' | 'DIRECT' | 'UNKNOWN';
 
 function nonEmpty(values: Array<string | null>): string[] {
   return values.filter((value): value is string => Boolean(value));
@@ -36,7 +35,7 @@ function minDate(values: Date[]): Date {
   return values.reduce((earliest, value) => (value < earliest ? value : earliest));
 }
 
-function sourceFor(event: JourneyEvent): JourneySource {
+function sourceFor(event: JourneyEvent): StorefrontJourneySource {
   if (event.metaAdExternalId || event.metaAdSetExternalId || event.metaCampaignExternalId || event.metaClickId) {
     return 'META';
   }
@@ -315,7 +314,7 @@ export class PixelJourneyService {
     input: {
       from?: Date;
       to?: Date;
-      source?: JourneySource;
+      source?: StorefrontJourneySource;
       metaAdExternalId?: string;
       productExternalId?: string;
       checkoutCompleted?: boolean;
@@ -325,7 +324,7 @@ export class PixelJourneyService {
   ) {
     const result = await this.repository.listSessions(storeId, input);
     return {
-      items: await this.decorateSessions(result.items),
+      items: await this.decorateSessions(storeId, result.items),
       pagination: { page: input.page, limit: input.limit, total: result.total },
     };
   }
@@ -333,7 +332,7 @@ export class PixelJourneyService {
   async getSession(storeId: string, sessionId: string) {
     const session = await this.repository.getSession(storeId, sessionId);
     if (!session) throw new AppError('Storefront session not found', 404, 'PIXEL_SESSION_NOT_FOUND');
-    const [decorated] = await this.decorateSessions([session]);
+    const [decorated] = await this.decorateSessions(storeId, [session]);
     const timeline = await this.repository.getSessionTimeline(storeId, session.browserSessionId);
     return { ...decorated, timeline };
   }
@@ -349,7 +348,7 @@ export class PixelJourneyService {
       sessionCount: sessions.length,
       firstSeenAt: sessions[0]!.startedAt,
       lastSeenAt: sessions.at(-1)!.endedAt,
-      sessions: await this.decorateSessions(sessions),
+      sessions: await this.decorateSessions(storeId, sessions),
       interpretation: 'Observed first-party journey evidence; no causal attribution is implied.',
     };
   }
@@ -469,7 +468,7 @@ export class PixelJourneyService {
     }
   }
 
-  private async decorateSessions<T extends JourneySession>(sessions: T[]) {
+  private async decorateSessions<T extends JourneySession>(storeId: string, sessions: T[]) {
     const orderIds = unique(sessions.map((session) => session.orderId));
     const metaAdIds = unique(
       sessions.flatMap((session) => session.touches.map((touch) => touch.metaAdId)),
@@ -483,13 +482,16 @@ export class PixelJourneyService {
     const collectionIds = unique(
       sessions.flatMap((session) => session.collections.map((collection) => collection.collectionId)),
     );
-    const [orders, ads, products, variants, collections] = await this.repository.findDisplayEntities({
-      orderIds,
-      metaAdIds,
-      productIds,
-      variantIds,
-      collectionIds,
-    });
+    const [orders, ads, products, variants, collections] = await this.repository.findDisplayEntities(
+      storeId,
+      {
+        orderIds,
+        metaAdIds,
+        productIds,
+        variantIds,
+        collectionIds,
+      },
+    );
     const orderMap = new Map(orders.map((row) => [row.id, row]));
     const adMap = new Map(ads.map((row) => [row.id, row]));
     const productMap = new Map(products.map((row) => [row.id, row]));
