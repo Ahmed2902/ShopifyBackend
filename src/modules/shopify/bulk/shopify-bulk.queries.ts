@@ -1,6 +1,6 @@
 export const BULK_OPERATION_RUN_QUERY = `#graphql
   mutation RunBulkQuery($query: String!) {
-    bulkOperationRunQuery(query: $query, groupObjects: false) {
+    bulkOperationRunQuery(query: $query, groupObjects: true) {
       bulkOperation {
         id
         status
