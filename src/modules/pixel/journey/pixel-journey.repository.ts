@@ -1,5 +1,6 @@
 import type { Prisma } from '../../../generated/prisma/client.js';
 import { prisma } from '../../../lib/prisma.js';
+import type { StorefrontJourneySource } from '../pixel.types.js';
 
 export interface SessionAggregateInput {
   anonymousVisitorId: string | null;
@@ -183,11 +184,9 @@ export class PixelJourneyRepository {
         select: { id: true },
       });
 
-      await Promise.all([
-        tx.storefrontSessionTouch.deleteMany({ where: { sessionId: session.id } }),
-        tx.storefrontSessionProduct.deleteMany({ where: { sessionId: session.id } }),
-        tx.storefrontSessionCollection.deleteMany({ where: { sessionId: session.id } }),
-      ]);
+      await tx.storefrontSessionTouch.deleteMany({ where: { sessionId: session.id } });
+      await tx.storefrontSessionProduct.deleteMany({ where: { sessionId: session.id } });
+      await tx.storefrontSessionCollection.deleteMany({ where: { sessionId: session.id } });
 
       if (touches.length > 0) {
         await tx.storefrontSessionTouch.createMany({
@@ -258,7 +257,7 @@ export class PixelJourneyRepository {
     input: {
       from?: Date;
       to?: Date;
-      source?: Prisma.EnumStorefrontJourneySourceFilter['equals'];
+      source?: StorefrontJourneySource;
       metaAdExternalId?: string;
       productExternalId?: string;
       checkoutCompleted?: boolean;
@@ -266,6 +265,11 @@ export class PixelJourneyRepository {
       limit: number;
     },
   ) {
+    const touchFilter: Prisma.StorefrontSessionTouchWhereInput = {
+      ...(input.source ? { source: input.source } : {}),
+      ...(input.metaAdExternalId ? { metaAdExternalId: input.metaAdExternalId } : {}),
+    };
+    const hasTouchFilter = Boolean(input.source || input.metaAdExternalId);
     const where: Prisma.StorefrontSessionWhereInput = {
       storeId,
       ...(input.from || input.to
@@ -276,10 +280,7 @@ export class PixelJourneyRepository {
             },
           }
         : {}),
-      ...(input.source ? { touches: { some: { source: input.source } } } : {}),
-      ...(input.metaAdExternalId
-        ? { touches: { some: { metaAdExternalId: input.metaAdExternalId } } }
-        : {}),
+      ...(hasTouchFilter ? { touches: { some: touchFilter } } : {}),
       ...(input.productExternalId
         ? { products: { some: { shopifyProductExternalId: input.productExternalId } } }
         : {}),
