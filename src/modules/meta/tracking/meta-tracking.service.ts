@@ -39,7 +39,8 @@ function mergeTrackingTags(value: string | null): string {
     .map((part) => part.trim())
     .filter(Boolean)
     .filter((part) => {
-      const key = part.split('=', 1)[0];
+      const separatorIndex = part.indexOf('=');
+      const key = separatorIndex === -1 ? part : part.slice(0, separatorIndex);
       return !Object.prototype.hasOwnProperty.call(TRACKING_VALUES, key);
     });
   return [...preserved, STRIDE_META_TRACKING_TEMPLATE].join('&');
