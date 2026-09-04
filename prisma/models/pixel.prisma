@@ -142,7 +142,6 @@ model StorefrontSession {
   updatedAt                DateTime                  @updatedAt
 
   store       Store                        @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  order       Order?                       @relation(fields: [orderId], references: [id], onDelete: SetNull)
   touches     StorefrontSessionTouch[]
   products    StorefrontSessionProduct[]
   collections StorefrontSessionCollection[]
@@ -156,34 +155,31 @@ model StorefrontSession {
 }
 
 model StorefrontSessionTouch {
-  id                     String                       @id @default(uuid()) @db.Uuid
-  sessionId              String                       @db.Uuid
+  id                     String                     @id @default(uuid()) @db.Uuid
+  sessionId              String                     @db.Uuid
   ordinal                Int
   eventAt                DateTime
   source                 StorefrontJourneySource
-  landingPageUrl         String?                      @db.Text
-  referrerUrl            String?                      @db.Text
-  utmSource              String?                      @db.VarChar(255)
-  utmMedium              String?                      @db.VarChar(255)
-  utmCampaign            String?                      @db.VarChar(255)
-  utmContent             String?                      @db.VarChar(255)
-  utmTerm                String?                      @db.VarChar(255)
-  metaClickId            String?                      @db.VarChar(512)
-  googleClickId          String?                      @db.VarChar(512)
-  tiktokClickId          String?                      @db.VarChar(512)
-  metaCampaignExternalId String?                      @db.VarChar(128)
-  metaAdSetExternalId    String?                      @db.VarChar(128)
-  metaAdExternalId       String?                      @db.VarChar(128)
-  metaCampaignId         String?                      @db.Uuid
-  metaAdSetId            String?                      @db.Uuid
-  metaAdId               String?                      @db.Uuid
-  metaResolutionStatus   StorefrontResolutionStatus   @default(NONE)
-  createdAt              DateTime                     @default(now())
+  landingPageUrl         String?                    @db.Text
+  referrerUrl            String?                    @db.Text
+  utmSource              String?                    @db.VarChar(255)
+  utmMedium              String?                    @db.VarChar(255)
+  utmCampaign            String?                    @db.VarChar(255)
+  utmContent             String?                    @db.VarChar(255)
+  utmTerm                String?                    @db.VarChar(255)
+  metaClickId            String?                    @db.VarChar(512)
+  googleClickId          String?                    @db.VarChar(512)
+  tiktokClickId          String?                    @db.VarChar(512)
+  metaCampaignExternalId String?                    @db.VarChar(128)
+  metaAdSetExternalId    String?                    @db.VarChar(128)
+  metaAdExternalId       String?                    @db.VarChar(128)
+  metaCampaignId         String?                    @db.Uuid
+  metaAdSetId            String?                    @db.Uuid
+  metaAdId               String?                    @db.Uuid
+  metaResolutionStatus   StorefrontResolutionStatus @default(NONE)
+  createdAt              DateTime                   @default(now())
 
-  session      StorefrontSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  metaCampaign MetaCampaign?     @relation(fields: [metaCampaignId], references: [id], onDelete: SetNull)
-  metaAdSet    MetaAdSet?        @relation(fields: [metaAdSetId], references: [id], onDelete: SetNull)
-  metaAd       MetaAd?           @relation(fields: [metaAdId], references: [id], onDelete: SetNull)
+  session StorefrontSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@unique([sessionId, ordinal])
   @@index([metaAdId, eventAt])
@@ -209,8 +205,6 @@ model StorefrontSessionProduct {
   createdAt                DateTime                   @default(now())
 
   session StorefrontSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  product Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
-  variant ProductVariant?   @relation(fields: [variantId], references: [id], onDelete: SetNull)
 
   @@unique([sessionId, identityKey])
   @@index([productId, firstSeenAt])
@@ -228,8 +222,7 @@ model StorefrontSessionCollection {
   lastSeenAt                  DateTime
   createdAt                   DateTime                   @default(now())
 
-  session    StorefrontSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  collection Collection?       @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+  session StorefrontSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@unique([sessionId, shopifyCollectionExternalId])
   @@index([collectionId, firstSeenAt])
