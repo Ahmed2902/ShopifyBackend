@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import type { Prisma } from '../../generated/prisma/client.js';
 import { env } from '../../config/env.js';
 import { AppError } from '../../errors/app-error.js';
+import { pixelJourneyService, type PixelJourneyService } from './journey/pixel-journey.service.js';
 import {
   calculatePixelRetentionExpiresAt,
   extractStorefrontAttribution,
@@ -57,6 +58,7 @@ export class PixelService {
     private readonly repository: PixelRepository = new PixelRepository(),
     private readonly shopifyProvisioner: ShopifyPixelProvisioner = new ShopifyPixelProvisioner(),
     private readonly now: () => Date = () => new Date(),
+    private readonly journeyService: PixelJourneyService = pixelJourneyService,
   ) {}
 
   async installShopifyPixel(storeId: string) {
@@ -159,6 +161,22 @@ export class PixelService {
       await this.repository.touchInstallation(installation.id, latestEventAt);
     }
 
+    const sessionIds = [
+      ...new Set(
+        normalized
+          .map((event) => event.sessionId)
+          .filter((sessionId): sessionId is string => Boolean(sessionId)),
+      ),
+    ];
+    if (sessionIds.length > 0) {
+      // Raw event durability is the collector contract. Session materialization is derived and
+      // repaired by a worker, so a temporary read-model failure must not turn a valid collector
+      // write into an endless browser retry loop.
+      await this.journeyService
+        .materializeSessions(installation.storeId, sessionIds)
+        .catch(() => undefined);
+    }
+
     return {
       received: batch.events.length,
       persisted: inserted,
@@ -210,6 +228,8 @@ export class PixelService {
       variantExternalId: event.variantExternalId ?? null,
       collectionExternalId: event.collectionExternalId ?? null,
       quantity: event.quantity ?? null,
+      shopifyCheckoutToken: event.shopifyCheckoutToken ?? null,
+      shopifyOrderExternalId: event.shopifyOrderExternalId ?? null,
       utmSource: attribution.utmSource ?? null,
       utmMedium: attribution.utmMedium ?? null,
       utmCampaign: attribution.utmCampaign ?? null,
