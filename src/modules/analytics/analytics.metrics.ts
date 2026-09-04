@@ -118,8 +118,16 @@ function selectedPurchaseValue(actions: MetaAction[], kind: 'ACTION' | 'ACTION_V
 
 function selectedPurchaseRoas(actions: MetaAction[]): number | null {
   for (const kind of ['WEBSITE_PURCHASE_ROAS', 'PURCHASE_ROAS'] as const) {
-    const values = actions
-      .filter((action) => action.kind === kind && purchaseRank(action.actionType) < 100)
+    const candidates = actions.filter(
+      (action) => action.kind === kind && purchaseRank(action.actionType) < 100,
+    );
+    if (candidates.length === 0) continue;
+
+    const bestRank = Math.min(...candidates.map((action) => purchaseRank(action.actionType)));
+    const selectedType = candidates.find((action) => purchaseRank(action.actionType) === bestRank)?.actionType;
+    if (!selectedType) continue;
+    const values = candidates
+      .filter((action) => action.actionType === selectedType)
       .map((action) => numeric(action.value))
       .filter((value) => value > 0);
     if (values.length > 0) return Math.max(...values);

@@ -42,24 +42,20 @@ function daily(rows: MetaRow[]) {
     .map(([date, values]) => ({ date, ...aggregateMeta(values) }));
 }
 
-function latestSyncedAt(rows: MetaRow[]): Date | null {
-  return rows.reduce<Date | null>(
-    (latest, row) => (!latest || row.syncedAt > latest ? row.syncedAt : latest),
-    null,
-  );
-}
-
 export class AdvertisingAnalyticsService {
   constructor(private readonly repository: AnalyticsRepository) {}
 
   async overview(store: StoreContext, windows: AnalyticsWindows) {
     const selectedAccounts = store.metaConnection?.selectedAdAccountIds ?? [];
-    const rows = await this.repository.getMetaRows(
-      store.id,
-      selectedAccounts,
-      windows.comparison.metaFrom,
-      windows.current.metaTo,
-    );
+    const [rows, latestInsight] = await Promise.all([
+      this.repository.getMetaRows(
+        store.id,
+        selectedAccounts,
+        windows.comparison.metaFrom,
+        windows.current.metaTo,
+      ),
+      this.repository.getLatestMetaInsightSyncedAt(store.id, selectedAccounts),
+    ]);
     const split = splitMeta(rows, windows);
     const currentByCurrency = groupMetaByCurrency(split.current);
     const comparisonByCurrency = groupMetaByCurrency(split.comparison);
@@ -68,7 +64,7 @@ export class AdvertisingAnalyticsService {
     return {
       window: windowResponse(windows),
       selectedAdAccounts: selectedAccounts.length,
-      lastInsightsSyncedAt: latestSyncedAt(rows),
+      lastInsightsSyncedAt: latestInsight?.syncedAt ?? null,
       attributionSettings: [
         ...new Set(split.current.map((row) => row.attributionSetting).filter(Boolean)),
       ],
@@ -77,26 +73,6 @@ export class AdvertisingAnalyticsService {
         const comparison = aggregateMeta(comparisonByCurrency.get(currency) ?? []);
         return { currency, current, comparison, change: metricChanges(current, comparison) };
       }),
-    };
-  }
-
-  async spendForCurrency(store: StoreContext, windows: AnalyticsWindows, currency: string) {
-    const selectedAccounts = store.metaConnection?.selectedAdAccountIds ?? [];
-    const rows = await this.repository.getMetaRows(
-      store.id,
-      selectedAccounts,
-      windows.comparison.metaFrom,
-      windows.current.metaTo,
-    );
-    const split = splitMeta(rows, windows);
-    return {
-      current: aggregateMeta(split.current.filter((row) => row.accountCurrency === currency)).spend,
-      comparison: aggregateMeta(
-        split.comparison.filter((row) => row.accountCurrency === currency),
-      ).spend,
-      excludedCurrencies: [...new Set(rows.map((row) => row.accountCurrency))].filter(
-        (value) => value !== currency,
-      ),
     };
   }
 

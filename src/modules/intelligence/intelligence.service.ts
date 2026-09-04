@@ -46,13 +46,22 @@ export class IntelligenceService {
       DECISION_WINDOW_DAYS,
     );
     const productWindow = completedWindow(now, store.ianaTimezone, PRODUCT_WINDOW_DAYS);
+    const selectedMetaAccounts = store.metaConnection?.selectedAdAccountIds ?? [];
 
-    const [metaRows, commerceRows, mappings, inventoryRows, orderHistorySync] = await Promise.all([
+    const [
+      metaRows,
+      commerceRows,
+      mappings,
+      inventoryRows,
+      successfulOrderHistorySync,
+      latestMetaInsightSync,
+    ] = await Promise.all([
       this.repository.getMetaEvidenceRows(storeId, productWindow.metaFrom, current.metaTo),
       this.repository.getCommerceRows(storeId, productWindow.instantFrom, productWindow.instantTo),
       this.repository.getActiveProductMappings(storeId),
       this.repository.getInventoryLevels(storeId),
       this.repository.getLatestOrderHistorySync(storeId),
+      this.repository.getLatestMetaInsightSyncedAt(storeId, selectedMetaAccounts),
     ]);
 
     const variantIds = [
@@ -106,7 +115,7 @@ export class IntelligenceService {
 
     const shopifyCommerceUsable =
       store.shopifyConnection?.status === 'ACTIVE' &&
-      (commerceRows.length > 0 || orderHistorySync?.status === 'SUCCEEDED');
+      (commerceRows.length > 0 || successfulOrderHistorySync?.status === 'SUCCEEDED');
     const productRuleWindow = { start: productWindow.metaFrom, end: productWindow.metaTo };
     for (const product of productResult.products) {
       const results = [
@@ -118,10 +127,7 @@ export class IntelligenceService {
       for (const result of results) if (result) recommendations.push(result);
     }
 
-    const latestMetaSyncedAt = metaRows.reduce<Date | null>(
-      (latest, row) => (!latest || row.syncedAt > latest ? row.syncedAt : latest),
-      null,
-    );
+    const latestMetaSyncedAt = latestMetaInsightSync?.syncedAt ?? null;
     const dataQuality = this.buildDataQuality({
       store,
       metaRowsCount: metaRows.length,

@@ -8,12 +8,13 @@ import { windowResponse } from './analytics.shared.js';
 import { CommerceAnalyticsService } from './commerce-analytics.service.js';
 
 type StoreContext = NonNullable<Awaited<ReturnType<AnalyticsRepository['getStoreContext']>>>;
+type OrderHistorySync = NonNullable<StoreContext['shopifyConnection']>['syncRuns'][number];
 
 /**
- * Page-oriented read side for Stride analytics.
+ * Stable analytics read side for Stride.
  *
- * Like Systemly's workspace queries, this composes existing domain facts for a page
- * without creating a second data model or moving mutations out of their owning domains.
+ * Workspaces compose source-domain facts for cross-domain analytical use-cases without
+ * creating a second write model or coupling backend contracts to the current UI layout.
  */
 export class AnalyticsWorkspace {
   private readonly commerce: CommerceAnalyticsService;
@@ -27,11 +28,16 @@ export class AnalyticsWorkspace {
   async overview(storeId: string, query: AnalyticsRangeQuery, now = new Date()) {
     const store = await this.loadStore(storeId);
     const windows = resolveAnalyticsWindows(query, store.ianaTimezone, now);
-    const [commerce, advertising, profitabilityBase] = await Promise.all([
-      this.commerce.summary(store, windows),
-      this.advertisingService.overview(store, windows),
-      this.commerce.profitabilityBase(store, windows),
-    ]);
+    const latestOrderHistoryAttempt = store.shopifyConnection?.syncRuns[0] ?? null;
+    const [commerce, advertising, profitabilityBase, latestSuccessfulOrderHistory] =
+      await Promise.all([
+        this.commerce.summary(store, windows),
+        this.advertisingService.overview(store, windows),
+        this.commerce.profitabilityBase(store, windows),
+        latestOrderHistoryAttempt?.status === 'SUCCEEDED'
+          ? Promise.resolve(latestOrderHistoryAttempt)
+          : this.repository.getLatestSuccessfulOrderHistorySync(storeId),
+      ]);
 
     const storeCurrencyAds = advertising.currencies.find(
       (item) => item.currency === store.currencyCode,
@@ -93,7 +99,11 @@ export class AnalyticsWorkspace {
           metaSpend: percentChange(currentSpend, comparisonSpend),
         },
       },
-      availability: this.availability(store),
+      availability: this.availability(
+        store,
+        advertising.lastInsightsSyncedAt,
+        latestSuccessfulOrderHistory,
+      ),
     };
   }
 
@@ -175,16 +185,44 @@ export class AnalyticsWorkspace {
     };
   }
 
-  private availability(store: StoreContext) {
+  private availability(
+    store: StoreContext,
+    lastInsightsSyncedAt: Date | null,
+    latestSuccessfulOrderHistory: OrderHistorySync | null,
+  ) {
+    const shopify = store.shopifyConnection;
+    const latestOrderHistoryAttempt = shopify?.syncRuns[0] ?? null;
+    const successfulOrderHistory =
+      latestOrderHistoryAttempt?.status === 'SUCCEEDED'
+        ? latestOrderHistoryAttempt
+        : latestSuccessfulOrderHistory;
+    const fullOrderHistoryAuthorized = Boolean(shopify?.scopes.includes('read_all_orders'));
+    const orderHistoryReady = Boolean(successfulOrderHistory);
+
     return {
       shopify: {
-        connected: store.shopifyConnection?.status === 'ACTIVE',
-        fullOrderHistory: Boolean(store.shopifyConnection?.scopes.includes('read_all_orders')),
-        lastSyncedAt: store.shopifyConnection?.lastSyncedAt ?? null,
+        connected: shopify?.status === 'ACTIVE',
+        // Preserve the established keys/meaning: this legacy flag reflects authorization, not proven coverage.
+        lastSyncedAt: shopify?.lastSyncedAt ?? null,
+        lastStoreSyncedAt: shopify?.lastSyncedAt ?? null,
+        fullOrderHistoryAuthorized,
+        fullOrderHistory: fullOrderHistoryAuthorized,
+        orderHistory: {
+          authorization: fullOrderHistoryAuthorized ? 'ALL_ORDERS' : 'RECENT_ORDERS',
+          syncReady: orderHistoryReady,
+          latestAttemptStatus: latestOrderHistoryAttempt?.status ?? null,
+          recordsRead: successfulOrderHistory?.recordsRead ?? 0,
+          recordsWritten: successfulOrderHistory?.recordsWritten ?? 0,
+          finishedAt: successfulOrderHistory?.finishedAt ?? null,
+          // SyncRun does not persist which order-history scope produced a successful run.
+          // Avoid claiming that ALL_ORDERS coverage has been independently verified.
+          fullCoverageVerified: false,
+        },
       },
       meta: {
         connected: store.metaConnection?.status === 'ACTIVE',
         selectedAdAccounts: store.metaConnection?.selectedAdAccountIds.length ?? 0,
+        lastInsightsSyncedAt,
       },
       inventoryMode: store.inventoryIntelligenceMode,
     };

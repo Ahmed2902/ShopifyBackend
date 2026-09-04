@@ -1,7 +1,7 @@
 export interface HistoricalMetrics {
   spend: number;
   impressions: number;
-  reach: number;
+  reach: number | null;
   clicks: number;
   purchases: number;
   purchaseValue: number;

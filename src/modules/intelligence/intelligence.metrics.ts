@@ -17,7 +17,6 @@ type MetaAction = MetaRow['actions'][number];
 interface MetaAccumulator {
   spend: number;
   impressions: number;
-  reach: number;
   clicks: number;
   purchases: number;
   purchaseValue: number;
@@ -51,7 +50,6 @@ function emptyMetaAccumulator(): MetaAccumulator {
   return {
     spend: 0,
     impressions: 0,
-    reach: 0,
     clicks: 0,
     purchases: 0,
     purchaseValue: 0,
@@ -81,8 +79,16 @@ function selectedPurchaseValue(actions: MetaAction[], kind: 'ACTION' | 'ACTION_V
 
 function selectedPurchaseRoas(actions: MetaAction[]): number | null {
   for (const kind of ['WEBSITE_PURCHASE_ROAS', 'PURCHASE_ROAS'] as const) {
-    const values = actions
-      .filter((action) => action.kind === kind && purchaseRank(action.actionType) < 100)
+    const candidates = actions.filter(
+      (action) => action.kind === kind && purchaseRank(action.actionType) < 100,
+    );
+    if (candidates.length === 0) continue;
+
+    const bestRank = Math.min(...candidates.map((action) => purchaseRank(action.actionType)));
+    const selectedType = candidates.find((action) => purchaseRank(action.actionType) === bestRank)?.actionType;
+    if (!selectedType) continue;
+    const values = candidates
+      .filter((action) => action.actionType === selectedType)
       .map((action) => number(action.value))
       .filter((value) => value > 0);
     if (values.length > 0) return Math.max(...values);
@@ -93,7 +99,6 @@ function selectedPurchaseRoas(actions: MetaAction[]): number | null {
 function addMetaRow(target: MetaAccumulator, row: MetaRow): void {
   const spend = number(row.spend);
   const impressions = Number(row.impressions);
-  const reach = Number(row.reach);
   const clicks = Number(row.clicks);
   const purchases = selectedPurchaseValue(row.actions, 'ACTION');
   const directPurchaseValue = selectedPurchaseValue(row.actions, 'ACTION_VALUE');
@@ -103,7 +108,6 @@ function addMetaRow(target: MetaAccumulator, row: MetaRow): void {
 
   target.spend += spend;
   target.impressions += Number.isFinite(impressions) ? impressions : 0;
-  target.reach += Number.isFinite(reach) ? reach : 0;
   target.clicks += Number.isFinite(clicks) ? clicks : 0;
   target.purchases += purchases;
   target.purchaseValue += purchaseValue;
@@ -114,7 +118,8 @@ function finishMetaMetrics(value: MetaAccumulator): HistoricalMetrics {
   return {
     spend: value.spend,
     impressions: value.impressions,
-    reach: value.reach,
+    // Reach is not additive across ad-level daily rows, so period reach is deliberately suppressed.
+    reach: null,
     clicks: value.clicks,
     purchases: value.purchases,
     purchaseValue: value.purchaseValue,
@@ -346,7 +351,7 @@ export function buildProductEvidence(input: {
       const unitCost = costAt(
         input.costRows,
         row.variantId,
-        row.order.shopifyCreatedAt,
+        row.order.processedAt ?? row.order.shopifyCreatedAt,
         input.storeCurrency,
       );
       if (unitCost !== null) {

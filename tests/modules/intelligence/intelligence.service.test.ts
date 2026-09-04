@@ -33,6 +33,7 @@ function buildRepository(overrides: Partial<IntelligenceRepository> = {}) {
       recordsWritten: 0,
       finishedAt: now,
     }),
+    getLatestMetaInsightSyncedAt: vi.fn().mockResolvedValue({ syncedAt: now }),
     getMetaEvidenceRows: vi.fn().mockResolvedValue([]),
     getCommerceRows: vi.fn().mockResolvedValue([]),
     getActiveProductMappings: vi.fn().mockResolvedValue([]),
@@ -82,6 +83,18 @@ describe('IntelligenceService', () => {
     expect(result.dataQuality).toContainEqual(
       expect.objectContaining({ code: 'SHOPIFY_CONNECTION_BLOCKED', status: 'BLOCKED' }),
     );
+  });
+
+  it('uses latest persisted Meta Insights freshness outside the analysis window', async () => {
+    const latest = new Date('2026-09-03T11:30:00.000Z');
+    const repository = buildRepository({
+      getMetaEvidenceRows: vi.fn().mockResolvedValue([]),
+      getLatestMetaInsightSyncedAt: vi.fn().mockResolvedValue({ syncedAt: latest }),
+    });
+
+    await new IntelligenceService(repository).snapshot(storeId, now);
+
+    expect(repository.getLatestMetaInsightSyncedAt).toHaveBeenCalledWith(storeId, ['act_101']);
   });
 
   it('stores only the inventory trust setting', async () => {

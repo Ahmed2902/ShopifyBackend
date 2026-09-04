@@ -1,5 +1,14 @@
 import { prisma } from '../../lib/prisma.js';
 
+function demandDateWhere(from: Date, to: Date) {
+  return {
+    OR: [
+      { processedAt: { gte: from, lte: to } },
+      { processedAt: null, shopifyCreatedAt: { gte: from, lte: to } },
+    ],
+  };
+}
+
 export class IntelligenceRepository {
   getStoreContext(storeId: string) {
     return prisma.store.findUnique({
@@ -28,6 +37,7 @@ export class IntelligenceRepository {
       where: {
         provider: 'SHOPIFY',
         resourceType: 'OrdersRefunds',
+        status: 'SUCCEEDED',
         shopifyConnection: { is: { storeId } },
       },
       orderBy: { createdAt: 'desc' },
@@ -37,6 +47,18 @@ export class IntelligenceRepository {
         recordsWritten: true,
         finishedAt: true,
       },
+    });
+  }
+
+  getLatestMetaInsightSyncedAt(storeId: string, selectedAccountIds: string[]) {
+    if (selectedAccountIds.length === 0) return Promise.resolve(null);
+    return prisma.metaInsightDaily.findFirst({
+      where: {
+        level: 'AD',
+        adAccount: { storeId, metaAccountId: { in: selectedAccountIds } },
+      },
+      orderBy: { syncedAt: 'desc' },
+      select: { syncedAt: true },
     });
   }
 
@@ -60,7 +82,6 @@ export class IntelligenceRepository {
         accountCurrency: true,
         spend: true,
         impressions: true,
-        reach: true,
         clicks: true,
         frequency: true,
         campaign: {
@@ -94,7 +115,7 @@ export class IntelligenceRepository {
           storeId,
           isTest: false,
           cancelledAt: null,
-          shopifyCreatedAt: { gte: from, lte: to },
+          ...demandDateWhere(from, to),
         },
         productId: { not: null },
       },
@@ -104,7 +125,7 @@ export class IntelligenceRepository {
         quantity: true,
         discountedTotal: true,
         order: {
-          select: { shopifyCreatedAt: true, currencyCode: true },
+          select: { shopifyCreatedAt: true, processedAt: true, currencyCode: true },
         },
         product: {
           select: { id: true, shopifyProductId: true, title: true },
@@ -113,7 +134,10 @@ export class IntelligenceRepository {
           select: { quantity: true, subtotal: true, restocked: true },
         },
       },
-      orderBy: { order: { shopifyCreatedAt: 'asc' } },
+      orderBy: [
+        { order: { processedAt: 'asc' } },
+        { order: { shopifyCreatedAt: 'asc' } },
+      ],
     });
   }
 
