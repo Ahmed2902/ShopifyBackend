@@ -15,6 +15,11 @@ const opaqueIdSchema = z
 
 const externalIdSchema = z.string().trim().min(1).max(128);
 const checkoutTokenSchema = z.string().trim().min(1).max(255);
+const shopifyOrderExternalIdSchema = z
+  .string()
+  .trim()
+  .max(128)
+  .regex(/^gid:\/\/shopify\/Order\/\d+$/);
 const providerNumericIdSchema = z.string().trim().regex(/^\d+$/).max(128);
 const attributionValueSchema = z.string().trim().min(1).max(255);
 const clickIdSchema = z.string().trim().min(1).max(512);
@@ -59,7 +64,7 @@ export const storefrontEventSchema = z
     collectionExternalId: externalIdSchema.optional(),
     quantity: z.number().int().min(1).max(100_000).optional(),
     shopifyCheckoutToken: checkoutTokenSchema.optional(),
-    shopifyOrderExternalId: externalIdSchema.optional(),
+    shopifyOrderExternalId: shopifyOrderExternalIdSchema.optional(),
     attribution: storefrontAttributionSchema.optional(),
   })
   .strict()
