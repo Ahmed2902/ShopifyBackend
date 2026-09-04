@@ -5,6 +5,7 @@ import {
   inventorySpendConflictRule,
   marginTrapRule,
   paidCommerceMismatchRule,
+  sharedExposureInventoryRule,
   underexposedProductRule,
 } from '../../../src/modules/intelligence/intelligence.rules.js';
 import type {
@@ -12,6 +13,7 @@ import type {
   CreativeEvidence,
   HistoricalMetrics,
   ProductEvidence,
+  SharedExposureEvidence,
 } from '../../../src/modules/intelligence/intelligence.types.js';
 
 const start = new Date('2026-08-17T00:00:00.000Z');
@@ -93,6 +95,42 @@ function product(overrides: Partial<ProductEvidence> = {}): ProductEvidence {
   };
 }
 
+function shared(overrides: Partial<SharedExposureEvidence> = {}): SharedExposureEvidence {
+  return {
+    entityId: 'ad-local',
+    externalEntityId: 'ad-meta',
+    name: 'Summer outfit',
+    currency: 'USD',
+    scope: 'MULTI_PRODUCT',
+    scopeConfidence: 0.95,
+    merchantConfirmed: false,
+    sharedAdSpend: 2_500,
+    impressions: 25_000,
+    inventoryTrusted: true,
+    products: [
+      {
+        entityId: 'product-pants',
+        externalEntityId: 'shopify-pants',
+        name: 'Pants',
+        stockAvailable: 12,
+        recentUnitsPerDay: 3,
+        daysCover: 4,
+      },
+      {
+        entityId: 'product-shirt',
+        externalEntityId: 'shopify-shirt',
+        name: 'Shirt',
+        stockAvailable: 200,
+        recentUnitsPerDay: 4,
+        daysCover: 50,
+      },
+    ],
+    collectionMembershipTruncated: false,
+    collections: [],
+    ...overrides,
+  };
+}
+
 describe('V1 deterministic intelligence rules', () => {
   it('flags campaign efficiency deterioration only with meaningful support and spend expansion', () => {
     const flagged = campaignEfficiencyRule(
@@ -104,6 +142,8 @@ describe('V1 deterministic intelligence rules', () => {
       ruleId: 'campaign_efficiency_deterioration',
       category: 'CAMPAIGN_EFFICIENCY',
       entityType: 'CAMPAIGN',
+      attributionPrecision: 'META_PROVIDER',
+      limitations: [],
     });
 
     expect(
@@ -126,6 +166,7 @@ describe('V1 deterministic intelligence rules', () => {
     ).toMatchObject({
       ruleId: 'creative_fatigue_symptoms',
       category: 'CREATIVE_FATIGUE',
+      attributionPrecision: 'META_PROVIDER',
     });
 
     expect(
@@ -135,7 +176,7 @@ describe('V1 deterministic intelligence rules', () => {
     ).toBeNull();
   });
 
-  it('gates Product × Ads opportunity and mismatch rules on mapping quality', () => {
+  it('requires strong local mapping but treats low global coverage as a confidence limitation', () => {
     expect(underexposedProductRule(product(), { start, end })).not.toBeNull();
     expect(
       underexposedProductRule(product({ mappingConfidence: 0.5 }), { start, end }),
@@ -146,10 +187,19 @@ describe('V1 deterministic intelligence rules', () => {
       mappedSpendShare: 0.2,
       mappedMetaSpend: 2_400,
     });
-    expect(paidCommerceMismatchRule(mismatch, { start, end })).not.toBeNull();
-    expect(
-      paidCommerceMismatchRule({ ...mismatch, mappingCoverage: 0.4 }, { start, end }),
-    ).toBeNull();
+    const clean = paidCommerceMismatchRule(mismatch, { start, end });
+    const partial = paidCommerceMismatchRule(
+      { ...mismatch, mappingCoverage: 0.4 },
+      { start, end },
+    );
+
+    expect(clean).not.toBeNull();
+    expect(partial).not.toBeNull();
+    expect(partial?.confidenceScore).toBeLessThan(clean!.confidenceScore);
+    expect(partial).toMatchObject({
+      attributionPrecision: 'EXACT_PRODUCT',
+      limitations: [expect.objectContaining({ code: 'MAPPING_COVERAGE_PARTIAL' })],
+    });
   });
 
   it('can flag meaningful paid exposure with zero observed Shopify sales', () => {
@@ -177,15 +227,16 @@ describe('V1 deterministic intelligence rules', () => {
     ).toBeNull();
   });
 
-  it('does not emit a margin trap until cost coverage is sufficient', () => {
+  it('does not emit a margin trap until the required product cost evidence exists', () => {
     const trap = product({ contributionAfterAds: -200, providerRoas: 3.2 });
-    expect(marginTrapRule(trap, { start, end })).toMatchObject({ category: 'MARGIN_TRAP' });
-    expect(
-      marginTrapRule({ ...trap, costCoverage: 0.6 }, { start, end }),
-    ).toBeNull();
+    expect(marginTrapRule(trap, { start, end })).toMatchObject({
+      category: 'MARGIN_TRAP',
+      attributionPrecision: 'EXACT_PRODUCT',
+    });
+    expect(marginTrapRule({ ...trap, costCoverage: 0.6 }, { start, end })).toBeNull();
   });
 
-  it('never uses inventory for spend guidance unless the merchant marked it trusted', () => {
+  it('never emits stock-cover guidance unless the merchant marked inventory trusted', () => {
     const lowCover = product({
       mappedMetaSpend: 1_000,
       inventoryTrusted: false,
@@ -199,6 +250,68 @@ describe('V1 deterministic intelligence rules', () => {
     ).toMatchObject({
       category: 'INVENTORY_SPEND_CONFLICT',
       severity: 'CRITICAL',
+      attributionPrecision: 'EXACT_PRODUCT',
     });
+  });
+
+  it('flags low-cover products inside a shared multi-product ad without allocating spend per product', () => {
+    const result = sharedExposureInventoryRule(shared(), { start, end });
+    expect(result).toMatchObject({
+      ruleId: 'shared_exposure_inventory_conflict',
+      entityType: 'AD',
+      attributionPrecision: 'SHARED_MULTI_PRODUCT',
+      limitations: [expect.objectContaining({ code: 'SHARED_SPEND_NOT_ALLOCATED' })],
+      evidence: expect.objectContaining({
+        sharedAdSpend: 2_500,
+        spendInterpretation: 'AD_LEVEL_SHARED_EXPOSURE_NOT_PRODUCT_LEVEL_ATTRIBUTION',
+      }),
+    });
+    expect(result?.evidence).not.toHaveProperty('productSpend');
+  });
+
+  it('adds current-membership and bounded-evaluation limitations for collection inventory exposure', () => {
+    const result = sharedExposureInventoryRule(
+      shared({
+        scope: 'COLLECTION',
+        collectionMembershipTruncated: true,
+        collections: [
+          {
+            id: 'collection-local',
+            shopifyCollectionId: 'collection-shopify',
+            title: 'Summer Drop',
+            handle: 'summer-drop',
+            productCount: 120,
+            evaluatedProductCount: 50,
+            membershipTruncated: true,
+          },
+        ],
+      }),
+      { start, end },
+    );
+
+    expect(result).toMatchObject({
+      attributionPrecision: 'COLLECTION',
+      limitations: expect.arrayContaining([
+        expect.objectContaining({ code: 'SHARED_SPEND_NOT_ALLOCATED' }),
+        expect.objectContaining({ code: 'CURRENT_COLLECTION_MEMBERSHIP' }),
+        expect.objectContaining({ code: 'COLLECTION_MEMBERSHIP_TRUNCATED' }),
+      ]),
+      evidence: expect.objectContaining({
+        collectionMembershipTruncated: true,
+        collections: [
+          expect.objectContaining({
+            productCount: 120,
+            evaluatedProductCount: 50,
+            membershipTruncated: true,
+          }),
+        ],
+      }),
+    });
+  });
+
+  it('suppresses shared inventory advice when inventory is not trusted', () => {
+    expect(
+      sharedExposureInventoryRule(shared({ inventoryTrusted: false }), { start, end }),
+    ).toBeNull();
   });
 });

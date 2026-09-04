@@ -62,9 +62,9 @@ model ProductVariant {
   shopifyCreatedAt  DateTime?
   shopifyUpdatedAt  DateTime?
   deletedAt         DateTime?
-  rawJson           Json?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  rawJson            Json?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   store                 Store                                 @relation(fields: [storeId], references: [id], onDelete: Restrict)
   product               Product                               @relation(fields: [productId], references: [id], onDelete: Restrict)
@@ -113,8 +113,9 @@ model Collection {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
-  store    Store               @relation(fields: [storeId], references: [id], onDelete: Restrict)
-  products ProductCollection[]
+  store      Store                 @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  products   ProductCollection[]
+  adMappings AdCollectionMapping[]
 
   @@unique([storeId, shopifyCollectionId])
   @@index([storeId, handle])

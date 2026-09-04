@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireStoreMembership } from '../../middleware/store.middleware.js';
+import { adExposureController } from './ad-exposure.controller.js';
 import { analyticsController } from './analytics.controller.js';
 
 export const analyticsRouter = Router({ mergeParams: true });
@@ -11,6 +12,8 @@ analyticsRouter.get('/products', analyticsController.products);
 analyticsRouter.get('/products/:productId', analyticsController.product);
 analyticsRouter.get('/product-ads', analyticsController.productAds);
 analyticsRouter.get('/product-ads/:productId', analyticsController.productAdsProduct);
+analyticsRouter.get('/ad-exposure', adExposureController.list);
+analyticsRouter.get('/ad-exposure/:adId', adExposureController.detail);
 analyticsRouter.get('/collections', analyticsController.collections);
 analyticsRouter.get('/customers', analyticsController.customers);
 analyticsRouter.get('/inventory', analyticsController.inventory);

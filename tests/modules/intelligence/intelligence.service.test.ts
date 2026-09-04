@@ -37,6 +37,7 @@ function buildRepository(overrides: Partial<IntelligenceRepository> = {}) {
     getMetaEvidenceRows: vi.fn().mockResolvedValue([]),
     getCommerceRows: vi.fn().mockResolvedValue([]),
     getActiveProductMappings: vi.fn().mockResolvedValue([]),
+    getSharedExposureTargets: vi.fn().mockResolvedValue([]),
     getInventoryLevels: vi.fn().mockResolvedValue([]),
     getVariantCosts: vi.fn().mockResolvedValue([]),
     getSettings: vi.fn().mockResolvedValue({
@@ -65,6 +66,7 @@ describe('IntelligenceService', () => {
       campaigns: 0,
       creatives: 0,
       products: 0,
+      sharedExposures: 0,
       metaRows: 0,
       commerceRows: 0,
       shopifyCommerceUsable: true,
@@ -95,6 +97,35 @@ describe('IntelligenceService', () => {
     await new IntelligenceService(repository).snapshot(storeId, now);
 
     expect(repository.getLatestMetaInsightSyncedAt).toHaveBeenCalledWith(storeId, ['act_101']);
+  });
+
+  it('bounds shared target evidence to ads observed in the same snapshot evidence window', async () => {
+    const observedAdId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const repository = buildRepository({
+      getMetaEvidenceRows: vi.fn().mockResolvedValue([
+        {
+          date: new Date('2026-09-01T00:00:00.000Z'),
+          syncedAt: now,
+          accountCurrency: 'USD',
+          spend: 10,
+          impressions: BigInt(1_000),
+          clicks: BigInt(10),
+          frequency: 1,
+          campaign: null,
+          ad: {
+            id: observedAdId,
+            metaAdId: 'meta-ad-1',
+            name: 'Observed ad',
+            creative: null,
+          },
+          actions: [],
+        },
+      ] as never),
+    });
+
+    await new IntelligenceService(repository).snapshot(storeId, now);
+
+    expect(repository.getSharedExposureTargets).toHaveBeenCalledWith(storeId, [observedAdId]);
   });
 
   it('stores only the inventory trust setting', async () => {

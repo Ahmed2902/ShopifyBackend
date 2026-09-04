@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import {
-  metaManualAdMappingsSchema,
+  metaManualAdTargetSchema,
   metaManualCatalogMappingSchema,
   metaMappingAdParamsSchema,
   metaMappingCatalogItemParamsSchema,
@@ -31,9 +31,15 @@ export class MetaMappingController {
 
   replaceAd = async (req: Request, res: Response) => {
     const { adId } = metaMappingAdParamsSchema.parse(req.params);
-    const { mappings } = metaManualAdMappingsSchema.parse(req.body);
+    const target = metaManualAdTargetSchema.parse(req.body);
     res.status(200).json(
-      await this.service.replaceManualAdMappings(req.context.storeId!, adId, mappings),
+      'mappings' in target
+        ? await this.service.replaceManualAdMappings(req.context.storeId!, adId, target.mappings)
+        : await this.service.replaceManualCollectionMappings(
+            req.context.storeId!,
+            adId,
+            target.collectionIds,
+          ),
     );
   };
 
