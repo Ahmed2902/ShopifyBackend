@@ -63,11 +63,18 @@ export function extractStorefrontAttribution(
     const attribution: StorefrontAttributionInput = {};
 
     for (const [queryKey, outputKey] of ATTRIBUTION_QUERY_KEYS) {
+      const raw = url.searchParams.get(queryKey)?.trim();
+      if (!raw) continue;
+
+      if (outputKey.endsWith('ExternalId')) {
+        if (raw.length > 128 || !/^\d+$/.test(raw)) continue;
+        attribution[outputKey] = raw;
+        continue;
+      }
+
       const maxLength = outputKey.endsWith('ClickId') ? 512 : 255;
-      const normalized = truncate(url.searchParams.get(queryKey), maxLength);
-      if (!normalized) continue;
-      if (outputKey.endsWith('ExternalId') && !/^\d+$/.test(normalized)) continue;
-      attribution[outputKey] = normalized;
+      const normalized = truncate(raw, maxLength);
+      if (normalized) attribution[outputKey] = normalized;
     }
 
     return attribution;
