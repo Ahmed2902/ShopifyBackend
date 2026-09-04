@@ -26,7 +26,22 @@ export class AnalyticsRepository {
         ianaTimezone: true,
         inventoryIntelligenceMode: true,
         shopifyConnection: {
-          select: { status: true, scopes: true, lastSyncedAt: true },
+          select: {
+            status: true,
+            scopes: true,
+            lastSyncedAt: true,
+            syncRuns: {
+              where: { resourceType: 'OrdersRefunds' },
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+              select: {
+                status: true,
+                recordsRead: true,
+                recordsWritten: true,
+                finishedAt: true,
+              },
+            },
+          },
         },
         metaConnection: {
           select: {
@@ -35,6 +50,36 @@ export class AnalyticsRepository {
           },
         },
       },
+    });
+  }
+
+  getLatestSuccessfulOrderHistorySync(storeId: string) {
+    return prisma.syncRun.findFirst({
+      where: {
+        provider: 'SHOPIFY',
+        resourceType: 'OrdersRefunds',
+        status: 'SUCCEEDED',
+        shopifyConnection: { is: { storeId } },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        status: true,
+        recordsRead: true,
+        recordsWritten: true,
+        finishedAt: true,
+      },
+    });
+  }
+
+  getLatestMetaInsightSyncedAt(storeId: string, selectedAccountIds: string[]) {
+    if (selectedAccountIds.length === 0) return Promise.resolve(null);
+    return prisma.metaInsightDaily.findFirst({
+      where: {
+        level: 'AD',
+        adAccount: { storeId, metaAccountId: { in: selectedAccountIds } },
+      },
+      orderBy: { syncedAt: 'desc' },
+      select: { syncedAt: true },
     });
   }
 
@@ -304,9 +349,7 @@ export class AnalyticsRepository {
         ...(filter.campaignIds ? { campaignId: { in: filter.campaignIds } } : {}),
         ...(filter.adSetIds ? { adSetId: { in: filter.adSetIds } } : {}),
         ...(filter.adIds ? { adId: { in: filter.adIds } } : {}),
-        ...(filter.creativeIds
-          ? { ad: { creativeId: { in: filter.creativeIds }, deletedAt: null } }
-          : {}),
+        ...(filter.creativeIds ? { ad: { creativeId: { in: filter.creativeIds } } } : {}),
       },
       select: {
         date: true,

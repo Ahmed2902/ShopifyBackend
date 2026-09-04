@@ -200,7 +200,8 @@ export class CommerceAnalyticsService {
     return {
       window: windowResponse(windows),
       currency: store.currencyCode,
-      methodology: 'SHOPIFY_PRODUCT_ORDER_COHORT_NET_OF_LINKED_REFUNDS',
+      methodology: 'SHOPIFY_ORDER_COHORT_WITH_CURRENT_COLLECTION_MEMBERSHIP',
+      membershipSnapshot: 'CURRENT',
       pagination: pagination(pageNumber, limit, page.total),
       items: page.items.map((collection) => {
         const ids = new Set(collection.products.map((item) => item.productId));
@@ -242,6 +243,15 @@ export class CommerceAnalyticsService {
     const comparison = aggregateOrders(split.comparison, store.currencyCode);
     const currentKnown = current.newOrders + current.returningOrders;
     const comparisonKnown = comparison.newOrders + comparison.returningOrders;
+    const segmentPair = (kind: 'NEW' | 'RETURNING' | 'UNKNOWN') => {
+      const segmentCurrent = segment(split.current, kind);
+      const segmentComparison = segment(split.comparison, kind);
+      return {
+        current: segmentCurrent,
+        comparison: segmentComparison,
+        change: metricChanges(segmentCurrent, segmentComparison),
+      };
+    };
 
     return {
       window: windowResponse(windows),
@@ -257,18 +267,9 @@ export class CommerceAnalyticsService {
         change: metricChanges(current, comparison),
       },
       segments: {
-        new: {
-          current: segment(split.current, 'NEW'),
-          comparison: segment(split.comparison, 'NEW'),
-        },
-        returning: {
-          current: segment(split.current, 'RETURNING'),
-          comparison: segment(split.comparison, 'RETURNING'),
-        },
-        unknown: {
-          current: segment(split.current, 'UNKNOWN'),
-          comparison: segment(split.comparison, 'UNKNOWN'),
-        },
+        new: segmentPair('NEW'),
+        returning: segmentPair('RETURNING'),
+        unknown: segmentPair('UNKNOWN'),
       },
     };
   }
