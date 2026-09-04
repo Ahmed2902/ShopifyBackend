@@ -23,6 +23,30 @@ enum PixelInstallationStatus {
   DISABLED
 }
 
+enum StorefrontJourneySource {
+  META
+  GOOGLE
+  TIKTOK
+  UTM
+  REFERRER
+  DIRECT
+  UNKNOWN
+}
+
+enum StorefrontResolutionStatus {
+  NONE
+  EXACT
+  PARTIAL
+  UNRESOLVED
+  CONFLICT
+}
+
+enum StorefrontOrderLinkStatus {
+  NONE
+  PENDING
+  LINKED
+}
+
 model PixelInstallation {
   id                   String                  @id @default(uuid()) @db.Uuid
   storeId              String                  @unique @db.Uuid
@@ -60,6 +84,8 @@ model StorefrontEvent {
   variantExternalId      String?                  @db.VarChar(128)
   collectionExternalId   String?                  @db.VarChar(128)
   quantity               Int?
+  shopifyCheckoutToken   String?                  @db.VarChar(255)
+  shopifyOrderExternalId String?                  @db.VarChar(128)
   utmSource              String?                  @db.VarChar(255)
   utmMedium              String?                  @db.VarChar(255)
   utmCampaign            String?                  @db.VarChar(255)
@@ -81,5 +107,130 @@ model StorefrontEvent {
   @@index([storeId, anonymousVisitorId, eventAt])
   @@index([storeId, sessionId, eventAt])
   @@index([storeId, metaAdExternalId, eventAt])
+  @@index([storeId, shopifyOrderExternalId])
   @@index([retentionExpiresAt])
+}
+
+model StorefrontSession {
+  id                       String                    @id @default(uuid()) @db.Uuid
+  storeId                  String                    @db.Uuid
+  browserSessionId         String                    @db.VarChar(128)
+  anonymousVisitorId       String?                   @db.VarChar(128)
+  startedAt                DateTime
+  endedAt                  DateTime
+  lastSourceReceivedAt     DateTime
+  eventCount               Int
+  pageViewCount            Int                       @default(0)
+  productViewCount         Int                       @default(0)
+  collectionViewCount      Int                       @default(0)
+  searchCount              Int                       @default(0)
+  addToCartCount           Int                       @default(0)
+  removeFromCartCount      Int                       @default(0)
+  checkoutProgressCount    Int                       @default(0)
+  checkoutStartedAt        DateTime?
+  checkoutCompletedAt      DateTime?
+  shopifyCheckoutToken     String?                   @db.VarChar(255)
+  shopifyOrderExternalId   String?                   @db.VarChar(128)
+  orderId                  String?                   @db.Uuid
+  orderLinkStatus          StorefrontOrderLinkStatus @default(NONE)
+  landingPageUrl           String?                   @db.Text
+  initialReferrerUrl       String?                   @db.Text
+  dataQualityFlags         String[]                  @default([])
+  retentionExpiresAt       DateTime
+  materializedAt           DateTime                  @default(now())
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+
+  store       Store                        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  order       Order?                       @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  touches     StorefrontSessionTouch[]
+  products    StorefrontSessionProduct[]
+  collections StorefrontSessionCollection[]
+
+  @@unique([storeId, browserSessionId])
+  @@index([storeId, startedAt])
+  @@index([storeId, anonymousVisitorId, startedAt])
+  @@index([storeId, orderLinkStatus, checkoutCompletedAt])
+  @@index([orderId])
+  @@index([retentionExpiresAt])
+}
+
+model StorefrontSessionTouch {
+  id                     String                       @id @default(uuid()) @db.Uuid
+  sessionId              String                       @db.Uuid
+  ordinal                Int
+  eventAt                DateTime
+  source                 StorefrontJourneySource
+  landingPageUrl         String?                      @db.Text
+  referrerUrl            String?                      @db.Text
+  utmSource              String?                      @db.VarChar(255)
+  utmMedium              String?                      @db.VarChar(255)
+  utmCampaign            String?                      @db.VarChar(255)
+  utmContent             String?                      @db.VarChar(255)
+  utmTerm                String?                      @db.VarChar(255)
+  metaClickId            String?                      @db.VarChar(512)
+  googleClickId          String?                      @db.VarChar(512)
+  tiktokClickId          String?                      @db.VarChar(512)
+  metaCampaignExternalId String?                      @db.VarChar(128)
+  metaAdSetExternalId    String?                      @db.VarChar(128)
+  metaAdExternalId       String?                      @db.VarChar(128)
+  metaCampaignId         String?                      @db.Uuid
+  metaAdSetId            String?                      @db.Uuid
+  metaAdId               String?                      @db.Uuid
+  metaResolutionStatus   StorefrontResolutionStatus   @default(NONE)
+  createdAt              DateTime                     @default(now())
+
+  session      StorefrontSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  metaCampaign MetaCampaign?     @relation(fields: [metaCampaignId], references: [id], onDelete: SetNull)
+  metaAdSet    MetaAdSet?        @relation(fields: [metaAdSetId], references: [id], onDelete: SetNull)
+  metaAd       MetaAd?           @relation(fields: [metaAdId], references: [id], onDelete: SetNull)
+
+  @@unique([sessionId, ordinal])
+  @@index([metaAdId, eventAt])
+  @@index([metaAdSetId, eventAt])
+  @@index([metaCampaignId, eventAt])
+  @@index([source, eventAt])
+}
+
+model StorefrontSessionProduct {
+  id                       String                     @id @default(uuid()) @db.Uuid
+  sessionId                String                     @db.Uuid
+  identityKey              String                     @db.VarChar(300)
+  shopifyProductExternalId String?                    @db.VarChar(128)
+  shopifyVariantExternalId String?                    @db.VarChar(128)
+  productId                String?                    @db.Uuid
+  variantId                String?                    @db.Uuid
+  resolutionStatus         StorefrontResolutionStatus @default(NONE)
+  viewCount                Int                        @default(0)
+  addToCartCount           Int                        @default(0)
+  removeFromCartCount      Int                        @default(0)
+  firstSeenAt              DateTime
+  lastSeenAt               DateTime
+  createdAt                DateTime                   @default(now())
+
+  session StorefrontSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  product Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variant ProductVariant?   @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@unique([sessionId, identityKey])
+  @@index([productId, firstSeenAt])
+  @@index([variantId, firstSeenAt])
+}
+
+model StorefrontSessionCollection {
+  id                          String                     @id @default(uuid()) @db.Uuid
+  sessionId                   String                     @db.Uuid
+  shopifyCollectionExternalId String                     @db.VarChar(128)
+  collectionId                String?                    @db.Uuid
+  resolutionStatus            StorefrontResolutionStatus @default(NONE)
+  viewCount                   Int                        @default(0)
+  firstSeenAt                 DateTime
+  lastSeenAt                  DateTime
+  createdAt                   DateTime                   @default(now())
+
+  session    StorefrontSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  collection Collection?       @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+
+  @@unique([sessionId, shopifyCollectionExternalId])
+  @@index([collectionId, firstSeenAt])
 }
