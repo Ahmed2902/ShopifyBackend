@@ -67,7 +67,7 @@ describe('ShopifyPixelProvisioner', () => {
     expect(apiService.requestAdminGraphql).not.toHaveBeenCalled();
   });
 
-  it('creates a Shopify WebPixel with Stride collector settings', async () => {
+  it('creates a Shopify WebPixel with JSON-serialized Stride collector settings', async () => {
     const { apiService, authService, provisioner } = buildProvisioner();
     const settings = {
       collectorUrl: 'https://api.stride.example/v1/pixel/events',
@@ -90,7 +90,7 @@ describe('ShopifyPixelProvisioner', () => {
         apiVersion: '2026-07',
         connectionId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
         query: expect.stringContaining('webPixelCreate'),
-        variables: { webPixel: { settings } },
+        variables: { webPixel: { settings: JSON.stringify(settings) } },
       }),
     );
   });
@@ -103,23 +103,27 @@ describe('ShopifyPixelProvisioner', () => {
         webPixel: { id: 'gid://shopify/WebPixel/42', settings: {} },
       },
     });
+    const settings = {
+      collectorUrl: 'https://api.stride.example/v1/pixel/events',
+      installationId: 'installation-id',
+      collectorToken: 'rotated-token',
+    };
 
     await expect(
       provisioner.upsert({
         storeId,
         existingWebPixelId: 'gid://shopify/WebPixel/42',
-        settings: {
-          collectorUrl: 'https://api.stride.example/v1/pixel/events',
-          installationId: 'installation-id',
-          collectorToken: 'rotated-token',
-        },
+        settings,
       }),
     ).resolves.toEqual({ id: 'gid://shopify/WebPixel/42' });
 
     expect(apiService.requestAdminGraphql).toHaveBeenCalledWith(
       expect.objectContaining({
         query: expect.stringContaining('webPixelUpdate'),
-        variables: expect.objectContaining({ id: 'gid://shopify/WebPixel/42' }),
+        variables: {
+          id: 'gid://shopify/WebPixel/42',
+          webPixel: { settings: JSON.stringify(settings) },
+        },
       }),
     );
   });
