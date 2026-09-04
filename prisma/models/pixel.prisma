@@ -17,6 +17,31 @@ enum StorefrontConsentState {
   NOT_REQUIRED
 }
 
+enum PixelInstallationStatus {
+  ACTIVE
+  ERROR
+  DISABLED
+}
+
+model PixelInstallation {
+  id                   String                  @id @default(uuid()) @db.Uuid
+  storeId              String                  @unique @db.Uuid
+  collectorTokenHash   String                  @db.VarChar(64)
+  collectorTokenPrefix String                  @db.VarChar(12)
+  shopifyWebPixelId    String?                 @unique @db.VarChar(128)
+  status               PixelInstallationStatus @default(ERROR)
+  installedAt          DateTime?
+  lastEventAt          DateTime?
+  lastError            String?                 @db.Text
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([lastEventAt])
+}
+
 model StorefrontEvent {
   id                   String                   @id @default(uuid()) @db.Uuid
   storeId              String                   @db.Uuid
