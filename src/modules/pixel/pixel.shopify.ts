@@ -99,9 +99,11 @@ export class ShopifyPixelProvisioner {
       connection,
     );
 
+    // Shopify's WebPixelInput expects its `settings` JSON scalar as a JSON-formatted string.
+    // Shopify then validates that string against the extension's settings schema.
     const variables = {
       webPixel: {
-        settings: input.settings,
+        settings: JSON.stringify(input.settings),
       },
     };
 
