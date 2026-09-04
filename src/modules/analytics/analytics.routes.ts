@@ -1,0 +1,24 @@
+import { Router } from 'express';
+import { requireAuth } from '../../middleware/auth.middleware.js';
+import { requireStoreMembership } from '../../middleware/store.middleware.js';
+import { analyticsController } from './analytics.controller.js';
+
+export const analyticsRouter = Router({ mergeParams: true });
+analyticsRouter.use(requireAuth, requireStoreMembership);
+
+analyticsRouter.get('/overview', analyticsController.overview);
+analyticsRouter.get('/products', analyticsController.products);
+analyticsRouter.get('/products/:productId', analyticsController.product);
+analyticsRouter.get('/collections', analyticsController.collections);
+analyticsRouter.get('/customers', analyticsController.customers);
+analyticsRouter.get('/inventory', analyticsController.inventory);
+
+analyticsRouter.get('/advertising', analyticsController.advertising);
+analyticsRouter.get('/campaigns', analyticsController.campaigns);
+analyticsRouter.get('/campaigns/:campaignId', analyticsController.campaign);
+analyticsRouter.get('/adsets', analyticsController.adSets);
+analyticsRouter.get('/adsets/:adSetId', analyticsController.adSet);
+analyticsRouter.get('/ads', analyticsController.ads);
+analyticsRouter.get('/ads/:adId', analyticsController.ad);
+analyticsRouter.get('/creatives', analyticsController.creatives);
+analyticsRouter.get('/creatives/:creativeId', analyticsController.creative);
