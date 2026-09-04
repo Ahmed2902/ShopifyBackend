@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { analyticsRouter } from './modules/analytics/analytics.routes.js';
 import { authRouter } from './modules/auth/auth.routes.js';
 import { intelligenceRouter } from './modules/intelligence/intelligence.routes.js';
 import { integrationRouter } from './modules/integrations/integration.routes.js';
@@ -20,6 +21,7 @@ router.use('/v1/stores/:storeId/integrations/meta', metaStoreRouter);
 router.use('/v1/stores/:storeId/integrations/tiktok', tiktokStoreRouter);
 router.use('/v1/stores/:storeId/integrations', integrationRouter);
 router.use('/v1/stores/:storeId/intelligence', intelligenceRouter);
+router.use('/v1/stores/:storeId/analytics', analyticsRouter);
 router.use('/v1/stores', storeRouter);
 
 export { router };
