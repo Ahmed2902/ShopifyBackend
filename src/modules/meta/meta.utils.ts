@@ -6,6 +6,9 @@ import type { MetaOAuthContext } from './meta.types.js';
 
 const META_OAUTH_CONTEXT_TTL_MS = 10 * 60 * 1000;
 const META_BASE_SCOPES = ['ads_read'] as const;
+const META_MANAGEMENT_SCOPES = ['ads_read', 'ads_management'] as const;
+
+export type MetaAuthorizationMode = 'READ_ONLY' | 'ADS_MANAGEMENT';
 
 function safeEqual(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left, 'utf8');
@@ -54,15 +57,23 @@ export function verifyMetaOAuthState(state: string | undefined): MetaOAuthContex
   }
 }
 
-export function buildMetaAuthorizationUrl(userId: string, storeId: string) {
+export function buildMetaAuthorizationUrl(
+  userId: string,
+  storeId: string,
+  mode: MetaAuthorizationMode = 'READ_ONLY',
+) {
   const state = createMetaOAuthState(userId, storeId);
   const url = new URL(`https://www.facebook.com/${env.META_API_VERSION}/dialog/oauth`);
   url.searchParams.set('client_id', env.META_APP_ID);
   url.searchParams.set('redirect_uri', metaCallbackUrl());
   url.searchParams.set('state', state);
-  url.searchParams.set('scope', META_BASE_SCOPES.join(','));
+  url.searchParams.set(
+    'scope',
+    (mode === 'ADS_MANAGEMENT' ? META_MANAGEMENT_SCOPES : META_BASE_SCOPES).join(','),
+  );
   url.searchParams.set('response_type', 'code');
-  return { authorizationUrl: url.toString(), state };
+  if (mode === 'ADS_MANAGEMENT') url.searchParams.set('auth_type', 'rerequest');
+  return { authorizationUrl: url.toString(), state, mode };
 }
 
 function metaFrontendRedirect(storeId: string, status: 'connected' | 'error', errorCode?: string): string {
