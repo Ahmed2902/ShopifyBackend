@@ -87,8 +87,6 @@ export class ShopifyService {
         await this.startOrderHistoryBackfill(result.storeId);
       }
     } catch (error) {
-      // Connecting the store must remain successful even when the optional history import
-      // cannot start. The integrations screen keeps the manual retry path visible.
       if (!(error instanceof AppError && error.code === 'SHOPIFY_ORDER_SCOPE_REQUIRED')) {
         logger.warn({ err: error, storeId: result.storeId }, 'Shopify order history did not auto-start');
       }
@@ -397,18 +395,21 @@ export class ShopifyService {
         1 +
         catalog.products.read +
         catalog.variants.read +
+        catalog.collections.read +
         inventory.locations.read +
         inventory.inventoryLevels.read,
       recordsWritten:
         1 +
         catalog.products.written +
         catalog.variants.written +
+        catalog.collections.written +
         inventory.locations.written +
         inventory.inventoryLevels.written,
       breakdown: {
         shop: 1,
         products: catalog.products.written,
         variants: catalog.variants.written,
+        collections: catalog.collections.written,
         locations: inventory.locations.written,
         inventoryLevels: inventory.inventoryLevels.written,
       },

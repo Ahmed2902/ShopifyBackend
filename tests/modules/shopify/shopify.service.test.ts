@@ -74,12 +74,44 @@ const variantResponse = {
             sku: 'HOODIE-BLK-L',
             tracked: true,
             requiresShipping: true,
+            unitCost: { amount: '24.00', currencyCode: 'USD' },
             createdAt: '2025-01-01T00:00:00.000Z',
             updatedAt: '2026-08-19T00:00:00.000Z',
           },
         },
       ],
       pageInfo: { hasNextPage: false, endCursor: 'variant-cursor' },
+    },
+  },
+};
+
+const collectionResponse = {
+  data: {
+    collections: {
+      nodes: [
+        {
+          id: 'gid://shopify/Collection/1',
+          title: 'Core',
+          handle: 'core',
+          descriptionHtml: null,
+          sortOrder: 'MANUAL',
+          image: null,
+          updatedAt: '2026-08-19T00:00:00.000Z',
+        },
+      ],
+      pageInfo: { hasNextPage: false, endCursor: 'collection-cursor' },
+    },
+  },
+};
+
+const collectionProductsResponse = {
+  data: {
+    collection: {
+      id: 'gid://shopify/Collection/1',
+      products: {
+        nodes: [{ id: 'gid://shopify/Product/1' }],
+        pageInfo: { hasNextPage: false, endCursor: 'collection-product-cursor' },
+      },
     },
   },
 };
@@ -189,6 +221,9 @@ function buildService(connectionOverrides: Record<string, unknown> = {}) {
   const catalogSyncRepository = {
     persistProducts: vi.fn().mockResolvedValue(undefined),
     persistVariants: vi.fn().mockResolvedValue(true),
+    persistCollections: vi.fn().mockResolvedValue(undefined),
+    replaceCollectionProducts: vi.fn().mockResolvedValue(true),
+    markMissingCollectionsDeleted: vi.fn().mockResolvedValue(0),
   } as unknown as ShopifyCatalogRepository;
   const inventorySyncRepository = {
     persistLocations: vi.fn().mockResolvedValue(undefined),
@@ -217,6 +252,8 @@ function stubFullCatalogInventorySync() {
     .mockResolvedValueOnce(jsonResponse(shopResponse))
     .mockResolvedValueOnce(jsonResponse(productResponse))
     .mockResolvedValueOnce(jsonResponse(variantResponse))
+    .mockResolvedValueOnce(jsonResponse(collectionResponse))
+    .mockResolvedValueOnce(jsonResponse(collectionProductsResponse))
     .mockResolvedValueOnce(jsonResponse(locationResponse))
     .mockResolvedValueOnce(jsonResponse(inventoryResponse));
   vi.stubGlobal('fetch', fetchMock);
@@ -229,7 +266,7 @@ afterEach(() => {
 });
 
 describe('Shopify catalog and inventory sync', () => {
-  it('synchronizes shop, products, variants, locations and all inventory states in batches', async () => {
+  it('synchronizes shop, products, variants, collections, locations and inventory in batches', async () => {
     const {
       repository,
       integrationService,
@@ -245,25 +282,45 @@ describe('Shopify catalog and inventory sync', () => {
       syncRunId,
       status: 'SUCCEEDED',
       resourceType: 'CatalogInventory',
-      recordsRead: 5,
-      recordsWritten: 5,
+      recordsRead: 6,
+      recordsWritten: 6,
       breakdown: {
         shop: 1,
         products: 1,
         variants: 1,
+        collections: 1,
         locations: 1,
         inventoryLevels: 1,
       },
     });
-    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(fetchMock).toHaveBeenCalledTimes(7);
     expect(catalogSyncRepository.persistProducts).toHaveBeenCalledWith(
       storeId,
       expect.arrayContaining([expect.objectContaining({ id: 'gid://shopify/Product/1' })]),
     );
     expect(catalogSyncRepository.persistVariants).toHaveBeenCalledWith(
       storeId,
-      expect.arrayContaining([expect.objectContaining({ id: 'gid://shopify/ProductVariant/1' })]),
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'gid://shopify/ProductVariant/1',
+          inventoryItem: expect.objectContaining({
+            unitCost: { amount: '24.00', currencyCode: 'USD' },
+          }),
+        }),
+      ]),
     );
+    expect(catalogSyncRepository.persistCollections).toHaveBeenCalledWith(
+      storeId,
+      expect.arrayContaining([expect.objectContaining({ id: 'gid://shopify/Collection/1' })]),
+    );
+    expect(catalogSyncRepository.replaceCollectionProducts).toHaveBeenCalledWith(
+      storeId,
+      'gid://shopify/Collection/1',
+      ['gid://shopify/Product/1'],
+    );
+    expect(catalogSyncRepository.markMissingCollectionsDeleted).toHaveBeenCalledWith(storeId, [
+      'gid://shopify/Collection/1',
+    ]);
     expect(inventorySyncRepository.persistLocations).toHaveBeenCalledWith(
       storeId,
       expect.arrayContaining([expect.objectContaining({ id: 'gid://shopify/Location/1' })]),
@@ -273,9 +330,11 @@ describe('Shopify catalog and inventory sync', () => {
       expect.arrayContaining([expect.objectContaining({ id: 'gid://shopify/InventoryLevel/1' })]),
       'INITIAL_SYNC',
     );
-    expect(repository.markMissingCatalogDeleted).toHaveBeenCalledWith(storeId, [
-      'gid://shopify/Product/1',
-    ], ['gid://shopify/ProductVariant/1']);
+    expect(repository.markMissingCatalogDeleted).toHaveBeenCalledWith(
+      storeId,
+      ['gid://shopify/Product/1'],
+      ['gid://shopify/ProductVariant/1'],
+    );
     expect(repository.markMissingLocationsDeleted).toHaveBeenCalledWith(storeId, [
       'gid://shopify/Location/1',
     ]);
@@ -308,17 +367,12 @@ describe('Shopify catalog and inventory sync', () => {
       .map((body) => body.variables?.first)
       .filter((value): value is number => typeof value === 'number');
 
-    expect(pageSizes).toEqual([250, 250, 250, 250]);
+    expect(pageSizes).toEqual([250, 250, 250, 250, 250, 250]);
   });
 
   it('uses the last successful periodic run as the commerce watermark', async () => {
     const watermark = new Date('2026-08-20T00:00:00.000Z');
-    const {
-      repository,
-      integrationService,
-      inventorySyncRepository,
-      service,
-    } = buildService({
+    const { repository, integrationService, inventorySyncRepository, service } = buildService({
       lastSyncedAt: new Date('2026-08-20T23:00:00.000Z'),
       lastReconciledAt: new Date('2026-08-20T23:00:00.000Z'),
     });
@@ -336,6 +390,7 @@ describe('Shopify catalog and inventory sync', () => {
       breakdown: {
         products: 1,
         variants: 1,
+        collections: 1,
         inventoryLevels: 1,
         ordersScanned: 0,
         commerceSkipped: true,
@@ -391,6 +446,7 @@ describe('Shopify catalog and inventory sync', () => {
       .mockResolvedValueOnce(jsonResponse(shopResponse))
       .mockResolvedValueOnce(jsonResponse({ data: { products: emptyConnection } }))
       .mockResolvedValueOnce(jsonResponse({ data: { productVariants: emptyConnection } }))
+      .mockResolvedValueOnce(jsonResponse({ data: { collections: emptyConnection } }))
       .mockResolvedValueOnce(jsonResponse({ data: { locations: emptyConnection } }));
     vi.stubGlobal('fetch', fetchMock);
 

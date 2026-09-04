@@ -1,6 +1,10 @@
 import type { Prisma } from '../../../generated/prisma/client.js';
 import { prisma } from '../../../lib/prisma.js';
-import type { ShopifyProduct, ShopifyVariant } from '../shopify.schema.js';
+import type {
+  ShopifyCollection,
+  ShopifyProduct,
+  ShopifyVariant,
+} from '../shopify.schema.js';
 
 const DB_WRITE_CONCURRENCY = 12;
 
@@ -63,6 +67,19 @@ function inventoryItemData(variant: ShopifyVariant) {
     shopifyUpdatedAt: optionalDate(item.updatedAt),
     deletedAt: null,
     rawJson: item as unknown as Prisma.InputJsonValue,
+  };
+}
+
+function collectionData(collection: ShopifyCollection) {
+  return {
+    title: collection.title,
+    handle: collection.handle ?? null,
+    descriptionHtml: collection.descriptionHtml ?? null,
+    sortOrder: collection.sortOrder ?? null,
+    imageUrl: collection.image?.url ?? null,
+    shopifyUpdatedAt: optionalDate(collection.updatedAt),
+    deletedAt: null,
+    rawJson: collection as unknown as Prisma.InputJsonValue,
   };
 }
 
@@ -207,9 +224,137 @@ export class ShopifyCatalogRepository {
       });
     });
 
+    await this.persistShopifyCosts(storeId, variants);
+
     const inventoryItemCount = await prisma.inventoryItem.count({
       where: { storeId, variantId: { in: persistedIds }, deletedAt: null },
     });
     return inventoryItemCount === persistedIds.length;
+  }
+
+  async persistShopifyCosts(storeId: string, variants: ShopifyVariant[]): Promise<void> {
+    const withCost = variants.filter((variant) => variant.inventoryItem.unitCost != null);
+    if (withCost.length === 0) return;
+
+    const externalIds = withCost.map((variant) => variant.id);
+    const persistedVariants = await prisma.productVariant.findMany({
+      where: { storeId, shopifyVariantId: { in: externalIds }, deletedAt: null },
+      select: { id: true, shopifyVariantId: true },
+    });
+    const variantMap = new Map(
+      persistedVariants.map((variant) => [variant.shopifyVariantId, variant.id]),
+    );
+    const currentCosts = await prisma.variantCost.findMany({
+      where: {
+        variantId: { in: persistedVariants.map((variant) => variant.id) },
+        source: 'SHOPIFY',
+        effectiveUntil: null,
+      },
+      select: { id: true, variantId: true, amount: true, currency: true },
+    });
+    const currentByVariant = new Map(currentCosts.map((cost) => [cost.variantId, cost]));
+
+    for (const variant of withCost) {
+      const variantId = variantMap.get(variant.id);
+      const cost = variant.inventoryItem.unitCost;
+      if (!variantId || !cost) continue;
+
+      const current = currentByVariant.get(variantId);
+      if (current && current.amount.toString() === cost.amount && current.currency === cost.currencyCode) {
+        continue;
+      }
+
+      const effectiveFrom = new Date();
+      await prisma.$transaction(async (tx) => {
+        if (current) {
+          await tx.variantCost.update({
+            where: { id: current.id },
+            data: { effectiveUntil: effectiveFrom },
+          });
+        }
+        await tx.variantCost.create({
+          data: {
+            variantId,
+            amount: cost.amount,
+            currency: cost.currencyCode,
+            source: 'SHOPIFY',
+            effectiveFrom,
+          },
+        });
+      });
+    }
+  }
+
+  async persistCollections(storeId: string, collections: ShopifyCollection[]): Promise<void> {
+    if (collections.length === 0) return;
+
+    await runBatched(collections, (collection) =>
+      prisma.collection.upsert({
+        where: {
+          storeId_shopifyCollectionId: {
+            storeId,
+            shopifyCollectionId: collection.id,
+          },
+        },
+        create: {
+          storeId,
+          shopifyCollectionId: collection.id,
+          ...collectionData(collection),
+        },
+        update: collectionData(collection),
+        select: { id: true },
+      }),
+    );
+  }
+
+  async replaceCollectionProducts(
+    storeId: string,
+    shopifyCollectionId: string,
+    shopifyProductIds: string[],
+  ): Promise<boolean> {
+    const [collection, products] = await Promise.all([
+      prisma.collection.findUnique({
+        where: { storeId_shopifyCollectionId: { storeId, shopifyCollectionId } },
+        select: { id: true },
+      }),
+      shopifyProductIds.length
+        ? prisma.product.findMany({
+            where: { storeId, shopifyProductId: { in: shopifyProductIds }, deletedAt: null },
+            select: { id: true, shopifyProductId: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    if (!collection) return false;
+    if (products.length !== new Set(shopifyProductIds).size) return false;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.productCollection.deleteMany({ where: { collectionId: collection.id } });
+      if (products.length > 0) {
+        const productByExternalId = new Map(
+          products.map((product) => [product.shopifyProductId, product.id]),
+        );
+        await tx.productCollection.createMany({
+          data: shopifyProductIds.map((externalId, index) => ({
+            collectionId: collection.id,
+            productId: productByExternalId.get(externalId)!,
+            position: index + 1,
+          })),
+          skipDuplicates: true,
+        });
+      }
+    });
+    return true;
+  }
+
+  async markMissingCollectionsDeleted(storeId: string, activeIds: string[]): Promise<number> {
+    const result = await prisma.collection.updateMany({
+      where: {
+        storeId,
+        deletedAt: null,
+        ...(activeIds.length > 0 ? { shopifyCollectionId: { notIn: activeIds } } : {}),
+      },
+      data: { deletedAt: new Date() },
+    });
+    return result.count;
   }
 }
