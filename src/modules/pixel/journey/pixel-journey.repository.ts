@@ -211,12 +211,19 @@ export class PixelJourneyRepository {
     });
   }
 
-  clearSessionRepair(storeId: string, browserSessionId: string, materializationStartedAt: Date) {
+  findSessionRepairMarker(storeId: string, browserSessionId: string) {
+    return prisma.storefrontSessionRepair.findUnique({
+      where: { storeId_browserSessionId: { storeId, browserSessionId } },
+      select: { id: true },
+    });
+  }
+
+  clearSessionRepair(storeId: string, browserSessionId: string, expectedMarkerId: string) {
     return prisma.storefrontSessionRepair.deleteMany({
       where: {
+        id: expectedMarkerId,
         storeId,
         browserSessionId,
-        updatedAt: { lte: materializationStartedAt },
       },
     });
   }
