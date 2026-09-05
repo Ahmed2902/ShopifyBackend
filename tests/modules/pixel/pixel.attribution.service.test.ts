@@ -19,6 +19,7 @@ function repositoryMock() {
     findVisitorJourneySessions: vi.fn(),
     findValidOrders: vi.fn(),
     replaceDailyRows: vi.fn().mockResolvedValue({ attribution: 0, paths: 0, targets: 0 }),
+    acknowledgeWindow: vi.fn().mockResolvedValue(1),
     advanceRollupState: vi.fn(),
     recordRollupError: vi.fn(),
     groupAttribution: vi.fn().mockResolvedValue([]),
@@ -70,7 +71,14 @@ describe('PixelAttributionService', () => {
       checkoutCompletedAt: new Date('2026-09-04T14:10:00.000Z'),
       orderId,
       orderLinkStatus: 'LINKED' as const,
-      touches: [metaTouch({ ordinal: 1, eventAt: '2026-09-04T14:00:00.000Z', adId: adBId, externalId: '301' })],
+      touches: [
+        metaTouch({
+          ordinal: 1,
+          eventAt: '2026-09-04T14:00:00.000Z',
+          adId: adBId,
+          externalId: '301',
+        }),
+      ],
       products: [
         {
           identityKey: 'product-1',
@@ -105,7 +113,14 @@ describe('PixelAttributionService', () => {
       {
         id: 'session-a',
         startedAt: new Date('2026-09-02T12:00:00.000Z'),
-        touches: [metaTouch({ ordinal: 1, eventAt: '2026-09-02T12:00:00.000Z', adId: adAId, externalId: '300' })],
+        touches: [
+          metaTouch({
+            ordinal: 1,
+            eventAt: '2026-09-02T12:00:00.000Z',
+            adId: adAId,
+            externalId: '300',
+          }),
+        ],
       },
       {
         id: 'session-b',
@@ -114,7 +129,8 @@ describe('PixelAttributionService', () => {
       },
     ] as never);
 
-    const service = new PixelAttributionService(repository, () => new Date('2026-09-05T00:00:00.000Z'));
+    const now = new Date('2026-09-05T00:00:00.000Z');
+    const service = new PixelAttributionService(repository, () => now);
     await service.rebuildStoreDate(storeId, 'UTC', '2026-09-04');
 
     const [, , attribution, paths, targets] = vi.mocked(repository.replaceDailyRows).mock.calls[0]!;
@@ -155,6 +171,12 @@ describe('PixelAttributionService', () => {
       ]),
     );
     expect(targets.some((row) => row.metaAdId === adAId)).toBe(false);
+    expect(repository.acknowledgeWindow).toHaveBeenCalledWith(
+      storeId,
+      expect.any(Date),
+      expect.any(Date),
+      now,
+    );
   });
 
   it('caps Pixel-only mapping suggestions below the exact mapping threshold and never activates them', async () => {
