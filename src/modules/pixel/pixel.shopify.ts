@@ -115,25 +115,22 @@ export class ShopifyPixelProvisioner {
   }): Promise<{ id: string }> {
     const { context } = await this.resolveContext(input.storeId);
 
-    // A previous provider write can succeed while local finalization fails. Query Shopify when
-    // the local provider id is absent so reinstall repairs that split-brain state instead of
-    // attempting a second non-idempotent webPixelCreate.
-    let webPixelId = input.existingWebPixelId;
-    if (!webPixelId) {
-      const response = await this.apiService.requestAdminGraphql<unknown>({
-        ...context,
-        query: WEB_PIXEL_QUERY,
-      });
-      const parsed = findResponseSchema.safeParse(response);
-      if (!parsed.success) {
-        throw new AppError(
-          'Shopify web pixel lookup returned an unexpected shape',
-          502,
-          'SHOPIFY_BAD_RESPONSE',
-        );
-      }
-      webPixelId = parsed.data.webPixel?.id ?? null;
+    // Treat Shopify as the source of truth for the current WebPixel resource. The locally stored
+    // provider ID can become stale if Shopify or the merchant deletes/recreates the pixel; always
+    // inspect the live resource before deciding whether to update or create.
+    const lookup = await this.apiService.requestAdminGraphql<unknown>({
+      ...context,
+      query: WEB_PIXEL_QUERY,
+    });
+    const parsedLookup = findResponseSchema.safeParse(lookup);
+    if (!parsedLookup.success) {
+      throw new AppError(
+        'Shopify web pixel lookup returned an unexpected shape',
+        502,
+        'SHOPIFY_BAD_RESPONSE',
+      );
     }
+    const webPixelId = parsedLookup.data.webPixel?.id ?? null;
 
     // Shopify's WebPixelInput expects its `settings` JSON scalar as a JSON-formatted string.
     const variables = {
