@@ -60,17 +60,24 @@ export function enqueueMetaHierarchyPixelRepairs(
   return db.$executeRaw`
     INSERT INTO "StorefrontSessionRepair"
       ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
-    SELECT DISTINCT
+    SELECT
       gen_random_uuid(),
-      s."storeId",
-      s."browserSessionId",
-      s."lastSourceReceivedAt",
+      affected."storeId",
+      affected."browserSessionId",
+      affected."sourceReceivedAt",
       CURRENT_TIMESTAMP,
       CURRENT_TIMESTAMP
-    FROM "StorefrontSession" s
-    INNER JOIN "StorefrontSessionTouch" t ON t."sessionId" = s."id"
-    WHERE s."storeId" = ${storeId}::uuid
-      AND (${evidencePredicate})
+    FROM (
+      SELECT
+        s."storeId",
+        s."browserSessionId",
+        MAX(s."lastSourceReceivedAt") AS "sourceReceivedAt"
+      FROM "StorefrontSession" s
+      INNER JOIN "StorefrontSessionTouch" t ON t."sessionId" = s."id"
+      WHERE s."storeId" = ${storeId}::uuid
+        AND (${evidencePredicate})
+      GROUP BY s."storeId", s."browserSessionId"
+    ) affected
     ON CONFLICT ("storeId", "browserSessionId")
     DO UPDATE SET
       "id" = EXCLUDED."id",
