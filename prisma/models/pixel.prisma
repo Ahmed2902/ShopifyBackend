@@ -43,32 +43,35 @@ model PixelInstallation {
 }
 
 model StorefrontEvent {
-  id                   String                   @id @default(uuid()) @db.Uuid
-  storeId              String                   @db.Uuid
-  eventId              String                   @db.VarChar(128)
-  eventVersion         Int                      @default(1)
-  eventName            StorefrontEventName
-  eventAt              DateTime
-  receivedAt           DateTime                 @default(now())
-  anonymousVisitorId   String?                  @db.VarChar(128)
-  sessionId            String?                  @db.VarChar(128)
-  consentState         StorefrontConsentState
-  pageUrl              String?                  @db.Text
-  referrerUrl          String?                  @db.Text
-  landingPageUrl       String?                  @db.Text
-  productExternalId    String?                  @db.VarChar(128)
-  variantExternalId    String?                  @db.VarChar(128)
-  collectionExternalId String?                  @db.VarChar(128)
-  quantity             Int?
-  utmSource            String?                  @db.VarChar(255)
-  utmMedium            String?                  @db.VarChar(255)
-  utmCampaign          String?                  @db.VarChar(255)
-  utmContent           String?                  @db.VarChar(255)
-  utmTerm              String?                  @db.VarChar(255)
-  metaClickId          String?                  @db.VarChar(512)
-  googleClickId        String?                  @db.VarChar(512)
-  tiktokClickId        String?                  @db.VarChar(512)
-  retentionExpiresAt   DateTime
+  id                     String                   @id @default(uuid()) @db.Uuid
+  storeId                String                   @db.Uuid
+  eventId                String                   @db.VarChar(128)
+  eventVersion           Int                      @default(1)
+  eventName              StorefrontEventName
+  eventAt                DateTime
+  receivedAt             DateTime                 @default(now())
+  anonymousVisitorId     String?                  @db.VarChar(128)
+  sessionId              String?                  @db.VarChar(128)
+  consentState           StorefrontConsentState
+  pageUrl                String?                  @db.Text
+  referrerUrl            String?                  @db.Text
+  landingPageUrl         String?                  @db.Text
+  productExternalId      String?                  @db.VarChar(128)
+  variantExternalId      String?                  @db.VarChar(128)
+  collectionExternalId   String?                  @db.VarChar(128)
+  quantity               Int?
+  utmSource              String?                  @db.VarChar(255)
+  utmMedium              String?                  @db.VarChar(255)
+  utmCampaign            String?                  @db.VarChar(255)
+  utmContent             String?                  @db.VarChar(255)
+  utmTerm                String?                  @db.VarChar(255)
+  metaClickId            String?                  @db.VarChar(512)
+  googleClickId          String?                  @db.VarChar(512)
+  tiktokClickId          String?                  @db.VarChar(512)
+  metaCampaignExternalId String?                  @db.VarChar(128)
+  metaAdSetExternalId    String?                  @db.VarChar(128)
+  metaAdExternalId       String?                  @db.VarChar(128)
+  retentionExpiresAt     DateTime
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
@@ -77,5 +80,6 @@ model StorefrontEvent {
   @@index([storeId, eventName, eventAt])
   @@index([storeId, anonymousVisitorId, eventAt])
   @@index([storeId, sessionId, eventAt])
+  @@index([storeId, metaAdExternalId, eventAt])
   @@index([retentionExpiresAt])
 }

@@ -37,6 +37,9 @@ const ATTRIBUTION_KEYS = [
   ['fbclid', 'metaClickId'],
   ['gclid', 'googleClickId'],
   ['ttclid', 'tiktokClickId'],
+  ['stride_meta_campaign_id', 'metaCampaignExternalId'],
+  ['stride_meta_adset_id', 'metaAdSetExternalId'],
+  ['stride_meta_ad_id', 'metaAdExternalId'],
 ];
 
 function safeUrl(value) {
@@ -50,7 +53,17 @@ function safeUrl(value) {
     const attribution = {};
     for (const [queryKey, outputKey] of ATTRIBUTION_KEYS) {
       const queryValue = parsed.searchParams.get(queryKey)?.trim();
-      if (queryValue) attribution[outputKey] = queryValue.slice(0, 512);
+      if (!queryValue) continue;
+
+      if (outputKey.endsWith('ExternalId')) {
+        if (queryValue.length <= 128 && /^\d+$/.test(queryValue)) {
+          attribution[outputKey] = queryValue;
+        }
+        continue;
+      }
+
+      const maxLength = outputKey.endsWith('ClickId') ? 512 : 255;
+      attribution[outputKey] = queryValue.slice(0, maxLength);
     }
 
     parsed.username = '';
@@ -61,6 +74,10 @@ function safeUrl(value) {
   } catch {
     return {url: undefined, attribution: {}};
   }
+}
+
+function hasAttribution(attribution) {
+  return Boolean(attribution && Object.keys(attribution).length > 0);
 }
 
 function mapEventName(name) {
@@ -197,7 +214,7 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
     }
 
     const current = safeUrl(event.context?.document?.location?.href);
-    if (!landing) {
+    if (!landing || hasAttribution(current.attribution)) {
       landing = current;
       await browser.sessionStorage.set(LANDING_KEY, JSON.stringify(landing));
     }

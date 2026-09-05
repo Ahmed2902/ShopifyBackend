@@ -37,4 +37,7 @@ export interface StorefrontAttributionInput {
   metaClickId?: string;
   googleClickId?: string;
   tiktokClickId?: string;
+  metaCampaignExternalId?: string;
+  metaAdSetExternalId?: string;
+  metaAdExternalId?: string;
 }

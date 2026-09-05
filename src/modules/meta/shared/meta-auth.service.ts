@@ -26,6 +26,11 @@ export class MetaAuthService {
     return buildMetaAuthorizationUrl(userId, storeId);
   }
 
+  async startAdsManagementUpgrade(userId: string, storeId: string) {
+    await this.assertCanManageStore(userId, storeId);
+    return buildMetaAuthorizationUrl(userId, storeId, 'ADS_MANAGEMENT');
+  }
+
   async completeInstall(code: string, state: string) {
     const context = verifyMetaOAuthState(state);
     await this.assertCanManageStore(context.userId, context.storeId);
