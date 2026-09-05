@@ -271,19 +271,43 @@ export class PixelJourneyRepository {
     orderId: string,
     dirtyAt: Date,
   ) {
-    return prisma.storefrontSession.updateMany({
-      where: {
-        id: sessionId,
-        orderLinkStatus: 'PENDING',
-        shopifyOrderExternalId: expectedShopifyOrderExternalId,
-      },
-      data: {
-        orderId,
-        orderLinkStatus: 'LINKED',
-        orderLinkAttemptCount: 0,
-        orderLinkNextAttemptAt: null,
-        rollupDirtyAt: dirtyAt,
-      },
+    return prisma.$transaction(async (tx) => {
+      // Match deletion's session-before-order lock order. Recheck commerce truth at the write,
+      // since the earlier external-ID lookup may have raced with deletion and repair completion.
+      const sessions = await tx.$queryRaw<Array<{ storeId: string }>>`
+        SELECT s."storeId"
+        FROM "StorefrontSession" s
+        WHERE s."id" = ${sessionId}::uuid
+          AND s."orderLinkStatus" = 'PENDING'
+          AND s."shopifyOrderExternalId" = ${expectedShopifyOrderExternalId}
+        FOR UPDATE OF s
+      `;
+      const session = sessions[0];
+      if (!session) return { count: 0 };
+      const orders = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT o."id"
+        FROM "Order" o
+        WHERE o."id" = ${orderId}::uuid
+          AND o."storeId" = ${session.storeId}::uuid
+          AND o."shopifyOrderId" = ${expectedShopifyOrderExternalId}
+        FOR KEY SHARE OF o
+      `;
+      if (orders.length === 0) return { count: 0 };
+
+      return tx.storefrontSession.updateMany({
+        where: {
+          id: sessionId,
+          orderLinkStatus: 'PENDING',
+          shopifyOrderExternalId: expectedShopifyOrderExternalId,
+        },
+        data: {
+          orderId,
+          orderLinkStatus: 'LINKED',
+          orderLinkAttemptCount: 0,
+          orderLinkNextAttemptAt: null,
+          rollupDirtyAt: dirtyAt,
+        },
+      });
     });
   }
 

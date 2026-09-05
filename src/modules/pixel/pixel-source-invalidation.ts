@@ -1,3 +1,4 @@
+import type { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
 
 /**
@@ -5,8 +6,11 @@ import { prisma } from '../../lib/prisma.js';
  * Any successfully committed hierarchy snapshot can change EXACT/PARTIAL/UNRESOLVED/CONFLICT
  * resolution, so rotate repair generations immediately at that source-domain commit boundary.
  */
-export function enqueueMetaHierarchyPixelRepairs(storeId: string) {
-  return prisma.$executeRaw`
+export function enqueueMetaHierarchyPixelRepairs(
+  storeId: string,
+  db: Pick<Prisma.TransactionClient, '$executeRaw'> = prisma,
+) {
+  return db.$executeRaw`
     INSERT INTO "StorefrontSessionRepair"
       ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
     SELECT
