@@ -120,6 +120,28 @@ function merchandiseContext(event) {
   return {};
 }
 
+function checkoutContext(event) {
+  if (
+    event.name !== 'checkout_started' &&
+    event.name !== 'checkout_completed' &&
+    !CHECKOUT_PROGRESS_EVENTS.has(event.name)
+  ) {
+    return {};
+  }
+
+  const checkout = event.data?.checkout;
+  const token = typeof checkout?.token === 'string' ? checkout.token.trim().slice(0, 255) : '';
+  const orderId =
+    event.name === 'checkout_completed' && typeof checkout?.order?.id === 'string'
+      ? checkout.order.id.trim().slice(0, 128)
+      : '';
+
+  return {
+    shopifyCheckoutToken: token || undefined,
+    shopifyOrderExternalId: orderId || undefined,
+  };
+}
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -232,6 +254,7 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
       referrerUrl: referrer.url,
       landingPageUrl: landing?.url,
       ...merchandiseContext(event),
+      ...checkoutContext(event),
       attribution: landing?.attribution,
     });
     scheduleFlush();
