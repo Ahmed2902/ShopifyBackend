@@ -228,7 +228,6 @@ export class PixelRepository {
           WHEN "lastEventAt" IS NULL THEN ${lastEventAt}
           ELSE GREATEST("lastEventAt", ${lastEventAt})
         END,
-        "lastError" = NULL,
         "updatedAt" = CURRENT_TIMESTAMP
       WHERE "id" = ${id}::uuid
       RETURNING "id"
