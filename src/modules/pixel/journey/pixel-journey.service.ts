@@ -219,15 +219,15 @@ export class PixelJourneyService {
   }
 
   async materializeSession(storeId: string, browserSessionId: string) {
-    // Capture the repair generation before reading raw events. Every ingestion rotates the
-    // marker UUID, so clearing this exact generation is a CAS: a concurrent event write leaves a
-    // newer marker behind even if its transaction began before this materialization.
+    // Capture the repair generation before reading raw events. The repository later claims this
+    // exact generation in the same transaction that replaces the read model. If a newer event
+    // rotates the marker—or another materializer already claimed it—the stale write is skipped.
     const repairMarker = await this.repository.findSessionRepairMarker(storeId, browserSessionId);
+    if (!repairMarker) return null;
+
     const events = await this.repository.findSessionEvents(storeId, browserSessionId);
     if (events.length === 0) {
-      if (repairMarker) {
-        await this.repository.clearSessionRepair(storeId, browserSessionId, repairMarker.id);
-      }
+      await this.repository.clearSessionRepair(storeId, browserSessionId, repairMarker.id);
       return null;
     }
 
@@ -301,18 +301,15 @@ export class PixelJourneyService {
       rollupDirtyAt: materializedAt,
     };
 
-    const result = await this.repository.replaceSessionReadModel(
+    return this.repository.replaceSessionReadModel(
       storeId,
       browserSessionId,
+      repairMarker.id,
       aggregate,
       touches,
       products,
       collections,
     );
-    if (repairMarker) {
-      await this.repository.clearSessionRepair(storeId, browserSessionId, repairMarker.id);
-    }
-    return result;
   }
 
   async repairDirtySessions(limit = DEFAULT_REPAIR_BATCH) {
