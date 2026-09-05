@@ -69,8 +69,6 @@ function sourceFor(event: JourneyEvent): StorefrontJourneySource {
 }
 
 function touchSignature(event: JourneyEvent): string {
-  // Every field that can change sourceFor() must participate in dedupe. Otherwise an
-  // UNKNOWN -> DIRECT or referrer-only transition can be silently collapsed.
   return JSON.stringify([
     event.pageUrl,
     event.referrerUrl,
@@ -194,7 +192,10 @@ function buildRawCollections(events: JourneyEvent[]): SessionCollectionAggregate
 }
 
 function orderRetryDelayMs(attemptCount: number): number {
-  return Math.min(ORDER_LINK_BASE_RETRY_MS * 2 ** Math.min(Math.max(attemptCount - 1, 0), 7), ORDER_LINK_MAX_RETRY_MS);
+  return Math.min(
+    ORDER_LINK_BASE_RETRY_MS * 2 ** Math.min(Math.max(attemptCount - 1, 0), 7),
+    ORDER_LINK_MAX_RETRY_MS,
+  );
 }
 
 export class PixelJourneyService {
@@ -219,9 +220,6 @@ export class PixelJourneyService {
   }
 
   async materializeSession(storeId: string, browserSessionId: string) {
-    // Capture the repair generation before reading raw events. The repository later claims this
-    // exact generation in the same transaction that replaces the read model. If a newer event
-    // rotates the marker—or another materializer already claimed it—the stale write is skipped.
     const repairMarker = await this.repository.findSessionRepairMarker(storeId, browserSessionId);
     if (!repairMarker) return null;
 
@@ -296,7 +294,10 @@ export class PixelJourneyService {
       landingPageUrl: events[0]?.landingPageUrl ?? events[0]?.pageUrl ?? null,
       initialReferrerUrl: events[0]?.referrerUrl ?? null,
       dataQualityFlags,
-      retentionExpiresAt: maxDate(events.map((event) => event.retentionExpiresAt)),
+      // Session-level pseudonymous evidence is retained no longer than its oldest source event.
+      // This is intentionally conservative: one long-lived browser session cannot extend an old
+      // touch, URL, or counter past the source event's own retention horizon.
+      retentionExpiresAt: minDate(events.map((event) => event.retentionExpiresAt)),
       materializedAt,
       rollupDirtyAt: materializedAt,
     };
@@ -334,31 +335,42 @@ export class PixelJourneyService {
     const sessions = await this.repository.findPendingOrderSessions(now, bounded);
     let linked = 0;
     let deferred = 0;
+    let stale = 0;
     for (const session of sessions) {
       if (!session.shopifyOrderExternalId) continue;
+      const expectedOrderExternalId = session.shopifyOrderExternalId;
       const order = await this.repository.findOrderByExternalId(
         session.storeId,
-        session.shopifyOrderExternalId,
+        expectedOrderExternalId,
       );
       if (order) {
-        await this.repository.setOrderLink(session.id, order.id, this.now());
-        linked += 1;
+        const updated = await this.repository.setOrderLink(
+          session.id,
+          expectedOrderExternalId,
+          order.id,
+          this.now(),
+        );
+        if (updated.count === 1) linked += 1;
+        else stale += 1;
         continue;
       }
 
       const attemptCount = session.orderLinkAttemptCount + 1;
-      await this.repository.scheduleOrderLinkRetry(
+      const updated = await this.repository.scheduleOrderLinkRetry(
         session.id,
+        expectedOrderExternalId,
         attemptCount,
         new Date(now.getTime() + orderRetryDelayMs(attemptCount)),
       );
-      deferred += 1;
+      if (updated.count === 1) deferred += 1;
+      else stale += 1;
     }
     return {
       selected: sessions.length,
       linked,
       deferred,
-      stillPending: sessions.length - linked,
+      stale,
+      stillPending: sessions.length - linked - stale,
     };
   }
 
