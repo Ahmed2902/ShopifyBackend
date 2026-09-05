@@ -82,4 +82,44 @@ describe('MetaTrackingProvider', () => {
     expect(fetchMock.mock.calls[1]?.[1]).toEqual(expect.objectContaining({ method: 'POST' }));
     expect(fetchMock.mock.calls[2]?.[1]).toEqual(expect.objectContaining({ method: 'POST' }));
   });
+
+  it('preserves degrees-of-freedom enhancements when cloning a post-based creative', async () => {
+    const enhancedAd = {
+      ...ad,
+      creative: {
+        ...ad.creative!,
+        degreesOfFreedomSpec: {
+          creative_features_spec: {
+            standard_enhancements: { enroll_status: 'OPT_IN' },
+          },
+        },
+      },
+    } as MetaTrackingAd;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: '3003', creative: { id: '4004' } }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: '5005' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: '3003' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      new MetaTrackingProvider().cloneCreativeAndAssign(
+        context,
+        enhancedAd,
+        'stride_meta_ad_id={{ad.id}}',
+      ),
+    ).resolves.toEqual({ newCreativeId: '5005' });
+
+    const createRequest = fetchMock.mock.calls[1]?.[1];
+    expect(createRequest).toEqual(expect.objectContaining({ method: 'POST' }));
+    const body = createRequest?.body;
+    expect(body).toBeInstanceOf(URLSearchParams);
+    const params = body as URLSearchParams;
+    expect(params.get('object_story_id')).toBe('123_456');
+    expect(params.get('degrees_of_freedom_spec')).toBe(
+      JSON.stringify(enhancedAd.creative?.degreesOfFreedomSpec),
+    );
+  });
 });
