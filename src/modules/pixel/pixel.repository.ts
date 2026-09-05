@@ -252,7 +252,7 @@ export class PixelRepository {
     return prisma.$transaction(async (tx) => {
       const selected = await tx.storefrontEvent.findMany({
         where: { id: { in: ids } },
-        select: { id: true, storeId: true, sessionId: true },
+        select: { id: true, storeId: true, sessionId: true, receivedAt: true },
       });
       if (selected.length === 0) return 0;
 
@@ -260,31 +260,45 @@ export class PixelRepository {
         where: { id: { in: selected.map((row) => row.id) } },
       });
 
-      const affectedSessions = new Map<string, { storeId: string; browserSessionId: string }>();
+      const affectedSessions = new Map<
+        string,
+        { storeId: string; browserSessionId: string; latestDeletedReceivedAt: Date }
+      >();
       for (const row of selected) {
         if (!row.sessionId) continue;
         const key = `${row.storeId}:${row.sessionId}`;
-        affectedSessions.set(key, { storeId: row.storeId, browserSessionId: row.sessionId });
+        const existing = affectedSessions.get(key);
+        affectedSessions.set(key, {
+          storeId: row.storeId,
+          browserSessionId: row.sessionId,
+          latestDeletedReceivedAt:
+            existing && existing.latestDeletedReceivedAt > row.receivedAt
+              ? existing.latestDeletedReceivedAt
+              : row.receivedAt,
+        });
       }
 
-      // Removing one source event can change a surviving session's first touch, counters,
-      // visitor identity, cohort date, and retention horizon. Rotate the repair generation after
-      // deletion whenever unexpired source evidence remains, so a materializer that read the old
-      // snapshot cannot commit and the worker rebuilds from only the surviving raw events.
-      for (const { storeId, browserSessionId } of affectedSessions.values()) {
+      // Every source deletion rotates the repair generation, including deletion of the final raw
+      // event in a browser session. That invalidates any materializer that captured the pre-delete
+      // generation. If evidence survives, the worker rebuilds from those sources; if none survives,
+      // it observes an empty session, clears this marker, and retention can delete the old read model.
+      for (const { storeId, browserSessionId, latestDeletedReceivedAt } of affectedSessions.values()) {
         const remaining = await tx.storefrontEvent.findFirst({
           where: { storeId, sessionId: browserSessionId },
           orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],
           select: { receivedAt: true },
         });
-        if (!remaining) continue;
+        const sourceReceivedAt =
+          remaining && remaining.receivedAt > latestDeletedReceivedAt
+            ? remaining.receivedAt
+            : latestDeletedReceivedAt;
 
         const repairId = randomUUID();
         await tx.$executeRaw`
           INSERT INTO "StorefrontSessionRepair"
             ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
           VALUES
-            (${repairId}::uuid, ${storeId}::uuid, ${browserSessionId}, ${remaining.receivedAt}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            (${repairId}::uuid, ${storeId}::uuid, ${browserSessionId}, ${sourceReceivedAt}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
           ON CONFLICT ("storeId", "browserSessionId")
           DO UPDATE SET
             "id" = EXCLUDED."id",
