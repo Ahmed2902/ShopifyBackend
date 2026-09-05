@@ -66,8 +66,8 @@ The APIs reuse Stride's normal store-timezone date contract and equal preceding 
 
 ## Eventual correctness
 
-The collector remains optimized for durable event capture. PIXEL-2 materializes sessions, then the PIXEL-3 worker finds session materializations newer than its per-store watermark. It rebuilds every affected store-local date from the complete retained session set before advancing the watermark.
+The collector remains optimized for durable event capture. PIXEL-2 materializes sessions, then the PIXEL-3 worker finds session read-model updates newer than its per-store watermark. This includes both new/repaired materializations and a later `PENDING -> LINKED` Shopify-order repair. It rebuilds every affected store-local date from the complete retained session set before advancing the watermark.
 
-Late and repaired session materializations therefore replace a daily aggregate deterministically rather than incrementing it twice.
+Late events, repaired sessions, and late exact Shopify order links therefore replace a daily aggregate deterministically rather than incrementing it twice or leaving purchase metrics stale.
 
 The behavior rollup worker runs before Pixel trace-retention cleanup.
