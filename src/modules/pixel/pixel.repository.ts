@@ -240,15 +240,6 @@ export class PixelRepository {
       SELECT e."id"
       FROM "StorefrontEvent" e
       WHERE e."retentionExpiresAt" <= ${now}
-        AND (
-          e."sessionId" IS NULL
-          OR NOT EXISTS (
-            SELECT 1
-            FROM "StorefrontSessionRepair" r
-            WHERE r."storeId" = e."storeId"
-              AND r."browserSessionId" = e."sessionId"
-          )
-        )
       ORDER BY e."retentionExpiresAt" ASC, e."id" ASC
       LIMIT ${limit}
     `;
@@ -257,7 +248,52 @@ export class PixelRepository {
 
   async deleteEventsByIds(ids: string[]) {
     if (ids.length === 0) return 0;
-    const result = await prisma.storefrontEvent.deleteMany({ where: { id: { in: ids } } });
-    return result.count;
+
+    return prisma.$transaction(async (tx) => {
+      const selected = await tx.storefrontEvent.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, storeId: true, sessionId: true },
+      });
+      if (selected.length === 0) return 0;
+
+      const result = await tx.storefrontEvent.deleteMany({
+        where: { id: { in: selected.map((row) => row.id) } },
+      });
+
+      const affectedSessions = new Map<string, { storeId: string; browserSessionId: string }>();
+      for (const row of selected) {
+        if (!row.sessionId) continue;
+        const key = `${row.storeId}:${row.sessionId}`;
+        affectedSessions.set(key, { storeId: row.storeId, browserSessionId: row.sessionId });
+      }
+
+      // Removing one source event can change a surviving session's first touch, counters,
+      // visitor identity, cohort date, and retention horizon. Rotate the repair generation after
+      // deletion whenever unexpired source evidence remains, so a materializer that read the old
+      // snapshot cannot commit and the worker rebuilds from only the surviving raw events.
+      for (const { storeId, browserSessionId } of affectedSessions.values()) {
+        const remaining = await tx.storefrontEvent.findFirst({
+          where: { storeId, sessionId: browserSessionId },
+          orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],
+          select: { receivedAt: true },
+        });
+        if (!remaining) continue;
+
+        const repairId = randomUUID();
+        await tx.$executeRaw`
+          INSERT INTO "StorefrontSessionRepair"
+            ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
+          VALUES
+            (${repairId}::uuid, ${storeId}::uuid, ${browserSessionId}, ${remaining.receivedAt}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          ON CONFLICT ("storeId", "browserSessionId")
+          DO UPDATE SET
+            "id" = EXCLUDED."id",
+            "sourceReceivedAt" = GREATEST("StorefrontSessionRepair"."sourceReceivedAt", EXCLUDED."sourceReceivedAt"),
+            "updatedAt" = CURRENT_TIMESTAMP
+        `;
+      }
+
+      return result.count;
+    });
   }
 }
