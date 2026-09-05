@@ -56,7 +56,7 @@ export class PixelBehaviorRepository {
       FROM "StorefrontSession" s
       LEFT JOIN "StorefrontBehaviorRollupState" r ON r."storeId" = s."storeId"
       WHERE r."rolledThroughMaterializedAt" IS NULL
-         OR s."materializedAt" > r."rolledThroughMaterializedAt"
+         OR s."updatedAt" > r."rolledThroughMaterializedAt"
       ORDER BY s."storeId"
       LIMIT ${limit}
     `;
@@ -67,11 +67,11 @@ export class PixelBehaviorRepository {
     return prisma.storefrontSession.findMany({
       where: {
         storeId,
-        ...(after ? { materializedAt: { gt: after } } : {}),
+        ...(after ? { updatedAt: { gt: after } } : {}),
       },
-      orderBy: [{ materializedAt: 'asc' }, { id: 'asc' }],
+      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
       take: limit,
-      select: { id: true, startedAt: true, materializedAt: true },
+      select: { id: true, startedAt: true, updatedAt: true },
     });
   }
 
