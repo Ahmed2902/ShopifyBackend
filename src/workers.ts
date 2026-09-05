@@ -74,10 +74,20 @@ const pixelAttributionWorker = new PollingWorker(
 const pixelRetentionWorker = new PollingWorker(
   60_000,
   async () => {
-    const sessions = await pixelJourneyService.cleanupExpiredSessions();
+    // Raw evidence expires first. Deleting an expired event rotates a repair generation whenever
+    // newer source evidence survives in that browser session. Drain one bounded repair batch
+    // immediately and defer session deletion whenever any repair work was observed; this keeps an
+    // old trace from being deleted before its surviving evidence has been rematerialized and its
+    // old/new cohort dates can be rolled up.
     const events = await pixelService.cleanupExpiredEvents();
-    if (sessions.deleted > 0 || events.deleted > 0) {
-      logger.info({ sessions, events }, 'Deleted expired Stride Pixel behavioral traces');
+    const repairs = await pixelJourneyService.repairDirtySessions(500);
+    const sessions =
+      repairs.selected === 0
+        ? await pixelJourneyService.cleanupExpiredSessions()
+        : { selected: 0, deleted: 0, deferredForRepairBacklog: true };
+
+    if (sessions.deleted > 0 || events.deleted > 0 || repairs.selected > 0 || repairs.failed > 0) {
+      logger.info({ sessions, events, repairs }, 'Deleted expired Stride Pixel behavioral traces');
     }
   },
   'Stride Pixel retention cleanup failed',
