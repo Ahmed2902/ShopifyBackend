@@ -16,7 +16,7 @@ function repositoryMock() {
     findSessionsForWindow: vi.fn(),
     findValidOrders: vi.fn(),
     replaceDailyRows: vi.fn().mockResolvedValue({ rows: 0 }),
-    acknowledgeWindow: vi.fn().mockResolvedValue(1),
+    acknowledgeSessions: vi.fn().mockResolvedValue(1),
     advanceRollupState: vi.fn().mockResolvedValue({ storeId }),
     recordRollupError: vi.fn(),
     aggregateStore: vi.fn(),
@@ -135,12 +135,7 @@ describe('PixelBehaviorService', () => {
       landingPageUrl: 'https://shop.example/products/shoe',
       linkedPurchaseSessionCount: 1,
     });
-    expect(repository.acknowledgeWindow).toHaveBeenCalledWith(
-      storeId,
-      expect.any(Date),
-      expect.any(Date),
-      now,
-    );
+    expect(repository.acknowledgeSessions).not.toHaveBeenCalled();
     expect(stringify(rows)).not.toContain('anonymousVisitorId');
   });
 
@@ -170,7 +165,7 @@ describe('PixelBehaviorService', () => {
     expect(stringify(landing)).not.toContain('order-token-123');
   });
 
-  it('rebuilds both previous and current cohort dates when a late event moves a session', async () => {
+  it('rebuilds both previous and current cohort dates and acknowledges only the selected dirty session', async () => {
     const repository = repositoryMock();
     const dirtyAt = new Date('2026-09-05T01:00:00.000Z');
     vi.mocked(repository.findDirtyStoreIds).mockResolvedValue([storeId]);
@@ -188,13 +183,17 @@ describe('PixelBehaviorService', () => {
         dirtyAt,
       },
     ] as never);
-    vi.mocked(repository.findSessionsForWindow).mockResolvedValue([] as never);
     const service = new PixelBehaviorService(repository, () => dirtyAt);
     const rebuild = vi.spyOn(service, 'rebuildStoreDate').mockResolvedValue({ date: '', rows: 0 });
 
     await service.rollupDirtyStores();
 
     expect(rebuild.mock.calls.map((call) => call[2])).toEqual(['2026-09-04', '2026-09-05']);
+    expect(repository.acknowledgeSessions).toHaveBeenCalledWith(
+      storeId,
+      ['session-db-id'],
+      dirtyAt,
+    );
   });
 
   it('returns current/comparison first-party funnel rates using store-timezone windows', async () => {
