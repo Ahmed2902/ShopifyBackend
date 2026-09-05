@@ -280,6 +280,18 @@ export class ShopifyWebhookRepository {
       });
       if (!order) return false;
 
+      const dirtyAt = new Date();
+      await tx.storefrontSession.updateMany({
+        where: { storeId, orderId: order.id },
+        data: {
+          orderId: null,
+          orderLinkStatus: 'PENDING',
+          orderLinkAttemptCount: 0,
+          orderLinkNextAttemptAt: dirtyAt,
+          rollupDirtyAt: dirtyAt,
+        },
+      });
+
       const refunds = await tx.refund.findMany({
         where: { orderId: order.id },
         select: { id: true },
