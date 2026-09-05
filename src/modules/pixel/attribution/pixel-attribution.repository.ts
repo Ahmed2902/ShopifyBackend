@@ -379,6 +379,26 @@ export class PixelAttributionRepository {
     });
   }
 
+  groupTargetEvidenceForAds(
+    storeId: string,
+    targetType: StorefrontAttributionTargetType,
+    metaAdIds: string[],
+    fromDate: Date,
+    toDate: Date,
+  ) {
+    if (metaAdIds.length === 0) return Promise.resolve([]);
+    return prisma.storefrontMetaTargetEvidenceDaily.groupBy({
+      by: ['metaAdId', 'targetKey'],
+      where: {
+        storeId,
+        targetType,
+        metaAdId: { in: metaAdIds },
+        bucketDate: { gte: fromDate, lte: toDate },
+      },
+      _sum: TARGET_SUM_FIELDS,
+    });
+  }
+
   async countTargetEvidence(
     storeId: string,
     targetType: StorefrontAttributionTargetType,
