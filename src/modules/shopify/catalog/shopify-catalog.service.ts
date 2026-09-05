@@ -32,7 +32,7 @@ const SHOPIFY_PAGE_SIZE = 250;
 
 export class ShopifyCatalogService {
   constructor(
-    private readonly repository: ShopifyRepository,
+    _repository: ShopifyRepository,
     private readonly integrationService: IntegrationService,
     private readonly apiService: ShopifyApiService,
     private readonly syncRepository: ShopifyCatalogRepository = new ShopifyCatalogRepository(),
@@ -82,7 +82,11 @@ export class ShopifyCatalogService {
         'SHOPIFY_CATALOG_INCONSISTENT',
       );
     }
-    await this.repository.upsertProduct(input.storeId, product.data);
+
+    // Reuse the same identity+repair transaction as full catalog sync. A webhook reconciliation
+    // can fail on a later variant page without leaving an earlier product/variant identity change
+    // committed outside the Pixel resolution invalidation contract.
+    await this.syncRepository.persistProducts(input.storeId, [product.data]);
 
     const variantIds: string[] = [];
     const pages = paginateShopifyConnection(async (cursor) => {
@@ -115,18 +119,15 @@ export class ShopifyCatalogService {
     });
 
     for await (const variants of pages) {
-      for (const variant of variants) {
-        const persisted = await this.repository.upsertVariant(input.storeId, variant);
-        if (!persisted) {
-          throw new AppError(
-            'Shopify variant references a product that was not synchronized',
-            502,
-            'SHOPIFY_CATALOG_INCONSISTENT',
-          );
-        }
-        variantIds.push(variant.id);
+      const persisted = await this.syncRepository.persistVariants(input.storeId, variants);
+      if (!persisted) {
+        throw new AppError(
+          'Shopify variant references a product that was not synchronized',
+          502,
+          'SHOPIFY_CATALOG_INCONSISTENT',
+        );
       }
-      await this.syncRepository.persistShopifyCosts(input.storeId, variants);
+      variantIds.push(...variants.map((variant) => variant.id));
     }
 
     return { found: true, variantIds };
