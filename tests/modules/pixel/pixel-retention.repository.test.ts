@@ -87,4 +87,42 @@ describeDatabase('Pixel retention repository', () => {
     expect(repair.id).not.toBe(originalRepair.id);
     expect(repair.sourceReceivedAt).toEqual(newReceivedAt);
   });
+
+  it('rotates the repair generation when the final raw source expires', async () => {
+    const store = await createStore();
+    const repository = new PixelRepository();
+    const sessionId = `session-final-${randomUUID()}`;
+    const receivedAt = new Date('2026-06-01T12:00:00.000Z');
+
+    const expired = await prisma.storefrontEvent.create({
+      data: {
+        storeId: store.id,
+        eventId: `expired-final-${randomUUID()}`,
+        eventName: 'PAGE_VIEW',
+        eventAt: receivedAt,
+        receivedAt,
+        sessionId,
+        consentState: 'GRANTED',
+        retentionExpiresAt: new Date('2026-09-05T11:59:00.000Z'),
+      },
+    });
+    const originalRepair = await prisma.storefrontSessionRepair.create({
+      data: {
+        storeId: store.id,
+        browserSessionId: sessionId,
+        sourceReceivedAt: receivedAt,
+      },
+    });
+
+    await expect(repository.deleteEventsByIds([expired.id])).resolves.toBe(1);
+    await expect(
+      prisma.storefrontEvent.count({ where: { storeId: store.id, sessionId } }),
+    ).resolves.toBe(0);
+
+    const repair = await prisma.storefrontSessionRepair.findUniqueOrThrow({
+      where: { storeId_browserSessionId: { storeId: store.id, browserSessionId: sessionId } },
+    });
+    expect(repair.id).not.toBe(originalRepair.id);
+    expect(repair.sourceReceivedAt).toEqual(receivedAt);
+  });
 });
