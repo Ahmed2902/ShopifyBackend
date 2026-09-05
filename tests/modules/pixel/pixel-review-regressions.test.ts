@@ -24,12 +24,37 @@ async function createStore() {
   return store;
 }
 
-async function createEvent(storeId: string, sessionId: string) {
+async function createEvent(
+  storeId: string,
+  sessionId: string,
+  input: { metaCampaignExternalId?: string; productExternalId?: string } = {},
+) {
   return prisma.storefrontEvent.create({ data: {
-    storeId, sessionId, eventId: randomUUID(), eventName: 'PAGE_VIEW',
-    eventAt: new Date(), consentState: 'GRANTED', metaCampaignExternalId: '1001',
-    productExternalId: 'gid://shopify/Product/1001',
+    storeId,
+    sessionId,
+    eventId: randomUUID(),
+    eventName: input.productExternalId ? 'PRODUCT_VIEW' : 'PAGE_VIEW',
+    eventAt: new Date(),
+    consentState: 'GRANTED',
+    metaCampaignExternalId: input.metaCampaignExternalId ?? null,
+    productExternalId: input.productExternalId ?? null,
     retentionExpiresAt: new Date(Date.now() + 86_400_000),
+  } });
+}
+
+async function createMaterializedSession(
+  storeId: string,
+  browserSessionId: string,
+  sourceReceivedAt: Date,
+) {
+  return prisma.storefrontSession.create({ data: {
+    storeId,
+    browserSessionId,
+    startedAt: sourceReceivedAt,
+    endedAt: sourceReceivedAt,
+    lastSourceReceivedAt: sourceReceivedAt,
+    eventCount: 1,
+    retentionExpiresAt: new Date(sourceReceivedAt.getTime() + 86_400_000),
   } });
 }
 
@@ -56,7 +81,17 @@ describeDatabase('Pixel review regression cases', () => {
       name: 'Account', currency: 'USD',
     } });
     const sessionId = randomUUID();
-    await createEvent(store.id, sessionId);
+    const event = await createEvent(store.id, sessionId, { metaCampaignExternalId: '1001' });
+    const session = await createMaterializedSession(store.id, sessionId, event.receivedAt);
+    await prisma.storefrontSessionTouch.create({ data: {
+      sessionId: session.id,
+      ordinal: 0,
+      eventAt: event.eventAt,
+      source: 'META',
+      metaCampaignExternalId: '1001',
+      metaResolutionStatus: 'UNRESOLVED',
+    } });
+
     const repository = new MetaAdsRepository();
     const campaign = await repository.upsertCampaign(account.id, { id: '1001', name: 'Committed' });
     await expect(repository.upsertAdSet(account.id, randomUUID(), {
@@ -102,11 +137,24 @@ describeDatabase('Pixel review regression cases', () => {
 
   it('rolls back earlier product-page inserts when a later update fails', async () => {
     const store = await createStore();
-    await createEvent(store.id, randomUUID());
+    const productExternalId = 'gid://shopify/Product/1002';
+    const browserSessionId = randomUUID();
+    const event = await createEvent(store.id, browserSessionId, { productExternalId });
+    const session = await createMaterializedSession(store.id, browserSessionId, event.receivedAt);
+    await prisma.storefrontSessionProduct.create({ data: {
+      sessionId: session.id,
+      identityKey: `product:${productExternalId}`,
+      shopifyProductExternalId: productExternalId,
+      resolutionStatus: 'UNRESOLVED',
+      viewCount: 1,
+      firstSeenAt: event.eventAt,
+      lastSeenAt: event.eventAt,
+    } });
+
     const existing = await prisma.product.create({ data: {
       storeId: store.id, shopifyProductId: 'gid://shopify/Product/1001', title: 'Existing', status: 'ACTIVE',
     } });
-    const product = { id: 'gid://shopify/Product/1002', title: 'New', status: 'ACTIVE', tags: [], tracksInventory: false };
+    const product = { id: productExternalId, title: 'New', status: 'ACTIVE', tags: [], tracksInventory: false };
     await expect(new ShopifyCatalogRepository().persistProducts(store.id, [
       product, { ...product, id: existing.shopifyProductId, updatedAt: 'invalid-date' },
     ])).rejects.toThrow();
@@ -114,6 +162,67 @@ describeDatabase('Pixel review regression cases', () => {
     expect(await prisma.storefrontSessionRepair.count({ where: { storeId: store.id } })).toBe(0);
     await new ShopifyCatalogRepository().persistProducts(store.id, [product]);
     expect(await prisma.storefrontSessionRepair.count({ where: { storeId: store.id } })).toBe(1);
+  });
+
+  it('rolls back missing-catalog deletion when its repair generation cannot commit', async () => {
+    const store = await createStore();
+    const productExternalId = `gid://shopify/Product/${Date.now()}`;
+    const product = await prisma.product.create({ data: {
+      storeId: store.id,
+      shopifyProductId: productExternalId,
+      title: 'Must survive failed invalidation',
+      status: 'ACTIVE',
+    } });
+    const sourceReceivedAt = new Date('2026-09-05T12:00:00.000Z');
+    const browserSessionId = randomUUID();
+    const session = await createMaterializedSession(store.id, browserSessionId, sourceReceivedAt);
+    await prisma.storefrontSessionProduct.create({ data: {
+      sessionId: session.id,
+      identityKey: `product:${productExternalId}`,
+      shopifyProductExternalId: productExternalId,
+      productId: product.id,
+      resolutionStatus: 'EXACT',
+      viewCount: 1,
+      firstSeenAt: sourceReceivedAt,
+      lastSeenAt: sourceReceivedAt,
+    } });
+
+    const suffix = randomUUID().replaceAll('-', '');
+    const functionName = `fail_pixel_repair_${suffix}`;
+    const triggerName = `fail_pixel_repair_${suffix}`;
+    await prisma.$executeRawUnsafe(`
+      CREATE FUNCTION "${functionName}"() RETURNS trigger AS $$
+      BEGIN
+        IF NEW."storeId" = '${store.id}'::uuid THEN
+          RAISE EXCEPTION 'forced repair failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TRIGGER "${triggerName}"
+      BEFORE INSERT OR UPDATE ON "StorefrontSessionRepair"
+      FOR EACH ROW EXECUTE FUNCTION "${functionName}"()
+    `);
+
+    try {
+      await expect(new ShopifyCatalogRepository().markMissingCatalogDeleted(store.id, [], []))
+        .rejects.toThrow();
+      expect(await prisma.product.findUniqueOrThrow({ where: { id: product.id } }))
+        .toMatchObject({ deletedAt: null });
+    } finally {
+      await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS "${triggerName}" ON "StorefrontSessionRepair"`);
+      await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS "${functionName}"()`);
+    }
+
+    await expect(new ShopifyCatalogRepository().markMissingCatalogDeleted(store.id, [], []))
+      .resolves.toEqual({ products: 1, variants: 0 });
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: product.id } })).deletedAt)
+      .toBeInstanceOf(Date);
+    expect(await prisma.storefrontSessionRepair.findUnique({
+      where: { storeId_browserSessionId: { storeId: store.id, browserSessionId } },
+    })).not.toBeNull();
   });
 
   it('repairs errored rollup state after the final session has been removed', async () => {
