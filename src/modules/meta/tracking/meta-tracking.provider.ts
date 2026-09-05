@@ -6,6 +6,10 @@ import { computeMetaAppSecretProof } from '../meta.utils.js';
 import type { MetaTrackingAd } from './meta-tracking.repository.js';
 
 const metaIdResponseSchema = z.object({ id: z.string().min(1) });
+const liveAdCreativeSchema = z.object({
+  id: z.string().min(1),
+  creative: z.object({ id: z.string().min(1) }).nullable().optional(),
+});
 
 export class MetaTrackingProvider {
   async cloneCreativeAndAssign(
@@ -16,6 +20,20 @@ export class MetaTrackingProvider {
     const creative = ad.creative;
     if (!creative) {
       throw new AppError('Meta ad has no synced creative', 409, 'META_TRACKING_CREATIVE_MISSING');
+    }
+
+    const liveCreativeId = await this.fetchLiveCreativeId(context, ad.metaAdId);
+    if (liveCreativeId !== creative.metaCreativeId) {
+      throw new AppError(
+        'Meta ad creative changed since the last Stride hierarchy sync; resync before applying tracking',
+        409,
+        'META_TRACKING_SNAPSHOT_STALE',
+        {
+          metaAdId: ad.metaAdId,
+          syncedCreativeId: creative.metaCreativeId,
+          liveCreativeId,
+        },
+      );
     }
 
     const createParams: Record<string, string> = {
@@ -65,6 +83,29 @@ export class MetaTrackingProvider {
     return { newCreativeId: created.data.id };
   }
 
+  private async fetchLiveCreativeId(context: MetaApiContext, metaAdId: string): Promise<string | null> {
+    const url = new URL(`https://graph.facebook.com/${context.apiVersion}/${metaAdId}`);
+    url.searchParams.set('fields', 'creative{id}');
+    url.searchParams.set('appsecret_proof', computeMetaAppSecretProof(context.accessToken));
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${context.accessToken}` },
+      });
+    } catch {
+      throw new AppError('Meta read request failed', 502, 'META_REQUEST_FAILED');
+    }
+
+    const payload = await this.parseResponse(response);
+    const parsed = liveAdCreativeSchema.safeParse(payload);
+    if (!parsed.success) {
+      throw new AppError('Meta returned an invalid ad creative response', 502, 'META_BAD_RESPONSE');
+    }
+    return parsed.data.creative?.id ?? null;
+  }
+
   private async requestMutation(
     context: MetaApiContext,
     path: string,
@@ -93,6 +134,10 @@ export class MetaTrackingProvider {
       throw new AppError('Meta write request failed', 502, 'META_REQUEST_FAILED');
     }
 
+    return this.parseResponse(response);
+  }
+
+  private async parseResponse(response: Response): Promise<unknown> {
     const text = await response.text();
     let payload: unknown = null;
     if (text) {
