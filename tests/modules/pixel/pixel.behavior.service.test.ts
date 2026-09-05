@@ -83,6 +83,10 @@ function validOrder() {
   };
 }
 
+function stringify(value: unknown) {
+  return JSON.stringify(value, (_key, item) => (typeof item === 'bigint' ? item.toString() : item));
+}
+
 describe('PixelBehaviorService', () => {
   it('rolls a product view -> cart -> exact Shopify purchase into privacy-safe daily facts', async () => {
     const repository = repositoryMock();
@@ -137,9 +141,7 @@ describe('PixelBehaviorService', () => {
       expect.any(Date),
       now,
     );
-    expect(
-      JSON.stringify(rows, (_key, value) => (typeof value === 'bigint' ? value.toString() : value)),
-    ).not.toContain('anonymousVisitorId');
+    expect(stringify(rows)).not.toContain('anonymousVisitorId');
   });
 
   it('redacts arbitrary user-specific landing paths before durable storage', async () => {
@@ -164,8 +166,8 @@ describe('PixelBehaviorService', () => {
     const rows = vi.mocked(repository.replaceDailyRows).mock.calls[0]?.[2] ?? [];
     const landing = rows.find((row) => row.dimension === 'LANDING_PAGE');
     expect(landing?.landingPageUrl).toBe('https://shop.example/:other');
-    expect(JSON.stringify(landing)).not.toContain('customer@example.com');
-    expect(JSON.stringify(landing)).not.toContain('order-token-123');
+    expect(stringify(landing)).not.toContain('customer@example.com');
+    expect(stringify(landing)).not.toContain('order-token-123');
   });
 
   it('rebuilds both previous and current cohort dates when a late event moves a session', async () => {
