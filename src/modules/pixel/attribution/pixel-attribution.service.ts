@@ -356,53 +356,64 @@ export class PixelAttributionService {
     let failed = 0;
 
     for (const storeId of storeIds) {
-      const context = await this.repository.getStoreContext(storeId);
-      if (!context) continue;
-      const dirty = await this.repository.findDirtySessions(storeId, DIRTY_SESSION_BATCH);
-      if (dirty.length === 0) continue;
-      const acknowledgedAt = this.now();
-
-      const dirtyDates = new Set<string>();
-      for (const row of dirty) {
-        dirtyDates.add(storeDate(row.startedAt, context.ianaTimezone));
-        if (row.previousStartedAt) dirtyDates.add(storeDate(row.previousStartedAt, context.ianaTimezone));
-      }
-      const visitors = [
-        ...new Set(dirty.flatMap((row) => (row.anonymousVisitorId ? [row.anonymousVisitorId] : []))),
-      ];
-      if (visitors.length > 0) {
-        const earliest = dirty.reduce(
-          (value, row) => (row.startedAt < value ? row.startedAt : value),
-          dirty[0]!.startedAt,
-        );
-        const latest = dirty.reduce(
-          (value, row) => (row.startedAt > value ? row.startedAt : value),
-          dirty[0]!.startedAt,
-        );
-        const through = new Date(latest.getTime() + LOOKBACK_DAYS * 86_400_000);
-        const laterPurchases = await this.repository.findLaterPurchaseSessions(
-          storeId,
-          visitors,
-          earliest,
-          through,
-        );
-        for (const purchase of laterPurchases) {
-          dirtyDates.add(storeDate(purchase.startedAt, context.ianaTimezone));
-        }
-      }
-
       try {
-        for (const date of [...dirtyDates].sort()) {
-          await this.rebuildStoreDate(storeId, context.ianaTimezone, date);
-          datesRebuilt += 1;
-        }
-        await this.repository.acknowledgeSessions(storeId, dirty, acknowledgedAt);
-        const watermark = dirty.reduce(
-          (latest, row) => (row.dirtyAt > latest ? row.dirtyAt : latest),
-          dirty[0]!.dirtyAt,
-        );
-        await this.repository.advanceRollupState(storeId, watermark, this.now());
-        storesRolled += 1;
+        await this.repository.withStoreRollupLock(storeId, async () => {
+          const context = await this.repository.getStoreContext(storeId);
+          if (!context) return;
+          const dirty = await this.repository.findDirtySessions(storeId, DIRTY_SESSION_BATCH);
+          if (dirty.length === 0) return;
+          const acknowledgedAt = this.now();
+
+          const dirtyDates = new Set<string>();
+          for (const row of dirty) {
+            dirtyDates.add(storeDate(row.startedAt, context.ianaTimezone));
+            if (row.previousStartedAt) dirtyDates.add(storeDate(row.previousStartedAt, context.ianaTimezone));
+          }
+
+          const visitors = [
+            ...new Set(
+              dirty.flatMap((row) => [
+                ...row.visitorIds,
+                ...(row.anonymousVisitorId ? [row.anonymousVisitorId] : []),
+              ]),
+            ),
+          ];
+          if (visitors.length > 0) {
+            const startCandidates = dirty.flatMap((row) =>
+              row.previousStartedAt ? [row.startedAt, row.previousStartedAt] : [row.startedAt],
+            );
+            const earliest = startCandidates.reduce(
+              (value, candidate) => (candidate < value ? candidate : value),
+              startCandidates[0]!,
+            );
+            const latest = startCandidates.reduce(
+              (value, candidate) => (candidate > value ? candidate : value),
+              startCandidates[0]!,
+            );
+            const through = new Date(latest.getTime() + LOOKBACK_DAYS * 86_400_000);
+            const laterPurchases = await this.repository.findLaterPurchaseSessions(
+              storeId,
+              visitors,
+              earliest,
+              through,
+            );
+            for (const purchase of laterPurchases) {
+              dirtyDates.add(storeDate(purchase.startedAt, context.ianaTimezone));
+            }
+          }
+
+          for (const date of [...dirtyDates].sort()) {
+            await this.rebuildStoreDate(storeId, context.ianaTimezone, date);
+            datesRebuilt += 1;
+          }
+          await this.repository.acknowledgeSessions(storeId, dirty, acknowledgedAt);
+          const watermark = dirty.reduce(
+            (latest, row) => (row.dirtyAt > latest ? row.dirtyAt : latest),
+            dirty[0]!.dirtyAt,
+          );
+          await this.repository.advanceRollupState(storeId, watermark, this.now());
+          storesRolled += 1;
+        });
       } catch (error) {
         failed += 1;
         const message = error instanceof Error ? error.message.slice(0, 1_000) : 'Attribution rollup failed';
