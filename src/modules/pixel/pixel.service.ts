@@ -72,14 +72,15 @@ export class PixelService {
     const collectorTokenPrefix = collectorToken.slice(0, TOKEN_PREFIX_LENGTH);
     const hadWorkingInstallation = existing?.status === 'ACTIVE';
 
-    // Stage the credential durably before changing Shopify. During rotation ingress accepts both
-    // the active and staged hashes, so a provider-success/local-finalize failure cannot take a
-    // producing storefront offline.
+    // Preserve ACTIVE while rotating a working installation so the old token keeps flowing.
+    // New/failed installations enter PROVISIONING so a Shopify-success/local-finalize failure can
+    // still accept the staged token and recover without another storefront outage.
     await this.repository.stageInstallation({
       id: installationId,
       storeId,
       collectorTokenHash,
       collectorTokenPrefix,
+      status: hadWorkingInstallation ? 'ACTIVE' : 'PROVISIONING',
     });
 
     let webPixel: { id: string };
