@@ -83,10 +83,47 @@ export class MetaRepository {
     });
   }
 
-  markConnectionSynced(connectionId: string, syncedAt = new Date()) {
-    return prisma.metaConnection.update({
-      where: { id: connectionId },
-      data: { lastSyncedAt: syncedAt },
+  async markConnectionSynced(connectionId: string, syncedAt = new Date()) {
+    return prisma.$transaction(async (tx) => {
+      const connection = await tx.metaConnection.update({
+        where: { id: connectionId },
+        data: { lastSyncedAt: syncedAt },
+      });
+
+      // Meta hierarchy sync can turn a previously unresolved Pixel touch into an exact identity,
+      // or invalidate/reparent a previously exact one. Rotate repair generations for every
+      // retained browser session carrying Meta hierarchy IDs so session materialization resolves
+      // against the newly synced hierarchy before behavior/attribution rollups are acknowledged.
+      await tx.$executeRaw`
+        INSERT INTO "StorefrontSessionRepair"
+          ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
+        SELECT
+          gen_random_uuid(),
+          e."storeId",
+          e."sessionId",
+          MAX(e."receivedAt"),
+          CURRENT_TIMESTAMP,
+          CURRENT_TIMESTAMP
+        FROM "StorefrontEvent" e
+        WHERE e."storeId" = ${connection.storeId}::uuid
+          AND e."sessionId" IS NOT NULL
+          AND (
+            e."metaCampaignExternalId" IS NOT NULL
+            OR e."metaAdSetExternalId" IS NOT NULL
+            OR e."metaAdExternalId" IS NOT NULL
+          )
+        GROUP BY e."storeId", e."sessionId"
+        ON CONFLICT ("storeId", "browserSessionId")
+        DO UPDATE SET
+          "id" = EXCLUDED."id",
+          "sourceReceivedAt" = GREATEST(
+            "StorefrontSessionRepair"."sourceReceivedAt",
+            EXCLUDED."sourceReceivedAt"
+          ),
+          "updatedAt" = CURRENT_TIMESTAMP
+      `;
+
+      return connection;
     });
   }
 
