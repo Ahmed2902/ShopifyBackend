@@ -55,6 +55,21 @@ DO UPDATE SET
 CREATE INDEX "StorefrontEvent_storeId_sessionId_receivedAt_idx"
   ON "StorefrontEvent"("storeId", "sessionId", "receivedAt");
 
+-- Source-domain invalidation works from compact materialized evidence rather than rescanning the
+-- retained raw-event table for every Meta/catalog source mutation.
+CREATE INDEX "StorefrontSessionTouch_meta_ad_external_idx"
+  ON "StorefrontSessionTouch"("metaAdExternalId", "eventAt");
+CREATE INDEX "StorefrontSessionTouch_meta_adset_external_idx"
+  ON "StorefrontSessionTouch"("metaAdSetExternalId", "eventAt");
+CREATE INDEX "StorefrontSessionTouch_meta_campaign_external_idx"
+  ON "StorefrontSessionTouch"("metaCampaignExternalId", "eventAt");
+CREATE INDEX "StorefrontSessionProduct_product_external_idx"
+  ON "StorefrontSessionProduct"("shopifyProductExternalId", "firstSeenAt");
+CREATE INDEX "StorefrontSessionProduct_variant_external_idx"
+  ON "StorefrontSessionProduct"("shopifyVariantExternalId", "firstSeenAt");
+CREATE INDEX "StorefrontSessionCollection_external_idx"
+  ON "StorefrontSessionCollection"("shopifyCollectionExternalId", "firstSeenAt");
+
 DROP INDEX IF EXISTS "StorefrontSession_storeId_orderLinkStatus_checkoutCompleted_idx";
 CREATE INDEX "StorefrontSession_order_retry_idx"
   ON "StorefrontSession"("storeId", "orderLinkStatus", "orderLinkNextAttemptAt", "checkoutCompletedAt");
