@@ -4,7 +4,7 @@ import { ShopifyRepository } from '../shopify/shopify.repository.js';
 import { ShopifyApiService } from '../shopify/shared/shopify-api.service.js';
 import { ShopifyAuthService } from '../shopify/shared/shopify-auth.service.js';
 
-const REQUIRED_PIXEL_SCOPES = ['write_pixels', 'read_customer_events'] as const;
+const REQUIRED_PIXEL_SCOPES = ['write_pixels', 'read_pixels', 'read_customer_events'] as const;
 
 const webPixelSchema = z.object({
   id: z.string().min(1),
@@ -15,6 +15,10 @@ const webPixelUserErrorSchema = z.object({
   field: z.array(z.string()).nullable().optional(),
   message: z.string(),
   code: z.string().nullable().optional(),
+});
+
+const findResponseSchema = z.object({
+  webPixel: webPixelSchema.nullable(),
 });
 
 const createResponseSchema = z.object({
@@ -30,6 +34,12 @@ const updateResponseSchema = z.object({
     webPixel: webPixelSchema.nullable(),
   }),
 });
+
+const WEB_PIXEL_QUERY = `
+query StrideWebPixel {
+  webPixel { id settings }
+}
+`;
 
 const WEB_PIXEL_CREATE_MUTATION = `
 mutation StrideWebPixelCreate($webPixel: WebPixelInput!) {
@@ -49,6 +59,22 @@ mutation StrideWebPixelUpdate($id: ID!, $webPixel: WebPixelInput!) {
 }
 `;
 
+function normalizePixelSettings(value: unknown): Record<string, unknown> | null {
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 export class ShopifyPixelProvisioner {
   private readonly repository: ShopifyRepository;
   private readonly apiService: ShopifyApiService;
@@ -64,12 +90,90 @@ export class ShopifyPixelProvisioner {
     this.authService = authService ?? new ShopifyAuthService(repository, this.apiService);
   }
 
+  async inspect(storeId: string): Promise<{ id: string; settings: Record<string, unknown> | null } | null> {
+    const { context } = await this.resolveContext(storeId);
+    const response = await this.apiService.requestAdminGraphql<unknown>({
+      ...context,
+      query: WEB_PIXEL_QUERY,
+    });
+    const parsed = findResponseSchema.safeParse(response);
+    if (!parsed.success) {
+      throw new AppError(
+        'Shopify web pixel lookup returned an unexpected shape',
+        502,
+        'SHOPIFY_BAD_RESPONSE',
+      );
+    }
+    const webPixel = parsed.data.webPixel;
+    return webPixel ? { id: webPixel.id, settings: normalizePixelSettings(webPixel.settings) } : null;
+  }
+
   async upsert(input: {
     storeId: string;
     existingWebPixelId: string | null;
     settings: Record<string, string>;
   }): Promise<{ id: string }> {
-    const target = await this.repository.findConnectionForSync(input.storeId);
+    const { context } = await this.resolveContext(input.storeId);
+
+    // Treat Shopify as the source of truth for the current WebPixel resource. The locally stored
+    // provider ID can become stale if Shopify or the merchant deletes/recreates the pixel; always
+    // inspect the live resource before deciding whether to update or create.
+    const lookup = await this.apiService.requestAdminGraphql<unknown>({
+      ...context,
+      query: WEB_PIXEL_QUERY,
+    });
+    const parsedLookup = findResponseSchema.safeParse(lookup);
+    if (!parsedLookup.success) {
+      throw new AppError(
+        'Shopify web pixel lookup returned an unexpected shape',
+        502,
+        'SHOPIFY_BAD_RESPONSE',
+      );
+    }
+    const webPixelId = parsedLookup.data.webPixel?.id ?? null;
+
+    // Shopify's WebPixelInput expects its `settings` JSON scalar as a JSON-formatted string.
+    const variables = {
+      webPixel: {
+        settings: JSON.stringify(input.settings),
+      },
+    };
+
+    if (webPixelId) {
+      const response = await this.apiService.requestAdminGraphql<unknown>({
+        ...context,
+        query: WEB_PIXEL_UPDATE_MUTATION,
+        variables: { id: webPixelId, ...variables },
+      });
+      const parsed = updateResponseSchema.safeParse(response);
+      if (!parsed.success) {
+        throw new AppError(
+          'Shopify web pixel update returned an unexpected shape',
+          502,
+          'SHOPIFY_BAD_RESPONSE',
+        );
+      }
+      return this.unwrapResult(parsed.data.webPixelUpdate, 'update');
+    }
+
+    const response = await this.apiService.requestAdminGraphql<unknown>({
+      ...context,
+      query: WEB_PIXEL_CREATE_MUTATION,
+      variables,
+    });
+    const parsed = createResponseSchema.safeParse(response);
+    if (!parsed.success) {
+      throw new AppError(
+        'Shopify web pixel creation returned an unexpected shape',
+        502,
+        'SHOPIFY_BAD_RESPONSE',
+      );
+    }
+    return this.unwrapResult(parsed.data.webPixelCreate, 'create');
+  }
+
+  private async resolveContext(storeId: string) {
+    const target = await this.repository.findConnectionForSync(storeId);
     if (!target) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
 
     const connection = target.shopifyConnection;
@@ -98,52 +202,14 @@ export class ShopifyPixelProvisioner {
       target.myshopifyDomain,
       connection,
     );
-
-    // Shopify's WebPixelInput expects its `settings` JSON scalar as a JSON-formatted string.
-    // Shopify then validates that string against the extension's settings schema.
-    const variables = {
-      webPixel: {
-        settings: JSON.stringify(input.settings),
-      },
-    };
-
-    if (input.existingWebPixelId) {
-      const response = await this.apiService.requestAdminGraphql<unknown>({
+    return {
+      context: {
         shop: target.myshopifyDomain,
         accessToken,
         apiVersion: connection.apiVersion,
         connectionId: connection.id,
-        query: WEB_PIXEL_UPDATE_MUTATION,
-        variables: { id: input.existingWebPixelId, ...variables },
-      });
-      const parsed = updateResponseSchema.safeParse(response);
-      if (!parsed.success) {
-        throw new AppError(
-          'Shopify web pixel update returned an unexpected shape',
-          502,
-          'SHOPIFY_BAD_RESPONSE',
-        );
-      }
-      return this.unwrapResult(parsed.data.webPixelUpdate, 'update');
-    }
-
-    const response = await this.apiService.requestAdminGraphql<unknown>({
-      shop: target.myshopifyDomain,
-      accessToken,
-      apiVersion: connection.apiVersion,
-      connectionId: connection.id,
-      query: WEB_PIXEL_CREATE_MUTATION,
-      variables,
-    });
-    const parsed = createResponseSchema.safeParse(response);
-    if (!parsed.success) {
-      throw new AppError(
-        'Shopify web pixel creation returned an unexpected shape',
-        502,
-        'SHOPIFY_BAD_RESPONSE',
-      );
-    }
-    return this.unwrapResult(parsed.data.webPixelCreate, 'create');
+      },
+    };
   }
 
   private unwrapResult(

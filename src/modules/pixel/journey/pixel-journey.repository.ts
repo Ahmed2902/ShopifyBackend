@@ -1,4 +1,5 @@
 import type { Prisma } from '../../../generated/prisma/client.js';
+import { Prisma as PrismaSql } from '../../../generated/prisma/client.js';
 import { prisma } from '../../../lib/prisma.js';
 import type { StorefrontJourneySource } from '../pixel.types.js';
 
@@ -21,11 +22,14 @@ export interface SessionAggregateInput {
   shopifyOrderExternalId: string | null;
   orderId: string | null;
   orderLinkStatus: 'NONE' | 'PENDING' | 'LINKED';
+  orderLinkAttemptCount: number;
+  orderLinkNextAttemptAt: Date | null;
   landingPageUrl: string | null;
   initialReferrerUrl: string | null;
   dataQualityFlags: string[];
   retentionExpiresAt: Date;
   materializedAt: Date;
+  rollupDirtyAt: Date;
 }
 
 export type SessionTouchInput = Omit<
@@ -82,6 +86,15 @@ export class PixelJourneyRepository {
     storeId: string,
     input: { campaignIds: string[]; adSetIds: string[]; adIds: string[] },
   ) {
+    const connection = await prisma.metaConnection.findUnique({
+      where: { storeId },
+      select: { selectedAdAccountIds: true },
+    });
+    const selectedAdAccountIds = connection?.selectedAdAccountIds ?? [];
+    if (selectedAdAccountIds.length === 0) {
+      return { campaigns: [], adSets: [], ads: [] };
+    }
+
     const [campaigns, adSets, ads] = await Promise.all([
       input.campaignIds.length === 0
         ? Promise.resolve([])
@@ -89,7 +102,7 @@ export class PixelJourneyRepository {
             where: {
               metaCampaignId: { in: input.campaignIds },
               deletedAt: null,
-              adAccount: { storeId },
+              adAccount: { storeId, metaAccountId: { in: selectedAdAccountIds } },
             },
             select: { id: true, metaCampaignId: true },
           }),
@@ -99,7 +112,7 @@ export class PixelJourneyRepository {
             where: {
               metaAdSetId: { in: input.adSetIds },
               deletedAt: null,
-              adAccount: { storeId },
+              adAccount: { storeId, metaAccountId: { in: selectedAdAccountIds } },
             },
             select: {
               id: true,
@@ -113,7 +126,7 @@ export class PixelJourneyRepository {
             where: {
               metaAdId: { in: input.adIds },
               deletedAt: null,
-              adAccount: { storeId },
+              adAccount: { storeId, metaAccountId: { in: selectedAdAccountIds } },
             },
             select: {
               id: true,
@@ -171,12 +184,22 @@ export class PixelJourneyRepository {
   async replaceSessionReadModel(
     storeId: string,
     browserSessionId: string,
+    expectedRepairMarkerId: string,
     aggregate: SessionAggregateInput,
     touches: SessionTouchInput[],
     products: SessionProductInput[],
     collections: SessionCollectionInput[],
   ) {
     return prisma.$transaction(async (tx) => {
+      const claimed = await tx.storefrontSessionRepair.deleteMany({
+        where: {
+          id: expectedRepairMarkerId,
+          storeId,
+          browserSessionId,
+        },
+      });
+      if (claimed.count === 0) return null;
+
       const session = await tx.storefrontSession.upsert({
         where: { storeId_browserSessionId: { storeId, browserSessionId } },
         create: { storeId, browserSessionId, ...aggregate },
@@ -208,48 +231,179 @@ export class PixelJourneyRepository {
     });
   }
 
-  async findDirtySessionKeys(limit: number) {
-    return prisma.$queryRaw<Array<{ storeId: string; browserSessionId: string }>>`
-      SELECT DISTINCT e."storeId" AS "storeId", e."sessionId" AS "browserSessionId"
-      FROM "StorefrontEvent" e
-      LEFT JOIN "StorefrontSession" s
-        ON s."storeId" = e."storeId" AND s."browserSessionId" = e."sessionId"
-      WHERE e."sessionId" IS NOT NULL
-        AND (s."id" IS NULL OR e."receivedAt" > s."lastSourceReceivedAt")
-      ORDER BY e."storeId", e."sessionId"
-      LIMIT ${limit}
-    `;
-  }
-
-  findPendingOrderSessions(limit: number) {
-    return prisma.storefrontSession.findMany({
-      where: { orderLinkStatus: 'PENDING', shopifyOrderExternalId: { not: null } },
-      orderBy: [{ checkoutCompletedAt: 'asc' }, { id: 'asc' }],
-      take: limit,
-      select: { id: true, storeId: true, shopifyOrderExternalId: true },
+  findSessionRepairMarker(storeId: string, browserSessionId: string) {
+    return prisma.storefrontSessionRepair.findUnique({
+      where: { storeId_browserSessionId: { storeId, browserSessionId } },
+      select: { id: true },
     });
   }
 
-  setOrderLink(sessionId: string, orderId: string) {
-    return prisma.storefrontSession.update({
-      where: { id: sessionId },
-      data: { orderId, orderLinkStatus: 'LINKED' },
-      select: { id: true },
+  clearSessionRepair(storeId: string, browserSessionId: string, expectedMarkerId: string) {
+    return prisma.storefrontSessionRepair.deleteMany({
+      where: {
+        id: expectedMarkerId,
+        storeId,
+        browserSessionId,
+      },
+    });
+  }
+
+  findDirtySessionKeys(limit: number) {
+    return prisma.storefrontSessionRepair.findMany({
+      orderBy: [{ sourceReceivedAt: 'asc' }, { id: 'asc' }],
+      take: limit,
+      select: { storeId: true, browserSessionId: true },
+    });
+  }
+
+  findPendingOrderSessions(now: Date, limit: number) {
+    return prisma.storefrontSession.findMany({
+      where: {
+        orderLinkStatus: 'PENDING',
+        shopifyOrderExternalId: { not: null },
+        OR: [{ orderLinkNextAttemptAt: null }, { orderLinkNextAttemptAt: { lte: now } }],
+      },
+      orderBy: [{ orderLinkNextAttemptAt: 'asc' }, { checkoutCompletedAt: 'asc' }, { id: 'asc' }],
+      take: limit,
+      select: {
+        id: true,
+        storeId: true,
+        shopifyOrderExternalId: true,
+        orderLinkAttemptCount: true,
+      },
+    });
+  }
+
+  setOrderLink(
+    sessionId: string,
+    expectedShopifyOrderExternalId: string,
+    orderId: string,
+    dirtyAt: Date,
+  ) {
+    return prisma.$transaction(async (tx) => {
+      // Match deletion's session-before-order lock order. Recheck commerce truth at the write,
+      // since the earlier external-ID lookup may have raced with deletion and repair completion.
+      const sessions = await tx.$queryRaw<Array<{ storeId: string }>>`
+        SELECT s."storeId"
+        FROM "StorefrontSession" s
+        WHERE s."id" = ${sessionId}::uuid
+          AND s."orderLinkStatus" = 'PENDING'
+          AND s."shopifyOrderExternalId" = ${expectedShopifyOrderExternalId}
+        FOR UPDATE OF s
+      `;
+      const session = sessions[0];
+      if (!session) return { count: 0 };
+      const orders = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT o."id"
+        FROM "Order" o
+        WHERE o."id" = ${orderId}::uuid
+          AND o."storeId" = ${session.storeId}::uuid
+          AND o."shopifyOrderId" = ${expectedShopifyOrderExternalId}
+        FOR KEY SHARE OF o
+      `;
+      if (orders.length === 0) return { count: 0 };
+
+      return tx.storefrontSession.updateMany({
+        where: {
+          id: sessionId,
+          orderLinkStatus: 'PENDING',
+          shopifyOrderExternalId: expectedShopifyOrderExternalId,
+        },
+        data: {
+          orderId,
+          orderLinkStatus: 'LINKED',
+          orderLinkAttemptCount: 0,
+          orderLinkNextAttemptAt: null,
+          rollupDirtyAt: dirtyAt,
+        },
+      });
+    });
+  }
+
+  scheduleOrderLinkRetry(
+    sessionId: string,
+    expectedShopifyOrderExternalId: string,
+    attemptCount: number,
+    nextAttemptAt: Date,
+  ) {
+    return prisma.storefrontSession.updateMany({
+      where: {
+        id: sessionId,
+        orderLinkStatus: 'PENDING',
+        shopifyOrderExternalId: expectedShopifyOrderExternalId,
+      },
+      data: {
+        orderLinkAttemptCount: attemptCount,
+        orderLinkNextAttemptAt: nextAttemptAt,
+      },
     });
   }
 
   async deleteExpiredSessions(now: Date, limit: number) {
-    const rows = await prisma.storefrontSession.findMany({
-      where: { retentionExpiresAt: { lte: now } },
-      orderBy: [{ retentionExpiresAt: 'asc' }, { id: 'asc' }],
-      take: limit,
-      select: { id: true },
+    return prisma.$transaction(async (tx) => {
+      const candidates = await tx.$queryRaw<Array<{ id: string; orderId: string | null }>>`
+        SELECT s."id", s."orderId"
+        FROM "StorefrontSession" s
+        WHERE s."retentionExpiresAt" <= ${now}
+          AND s."behaviorRolledUpAt" IS NOT NULL
+          AND s."attributionRolledUpAt" IS NOT NULL
+          AND s."behaviorRolledUpAt" >= s."rollupDirtyAt"
+          AND s."attributionRolledUpAt" >= s."rollupDirtyAt"
+          AND s."behaviorRolledStartedAt" = s."startedAt"
+          AND s."attributionRolledStartedAt" = s."startedAt"
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "StorefrontSessionRepair" r
+            WHERE r."storeId" = s."storeId"
+              AND r."browserSessionId" = s."browserSessionId"
+          )
+        ORDER BY s."retentionExpiresAt" ASC, s."id" ASC
+        LIMIT ${limit}
+        FOR UPDATE OF s SKIP LOCKED
+      `;
+      if (candidates.length === 0) return { selected: 0, deleted: 0 };
+
+      const orderIds = [...new Set(candidates.flatMap((row) => (row.orderId ? [row.orderId] : [])))];
+      if (orderIds.length > 0) {
+        const joinedOrderIds = PrismaSql.join(orderIds.map((id) => PrismaSql.sql`${id}::uuid`));
+        await tx.$queryRaw`
+          SELECT o."id"
+          FROM "Order" o
+          WHERE o."id" IN (${joinedOrderIds})
+          FOR UPDATE OF o
+        `;
+      }
+
+      const sessionIds = PrismaSql.join(candidates.map((row) => PrismaSql.sql`${row.id}::uuid`));
+      const deleted = await tx.$queryRaw<Array<{ id: string }>>`
+        DELETE FROM "StorefrontSession" s
+        WHERE s."id" IN (${sessionIds})
+          AND s."retentionExpiresAt" <= ${now}
+          AND s."behaviorRolledUpAt" IS NOT NULL
+          AND s."attributionRolledUpAt" IS NOT NULL
+          AND s."behaviorRolledUpAt" >= s."rollupDirtyAt"
+          AND s."attributionRolledUpAt" >= s."rollupDirtyAt"
+          AND s."behaviorRolledStartedAt" = s."startedAt"
+          AND s."attributionRolledStartedAt" = s."startedAt"
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "StorefrontSessionRepair" r
+            WHERE r."storeId" = s."storeId"
+              AND r."browserSessionId" = s."browserSessionId"
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "Order" o
+            WHERE o."id" = s."orderId"
+              AND (
+                o."updatedAt" > s."behaviorRolledUpAt"
+                OR o."updatedAt" > s."attributionRolledUpAt"
+              )
+          )
+        RETURNING s."id"
+      `;
+      return { selected: candidates.length, deleted: deleted.length };
     });
-    if (rows.length === 0) return { selected: 0, deleted: 0 };
-    const result = await prisma.storefrontSession.deleteMany({
-      where: { id: { in: rows.map((row) => row.id) } },
-    });
-    return { selected: rows.length, deleted: result.count };
   }
 
   async listSessions(
@@ -337,10 +491,10 @@ export class PixelJourneyRepository {
     });
   }
 
-  listVisitorSessions(storeId: string, anonymousVisitorId: string, limit: number) {
-    return prisma.storefrontSession.findMany({
+  async listVisitorSessions(storeId: string, anonymousVisitorId: string, limit: number) {
+    const rows = await prisma.storefrontSession.findMany({
       where: { storeId, anonymousVisitorId },
-      orderBy: [{ startedAt: 'asc' }, { id: 'asc' }],
+      orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
       take: limit,
       include: {
         touches: { orderBy: { ordinal: 'asc' } },
@@ -348,6 +502,7 @@ export class PixelJourneyRepository {
         collections: { orderBy: { firstSeenAt: 'asc' } },
       },
     });
+    return rows.reverse();
   }
 
   findDisplayEntities(

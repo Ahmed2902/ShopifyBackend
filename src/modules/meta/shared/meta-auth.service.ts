@@ -41,6 +41,18 @@ export class MetaAuthService {
       throw new AppError('Meta returned an invalid access token', 401, 'INVALID_META_ACCESS_TOKEN');
     }
     this.assertBasePermissions(inspection.scopes);
+    if (
+      context.authorizationMode === 'ADS_MANAGEMENT' &&
+      !inspection.scopes.includes('ads_management')
+    ) {
+      // Do not persist a downgraded token as a successful upgrade. The existing read-only
+      // connection remains untouched and the merchant can retry or choose manual tracking.
+      throw new AppError(
+        'Meta did not grant the requested ads_management permission',
+        403,
+        'META_ADS_MANAGEMENT_REQUIRED',
+      );
+    }
 
     const expiresAt =
       inspection.expiresAt ??

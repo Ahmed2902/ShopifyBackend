@@ -242,10 +242,7 @@ function flattenJourney(sessions: JourneySession[]): FlattenedTouch[] {
     });
 }
 
-function validPurchaseDelay(
-  current: AttributionSession,
-  journeySessions: JourneySession[],
-): number | null {
+function validPurchaseDelay(current: AttributionSession, journeySessions: JourneySession[]): number | null {
   if (!current.checkoutCompletedAt) return null;
   const firstStart = journeySessions.reduce(
     (earliest, session) => (session.startedAt < earliest ? session.startedAt : earliest),
@@ -268,18 +265,14 @@ function collectionTargetKey(collection: AttributionSession['collections'][numbe
     : `collection-external:${collection.shopifyCollectionExternalId}`;
 }
 
-function productPurchased(
-  product: AttributionSession['products'][number],
-  order: ValidOrder | null,
-): boolean {
+function productPurchased(product: AttributionSession['products'][number], order: ValidOrder | null): boolean {
   if (!order) return false;
   return order.lineItems.some((line) => {
     if (product.productId && line.productId === product.productId) return true;
     if (product.shopifyProductExternalId && line.shopifyProductId === product.shopifyProductExternalId) return true;
     if (product.variantId && line.variantId === product.variantId) return true;
     return Boolean(
-      product.shopifyVariantExternalId &&
-        line.shopifyVariantId === product.shopifyVariantExternalId,
+      product.shopifyVariantExternalId && line.shopifyVariantId === product.shopifyVariantExternalId,
     );
   });
 }
@@ -303,17 +296,29 @@ function attributionSnapshot(sum: Record<string, number | bigint | null> | undef
   };
 }
 
-function pathSnapshot(sum: Record<string, number | bigint | null> | undefined) {
+function pathSnapshot(path: string, sum: Record<string, number | bigint | null> | undefined) {
   const sessions = numberValue(sum?.sessionCount);
   const purchases = numberValue(sum?.linkedPurchaseSessionCount);
   const delayCount = numberValue(sum?.conversionDelayCount);
+  const kind = path.startsWith('JOURNEY:') ? 'PURCHASE_JOURNEY' : 'SESSION';
   return {
+    kind,
     sessions,
     linkedPurchaseSessions: purchases,
     crossSessionPurchaseSessions: numberValue(sum?.crossSessionPurchaseCount),
-    purchaseRate: safeRate(purchases, sessions),
+    purchaseRate: kind === 'SESSION' ? safeRate(purchases, sessions) : null,
     averageJourneyToPurchaseMs:
       delayCount > 0 ? numberValue(sum?.conversionDelayMsTotal) / delayCount : null,
+  };
+}
+
+function pathMetricValues(snapshot: ReturnType<typeof pathSnapshot>) {
+  return {
+    sessions: snapshot.sessions,
+    linkedPurchaseSessions: snapshot.linkedPurchaseSessions,
+    crossSessionPurchaseSessions: snapshot.crossSessionPurchaseSessions,
+    purchaseRate: snapshot.purchaseRate,
+    averageJourneyToPurchaseMs: snapshot.averageJourneyToPurchaseMs,
   };
 }
 
@@ -351,48 +356,64 @@ export class PixelAttributionService {
     let failed = 0;
 
     for (const storeId of storeIds) {
-      const context = await this.repository.getStoreContext(storeId);
-      if (!context) continue;
-      const previous = context.storefrontAttributionRollup?.rolledThroughSessionUpdatedAt ?? null;
-      const dirty = await this.repository.findDirtySessions(storeId, previous, DIRTY_SESSION_BATCH);
-      if (dirty.length === 0) continue;
-
-      const dirtyDates = new Set(dirty.map((row) => storeDate(row.startedAt, context.ianaTimezone)));
-      const visitors = [
-        ...new Set(dirty.flatMap((row) => (row.anonymousVisitorId ? [row.anonymousVisitorId] : []))),
-      ];
-      if (visitors.length > 0) {
-        const earliest = dirty.reduce(
-          (value, row) => (row.startedAt < value ? row.startedAt : value),
-          dirty[0]!.startedAt,
-        );
-        const latest = dirty.reduce(
-          (value, row) => (row.startedAt > value ? row.startedAt : value),
-          dirty[0]!.startedAt,
-        );
-        const through = new Date(latest.getTime() + LOOKBACK_DAYS * 86_400_000);
-        const laterPurchases = await this.repository.findLaterPurchaseSessions(
-          storeId,
-          visitors,
-          earliest,
-          through,
-        );
-        for (const purchase of laterPurchases) {
-          dirtyDates.add(storeDate(purchase.startedAt, context.ianaTimezone));
-        }
-      }
-
       try {
-        for (const date of [...dirtyDates].sort()) {
-          await this.rebuildStoreDate(storeId, context.ianaTimezone, date);
-          datesRebuilt += 1;
-        }
-        const watermark = dirty.reduce(
-          (latest, row) => (row.updatedAt > latest ? row.updatedAt : latest),
-          dirty[0]!.updatedAt,
-        );
-        await this.repository.advanceRollupState(storeId, watermark, this.now());
-        storesRolled += 1;
+        await this.repository.withStoreRollupLock(storeId, async () => {
+          const context = await this.repository.getStoreContext(storeId);
+          if (!context) return;
+          const dirty = await this.repository.findDirtySessions(storeId, DIRTY_SESSION_BATCH);
+          if (dirty.length === 0) return;
+          const acknowledgedAt = this.now();
+
+          const dirtyDates = new Set<string>();
+          for (const row of dirty) {
+            dirtyDates.add(storeDate(row.startedAt, context.ianaTimezone));
+            if (row.previousStartedAt) dirtyDates.add(storeDate(row.previousStartedAt, context.ianaTimezone));
+          }
+
+          const visitors = [
+            ...new Set(
+              dirty.flatMap((row) => [
+                ...row.visitorIds,
+                ...(row.anonymousVisitorId ? [row.anonymousVisitorId] : []),
+              ]),
+            ),
+          ];
+          if (visitors.length > 0) {
+            const startCandidates = dirty.flatMap((row) =>
+              row.previousStartedAt ? [row.startedAt, row.previousStartedAt] : [row.startedAt],
+            );
+            const earliest = startCandidates.reduce(
+              (value, candidate) => (candidate < value ? candidate : value),
+              startCandidates[0]!,
+            );
+            const latest = startCandidates.reduce(
+              (value, candidate) => (candidate > value ? candidate : value),
+              startCandidates[0]!,
+            );
+            const through = new Date(latest.getTime() + LOOKBACK_DAYS * 86_400_000);
+            const laterPurchases = await this.repository.findLaterPurchaseSessions(
+              storeId,
+              visitors,
+              earliest,
+              through,
+            );
+            for (const purchase of laterPurchases) {
+              dirtyDates.add(storeDate(purchase.startedAt, context.ianaTimezone));
+            }
+          }
+
+          for (const date of [...dirtyDates].sort()) {
+            await this.rebuildStoreDate(storeId, context.ianaTimezone, date);
+            datesRebuilt += 1;
+          }
+          await this.repository.acknowledgeSessions(storeId, dirty, acknowledgedAt);
+          const watermark = dirty.reduce(
+            (latest, row) => (row.dirtyAt > latest ? row.dirtyAt : latest),
+            dirty[0]!.dirtyAt,
+          );
+          await this.repository.advanceRollupState(storeId, watermark, this.now());
+          storesRolled += 1;
+        });
       } catch (error) {
         failed += 1;
         const message = error instanceof Error ? error.message.slice(0, 1_000) : 'Attribution rollup failed';
@@ -438,17 +459,20 @@ export class PixelAttributionService {
         for (const identity of sessionIdentities) {
           const dimension = identity.exactMeta ? 'META_AD' : 'SOURCE';
           const mapKey = `${dimension}:${identity.key}`;
-          const row =
-            attribution.get(mapKey) ?? newAttributionRow(storeId, day, identity, dimension);
+          const row = attribution.get(mapKey) ?? newAttributionRow(storeId, day, identity, dimension);
           row.touchedSessionCount += 1;
           if (identity.exactMeta) row.exactMetaResolutionSessionCount += 1;
           attribution.set(mapKey, row);
         }
 
-        const sessionPath = `SESSION:${sourcePath(session.touches)}`;
+        const purchaseCutoff =
+          validPurchase && session.checkoutCompletedAt ? session.checkoutCompletedAt : session.endedAt;
+        const sessionPathTouches = session.touches.filter((touch) => touch.eventAt <= purchaseCutoff);
+        const sessionPath = `SESSION:${sourcePath(sessionPathTouches)}`;
         const sessionPathKey = hash(sessionPath);
         const sessionPathRow = paths.get(sessionPathKey) ?? newPathRow(storeId, day, sessionPath);
         sessionPathRow.sessionCount += 1;
+        if (validPurchase) sessionPathRow.linkedPurchaseSessionCount += 1;
         paths.set(sessionPathKey, sessionPathRow);
 
         let purchaseJourney: JourneySession[] = [];
@@ -468,7 +492,7 @@ export class PixelAttributionService {
               storeId,
               session.anonymousVisitorId,
               dateWindow(lookbackDate, lookbackDate, timeZone).instantFrom,
-              session.endedAt,
+              purchaseCutoff,
             );
           }
           if (purchaseJourney.length === 0) {
@@ -476,11 +500,11 @@ export class PixelAttributionService {
               {
                 id: session.id,
                 startedAt: session.startedAt,
-                touches: session.touches,
+                touches: session.touches.filter((touch) => touch.eventAt <= purchaseCutoff),
               },
             ];
           }
-          flattened = flattenJourney(purchaseJourney);
+          flattened = flattenJourney(purchaseJourney).filter((touch) => touch.eventAt <= purchaseCutoff);
           journeyIdentities = uniqueIdentities(flattened);
           crossSession = new Set(flattened.map((touch) => touch.journeySessionId)).size > 1;
           delay = validPurchaseDelay(session, purchaseJourney);
@@ -506,8 +530,7 @@ export class PixelAttributionService {
           for (const identity of journeyIdentities) {
             const dimension = identity.exactMeta ? 'META_AD' : 'SOURCE';
             const mapKey = `${dimension}:${identity.key}`;
-            const row =
-              attribution.get(mapKey) ?? newAttributionRow(storeId, day, identity, dimension);
+            const row = attribution.get(mapKey) ?? newAttributionRow(storeId, day, identity, dimension);
             row.linkedPurchaseSessionCount += 1;
             if (firstIdentityKeys.has(identity.key)) row.firstTouchPurchaseSessionCount += 1;
             if (lastIdentityKeys.has(identity.key)) row.lastTouchPurchaseSessionCount += 1;
@@ -533,6 +556,7 @@ export class PixelAttributionService {
           paths.set(journeyPathKey, journeyPathRow);
         }
 
+        const journeyIdentityKeys = new Set(journeyIdentities.map((identity) => identity.key));
         const exactAds = new Map<string, TouchIdentity>();
         for (const touch of session.touches) {
           const ad = exactMetaIdentity(touch);
@@ -558,7 +582,7 @@ export class PixelAttributionService {
             row.interactedSessionCount += 1;
             if (product.viewCount > 0) row.viewedSessionCount += 1;
             if (product.addToCartCount > 0) row.addToCartSessionCount += 1;
-            const purchased = productPurchased(product, order);
+            const purchased = productPurchased(product, order) && journeyIdentityKeys.has(ad.key);
             if (purchased) {
               row.linkedPurchaseSessionCount += 1;
               if (firstIdentityKeys.has(ad.key)) row.firstTouchPurchaseSessionCount += 1;
@@ -584,7 +608,7 @@ export class PixelAttributionService {
               });
             row.interactedSessionCount += 1;
             if (collection.viewCount > 0) row.viewedSessionCount += 1;
-            if (validPurchase) {
+            if (validPurchase && journeyIdentityKeys.has(ad.key)) {
               row.linkedPurchaseSessionCount += 1;
               if (firstIdentityKeys.has(ad.key)) row.firstTouchPurchaseSessionCount += 1;
               if (lastIdentityKeys.has(ad.key)) row.lastTouchPurchaseSessionCount += 1;
@@ -645,15 +669,16 @@ export class PixelAttributionService {
     return {
       window: windows,
       items: currentRows.map((row) => {
-        const current = pathSnapshot(row._sum as Record<string, number | bigint | null>);
+        const current = pathSnapshot(row.path, row._sum as Record<string, number | bigint | null>);
         const comparison = pathSnapshot(
+          row.path,
           comparisonMap.get(row.pathHash)?._sum as Record<string, number | bigint | null> | undefined,
         );
         return {
           path: row.path,
           current,
           comparison,
-          change: metricChanges(current, comparison),
+          change: metricChanges(pathMetricValues(current), pathMetricValues(comparison)),
         };
       }),
       pagination: { page: query.page, limit: query.limit, total },
@@ -688,13 +713,7 @@ export class PixelAttributionService {
       this.repository.findTargetMetadata(storeId, adIds, targetKeys),
       this.repository.findMetaAdsForDisplay(storeId, adIds),
       this.repository.findActiveMappings(storeId, adIds),
-      this.repository.groupTargetEvidenceForAds(
-        storeId,
-        targetType,
-        adIds,
-        currentFrom,
-        currentTo,
-      ),
+      this.repository.groupTargetEvidenceForAds(storeId, targetType, adIds, currentFrom, currentTo),
     ]);
     const metaMap = new Map(metadata.map((row) => [`${row.metaAdId}:${row.targetKey}`, row]));
     const adMap = new Map(ads.map((row) => [row.id, row]));
@@ -715,8 +734,7 @@ export class PixelAttributionService {
       const viewRate = safeRate(viewed, interacted) ?? 0;
       const purchaseRate = safeRate(purchased, interacted) ?? 0;
       const eligible =
-        interacted >= MAPPING_SUGGESTION_MIN_SESSIONS &&
-        viewRate >= MAPPING_SUGGESTION_MIN_VIEW_RATE;
+        interacted >= MAPPING_SUGGESTION_MIN_SESSIONS && viewRate >= MAPPING_SUGGESTION_MIN_VIEW_RATE;
       const support = Math.min(interacted / 20, 1);
       const suggestedConfidence = eligible
         ? Math.min(
@@ -753,8 +771,7 @@ export class PixelAttributionService {
       const viewed = numberValue(row._sum.viewedSessionCount);
       const viewRate = safeRate(viewed, interacted) ?? 0;
       const eligible =
-        interacted >= MAPPING_SUGGESTION_MIN_SESSIONS &&
-        viewRate >= MAPPING_SUGGESTION_MIN_VIEW_RATE;
+        interacted >= MAPPING_SUGGESTION_MIN_SESSIONS && viewRate >= MAPPING_SUGGESTION_MIN_VIEW_RATE;
       if (eligible) eligibleCountByAd.set(row.metaAdId, (eligibleCountByAd.get(row.metaAdId) ?? 0) + 1);
     }
 
@@ -895,10 +912,15 @@ export class PixelAttributionService {
       source: 'STRIDE_FIRST_PARTY_JOURNEY_PLUS_SHOPIFY_ORDER_TRUTH',
       lookbackDays: LOOKBACK_DAYS,
       firstTouch: 'First observed touch inside the retained 30-day first-party journey window.',
-      lastTouch: 'Last observed touch inside the retained 30-day first-party journey window.',
-      assistedTouch: 'An observed touch that appears before the final observed touch in a Shopify-linked purchase journey.',
+      lastTouch:
+        'Last observed touch at or before checkout completion inside the retained 30-day journey window.',
+      assistedTouch:
+        'An observed touch before the final pre-purchase touch in a Shopify-linked purchase journey.',
       purchaseTruth: 'Only exact non-test, non-cancelled Shopify order links count as purchases.',
-      interpretation: 'Descriptive first-party attribution evidence only; no causal or incrementality claim is implied.',
+      pathSemantics:
+        'SESSION paths expose a conversion denominator; JOURNEY paths are purchase-only descriptive paths and intentionally return a null purchase rate.',
+      interpretation:
+        'Descriptive first-party attribution evidence only; no causal or incrementality claim is implied.',
     };
   }
 }

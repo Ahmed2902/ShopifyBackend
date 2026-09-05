@@ -4,6 +4,7 @@ import { pixelAttributionService } from './modules/pixel/attribution/pixel-attri
 import { pixelBehaviorService } from './modules/pixel/behavior/pixel-behavior.service.js';
 import { pixelJourneyService } from './modules/pixel/journey/pixel-journey.service.js';
 import { pixelService } from './modules/pixel/pixel.service.js';
+import { pixelRollupStateRepair } from './modules/pixel/rollup/pixel-rollup-state-repair.js';
 import { reconciliationService } from './modules/reconciliation/reconciliation.service.js';
 import { shopifyService } from './modules/shopify/shopify.service.js';
 import { tiktokWebhookService } from './modules/tiktok/webhook/tiktok-webhook.service.js';
@@ -53,8 +54,12 @@ const pixelBehaviorWorker = new PollingWorker(
   30_000,
   async () => {
     const result = await pixelBehaviorService.rollupDirtyStores(10);
-    if (result.storesRolled > 0 || result.failed > 0) {
-      logger.info(result, 'Rolled up privacy-safe Stride Pixel behavioral facts');
+    const repairedStates = await pixelRollupStateRepair.repairBehavior(10);
+    if (result.storesRolled > 0 || result.failed > 0 || repairedStates > 0) {
+      logger.info(
+        { ...result, repairedStates },
+        'Rolled up privacy-safe Stride Pixel behavioral facts',
+      );
     }
   },
   'Stride Pixel behavioral rollup failed',
@@ -64,8 +69,12 @@ const pixelAttributionWorker = new PollingWorker(
   30_000,
   async () => {
     const result = await pixelAttributionService.rollupDirtyStores(10);
-    if (result.storesRolled > 0 || result.failed > 0) {
-      logger.info(result, 'Rolled up privacy-safe Stride Pixel attribution evidence');
+    const repairedStates = await pixelRollupStateRepair.repairAttribution(10);
+    if (result.storesRolled > 0 || result.failed > 0 || repairedStates > 0) {
+      logger.info(
+        { ...result, repairedStates },
+        'Rolled up privacy-safe Stride Pixel attribution evidence',
+      );
     }
   },
   'Stride Pixel attribution rollup failed',
@@ -74,10 +83,16 @@ const pixelAttributionWorker = new PollingWorker(
 const pixelRetentionWorker = new PollingWorker(
   60_000,
   async () => {
-    const sessions = await pixelJourneyService.cleanupExpiredSessions();
+    // Raw evidence expires first. Deleting expired source events rotates repair generations for
+    // affected sessions. Drain one bounded repair batch immediately, then always run session
+    // cleanup: the cleanup query itself excludes any session that still has repair work or stale
+    // rollups, so one tenant's backlog cannot globally retain unrelated expired traces.
     const events = await pixelService.cleanupExpiredEvents();
-    if (sessions.deleted > 0 || events.deleted > 0) {
-      logger.info({ sessions, events }, 'Deleted expired Stride Pixel behavioral traces');
+    const repairs = await pixelJourneyService.repairDirtySessions(500);
+    const sessions = await pixelJourneyService.cleanupExpiredSessions();
+
+    if (sessions.deleted > 0 || events.deleted > 0 || repairs.selected > 0 || repairs.failed > 0) {
+      logger.info({ sessions, events, repairs }, 'Deleted expired Stride Pixel behavioral traces');
     }
   },
   'Stride Pixel retention cleanup failed',

@@ -11,6 +11,8 @@ const DEFAULT_REPAIR_BATCH = 100;
 const MAX_REPAIR_BATCH = 500;
 const DEFAULT_RETENTION_BATCH = 1_000;
 const MAX_VISITOR_SESSIONS = 100;
+const ORDER_LINK_BASE_RETRY_MS = 5 * 60_000;
+const ORDER_LINK_MAX_RETRY_MS = 6 * 60 * 60_000;
 
 type JourneyEvent = Awaited<
   ReturnType<PixelJourneyRepository['findSessionEvents']>
@@ -48,7 +50,12 @@ function minDate(values: Date[]): Date {
 }
 
 function sourceFor(event: JourneyEvent): StorefrontJourneySource {
-  if (event.metaAdExternalId || event.metaAdSetExternalId || event.metaCampaignExternalId || event.metaClickId) {
+  if (
+    event.metaAdExternalId ||
+    event.metaAdSetExternalId ||
+    event.metaCampaignExternalId ||
+    event.metaClickId
+  ) {
     return 'META';
   }
   if (event.googleClickId) return 'GOOGLE';
@@ -63,6 +70,8 @@ function sourceFor(event: JourneyEvent): StorefrontJourneySource {
 
 function touchSignature(event: JourneyEvent): string {
   return JSON.stringify([
+    event.pageUrl,
+    event.referrerUrl,
     event.landingPageUrl,
     event.utmSource,
     event.utmMedium,
@@ -182,6 +191,13 @@ function buildRawCollections(events: JourneyEvent[]): SessionCollectionAggregate
   return [...aggregates.values()].sort((a, b) => a.firstSeenAt.getTime() - b.firstSeenAt.getTime());
 }
 
+function orderRetryDelayMs(attemptCount: number): number {
+  return Math.min(
+    ORDER_LINK_BASE_RETRY_MS * 2 ** Math.min(Math.max(attemptCount - 1, 0), 7),
+    ORDER_LINK_MAX_RETRY_MS,
+  );
+}
+
 export class PixelJourneyService {
   constructor(
     private readonly repository: PixelJourneyRepository = new PixelJourneyRepository(),
@@ -204,8 +220,14 @@ export class PixelJourneyService {
   }
 
   async materializeSession(storeId: string, browserSessionId: string) {
+    const repairMarker = await this.repository.findSessionRepairMarker(storeId, browserSessionId);
+    if (!repairMarker) return null;
+
     const events = await this.repository.findSessionEvents(storeId, browserSessionId);
-    if (events.length === 0) return null;
+    if (events.length === 0) {
+      await this.repository.clearSessionRepair(storeId, browserSessionId, repairMarker.id);
+      return null;
+    }
 
     const touches = buildRawTouches(events);
     const products = buildRawProducts(events);
@@ -236,6 +258,7 @@ export class PixelJourneyService {
       : null;
     const checkoutStartedEvents = events.filter((event) => event.eventName === 'BEGIN_CHECKOUT');
     const checkoutCompletedEvents = events.filter((event) => event.eventName === 'CHECKOUT_COMPLETED');
+    const materializedAt = this.now();
 
     const aggregate = {
       anonymousVisitorId: visitorIds[0] ?? null,
@@ -266,16 +289,23 @@ export class PixelJourneyService {
           ? ('LINKED' as const)
           : ('PENDING' as const)
         : ('NONE' as const),
+      orderLinkAttemptCount: 0,
+      orderLinkNextAttemptAt: null,
       landingPageUrl: events[0]?.landingPageUrl ?? events[0]?.pageUrl ?? null,
       initialReferrerUrl: events[0]?.referrerUrl ?? null,
       dataQualityFlags,
-      retentionExpiresAt: maxDate(events.map((event) => event.retentionExpiresAt)),
-      materializedAt: this.now(),
+      // Session-level pseudonymous evidence is retained no longer than its oldest source event.
+      // This is intentionally conservative: one long-lived browser session cannot extend an old
+      // touch, URL, or counter past the source event's own retention horizon.
+      retentionExpiresAt: minDate(events.map((event) => event.retentionExpiresAt)),
+      materializedAt,
+      rollupDirtyAt: materializedAt,
     };
 
     return this.repository.replaceSessionReadModel(
       storeId,
       browserSessionId,
+      repairMarker.id,
       aggregate,
       touches,
       products,
@@ -301,19 +331,47 @@ export class PixelJourneyService {
 
   async linkPendingOrders(limit = DEFAULT_REPAIR_BATCH) {
     const bounded = Math.min(Math.max(1, Math.trunc(limit)), MAX_REPAIR_BATCH);
-    const sessions = await this.repository.findPendingOrderSessions(bounded);
+    const now = this.now();
+    const sessions = await this.repository.findPendingOrderSessions(now, bounded);
     let linked = 0;
+    let deferred = 0;
+    let stale = 0;
     for (const session of sessions) {
       if (!session.shopifyOrderExternalId) continue;
+      const expectedOrderExternalId = session.shopifyOrderExternalId;
       const order = await this.repository.findOrderByExternalId(
         session.storeId,
-        session.shopifyOrderExternalId,
+        expectedOrderExternalId,
       );
-      if (!order) continue;
-      await this.repository.setOrderLink(session.id, order.id);
-      linked += 1;
+      if (order) {
+        const updated = await this.repository.setOrderLink(
+          session.id,
+          expectedOrderExternalId,
+          order.id,
+          this.now(),
+        );
+        if (updated.count === 1) linked += 1;
+        else stale += 1;
+        continue;
+      }
+
+      const attemptCount = session.orderLinkAttemptCount + 1;
+      const updated = await this.repository.scheduleOrderLinkRetry(
+        session.id,
+        expectedOrderExternalId,
+        attemptCount,
+        new Date(now.getTime() + orderRetryDelayMs(attemptCount)),
+      );
+      if (updated.count === 1) deferred += 1;
+      else stale += 1;
     }
-    return { selected: sessions.length, linked, stillPending: sessions.length - linked };
+    return {
+      selected: sessions.length,
+      linked,
+      deferred,
+      stale,
+      stillPending: sessions.length - linked - stale,
+    };
   }
 
   cleanupExpiredSessions(limit = DEFAULT_RETENTION_BATCH) {

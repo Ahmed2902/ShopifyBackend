@@ -1,7 +1,10 @@
+export type MetaAuthorizationMode = 'READ_ONLY' | 'ADS_MANAGEMENT';
+
 export interface MetaOAuthContext {
   nonce: string;
   userId: string;
   storeId: string;
+  authorizationMode: MetaAuthorizationMode;
   expiresAt: number;
 }
 

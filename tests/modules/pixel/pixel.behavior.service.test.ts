@@ -12,11 +12,13 @@ function repositoryMock() {
   return {
     getStoreContext: vi.fn(),
     findDirtyStoreIds: vi.fn().mockResolvedValue([]),
+    withStoreRollupLock: vi.fn(async (_storeId: string, work: () => Promise<unknown>) => work()),
     findDirtySessions: vi.fn().mockResolvedValue([]),
     findSessionsForWindow: vi.fn(),
     findValidOrders: vi.fn(),
     replaceDailyRows: vi.fn().mockResolvedValue({ rows: 0 }),
-    advanceRollupState: vi.fn(),
+    acknowledgeSessions: vi.fn().mockResolvedValue(1),
+    advanceRollupState: vi.fn().mockResolvedValue({ storeId }),
     recordRollupError: vi.fn(),
     aggregateStore: vi.fn(),
     groupDimension: vi.fn().mockResolvedValue([]),
@@ -28,64 +30,74 @@ function repositoryMock() {
   } as unknown as PixelBehaviorRepository;
 }
 
+function session(input: Record<string, unknown> = {}) {
+  return {
+    id: 'session-db-id',
+    startedAt: new Date('2026-09-04T10:00:00.000Z'),
+    pageViewCount: 2,
+    productViewCount: 1,
+    collectionViewCount: 1,
+    searchCount: 0,
+    addToCartCount: 1,
+    removeFromCartCount: 0,
+    checkoutStartedAt: new Date('2026-09-04T10:05:00.000Z'),
+    checkoutCompletedAt: new Date('2026-09-04T10:10:00.000Z'),
+    orderId,
+    orderLinkStatus: 'LINKED',
+    landingPageUrl: 'https://shop.example/products/shoe',
+    products: [
+      {
+        identityKey: 'variant:shoe',
+        shopifyProductExternalId: 'gid://shopify/Product/100',
+        shopifyVariantExternalId: 'gid://shopify/ProductVariant/200',
+        productId,
+        variantId,
+        resolutionStatus: 'EXACT',
+        viewCount: 1,
+        addToCartCount: 1,
+        removeFromCartCount: 0,
+      },
+    ],
+    collections: [
+      {
+        shopifyCollectionExternalId: 'gid://shopify/Collection/300',
+        collectionId,
+        resolutionStatus: 'EXACT',
+        viewCount: 1,
+      },
+    ],
+    ...input,
+  };
+}
+
+function validOrder() {
+  return {
+    id: orderId,
+    lineItems: [
+      {
+        productId,
+        variantId,
+        shopifyProductId: 'gid://shopify/Product/100',
+        shopifyVariantId: 'gid://shopify/ProductVariant/200',
+      },
+    ],
+  };
+}
+
+function stringify(value: unknown) {
+  return JSON.stringify(value, (_key, item) => (typeof item === 'bigint' ? item.toString() : item));
+}
+
 describe('PixelBehaviorService', () => {
   it('rolls a product view -> cart -> exact Shopify purchase into privacy-safe daily facts', async () => {
     const repository = repositoryMock();
     vi.mocked(repository.findSessionsForWindow)
-      .mockResolvedValueOnce([
-        {
-          id: 'session-db-id',
-          startedAt: new Date('2026-09-04T10:00:00.000Z'),
-          pageViewCount: 2,
-          productViewCount: 1,
-          collectionViewCount: 1,
-          searchCount: 0,
-          addToCartCount: 1,
-          removeFromCartCount: 0,
-          checkoutStartedAt: new Date('2026-09-04T10:05:00.000Z'),
-          checkoutCompletedAt: new Date('2026-09-04T10:10:00.000Z'),
-          orderId,
-          orderLinkStatus: 'LINKED',
-          landingPageUrl: 'https://shop.example/products/shoe',
-          products: [
-            {
-              identityKey: 'variant:shoe',
-              shopifyProductExternalId: 'gid://shopify/Product/100',
-              shopifyVariantExternalId: 'gid://shopify/ProductVariant/200',
-              productId,
-              variantId,
-              resolutionStatus: 'EXACT',
-              viewCount: 1,
-              addToCartCount: 1,
-              removeFromCartCount: 0,
-            },
-          ],
-          collections: [
-            {
-              shopifyCollectionExternalId: 'gid://shopify/Collection/300',
-              collectionId,
-              resolutionStatus: 'EXACT',
-              viewCount: 1,
-            },
-          ],
-        },
-      ] as never)
+      .mockResolvedValueOnce([session()] as never)
       .mockResolvedValueOnce([] as never);
-    vi.mocked(repository.findValidOrders).mockResolvedValue([
-      {
-        id: orderId,
-        lineItems: [
-          {
-            productId,
-            variantId,
-            shopifyProductId: 'gid://shopify/Product/100',
-            shopifyVariantId: 'gid://shopify/ProductVariant/200',
-          },
-        ],
-      },
-    ] as never);
+    vi.mocked(repository.findValidOrders).mockResolvedValue([validOrder()] as never);
 
-    const service = new PixelBehaviorService(repository, () => new Date('2026-09-05T00:00:00.000Z'));
+    const now = new Date('2026-09-05T00:00:00.000Z');
+    const service = new PixelBehaviorService(repository, () => now);
     await service.rebuildStoreDate(storeId, 'UTC', '2026-09-04');
 
     const [, , rows] = vi.mocked(repository.replaceDailyRows).mock.calls[0]!;
@@ -124,8 +136,64 @@ describe('PixelBehaviorService', () => {
       landingPageUrl: 'https://shop.example/products/shoe',
       linkedPurchaseSessionCount: 1,
     });
-    expect(JSON.stringify(rows, (_key, value) => (typeof value === 'bigint' ? value.toString() : value)))
-      .not.toContain('anonymousVisitorId');
+    expect(repository.acknowledgeSessions).not.toHaveBeenCalled();
+    expect(stringify(rows)).not.toContain('anonymousVisitorId');
+  });
+
+  it('redacts arbitrary user-specific landing paths before durable storage', async () => {
+    const repository = repositoryMock();
+    vi.mocked(repository.findSessionsForWindow)
+      .mockResolvedValueOnce([
+        session({
+          orderId: null,
+          orderLinkStatus: 'NONE',
+          checkoutCompletedAt: null,
+          landingPageUrl: 'https://shop.example/apps/profile/customer@example.com/order-token-123',
+          products: [],
+          collections: [],
+        }),
+      ] as never)
+      .mockResolvedValueOnce([] as never);
+    vi.mocked(repository.findValidOrders).mockResolvedValue([] as never);
+
+    const service = new PixelBehaviorService(repository, () => new Date('2026-09-05T00:00:00.000Z'));
+    await service.rebuildStoreDate(storeId, 'UTC', '2026-09-04');
+
+    const rows = vi.mocked(repository.replaceDailyRows).mock.calls[0]?.[2] ?? [];
+    const landing = rows.find((row) => row.dimension === 'LANDING_PAGE');
+    expect(landing?.landingPageUrl).toBe('https://shop.example/:other');
+    expect(stringify(landing)).not.toContain('customer@example.com');
+    expect(stringify(landing)).not.toContain('order-token-123');
+  });
+
+  it('rebuilds both previous and current cohort dates and acknowledges only the exact selected dirty version', async () => {
+    const repository = repositoryMock();
+    const dirtyAt = new Date('2026-09-05T01:00:00.000Z');
+    const orderUpdatedAt = new Date('2026-09-05T00:59:00.000Z');
+    const dirty = {
+      id: 'session-db-id',
+      startedAt: new Date('2026-09-04T23:30:00.000Z'),
+      previousStartedAt: new Date('2026-09-05T00:30:00.000Z'),
+      rollupDirtyAt: dirtyAt,
+      orderUpdatedAt,
+      dirtyAt,
+    };
+    vi.mocked(repository.findDirtyStoreIds).mockResolvedValue([storeId]);
+    vi.mocked(repository.getStoreContext).mockResolvedValue({
+      id: storeId,
+      ianaTimezone: 'UTC',
+      pixelInstallation: { status: 'ACTIVE', lastEventAt: dirtyAt },
+      storefrontBehaviorRollup: null,
+    } as never);
+    vi.mocked(repository.findDirtySessions).mockResolvedValue([dirty] as never);
+    const service = new PixelBehaviorService(repository, () => dirtyAt);
+    const rebuild = vi.spyOn(service, 'rebuildStoreDate').mockResolvedValue({ date: '', rows: 0 });
+
+    await service.rollupDirtyStores();
+
+    expect(rebuild.mock.calls.map((call) => call[2])).toEqual(['2026-09-04', '2026-09-05']);
+    expect(repository.acknowledgeSessions).toHaveBeenCalledWith(storeId, [dirty], dirtyAt);
+    expect(repository.withStoreRollupLock).toHaveBeenCalledWith(storeId, expect.any(Function));
   });
 
   it('returns current/comparison first-party funnel rates using store-timezone windows', async () => {

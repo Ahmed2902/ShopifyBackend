@@ -1,4 +1,5 @@
-import type { Prisma, StorefrontBehaviorDimension } from '../../../generated/prisma/client.js';
+import { Prisma, type StorefrontBehaviorDimension } from '../../../generated/prisma/client.js';
+import { withPostgresAdvisoryLock } from '../../../lib/postgres-advisory-lock.js';
 import { prisma } from '../../../lib/prisma.js';
 
 const BEHAVIOR_SUM_FIELDS = {
@@ -29,6 +30,15 @@ export type BehaviorDailyInput = Omit<
   'id' | 'createdAt' | 'updatedAt'
 >;
 
+export interface BehaviorDirtySession {
+  id: string;
+  startedAt: Date;
+  previousStartedAt: Date | null;
+  rollupDirtyAt: Date;
+  orderUpdatedAt: Date | null;
+  dirtyAt: Date;
+}
+
 export class PixelBehaviorRepository {
   getStoreContext(storeId: string) {
     return prisma.store.findUnique({
@@ -52,37 +62,60 @@ export class PixelBehaviorRepository {
 
   async findDirtyStoreIds(limit: number) {
     const rows = await prisma.$queryRaw<Array<{ storeId: string }>>`
-      SELECT DISTINCT s."storeId" AS "storeId"
+      SELECT
+        s."storeId" AS "storeId",
+        GREATEST(
+          COALESCE(r."lastRolledUpAt", TIMESTAMP 'epoch'),
+          COALESCE(r."updatedAt", TIMESTAMP 'epoch')
+        ) AS "lastAttemptAt"
       FROM "StorefrontSession" s
+      LEFT JOIN "Order" o ON o."id" = s."orderId"
       LEFT JOIN "StorefrontBehaviorRollupState" r ON r."storeId" = s."storeId"
-      WHERE r."rolledThroughMaterializedAt" IS NULL
-         OR s."updatedAt" > r."rolledThroughMaterializedAt"
-      ORDER BY s."storeId"
+      WHERE s."behaviorRolledUpAt" IS NULL
+         OR s."behaviorRolledUpAt" < s."rollupDirtyAt"
+         OR s."behaviorRolledStartedAt" IS DISTINCT FROM s."startedAt"
+         OR (o."id" IS NOT NULL AND o."updatedAt" > s."behaviorRolledUpAt")
+      GROUP BY s."storeId", r."lastRolledUpAt", r."updatedAt"
+      ORDER BY "lastAttemptAt" ASC, s."storeId" ASC
       LIMIT ${limit}
     `;
     return rows.map((row) => row.storeId);
   }
 
-  async findDirtySessions(storeId: string, after: Date | null, limit: number) {
-    const rows = await prisma.storefrontSession.findMany({
-      where: {
-        storeId,
-        ...(after ? { updatedAt: { gt: after } } : {}),
-      },
-      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
-      take: limit,
-      select: { id: true, startedAt: true, updatedAt: true },
-    });
-    return rows.map((row) => ({
-      id: row.id,
-      startedAt: row.startedAt,
-      materializedAt: row.updatedAt,
-    }));
+  withStoreRollupLock<T>(storeId: string, work: () => Promise<T>): Promise<T> {
+    return withPostgresAdvisoryLock(`stride:pixel:behavior:${storeId}`, work);
+  }
+
+  findDirtySessions(storeId: string, limit: number) {
+    return prisma.$queryRaw<BehaviorDirtySession[]>`
+      SELECT
+        s."id",
+        s."startedAt",
+        s."behaviorRolledStartedAt" AS "previousStartedAt",
+        s."rollupDirtyAt" AS "rollupDirtyAt",
+        o."updatedAt" AS "orderUpdatedAt",
+        GREATEST(s."rollupDirtyAt", COALESCE(o."updatedAt", s."rollupDirtyAt")) AS "dirtyAt"
+      FROM "StorefrontSession" s
+      LEFT JOIN "Order" o ON o."id" = s."orderId"
+      WHERE s."storeId" = ${storeId}::uuid
+        AND (
+          s."behaviorRolledUpAt" IS NULL
+          OR s."behaviorRolledUpAt" < s."rollupDirtyAt"
+          OR s."behaviorRolledStartedAt" IS DISTINCT FROM s."startedAt"
+          OR (o."id" IS NOT NULL AND o."updatedAt" > s."behaviorRolledUpAt")
+        )
+      ORDER BY "dirtyAt" ASC, s."id" ASC
+      LIMIT ${limit}
+    `;
   }
 
   findSessionsForWindow(storeId: string, instantFrom: Date, instantTo: Date, skip: number, take: number) {
     return prisma.storefrontSession.findMany({
-      where: { storeId, startedAt: { gte: instantFrom, lte: instantTo } },
+      where: {
+        storeId,
+        eventCount: { gt: 0 },
+        startedAt: { gte: instantFrom, lte: instantTo },
+      },
       orderBy: [{ startedAt: 'asc' }, { id: 'asc' }],
       skip,
       take,
@@ -157,6 +190,37 @@ export class PixelBehaviorRepository {
       }
       return { rows: rows.length };
     });
+  }
+
+  async acknowledgeSessions(storeId: string, sessions: BehaviorDirtySession[], acknowledgedAt: Date) {
+    if (sessions.length === 0) return 0;
+    const versions = Prisma.join(
+      sessions.map(
+        (row) => Prisma.sql`(
+          ${row.id}::uuid,
+          ${row.startedAt}::timestamp(3),
+          ${row.rollupDirtyAt}::timestamp(3),
+          ${row.orderUpdatedAt}::timestamp(3)
+        )`,
+      ),
+    );
+    return prisma.$executeRaw`
+      UPDATE "StorefrontSession" s
+      SET
+        "behaviorRolledUpAt" = ${acknowledgedAt},
+        "behaviorRolledStartedAt" = s."startedAt",
+        "updatedAt" = CURRENT_TIMESTAMP
+      FROM (VALUES ${versions}) AS v("id", "startedAt", "rollupDirtyAt", "orderUpdatedAt")
+      WHERE s."storeId" = ${storeId}::uuid
+        AND s."id" = v."id"
+        AND s."startedAt" = v."startedAt"
+        AND s."rollupDirtyAt" = v."rollupDirtyAt"
+        AND (
+          SELECT o."updatedAt"
+          FROM "Order" o
+          WHERE o."id" = s."orderId"
+        ) IS NOT DISTINCT FROM v."orderUpdatedAt"
+    `;
   }
 
   advanceRollupState(storeId: string, watermark: Date, rolledUpAt: Date) {
@@ -283,7 +347,14 @@ export class PixelBehaviorRepository {
     if (productIds.length === 0) return Promise.resolve([]);
     return prisma.product.findMany({
       where: { storeId, id: { in: productIds } },
-      select: { id: true, shopifyProductId: true, title: true, handle: true, status: true, deletedAt: true },
+      select: {
+        id: true,
+        shopifyProductId: true,
+        title: true,
+        handle: true,
+        status: true,
+        deletedAt: true,
+      },
     });
   }
 

@@ -47,7 +47,7 @@ The merchant can keep the Meta connection read-only and paste the generated URL-
 Endpoint:
 
 ```text
-GET /v1/stores/:storeId/meta/tracking/manual
+GET /v1/stores/:storeId/integrations/meta/tracking/manual
 ```
 
 ### Automatic — optional `ads_management`
@@ -55,7 +55,7 @@ GET /v1/stores/:storeId/meta/tracking/manual
 The base Meta connection remains read-only (`ads_read`). The merchant explicitly starts a second OAuth flow when they choose automatic setup:
 
 ```text
-POST /v1/stores/:storeId/meta/tracking/permission
+POST /v1/stores/:storeId/integrations/meta/tracking/permission
 ```
 
 That flow requests:
@@ -64,12 +64,12 @@ That flow requests:
 ads_read,ads_management
 ```
 
-The granted scopes are stored on the existing Meta connection after the normal callback completes.
+The requested authorization mode is signed into OAuth state. The callback only completes an automatic-tracking upgrade when Meta's inspected token actually contains `ads_management`. If the merchant declines that permission, Stride returns `META_ADS_MANAGEMENT_REQUIRED` and leaves the existing read-only connection untouched instead of reporting a false successful upgrade.
 
 Audit coverage:
 
 ```text
-GET /v1/stores/:storeId/meta/tracking
+GET /v1/stores/:storeId/integrations/meta/tracking
 ```
 
 The audit reports exact, partial, and missing tracking coverage per synced ad and always returns the manual fallback.
@@ -77,7 +77,7 @@ The audit reports exact, partial, and missing tracking coverage per synced ad an
 Apply or dry-run:
 
 ```text
-POST /v1/stores/:storeId/meta/tracking/apply
+POST /v1/stores/:storeId/integrations/meta/tracking/apply
 ```
 
 Example dry-run body:
@@ -120,9 +120,5 @@ Until Meta grants the production access required for other businesses' ad accoun
 
 ## Deferred
 
-- materialized session/journey read model
-- Shopify order linkage
-- first-touch/last-touch/path analytics
-- behavioral funnel analytics
 - exact Google/TikTok setup
 - any budget/bid/status automation

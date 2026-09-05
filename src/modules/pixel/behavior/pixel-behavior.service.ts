@@ -12,6 +12,7 @@ import {
 const SESSION_PAGE_SIZE = 1_000;
 const DIRTY_SESSION_BATCH = 1_000;
 const MAX_DIRTY_STORES = 50;
+const SAFE_HANDLE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 
 type BehaviorSession = Awaited<
   ReturnType<PixelBehaviorRepository['findSessionsForWindow']>
@@ -83,6 +84,28 @@ function numberValue(value: number | bigint | null | undefined): number {
 
 function landingHash(url: string): string {
   return createHash('sha256').update(url).digest('hex');
+}
+
+function durableLandingPage(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    if (segments.length === 0) return `${parsed.origin}/`;
+
+    const [root, first, second] = segments;
+    if ((root === 'products' || root === 'collections' || root === 'pages') && first && SAFE_HANDLE.test(first)) {
+      return `${parsed.origin}/${root}/${first}`;
+    }
+    if (root === 'blogs' && first && SAFE_HANDLE.test(first)) {
+      if (second && SAFE_HANDLE.test(second)) return `${parsed.origin}/blogs/${first}/${second}`;
+      return `${parsed.origin}/blogs/${first}`;
+    }
+    if (root === 'search' || root === 'cart') return `${parsed.origin}/${root}`;
+
+    return `${parsed.origin}/:other`;
+  } catch {
+    return null;
+  }
 }
 
 function productKey(row: SessionProduct): string {
@@ -295,28 +318,32 @@ export class PixelBehaviorService {
     let failed = 0;
 
     for (const storeId of storeIds) {
-      const context = await this.repository.getStoreContext(storeId);
-      if (!context) continue;
-      const previousWatermark = context.storefrontBehaviorRollup?.rolledThroughMaterializedAt ?? null;
-      const dirty = await this.repository.findDirtySessions(
-        storeId,
-        previousWatermark,
-        DIRTY_SESSION_BATCH,
-      );
-      if (dirty.length === 0) continue;
-
-      const dates = [...new Set(dirty.map((row) => storeDate(row.startedAt, context.ianaTimezone)))];
       try {
-        for (const date of dates) {
-          await this.rebuildStoreDate(storeId, context.ianaTimezone, date);
-          datesRebuilt += 1;
-        }
-        const watermark = dirty.reduce(
-          (latest, row) => (row.materializedAt > latest ? row.materializedAt : latest),
-          dirty[0]!.materializedAt,
-        );
-        await this.repository.advanceRollupState(storeId, watermark, this.now());
-        storesRolled += 1;
+        await this.repository.withStoreRollupLock(storeId, async () => {
+          const context = await this.repository.getStoreContext(storeId);
+          if (!context) return;
+          const dirty = await this.repository.findDirtySessions(storeId, DIRTY_SESSION_BATCH);
+          if (dirty.length === 0) return;
+          const acknowledgedAt = this.now();
+
+          const dates = new Set<string>();
+          for (const row of dirty) {
+            dates.add(storeDate(row.startedAt, context.ianaTimezone));
+            if (row.previousStartedAt) dates.add(storeDate(row.previousStartedAt, context.ianaTimezone));
+          }
+
+          for (const date of [...dates].sort()) {
+            await this.rebuildStoreDate(storeId, context.ianaTimezone, date);
+            datesRebuilt += 1;
+          }
+          await this.repository.acknowledgeSessions(storeId, dirty, acknowledgedAt);
+          const watermark = dirty.reduce(
+            (latest, row) => (row.dirtyAt > latest ? row.dirtyAt : latest),
+            dirty[0]!.dirtyAt,
+          );
+          await this.repository.advanceRollupState(storeId, watermark, this.now());
+          storesRolled += 1;
+        });
       } catch (error) {
         failed += 1;
         const message = error instanceof Error ? error.message.slice(0, 1_000) : 'Behavior rollup failed';
@@ -365,20 +392,23 @@ export class PixelBehaviorService {
         aggregates.set(storeKey, storeRow);
 
         if (session.landingPageUrl) {
-          const hash = landingHash(session.landingPageUrl);
-          const key = `LANDING_PAGE:${hash}`;
-          const landingRow =
-            aggregates.get(key) ??
-            newAccumulator({
-              storeId,
-              bucketDate: day,
-              dimension: 'LANDING_PAGE',
-              dimensionKey: hash,
-              landingPageHash: hash,
-              landingPageUrl: session.landingPageUrl,
-            });
-          addCommonSession(landingRow, session, validPurchase, delay);
-          aggregates.set(key, landingRow);
+          const durableUrl = durableLandingPage(session.landingPageUrl);
+          if (durableUrl) {
+            const hash = landingHash(durableUrl);
+            const key = `LANDING_PAGE:${hash}`;
+            const landingRow =
+              aggregates.get(key) ??
+              newAccumulator({
+                storeId,
+                bucketDate: day,
+                dimension: 'LANDING_PAGE',
+                dimensionKey: hash,
+                landingPageHash: hash,
+                landingPageUrl: durableUrl,
+              });
+            addCommonSession(landingRow, session, validPurchase, delay);
+            aggregates.set(key, landingRow);
+          }
         }
 
         for (const product of mergeSessionProducts(session.products)) {
@@ -478,7 +508,8 @@ export class PixelBehaviorService {
       methodology: {
         source: 'STRIDE_FIRST_PARTY_BEHAVIOR_PLUS_SHOPIFY_LINKED_ORDERS',
         sessionCohort: 'Metrics are assigned to the store-local date on which the session started.',
-        purchaseTruth: 'linkedPurchaseSessions counts non-test, non-cancelled Shopify orders linked by exact Shopify order identity.',
+        purchaseTruth:
+          'linkedPurchaseSessions counts non-test, non-cancelled Shopify orders linked by exact Shopify order identity.',
         interpretation: 'Observed first-party behavior; no causal attribution is implied.',
       },
     };
@@ -575,6 +606,10 @@ export class PixelBehaviorService {
         collectionInterpretation:
           dimension === 'COLLECTION'
             ? 'A collection purchase is downstream same-session purchase evidence, not causal collection attribution.'
+            : null,
+        landingPagePrivacy:
+          dimension === 'LANDING_PAGE'
+            ? 'Durable landing-page dimensions retain only normalized Shopify route shapes; arbitrary path segments are redacted.'
             : null,
         interpretation: 'Observed first-party behavior; no causal attribution is implied.',
       },

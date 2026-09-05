@@ -6,7 +6,9 @@ import { ShopifyPixelProvisioner } from '../../../src/modules/pixel/pixel.shopif
 
 const storeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
-function buildProvisioner(scopes = ['read_products', 'write_pixels', 'read_customer_events']) {
+function buildProvisioner(
+  scopes = ['read_products', 'write_pixels', 'read_pixels', 'read_customer_events'],
+) {
   const connection = {
     id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
     status: 'ACTIVE',
@@ -25,11 +27,24 @@ function buildProvisioner(scopes = ['read_products', 'write_pixels', 'read_custo
     }),
   } as unknown as ShopifyRepository;
   const apiService = {
-    requestAdminGraphql: vi.fn().mockResolvedValue({
-      webPixelCreate: {
-        userErrors: [],
-        webPixel: { id: 'gid://shopify/WebPixel/1', settings: {} },
-      },
+    requestAdminGraphql: vi.fn().mockImplementation(async (input: { query: string }) => {
+      if (input.query.includes('StrideWebPixelCreate')) {
+        return {
+          webPixelCreate: {
+            userErrors: [],
+            webPixel: { id: 'gid://shopify/WebPixel/1', settings: {} },
+          },
+        };
+      }
+      if (input.query.includes('StrideWebPixelUpdate')) {
+        return {
+          webPixelUpdate: {
+            userErrors: [],
+            webPixel: { id: 'gid://shopify/WebPixel/42', settings: {} },
+          },
+        };
+      }
+      return { webPixel: null };
     }),
   } as unknown as ShopifyApiService;
   const authService = {
@@ -45,7 +60,7 @@ function buildProvisioner(scopes = ['read_products', 'write_pixels', 'read_custo
 }
 
 describe('ShopifyPixelProvisioner', () => {
-  it('requires both pixel/customer-event scopes before provider mutation', async () => {
+  it('requires write/read pixel and customer-event scopes before provider mutation', async () => {
     const { apiService, authService, provisioner } = buildProvisioner(['read_products']);
 
     await expect(
@@ -61,14 +76,14 @@ describe('ShopifyPixelProvisioner', () => {
     ).rejects.toMatchObject({
       statusCode: 409,
       code: 'SHOPIFY_PIXEL_SCOPE_REQUIRED',
-      details: { missingScopes: ['write_pixels', 'read_customer_events'] },
+      details: { missingScopes: ['write_pixels', 'read_pixels', 'read_customer_events'] },
     });
     expect(authService.resolveAccessToken).not.toHaveBeenCalled();
     expect(apiService.requestAdminGraphql).not.toHaveBeenCalled();
   });
 
-  it('creates a Shopify WebPixel with JSON-serialized Stride collector settings', async () => {
-    const { apiService, authService, provisioner } = buildProvisioner();
+  it('looks up an existing remote WebPixel before creating when local provider id is missing', async () => {
+    const { apiService, provisioner } = buildProvisioner();
     const settings = {
       collectorUrl: 'https://api.stride.example/v1/pixel/events',
       installationId: 'installation-id',
@@ -79,29 +94,65 @@ describe('ShopifyPixelProvisioner', () => {
       provisioner.upsert({ storeId, existingWebPixelId: null, settings }),
     ).resolves.toEqual({ id: 'gid://shopify/WebPixel/1' });
 
-    expect(authService.resolveAccessToken).toHaveBeenCalledWith(
-      'example.myshopify.com',
-      expect.objectContaining({ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }),
+    expect(apiService.requestAdminGraphql).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(apiService.requestAdminGraphql).mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ query: expect.stringContaining('StrideWebPixel') }),
     );
-    expect(apiService.requestAdminGraphql).toHaveBeenCalledWith(
+    expect(vi.mocked(apiService.requestAdminGraphql).mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({
-        shop: 'example.myshopify.com',
-        accessToken: 'access-token',
-        apiVersion: '2026-07',
-        connectionId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
         query: expect.stringContaining('webPixelCreate'),
         variables: { webPixel: { settings: JSON.stringify(settings) } },
       }),
     );
   });
 
-  it('updates the existing provider WebPixel instead of creating a second one', async () => {
+  it('recovers a remotely-created WebPixel and updates it rather than creating another', async () => {
     const { apiService, provisioner } = buildProvisioner();
-    vi.mocked(apiService.requestAdminGraphql).mockResolvedValue({
-      webPixelUpdate: {
-        userErrors: [],
-        webPixel: { id: 'gid://shopify/WebPixel/42', settings: {} },
-      },
+    vi.mocked(apiService.requestAdminGraphql).mockImplementation(async (input: { query: string }) => {
+      if (input.query.includes('StrideWebPixel {')) {
+        return { webPixel: { id: 'gid://shopify/WebPixel/77', settings: '{}' } };
+      }
+      return {
+        webPixelUpdate: {
+          userErrors: [],
+          webPixel: { id: 'gid://shopify/WebPixel/77', settings: {} },
+        },
+      };
+    });
+    const settings = {
+      collectorUrl: 'https://api.stride.example/v1/pixel/events',
+      installationId: 'installation-id',
+      collectorToken: 'recovery-token',
+    };
+
+    await expect(
+      provisioner.upsert({ storeId, existingWebPixelId: null, settings }),
+    ).resolves.toEqual({ id: 'gid://shopify/WebPixel/77' });
+
+    expect(apiService.requestAdminGraphql).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(apiService.requestAdminGraphql).mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        query: expect.stringContaining('webPixelUpdate'),
+        variables: {
+          id: 'gid://shopify/WebPixel/77',
+          webPixel: { settings: JSON.stringify(settings) },
+        },
+      }),
+    );
+  });
+
+  it('verifies the live WebPixel before updating a locally stored provider id', async () => {
+    const { apiService, provisioner } = buildProvisioner();
+    vi.mocked(apiService.requestAdminGraphql).mockImplementation(async (input: { query: string }) => {
+      if (input.query.includes('StrideWebPixel {')) {
+        return { webPixel: { id: 'gid://shopify/WebPixel/42', settings: '{}' } };
+      }
+      return {
+        webPixelUpdate: {
+          userErrors: [],
+          webPixel: { id: 'gid://shopify/WebPixel/42', settings: {} },
+        },
+      };
     });
     const settings = {
       collectorUrl: 'https://api.stride.example/v1/pixel/events',
@@ -117,7 +168,8 @@ describe('ShopifyPixelProvisioner', () => {
       }),
     ).resolves.toEqual({ id: 'gid://shopify/WebPixel/42' });
 
-    expect(apiService.requestAdminGraphql).toHaveBeenCalledWith(
+    expect(apiService.requestAdminGraphql).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(apiService.requestAdminGraphql).mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({
         query: expect.stringContaining('webPixelUpdate'),
         variables: {
@@ -128,19 +180,49 @@ describe('ShopifyPixelProvisioner', () => {
     );
   });
 
+  it('creates a replacement when the locally stored WebPixel id is stale remotely', async () => {
+    const { apiService, provisioner } = buildProvisioner();
+    const settings = {
+      collectorUrl: 'https://api.stride.example/v1/pixel/events',
+      installationId: 'installation-id',
+      collectorToken: 'replacement-token',
+    };
+
+    await expect(
+      provisioner.upsert({
+        storeId,
+        existingWebPixelId: 'gid://shopify/WebPixel/stale',
+        settings,
+      }),
+    ).resolves.toEqual({ id: 'gid://shopify/WebPixel/1' });
+
+    expect(apiService.requestAdminGraphql).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(apiService.requestAdminGraphql).mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        query: expect.stringContaining('webPixelCreate'),
+        variables: { webPixel: { settings: JSON.stringify(settings) } },
+      }),
+    );
+  });
+
   it('surfaces Shopify userErrors without pretending installation succeeded', async () => {
     const { apiService, provisioner } = buildProvisioner();
-    vi.mocked(apiService.requestAdminGraphql).mockResolvedValue({
-      webPixelCreate: {
-        userErrors: [
-          {
-            field: ['webPixel', 'settings'],
-            message: 'Settings do not match the extension schema',
-            code: 'INVALID',
+    vi.mocked(apiService.requestAdminGraphql).mockImplementation(async (input: { query: string }) => {
+      if (input.query.includes('StrideWebPixelCreate')) {
+        return {
+          webPixelCreate: {
+            userErrors: [
+              {
+                field: ['webPixel', 'settings'],
+                message: 'Settings do not match the extension schema',
+                code: 'INVALID',
+              },
+            ],
+            webPixel: null,
           },
-        ],
-        webPixel: null,
-      },
+        };
+      }
+      return { webPixel: null };
     });
 
     await expect(

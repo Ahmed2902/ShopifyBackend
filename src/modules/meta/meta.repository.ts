@@ -1,5 +1,6 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
+import { enqueueMetaHierarchyPixelRepairs } from '../pixel/pixel-source-invalidation.js';
 import type { MetaAdAccountAsset } from './meta.types.js';
 
 const adAccountSelect = {
@@ -83,10 +84,18 @@ export class MetaRepository {
     });
   }
 
-  markConnectionSynced(connectionId: string, syncedAt = new Date()) {
-    return prisma.metaConnection.update({
-      where: { id: connectionId },
-      data: { lastSyncedAt: syncedAt },
+  async markConnectionSynced(connectionId: string, syncedAt = new Date()) {
+    return prisma.$transaction(async (tx) => {
+      const connection = await tx.metaConnection.update({
+        where: { id: connectionId },
+        data: { lastSyncedAt: syncedAt },
+      });
+
+      // Resolver-relevant row writes already rotate targeted repair generations atomically. Keep
+      // one bounded final safety pass over the compact materialized touch model so a completed
+      // hierarchy sync leaves every retained Meta touch aligned with the final account snapshot.
+      await enqueueMetaHierarchyPixelRepairs(connection.storeId, tx);
+      return connection;
     });
   }
 
@@ -135,6 +144,10 @@ export class MetaRepository {
         });
       }
 
+      // Selected account scope is part of provider truth. A deselected account stops syncing, so
+      // retained Pixel touches must re-resolve immediately rather than continuing to treat stale
+      // rows from that account as current exact provider identity.
+      await enqueueMetaHierarchyPixelRepairs(input.storeId, tx);
       return connection;
     });
   }
