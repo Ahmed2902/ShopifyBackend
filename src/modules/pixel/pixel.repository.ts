@@ -41,6 +41,7 @@ export class PixelRepository {
     storeId: string;
     collectorTokenHash: string;
     collectorTokenPrefix: string;
+    status: 'ACTIVE' | 'PROVISIONING';
   }) {
     return prisma.pixelInstallation.upsert({
       where: { storeId: input.storeId },
@@ -52,13 +53,14 @@ export class PixelRepository {
         pendingCollectorTokenHash: input.collectorTokenHash,
         pendingCollectorTokenPrefix: input.collectorTokenPrefix,
         shopifyWebPixelId: null,
-        status: 'PROVISIONING',
+        status: input.status,
         installedAt: null,
         lastError: null,
       },
       update: {
         pendingCollectorTokenHash: input.collectorTokenHash,
         pendingCollectorTokenPrefix: input.collectorTokenPrefix,
+        status: input.status,
         lastError: null,
       },
       select: {
