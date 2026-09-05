@@ -6,18 +6,32 @@ export class PixelRollupStateRepair {
       WITH candidates AS (
         SELECT
           r."storeId",
-          MAX(GREATEST(s."rollupDirtyAt", COALESCE(o."updatedAt", s."rollupDirtyAt"))) AS watermark
+          COALESCE(
+            MAX(GREATEST(s."rollupDirtyAt", COALESCE(o."updatedAt", s."rollupDirtyAt")))
+              FILTER (WHERE s."id" IS NOT NULL),
+            r."rolledThroughMaterializedAt",
+            CURRENT_TIMESTAMP
+          ) AS watermark
         FROM "StorefrontBehaviorRollupState" r
-        INNER JOIN "StorefrontSession" s ON s."storeId" = r."storeId"
+        LEFT JOIN "StorefrontSession" s ON s."storeId" = r."storeId"
         LEFT JOIN "Order" o ON o."id" = s."orderId"
         WHERE r."lastError" IS NOT NULL
-        GROUP BY r."storeId"
-        HAVING BOOL_AND(
-          s."behaviorRolledUpAt" IS NOT NULL
-          AND s."behaviorRolledUpAt" >= s."rollupDirtyAt"
-          AND s."behaviorRolledStartedAt" = s."startedAt"
-          AND (o."id" IS NULL OR o."updatedAt" <= s."behaviorRolledUpAt")
-        )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "StorefrontSession" dirty
+            LEFT JOIN "Order" dirty_order ON dirty_order."id" = dirty."orderId"
+            WHERE dirty."storeId" = r."storeId"
+              AND (
+                dirty."behaviorRolledUpAt" IS NULL
+                OR dirty."behaviorRolledUpAt" < dirty."rollupDirtyAt"
+                OR dirty."behaviorRolledStartedAt" IS DISTINCT FROM dirty."startedAt"
+                OR (
+                  dirty_order."id" IS NOT NULL
+                  AND dirty_order."updatedAt" > dirty."behaviorRolledUpAt"
+                )
+              )
+          )
+        GROUP BY r."storeId", r."rolledThroughMaterializedAt"
         ORDER BY r."storeId"
         LIMIT ${limit}
       )
@@ -54,18 +68,32 @@ export class PixelRollupStateRepair {
       WITH candidates AS (
         SELECT
           r."storeId",
-          MAX(GREATEST(s."rollupDirtyAt", COALESCE(o."updatedAt", s."rollupDirtyAt"))) AS watermark
+          COALESCE(
+            MAX(GREATEST(s."rollupDirtyAt", COALESCE(o."updatedAt", s."rollupDirtyAt")))
+              FILTER (WHERE s."id" IS NOT NULL),
+            r."rolledThroughSessionUpdatedAt",
+            CURRENT_TIMESTAMP
+          ) AS watermark
         FROM "StorefrontAttributionRollupState" r
-        INNER JOIN "StorefrontSession" s ON s."storeId" = r."storeId"
+        LEFT JOIN "StorefrontSession" s ON s."storeId" = r."storeId"
         LEFT JOIN "Order" o ON o."id" = s."orderId"
         WHERE r."lastError" IS NOT NULL
-        GROUP BY r."storeId"
-        HAVING BOOL_AND(
-          s."attributionRolledUpAt" IS NOT NULL
-          AND s."attributionRolledUpAt" >= s."rollupDirtyAt"
-          AND s."attributionRolledStartedAt" = s."startedAt"
-          AND (o."id" IS NULL OR o."updatedAt" <= s."attributionRolledUpAt")
-        )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "StorefrontSession" dirty
+            LEFT JOIN "Order" dirty_order ON dirty_order."id" = dirty."orderId"
+            WHERE dirty."storeId" = r."storeId"
+              AND (
+                dirty."attributionRolledUpAt" IS NULL
+                OR dirty."attributionRolledUpAt" < dirty."rollupDirtyAt"
+                OR dirty."attributionRolledStartedAt" IS DISTINCT FROM dirty."startedAt"
+                OR (
+                  dirty_order."id" IS NOT NULL
+                  AND dirty_order."updatedAt" > dirty."attributionRolledUpAt"
+                )
+              )
+          )
+        GROUP BY r."storeId", r."rolledThroughSessionUpdatedAt"
         ORDER BY r."storeId"
         LIMIT ${limit}
       )
