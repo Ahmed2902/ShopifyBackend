@@ -4,7 +4,7 @@ import { ShopifyRepository } from '../shopify/shopify.repository.js';
 import { ShopifyApiService } from '../shopify/shared/shopify-api.service.js';
 import { ShopifyAuthService } from '../shopify/shared/shopify-auth.service.js';
 
-const REQUIRED_PIXEL_SCOPES = ['write_pixels', 'read_customer_events'] as const;
+const REQUIRED_PIXEL_SCOPES = ['write_pixels', 'read_pixels', 'read_customer_events'] as const;
 
 const webPixelSchema = z.object({
   id: z.string().min(1),
@@ -15,6 +15,10 @@ const webPixelUserErrorSchema = z.object({
   field: z.array(z.string()).nullable().optional(),
   message: z.string(),
   code: z.string().nullable().optional(),
+});
+
+const findResponseSchema = z.object({
+  webPixel: webPixelSchema.nullable(),
 });
 
 const createResponseSchema = z.object({
@@ -30,6 +34,12 @@ const updateResponseSchema = z.object({
     webPixel: webPixelSchema.nullable(),
   }),
 });
+
+const WEB_PIXEL_QUERY = `
+query StrideWebPixel {
+  webPixel { id settings }
+}
+`;
 
 const WEB_PIXEL_CREATE_MUTATION = `
 mutation StrideWebPixelCreate($webPixel: WebPixelInput!) {
@@ -98,23 +108,45 @@ export class ShopifyPixelProvisioner {
       target.myshopifyDomain,
       connection,
     );
+    const context = {
+      shop: target.myshopifyDomain,
+      accessToken,
+      apiVersion: connection.apiVersion,
+      connectionId: connection.id,
+    };
+
+    // A previous provider write can succeed while local finalization fails. Query Shopify when
+    // the local provider id is absent so reinstall repairs that split-brain state instead of
+    // attempting a second non-idempotent webPixelCreate.
+    let webPixelId = input.existingWebPixelId;
+    if (!webPixelId) {
+      const response = await this.apiService.requestAdminGraphql<unknown>({
+        ...context,
+        query: WEB_PIXEL_QUERY,
+      });
+      const parsed = findResponseSchema.safeParse(response);
+      if (!parsed.success) {
+        throw new AppError(
+          'Shopify web pixel lookup returned an unexpected shape',
+          502,
+          'SHOPIFY_BAD_RESPONSE',
+        );
+      }
+      webPixelId = parsed.data.webPixel?.id ?? null;
+    }
 
     // Shopify's WebPixelInput expects its `settings` JSON scalar as a JSON-formatted string.
-    // Shopify then validates that string against the extension's settings schema.
     const variables = {
       webPixel: {
         settings: JSON.stringify(input.settings),
       },
     };
 
-    if (input.existingWebPixelId) {
+    if (webPixelId) {
       const response = await this.apiService.requestAdminGraphql<unknown>({
-        shop: target.myshopifyDomain,
-        accessToken,
-        apiVersion: connection.apiVersion,
-        connectionId: connection.id,
+        ...context,
         query: WEB_PIXEL_UPDATE_MUTATION,
-        variables: { id: input.existingWebPixelId, ...variables },
+        variables: { id: webPixelId, ...variables },
       });
       const parsed = updateResponseSchema.safeParse(response);
       if (!parsed.success) {
@@ -128,10 +160,7 @@ export class ShopifyPixelProvisioner {
     }
 
     const response = await this.apiService.requestAdminGraphql<unknown>({
-      shop: target.myshopifyDomain,
-      accessToken,
-      apiVersion: connection.apiVersion,
-      connectionId: connection.id,
+      ...context,
       query: WEB_PIXEL_CREATE_MUTATION,
       variables,
     });
