@@ -86,6 +86,15 @@ export class PixelJourneyRepository {
     storeId: string,
     input: { campaignIds: string[]; adSetIds: string[]; adIds: string[] },
   ) {
+    const connection = await prisma.metaConnection.findUnique({
+      where: { storeId },
+      select: { selectedAdAccountIds: true },
+    });
+    const selectedAdAccountIds = connection?.selectedAdAccountIds ?? [];
+    if (selectedAdAccountIds.length === 0) {
+      return { campaigns: [], adSets: [], ads: [] };
+    }
+
     const [campaigns, adSets, ads] = await Promise.all([
       input.campaignIds.length === 0
         ? Promise.resolve([])
@@ -93,7 +102,7 @@ export class PixelJourneyRepository {
             where: {
               metaCampaignId: { in: input.campaignIds },
               deletedAt: null,
-              adAccount: { storeId },
+              adAccount: { storeId, metaAccountId: { in: selectedAdAccountIds } },
             },
             select: { id: true, metaCampaignId: true },
           }),
@@ -103,7 +112,7 @@ export class PixelJourneyRepository {
             where: {
               metaAdSetId: { in: input.adSetIds },
               deletedAt: null,
-              adAccount: { storeId },
+              adAccount: { storeId, metaAccountId: { in: selectedAdAccountIds } },
             },
             select: {
               id: true,
@@ -117,7 +126,7 @@ export class PixelJourneyRepository {
             where: {
               metaAdId: { in: input.adIds },
               deletedAt: null,
-              adAccount: { storeId },
+              adAccount: { storeId, metaAccountId: { in: selectedAdAccountIds } },
             },
             select: {
               id: true,
