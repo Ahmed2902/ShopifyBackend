@@ -111,7 +111,11 @@ export class PixelBehaviorRepository {
 
   findSessionsForWindow(storeId: string, instantFrom: Date, instantTo: Date, skip: number, take: number) {
     return prisma.storefrontSession.findMany({
-      where: { storeId, startedAt: { gte: instantFrom, lte: instantTo } },
+      where: {
+        storeId,
+        eventCount: { gt: 0 },
+        startedAt: { gte: instantFrom, lte: instantTo },
+      },
       orderBy: [{ startedAt: 'asc' }, { id: 'asc' }],
       skip,
       take,
