@@ -65,16 +65,26 @@ export class PixelService {
 
   async installShopifyPixel(storeId: string) {
     const collectorUrl = this.getCollectorUrl();
-    const existing = await this.repository.findInstallationByStoreId(storeId);
+    const existing = await this.repository.findInstallationForProvisioning(storeId);
     const requestedInstallationId = existing?.id ?? randomUUID();
     const collectorToken = randomBytes(PIXEL_COLLECTOR_TOKEN_BYTES).toString('base64url');
     const collectorTokenHash = serializeTokenHash(collectorToken);
     const collectorTokenPrefix = collectorToken.slice(0, TOKEN_PREFIX_LENGTH);
     const hadWorkingInstallation = existing?.status === 'ACTIVE';
+    const hadRecoverablePendingCredential = Boolean(
+      existing?.pendingCollectorTokenHash && existing.lastError,
+    );
+    const rollbackStatus = hadWorkingInstallation
+      ? ('ACTIVE' as const)
+      : hadRecoverablePendingCredential
+        ? ('PROVISIONING' as const)
+        : ('ERROR' as const);
 
     // The pending hash doubles as an ownership token. A healthy in-flight install cannot be
-    // overwritten by a second request; a previously failed operation (lastError != null) can be
-    // reclaimed on the next explicit retry.
+    // overwritten by a second request. When an earlier provider write succeeded but local
+    // finalization failed, stageInstallation first promotes that known-live pending hash to the
+    // accepted collector hash before staging the replacement, so a retry failure cannot strand
+    // Shopify on an unaccepted credential.
     const staged = await this.repository.stageInstallation({
       id: requestedInstallationId,
       storeId,
@@ -107,7 +117,7 @@ export class PixelService {
         .rollbackStagedInstallation(
           installationId,
           collectorTokenHash,
-          hadWorkingInstallation,
+          rollbackStatus,
           errorMessage(error),
         )
         .catch(() => undefined);
