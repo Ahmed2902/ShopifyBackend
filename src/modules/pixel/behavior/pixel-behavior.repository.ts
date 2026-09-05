@@ -63,8 +63,8 @@ export class PixelBehaviorRepository {
     return rows.map((row) => row.storeId);
   }
 
-  findDirtySessions(storeId: string, after: Date | null, limit: number) {
-    return prisma.storefrontSession.findMany({
+  async findDirtySessions(storeId: string, after: Date | null, limit: number) {
+    const rows = await prisma.storefrontSession.findMany({
       where: {
         storeId,
         ...(after ? { updatedAt: { gt: after } } : {}),
@@ -73,6 +73,11 @@ export class PixelBehaviorRepository {
       take: limit,
       select: { id: true, startedAt: true, updatedAt: true },
     });
+    return rows.map((row) => ({
+      id: row.id,
+      startedAt: row.startedAt,
+      materializedAt: row.updatedAt,
+    }));
   }
 
   findSessionsForWindow(storeId: string, instantFrom: Date, instantTo: Date, skip: number, take: number) {
