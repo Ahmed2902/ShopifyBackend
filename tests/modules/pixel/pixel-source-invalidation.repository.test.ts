@@ -32,7 +32,7 @@ afterEach(async () => {
 });
 
 describeDatabase('Pixel source-domain invalidation', () => {
-  it('unlinks and dirties Pixel sessions before deleting Shopify order truth', async () => {
+  it('rotates repair generation, unlinks, and dirties sessions before deleting Shopify order truth', async () => {
     const store = await createStore();
     const shopifyOrderId = `gid://shopify/Order/${Date.now()}`;
     const order = await prisma.order.create({
@@ -45,10 +45,11 @@ describeDatabase('Pixel source-domain invalidation', () => {
       },
     });
     const previousDirtyAt = new Date('2026-09-01T10:05:00.000Z');
+    const browserSessionId = `session-${randomUUID()}`;
     const session = await prisma.storefrontSession.create({
       data: {
         storeId: store.id,
-        browserSessionId: `session-${randomUUID()}`,
+        browserSessionId,
         startedAt: new Date('2026-09-01T09:55:00.000Z'),
         endedAt: new Date('2026-09-01T10:05:00.000Z'),
         lastSourceReceivedAt: new Date('2026-09-01T10:05:00.000Z'),
@@ -64,6 +65,13 @@ describeDatabase('Pixel source-domain invalidation', () => {
         retentionExpiresAt: new Date('2026-12-01T00:00:00.000Z'),
       },
     });
+    const originalRepair = await prisma.storefrontSessionRepair.create({
+      data: {
+        storeId: store.id,
+        browserSessionId,
+        sourceReceivedAt: session.lastSourceReceivedAt,
+      },
+    });
 
     await expect(
       new ShopifyWebhookRepository().deleteOrder(store.id, shopifyOrderId),
@@ -76,6 +84,12 @@ describeDatabase('Pixel source-domain invalidation', () => {
     expect(repaired.orderLinkAttemptCount).toBe(0);
     expect(repaired.orderLinkNextAttemptAt).not.toBeNull();
     expect(repaired.rollupDirtyAt.getTime()).toBeGreaterThan(previousDirtyAt.getTime());
+
+    const repair = await prisma.storefrontSessionRepair.findUniqueOrThrow({
+      where: { storeId_browserSessionId: { storeId: store.id, browserSessionId } },
+    });
+    expect(repair.id).not.toBe(originalRepair.id);
+    expect(repair.sourceReceivedAt).toEqual(session.lastSourceReceivedAt);
   });
 
   it('rotates retained Pixel repair generations after Meta hierarchy sync', async () => {
