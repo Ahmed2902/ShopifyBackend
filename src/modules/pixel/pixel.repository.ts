@@ -177,6 +177,11 @@ export class PixelRepository {
     const rows = await prisma.$queryRaw<Array<{ id: string; status: string }>>`
       UPDATE "PixelInstallation"
       SET
+        "status" = CASE
+          WHEN "collectorTokenHash" = "pendingCollectorTokenHash"
+          THEN 'PROVISIONING'::"PixelInstallationStatus"
+          ELSE "status"
+        END,
         "lastError" = ${lastError},
         "updatedAt" = CURRENT_TIMESTAMP
       WHERE "id" = ${id}::uuid
@@ -278,10 +283,11 @@ export class PixelRepository {
         });
       }
 
-      // Every source deletion rotates the repair generation, including deletion of the final raw
-      // event in a browser session. That invalidates any materializer that captured the pre-delete
-      // generation. If evidence survives, the worker rebuilds from those sources; if none survives,
-      // it observes an empty session, clears this marker, and retention can delete the old read model.
+      // Every source deletion rotates the repair generation. When the final source disappears,
+      // atomically turn the retained session into a zero-evidence dirty tombstone first. The
+      // tombstone preserves only cohort/visitor identity needed to remove its prior behavior and
+      // downstream attribution contributions. It cannot be retention-deleted until the repair
+      // marker is consumed and both rollups acknowledge the new dirty generation.
       for (const { storeId, browserSessionId, latestDeletedReceivedAt } of affectedSessions.values()) {
         const remaining = await tx.storefrontEvent.findFirst({
           where: { storeId, sessionId: browserSessionId },
@@ -292,6 +298,46 @@ export class PixelRepository {
           remaining && remaining.receivedAt > latestDeletedReceivedAt
             ? remaining.receivedAt
             : latestDeletedReceivedAt;
+
+        if (!remaining) {
+          const invalidatedAt = new Date();
+          const session = await tx.storefrontSession.findUnique({
+            where: { storeId_browserSessionId: { storeId, browserSessionId } },
+            select: { id: true },
+          });
+          if (session) {
+            await tx.storefrontSession.update({
+              where: { id: session.id },
+              data: {
+                eventCount: 0,
+                pageViewCount: 0,
+                productViewCount: 0,
+                collectionViewCount: 0,
+                searchCount: 0,
+                addToCartCount: 0,
+                removeFromCartCount: 0,
+                checkoutProgressCount: 0,
+                checkoutStartedAt: null,
+                checkoutCompletedAt: null,
+                shopifyCheckoutToken: null,
+                shopifyOrderExternalId: null,
+                orderId: null,
+                orderLinkStatus: 'NONE',
+                orderLinkAttemptCount: 0,
+                orderLinkNextAttemptAt: null,
+                landingPageUrl: null,
+                initialReferrerUrl: null,
+                dataQualityFlags: [],
+                retentionExpiresAt: invalidatedAt,
+                materializedAt: invalidatedAt,
+                rollupDirtyAt: invalidatedAt,
+              },
+            });
+            await tx.storefrontSessionTouch.deleteMany({ where: { sessionId: session.id } });
+            await tx.storefrontSessionProduct.deleteMany({ where: { sessionId: session.id } });
+            await tx.storefrontSessionCollection.deleteMany({ where: { sessionId: session.id } });
+          }
+        }
 
         const repairId = randomUUID();
         await tx.$executeRaw`
