@@ -50,25 +50,53 @@ export async function enqueueMetaHierarchyPixelRepairs(
     WHERE "storeId" = ${storeId}::uuid
   `;
 
-  const evidencePredicate = evidence
-    ? Prisma.join(
-        [
-          ...(campaignIds.length > 0
-            ? [Prisma.sql`t."metaCampaignExternalId" IN (${sqlValues(campaignIds)})`]
-            : []),
-          ...(adSetIds.length > 0
-            ? [Prisma.sql`t."metaAdSetExternalId" IN (${sqlValues(adSetIds)})`]
-            : []),
-          ...(adIds.length > 0
-            ? [Prisma.sql`t."metaAdExternalId" IN (${sqlValues(adIds)})`]
-            : []),
-        ],
-        ' OR ',
+  const predicates: Prisma.Sql[] = [];
+  if (campaignIds.length > 0) {
+    predicates.push(Prisma.sql`(
+      t."metaCampaignExternalId" IN (${sqlValues(campaignIds)})
+      OR t."metaCampaignId" IN (
+        SELECT c."id"
+        FROM "MetaCampaign" c
+        INNER JOIN "MetaAdAccount" a ON a."id" = c."adAccountId"
+        WHERE a."storeId" = ${storeId}::uuid
+          AND c."metaCampaignId" IN (${sqlValues(campaignIds)})
       )
+    )`);
+  }
+  if (adSetIds.length > 0) {
+    predicates.push(Prisma.sql`(
+      t."metaAdSetExternalId" IN (${sqlValues(adSetIds)})
+      OR t."metaAdSetId" IN (
+        SELECT a_set."id"
+        FROM "MetaAdSet" a_set
+        INNER JOIN "MetaAdAccount" a ON a."id" = a_set."adAccountId"
+        WHERE a."storeId" = ${storeId}::uuid
+          AND a_set."metaAdSetId" IN (${sqlValues(adSetIds)})
+      )
+    )`);
+  }
+  if (adIds.length > 0) {
+    predicates.push(Prisma.sql`(
+      t."metaAdExternalId" IN (${sqlValues(adIds)})
+      OR t."metaAdId" IN (
+        SELECT ad."id"
+        FROM "MetaAd" ad
+        INNER JOIN "MetaAdAccount" a ON a."id" = ad."adAccountId"
+        WHERE a."storeId" = ${storeId}::uuid
+          AND ad."metaAdId" IN (${sqlValues(adIds)})
+      )
+    )`);
+  }
+
+  const evidencePredicate = evidence
+    ? Prisma.join(predicates, ' OR ')
     : Prisma.sql`(
         t."metaCampaignExternalId" IS NOT NULL
         OR t."metaAdSetExternalId" IS NOT NULL
         OR t."metaAdExternalId" IS NOT NULL
+        OR t."metaCampaignId" IS NOT NULL
+        OR t."metaAdSetId" IS NOT NULL
+        OR t."metaAdId" IS NOT NULL
       )`;
 
   return db.$executeRaw`
