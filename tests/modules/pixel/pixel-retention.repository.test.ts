@@ -89,11 +89,13 @@ describeDatabase('Pixel retention repository', () => {
     expect(repair.sourceReceivedAt).toEqual(newReceivedAt);
   });
 
-  it('rotates the repair generation when the final raw source expires', async () => {
+  it('invalidates the retained read model when the final raw source expires', async () => {
     const store = await createStore();
     const repository = new PixelRepository();
     const sessionId = `session-final-${randomUUID()}`;
+    const visitorId = `visitor-${randomUUID()}`;
     const receivedAt = new Date('2026-06-01T12:00:00.000Z');
+    const rolledAt = new Date('2026-06-01T13:00:00.000Z');
 
     const expired = await prisma.storefrontEvent.create({
       data: {
@@ -103,8 +105,39 @@ describeDatabase('Pixel retention repository', () => {
         eventAt: receivedAt,
         receivedAt,
         sessionId,
+        anonymousVisitorId: visitorId,
         consentState: 'GRANTED',
+        pageUrl: 'https://example.test/products/old',
         retentionExpiresAt: new Date('2026-09-05T11:59:00.000Z'),
+      },
+    });
+    const session = await prisma.storefrontSession.create({
+      data: {
+        storeId: store.id,
+        browserSessionId: sessionId,
+        anonymousVisitorId: visitorId,
+        startedAt: receivedAt,
+        endedAt: receivedAt,
+        lastSourceReceivedAt: receivedAt,
+        eventCount: 1,
+        pageViewCount: 1,
+        landingPageUrl: 'https://example.test/products/old',
+        rollupDirtyAt: receivedAt,
+        behaviorRolledUpAt: rolledAt,
+        behaviorRolledStartedAt: receivedAt,
+        attributionRolledUpAt: rolledAt,
+        attributionRolledStartedAt: receivedAt,
+        retentionExpiresAt: new Date('2026-09-05T11:59:00.000Z'),
+      },
+    });
+    await prisma.storefrontSessionTouch.create({
+      data: {
+        sessionId: session.id,
+        ordinal: 1,
+        eventAt: receivedAt,
+        source: 'DIRECT',
+        landingPageUrl: 'https://example.test/products/old',
+        metaResolutionStatus: 'NONE',
       },
     });
     const originalRepair = await prisma.storefrontSessionRepair.create({
@@ -118,6 +151,20 @@ describeDatabase('Pixel retention repository', () => {
     await expect(repository.deleteEventsByIds([expired.id])).resolves.toBe(1);
     await expect(
       prisma.storefrontEvent.count({ where: { storeId: store.id, sessionId } }),
+    ).resolves.toBe(0);
+
+    const invalidated = await prisma.storefrontSession.findUniqueOrThrow({ where: { id: session.id } });
+    expect(invalidated.anonymousVisitorId).toBe(visitorId);
+    expect(invalidated.startedAt).toEqual(receivedAt);
+    expect(invalidated.eventCount).toBe(0);
+    expect(invalidated.pageViewCount).toBe(0);
+    expect(invalidated.checkoutCompletedAt).toBeNull();
+    expect(invalidated.orderId).toBeNull();
+    expect(invalidated.orderLinkStatus).toBe('NONE');
+    expect(invalidated.landingPageUrl).toBeNull();
+    expect(invalidated.rollupDirtyAt.getTime()).toBeGreaterThan(rolledAt.getTime());
+    await expect(
+      prisma.storefrontSessionTouch.count({ where: { sessionId: session.id } }),
     ).resolves.toBe(0);
 
     const repair = await prisma.storefrontSessionRepair.findUniqueOrThrow({
