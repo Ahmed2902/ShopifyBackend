@@ -4,6 +4,7 @@ import { pixelAttributionService } from './modules/pixel/attribution/pixel-attri
 import { pixelBehaviorService } from './modules/pixel/behavior/pixel-behavior.service.js';
 import { pixelJourneyService } from './modules/pixel/journey/pixel-journey.service.js';
 import { pixelService } from './modules/pixel/pixel.service.js';
+import { pixelRollupStateRepair } from './modules/pixel/rollup/pixel-rollup-state-repair.js';
 import { reconciliationService } from './modules/reconciliation/reconciliation.service.js';
 import { shopifyService } from './modules/shopify/shopify.service.js';
 import { tiktokWebhookService } from './modules/tiktok/webhook/tiktok-webhook.service.js';
@@ -53,8 +54,12 @@ const pixelBehaviorWorker = new PollingWorker(
   30_000,
   async () => {
     const result = await pixelBehaviorService.rollupDirtyStores(10);
-    if (result.storesRolled > 0 || result.failed > 0) {
-      logger.info(result, 'Rolled up privacy-safe Stride Pixel behavioral facts');
+    const repairedStates = await pixelRollupStateRepair.repairBehavior(10);
+    if (result.storesRolled > 0 || result.failed > 0 || repairedStates > 0) {
+      logger.info(
+        { ...result, repairedStates },
+        'Rolled up privacy-safe Stride Pixel behavioral facts',
+      );
     }
   },
   'Stride Pixel behavioral rollup failed',
@@ -64,8 +69,12 @@ const pixelAttributionWorker = new PollingWorker(
   30_000,
   async () => {
     const result = await pixelAttributionService.rollupDirtyStores(10);
-    if (result.storesRolled > 0 || result.failed > 0) {
-      logger.info(result, 'Rolled up privacy-safe Stride Pixel attribution evidence');
+    const repairedStates = await pixelRollupStateRepair.repairAttribution(10);
+    if (result.storesRolled > 0 || result.failed > 0 || repairedStates > 0) {
+      logger.info(
+        { ...result, repairedStates },
+        'Rolled up privacy-safe Stride Pixel attribution evidence',
+      );
     }
   },
   'Stride Pixel attribution rollup failed',
