@@ -179,7 +179,10 @@ describe('PixelJourneyService', () => {
     const service = new PixelJourneyService(repository, () => fixedNow);
     await service.materializeSession(storeId, browserSessionId);
 
-    const [, , aggregate, touches, products] = vi.mocked(repository.replaceSessionReadModel).mock.calls[0]!;
+    const [, , claimedMarker, aggregate, touches, products] = vi.mocked(
+      repository.replaceSessionReadModel,
+    ).mock.calls[0]!;
+    expect(claimedMarker).toBe(repairMarkerId);
     expect(aggregate).toMatchObject({
       anonymousVisitorId: visitorId,
       eventCount: 6,
@@ -219,14 +222,10 @@ describe('PixelJourneyService', () => {
       viewCount: 1,
       addToCartCount: 1,
     });
-    expect(repository.clearSessionRepair).toHaveBeenCalledWith(
-      storeId,
-      browserSessionId,
-      repairMarkerId,
-    );
+    expect(repository.clearSessionRepair).not.toHaveBeenCalled();
   });
 
-  it('clears only the repair generation captured before reading session events', async () => {
+  it('claims the repair generation captured before reading session events with the read-model write', async () => {
     const repository = buildRepository([event({ eventId: 'event_generation' })]);
     const service = new PixelJourneyService(repository, () => fixedNow);
 
@@ -236,11 +235,25 @@ describe('PixelJourneyService', () => {
     expect(vi.mocked(repository.findSessionRepairMarker).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(repository.findSessionEvents).mock.invocationCallOrder[0]!,
     );
-    expect(repository.clearSessionRepair).toHaveBeenCalledWith(
+    expect(repository.replaceSessionReadModel).toHaveBeenCalledWith(
       storeId,
       browserSessionId,
       repairMarkerId,
+      expect.any(Object),
+      expect.any(Array),
+      expect.any(Array),
+      expect.any(Array),
     );
+    expect(repository.clearSessionRepair).not.toHaveBeenCalled();
+  });
+
+  it('does not report a stale materialization as applied when its repair generation was superseded', async () => {
+    const repository = buildRepository([event({ eventId: 'event_stale_generation' })]);
+    vi.mocked(repository.replaceSessionReadModel).mockResolvedValue(null);
+    const service = new PixelJourneyService(repository, () => fixedNow);
+
+    await expect(service.materializeSession(storeId, browserSessionId)).resolves.toBeNull();
+    expect(repository.clearSessionRepair).not.toHaveBeenCalled();
   });
 
   it('does not collapse source changes driven only by page/referrer URLs', async () => {
@@ -272,7 +285,7 @@ describe('PixelJourneyService', () => {
 
     await service.materializeSession(storeId, browserSessionId);
 
-    const touches = vi.mocked(repository.replaceSessionReadModel).mock.calls[0]?.[3] ?? [];
+    const touches = vi.mocked(repository.replaceSessionReadModel).mock.calls[0]?.[4] ?? [];
     expect(touches.map((touch) => touch.source)).toEqual(['UNKNOWN', 'DIRECT', 'REFERRER']);
   });
 
@@ -293,7 +306,7 @@ describe('PixelJourneyService', () => {
 
     await service.materializeSession(storeId, browserSessionId);
 
-    const [, , aggregate, touches] = vi.mocked(repository.replaceSessionReadModel).mock.calls[0]!;
+    const [, , , aggregate, touches] = vi.mocked(repository.replaceSessionReadModel).mock.calls[0]!;
     expect(aggregate).toMatchObject({
       shopifyOrderExternalId: orderGid,
       orderId: null,
