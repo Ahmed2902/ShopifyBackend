@@ -71,6 +71,25 @@ export class MetaTrackingProvider {
       );
     }
 
+    // Creative creation is non-idempotent and can take long enough for a merchant or another
+    // automation to repoint the ad. Re-read immediately before the actual assignment so the final
+    // tracking-only mutation cannot overwrite a newer creative. The newly created clone is returned
+    // as orphan evidence if we abort here so it can be audited/cleaned up manually.
+    const liveCreativeIdBeforeAssignment = await this.fetchLiveCreativeId(context, ad.metaAdId);
+    if (liveCreativeIdBeforeAssignment !== creative.metaCreativeId) {
+      throw new AppError(
+        'Meta ad creative changed while Stride was preparing tracking; the new creative was not assigned',
+        409,
+        'META_TRACKING_SNAPSHOT_STALE',
+        {
+          metaAdId: ad.metaAdId,
+          syncedCreativeId: creative.metaCreativeId,
+          liveCreativeId: liveCreativeIdBeforeAssignment,
+          createdCreativeId: created.data.id,
+        },
+      );
+    }
+
     try {
       await this.requestMutation(context, `/${ad.metaAdId}`, {
         creative: JSON.stringify({ creative_id: created.data.id }),
