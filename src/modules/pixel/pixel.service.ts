@@ -76,7 +76,7 @@ export class PixelService {
     );
     const rollbackStatus = hadWorkingInstallation
       ? ('ACTIVE' as const)
-      : hadRecoverablePendingCredential
+      : existing?.status === 'PROVISIONING' || hadRecoverablePendingCredential
         ? ('PROVISIONING' as const)
         : ('ERROR' as const);
 
