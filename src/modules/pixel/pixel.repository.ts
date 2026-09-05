@@ -177,11 +177,6 @@ export class PixelRepository {
     const rows = await prisma.$queryRaw<Array<{ id: string; status: string }>>`
       UPDATE "PixelInstallation"
       SET
-        "status" = CASE
-          WHEN "collectorTokenHash" = "pendingCollectorTokenHash"
-          THEN 'PROVISIONING'::"PixelInstallationStatus"
-          ELSE "status"
-        END,
         "lastError" = ${lastError},
         "updatedAt" = CURRENT_TIMESTAMP
       WHERE "id" = ${id}::uuid
