@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { prisma } from '../../../src/lib/prisma.js';
+import { PixelJourneyRepository } from '../../../src/modules/pixel/journey/pixel-journey.repository.js';
 import { PixelRepository } from '../../../src/modules/pixel/pixel.repository.js';
 
 const describeDatabase = process.env.RUN_DB_TESTS === 'true' ? describe : describe.skip;
@@ -124,5 +125,46 @@ describeDatabase('Pixel retention repository', () => {
     });
     expect(repair.id).not.toBe(originalRepair.id);
     expect(repair.sourceReceivedAt).toEqual(receivedAt);
+  });
+
+  it('does not delete an expired rolled session while any repair generation is pending', async () => {
+    const store = await createStore();
+    const browserSessionId = `session-pending-repair-${randomUUID()}`;
+    const startedAt = new Date('2026-06-01T10:00:00.000Z');
+    const endedAt = new Date('2026-06-01T10:10:00.000Z');
+    const rolledAt = new Date('2026-06-01T11:00:00.000Z');
+    const session = await prisma.storefrontSession.create({
+      data: {
+        storeId: store.id,
+        browserSessionId,
+        startedAt,
+        endedAt,
+        lastSourceReceivedAt: endedAt,
+        eventCount: 1,
+        rollupDirtyAt: endedAt,
+        behaviorRolledUpAt: rolledAt,
+        behaviorRolledStartedAt: startedAt,
+        attributionRolledUpAt: rolledAt,
+        attributionRolledStartedAt: startedAt,
+        retentionExpiresAt: new Date('2026-09-05T11:00:00.000Z'),
+      },
+    });
+    await prisma.storefrontSessionRepair.create({
+      data: {
+        storeId: store.id,
+        browserSessionId,
+        sourceReceivedAt: endedAt,
+      },
+    });
+
+    const result = await new PixelJourneyRepository().deleteExpiredSessions(
+      new Date('2026-09-05T12:00:00.000Z'),
+      100,
+    );
+
+    expect(result.deleted).toBe(0);
+    await expect(prisma.storefrontSession.findUnique({ where: { id: session.id } })).resolves.toMatchObject({
+      id: session.id,
+    });
   });
 });
