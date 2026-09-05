@@ -16,14 +16,14 @@ enum InventoryIntelligenceMode {
 }
 
 model User {
-  id               String    @id @default(uuid()) @db.Uuid
-  email            String    @unique
-  name             String?
-  passwordHash     String?
-  googleId         String?   @unique
-  emailVerifiedAt  DateTime?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  id              String   @id @default(uuid()) @db.Uuid
+  email           String   @unique
+  name            String?
+  passwordHash    String?
+  googleId        String?  @unique
+  emailVerifiedAt DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   memberships StoreMembership[]
   sessions    RefreshSession[]
@@ -95,22 +95,24 @@ model Store {
   createdAt                    DateTime                  @default(now())
   updatedAt                    DateTime                  @updatedAt
 
-  memberships        StoreMembership[]
-  shopifyConnection  ShopifyConnection?
-  metaConnection     MetaConnection?
-  tiktokConnection   TikTokConnection?
-  pixelInstallation  PixelInstallation?
-  metaAdAccounts     MetaAdAccount[]
-  metaCatalogs       MetaProductCatalog[]
-  tiktokAdvertisers  TikTokAdvertiser[]
-  tiktokCatalogs     TikTokCatalog[]
-  products           Product[]
-  variants           ProductVariant[]
-  collections        Collection[]
-  inventoryItems     InventoryItem[]
-  locations          Location[]
-  orders             Order[]
-  restocks           Restock[]
-  storefrontEvents   StorefrontEvent[]
-  storefrontSessions StorefrontSession[]
+  memberships                 StoreMembership[]
+  shopifyConnection           ShopifyConnection?
+  metaConnection              MetaConnection?
+  tiktokConnection            TikTokConnection?
+  pixelInstallation           PixelInstallation?
+  metaAdAccounts              MetaAdAccount[]
+  metaCatalogs                MetaProductCatalog[]
+  tiktokAdvertisers           TikTokAdvertiser[]
+  tiktokCatalogs              TikTokCatalog[]
+  products                    Product[]
+  variants                    ProductVariant[]
+  collections                 Collection[]
+  inventoryItems              InventoryItem[]
+  locations                   Location[]
+  orders                      Order[]
+  restocks                    Restock[]
+  storefrontEvents            StorefrontEvent[]
+  storefrontSessions          StorefrontSession[]
+  storefrontBehaviorDaily     StorefrontBehaviorDaily[]
+  storefrontBehaviorRollup    StorefrontBehaviorRollupState?
 }

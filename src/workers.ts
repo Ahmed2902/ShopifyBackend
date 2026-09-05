@@ -1,5 +1,6 @@
 import { logger } from './lib/logger.js';
 import { PollingWorker } from './lib/polling-worker.js';
+import { pixelBehaviorService } from './modules/pixel/behavior/pixel-behavior.service.js';
 import { pixelJourneyService } from './modules/pixel/journey/pixel-journey.service.js';
 import { pixelService } from './modules/pixel/pixel.service.js';
 import { reconciliationService } from './modules/reconciliation/reconciliation.service.js';
@@ -47,13 +48,24 @@ const pixelJourneyWorker = new PollingWorker(
   'Stride Pixel journey reconciliation failed',
 );
 
+const pixelBehaviorWorker = new PollingWorker(
+  30_000,
+  async () => {
+    const result = await pixelBehaviorService.rollupDirtyStores(10);
+    if (result.storesRolled > 0 || result.failed > 0) {
+      logger.info(result, 'Rolled up privacy-safe Stride Pixel behavioral facts');
+    }
+  },
+  'Stride Pixel behavioral rollup failed',
+);
+
 const pixelRetentionWorker = new PollingWorker(
   60_000,
   async () => {
     const sessions = await pixelJourneyService.cleanupExpiredSessions();
     const events = await pixelService.cleanupExpiredEvents();
     if (sessions.deleted > 0 || events.deleted > 0) {
-      logger.info({ sessions, events }, 'Deleted expired Stride Pixel behavioral data');
+      logger.info({ sessions, events }, 'Deleted expired Stride Pixel behavioral traces');
     }
   },
   'Stride Pixel retention cleanup failed',
@@ -64,6 +76,7 @@ const workers = [
   tiktokWebhookWorker,
   reconciliationWorker,
   pixelJourneyWorker,
+  pixelBehaviorWorker,
   pixelRetentionWorker,
 ];
 
