@@ -26,7 +26,7 @@ function buildService(input?: {
     stageInstallation: vi.fn().mockImplementation(async (value) => ({
       id: value.id,
       storeId: value.storeId,
-      status: installation?.status ?? 'PROVISIONING',
+      status: value.status,
       shopifyWebPixelId: installation?.shopifyWebPixelId ?? null,
     })),
     finalizeInstallation: vi.fn().mockImplementation(async (value) => ({
@@ -82,9 +82,10 @@ describe('PixelService', () => {
     expect(rawToken).toHaveLength(43);
     expect(stageCall?.collectorTokenHash).toBe(tokenHash(rawToken!));
     expect(stageCall?.collectorTokenPrefix).toBe(rawToken!.slice(0, 8));
+    expect(stageCall?.status).toBe('PROVISIONING');
     expect(JSON.stringify(stageCall)).not.toContain(rawToken!);
     expect(repository.finalizeInstallation).toHaveBeenCalledWith({
-      id: installationId,
+      id: stageCall?.id,
       shopifyWebPixelId: 'gid://shopify/WebPixel/1',
       installedAt: fixedNow,
     });
@@ -95,6 +96,56 @@ describe('PixelService', () => {
       collectorUrl: 'http://localhost:3001/v1/pixel/events',
       requiredShopifyScopes: ['write_pixels', 'read_pixels', 'read_customer_events'],
     });
+  });
+
+  it('keeps a working installation ACTIVE while staging a rotation', async () => {
+    const existing = {
+      id: installationId,
+      storeId,
+      collectorTokenPrefix: 'OLDTOKEN',
+      shopifyWebPixelId: 'gid://shopify/WebPixel/42',
+      status: 'ACTIVE',
+      installedAt: new Date('2026-09-01T12:00:00.000Z'),
+      lastEventAt: null,
+      lastError: null,
+      createdAt: new Date('2026-09-01T12:00:00.000Z'),
+      updatedAt: fixedNow,
+    };
+    const { repository, service } = buildService({ installation: existing });
+
+    await service.installShopifyPixel(storeId);
+
+    expect(repository.stageInstallation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: installationId, storeId, status: 'ACTIVE' }),
+    );
+  });
+
+  it('moves a failed installation into PROVISIONING before retrying Shopify', async () => {
+    const existing = {
+      id: installationId,
+      storeId,
+      collectorTokenPrefix: 'FAILED',
+      shopifyWebPixelId: null,
+      status: 'ERROR',
+      installedAt: null,
+      lastEventAt: null,
+      lastError: 'previous failure',
+      createdAt: new Date('2026-09-01T12:00:00.000Z'),
+      updatedAt: fixedNow,
+    };
+    const { repository, service } = buildService({ installation: existing });
+    vi.mocked(repository.finalizeInstallation).mockRejectedValue(new Error('database unavailable'));
+
+    await expect(service.installShopifyPixel(storeId)).rejects.toThrow('database unavailable');
+
+    expect(repository.stageInstallation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: installationId, storeId, status: 'PROVISIONING' }),
+    );
+    expect(repository.rollbackStagedInstallation).not.toHaveBeenCalled();
+    expect(repository.recordInstallationError).toHaveBeenCalledWith(
+      installationId,
+      'database unavailable',
+    );
   });
 
   it('rolls back only the staged credential when Shopify reprovision fails', async () => {
