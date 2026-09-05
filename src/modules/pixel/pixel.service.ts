@@ -70,9 +70,6 @@ export class PixelService {
     const collectorUrl = this.getCollectorUrl();
     let existing = await this.repository.findInstallationForProvisioning(storeId);
 
-    // A process can die after Shopify accepts the staged token but before local finalization (and
-    // even before recordInstallationError succeeds). Fresh in-flight operations still fail closed;
-    // only an old operation is reconciled by inspecting Shopify's current settings.
     if (existing?.pendingCollectorTokenHash && !existing.lastError) {
       const operationAgeMs = this.now().getTime() - existing.updatedAt.getTime();
       if (operationAgeMs < PROVISIONING_STALE_MS) {
@@ -254,8 +251,11 @@ export class PixelService {
     const inserted = await this.repository.insertEvents(installation.storeId, normalized, receivedAt);
 
     if (eligible.length > 0) {
-      // Operational freshness is server-observed receipt time, never a browser-supplied timestamp.
-      await this.repository.touchInstallation(installation.id, receivedAt);
+      const latestEventAt = eligible.reduce((latest, event) => {
+        const eventAt = new Date(event.eventAt);
+        return eventAt > latest ? eventAt : latest;
+      }, new Date(0));
+      await this.repository.touchInstallation(installation.id, latestEventAt);
     }
 
     const sessionIds = [
@@ -300,10 +300,7 @@ export class PixelService {
     return { selected: ids.length, deleted };
   }
 
-  private normalizeEvent(
-    event: StorefrontEventInput,
-    receivedAt: Date,
-  ): StoreScopedEventInput {
+  private normalizeEvent(event: StorefrontEventInput, receivedAt: Date): StoreScopedEventInput {
     const eventAt = new Date(event.eventAt);
     const eventAgeMs = receivedAt.getTime() - eventAt.getTime();
     if (eventAgeMs > MAX_EVENT_PAST_SKEW_MS || eventAgeMs < -MAX_EVENT_FUTURE_SKEW_MS) {
