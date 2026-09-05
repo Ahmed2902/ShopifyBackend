@@ -454,9 +454,9 @@ export class PixelAttributionService {
         let purchaseJourney: JourneySession[] = [];
         let flattened: FlattenedTouch[] = [];
         let journeyIdentities: TouchIdentity[] = [];
-        let firstIdentityKeys = new Set<string>();
-        let lastIdentityKeys = new Set<string>();
-        let assistedIdentityKeys = new Set<string>();
+        const firstIdentityKeys = new Set<string>();
+        const lastIdentityKeys = new Set<string>();
+        const assistedIdentityKeys = new Set<string>();
         let delay: number | null = null;
         let crossSession = false;
 
@@ -512,7 +512,7 @@ export class PixelAttributionService {
             if (firstIdentityKeys.has(identity.key)) row.firstTouchPurchaseSessionCount += 1;
             if (lastIdentityKeys.has(identity.key)) row.lastTouchPurchaseSessionCount += 1;
             if (assistedIdentityKeys.has(identity.key)) row.assistedPurchaseSessionCount += 1;
-            if (journeyIdentities.length === 1) row.singleTouchPurchaseSessionCount += 1;
+            if (flattened.length === 1) row.singleTouchPurchaseSessionCount += 1;
             if (crossSession) row.crossSessionPurchaseCount += 1;
             if (delay !== null) {
               row.conversionDelayMsTotal += BigInt(delay);
@@ -671,26 +671,30 @@ export class PixelAttributionService {
     const context = await this.repository.getStoreContext(storeId);
     if (!context) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
     const windows = resolveAnalyticsWindows(query, context.ianaTimezone, now);
+    const currentFrom = bucketDate(windows.current.fromDate);
+    const currentTo = bucketDate(windows.current.toDate);
     const rows = await this.repository.groupTargetEvidence(
       storeId,
       targetType,
-      bucketDate(windows.current.fromDate),
-      bucketDate(windows.current.toDate),
+      currentFrom,
+      currentTo,
       query.page,
       query.limit,
     );
     const adIds = [...new Set(rows.map((row) => row.metaAdId))];
     const targetKeys = [...new Set(rows.map((row) => row.targetKey))];
-    const [total, metadata, ads, activeMappings] = await Promise.all([
-      this.repository.countTargetEvidence(
-        storeId,
-        targetType,
-        bucketDate(windows.current.fromDate),
-        bucketDate(windows.current.toDate),
-      ),
+    const [total, metadata, ads, activeMappings, allRowsForAds] = await Promise.all([
+      this.repository.countTargetEvidence(storeId, targetType, currentFrom, currentTo),
       this.repository.findTargetMetadata(storeId, adIds, targetKeys),
       this.repository.findMetaAdsForDisplay(storeId, adIds),
       this.repository.findActiveMappings(storeId, adIds),
+      this.repository.groupTargetEvidenceForAds(
+        storeId,
+        targetType,
+        adIds,
+        currentFrom,
+        currentTo,
+      ),
     ]);
     const metaMap = new Map(metadata.map((row) => [`${row.metaAdId}:${row.targetKey}`, row]));
     const adMap = new Map(ads.map((row) => [row.id, row]));
@@ -744,8 +748,14 @@ export class PixelAttributionService {
     });
 
     const eligibleCountByAd = new Map<string, number>();
-    for (const row of prelim) {
-      if (row.eligible) eligibleCountByAd.set(row.metaAdId, (eligibleCountByAd.get(row.metaAdId) ?? 0) + 1);
+    for (const row of allRowsForAds) {
+      const interacted = numberValue(row._sum.interactedSessionCount);
+      const viewed = numberValue(row._sum.viewedSessionCount);
+      const viewRate = safeRate(viewed, interacted) ?? 0;
+      const eligible =
+        interacted >= MAPPING_SUGGESTION_MIN_SESSIONS &&
+        viewRate >= MAPPING_SUGGESTION_MIN_VIEW_RATE;
+      if (eligible) eligibleCountByAd.set(row.metaAdId, (eligibleCountByAd.get(row.metaAdId) ?? 0) + 1);
     }
 
     const items = prelim.map((row) => {
@@ -782,7 +792,11 @@ export class PixelAttributionService {
         suggestion: {
           status,
           suggestedConfidence: row.suggestedConfidence,
-          suggestedScope: shared ? 'MULTI_PRODUCT' : targetType,
+          suggestedScope: shared
+            ? targetType === 'PRODUCT'
+              ? 'MULTI_PRODUCT'
+              : 'UNKNOWN'
+            : targetType,
           automaticallyActivatesMapping: false,
           exactMappingThreshold: 0.7,
           limitation:
