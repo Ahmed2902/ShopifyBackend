@@ -13,6 +13,7 @@ function repositoryMock() {
   return {
     getStoreContext: vi.fn(),
     findDirtyStoreIds: vi.fn().mockResolvedValue([]),
+    withStoreRollupLock: vi.fn(async (_storeId: string, work: () => Promise<unknown>) => work()),
     findDirtySessions: vi.fn().mockResolvedValue([]),
     findLaterPurchaseSessions: vi.fn().mockResolvedValue([]),
     findSessionsForWindow: vi.fn(),
@@ -98,14 +99,7 @@ describe('PixelAttributionService', () => {
       checkoutCompletedAt: new Date('2026-09-04T14:10:00.000Z'),
       orderId,
       orderLinkStatus: 'LINKED' as const,
-      touches: [
-        metaTouch({
-          ordinal: 1,
-          eventAt: '2026-09-04T14:00:00.000Z',
-          adId: adBId,
-          externalId: '301',
-        }),
-      ],
+      touches: [metaTouch({ ordinal: 1, eventAt: '2026-09-04T14:00:00.000Z', adId: adBId, externalId: '301' })],
       products: [productInteraction()],
       collections: [],
     };
@@ -117,20 +111,9 @@ describe('PixelAttributionService', () => {
       {
         id: 'session-a',
         startedAt: new Date('2026-09-02T12:00:00.000Z'),
-        touches: [
-          metaTouch({
-            ordinal: 1,
-            eventAt: '2026-09-02T12:00:00.000Z',
-            adId: adAId,
-            externalId: '300',
-          }),
-        ],
+        touches: [metaTouch({ ordinal: 1, eventAt: '2026-09-02T12:00:00.000Z', adId: adAId, externalId: '300' })],
       },
-      {
-        id: 'session-b',
-        startedAt: currentSession.startedAt,
-        touches: currentSession.touches,
-      },
+      { id: 'session-b', startedAt: currentSession.startedAt, touches: currentSession.touches },
     ] as never);
 
     const service = new PixelAttributionService(repository, () => new Date('2026-09-05T00:00:00.000Z'));
@@ -153,44 +136,26 @@ describe('PixelAttributionService', () => {
       lastTouchPurchaseSessionCount: 1,
       crossSessionPurchaseCount: 1,
     });
-    expect(paths).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          path: 'JOURNEY:META',
-          linkedPurchaseSessionCount: 1,
-          crossSessionPurchaseCount: 1,
-        }),
-      ]),
-    );
-    expect(targets).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metaAdId: adBId,
-          targetType: 'PRODUCT',
-          productId,
-          linkedPurchaseSessionCount: 1,
-          lastTouchPurchaseSessionCount: 1,
-        }),
-      ]),
-    );
+    expect(paths).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'JOURNEY:META', linkedPurchaseSessionCount: 1, crossSessionPurchaseCount: 1 }),
+    ]));
+    expect(targets).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        metaAdId: adBId,
+        targetType: 'PRODUCT',
+        productId,
+        linkedPurchaseSessionCount: 1,
+        lastTouchPurchaseSessionCount: 1,
+      }),
+    ]));
     expect(targets.some((row) => row.metaAdId === adAId)).toBe(false);
     expect(repository.acknowledgeSessions).not.toHaveBeenCalled();
   });
 
   it('excludes post-checkout touches from purchase credit and keeps a coherent session denominator', async () => {
     const repository = repositoryMock();
-    const prePurchase = metaTouch({
-      ordinal: 1,
-      eventAt: '2026-09-04T14:00:00.000Z',
-      adId: adBId,
-      externalId: '301',
-    });
-    const postPurchase = metaTouch({
-      ordinal: 2,
-      eventAt: '2026-09-04T14:15:00.000Z',
-      adId: adAId,
-      externalId: '302',
-    });
+    const prePurchase = metaTouch({ ordinal: 1, eventAt: '2026-09-04T14:00:00.000Z', adId: adBId, externalId: '301' });
+    const postPurchase = metaTouch({ ordinal: 2, eventAt: '2026-09-04T14:15:00.000Z', adId: adAId, externalId: '302' });
     const currentSession = {
       id: 'session-cutoff',
       anonymousVisitorId: visitorId,
@@ -208,11 +173,7 @@ describe('PixelAttributionService', () => {
       .mockResolvedValueOnce([] as never);
     vi.mocked(repository.findValidOrders).mockResolvedValue([validOrder()] as never);
     vi.mocked(repository.findVisitorJourneySessions).mockResolvedValue([
-      {
-        id: currentSession.id,
-        startedAt: currentSession.startedAt,
-        touches: currentSession.touches,
-      },
+      { id: currentSession.id, startedAt: currentSession.startedAt, touches: currentSession.touches },
     ] as never);
 
     const service = new PixelAttributionService(repository, () => new Date('2026-09-05T00:00:00.000Z'));
@@ -225,10 +186,7 @@ describe('PixelAttributionService', () => {
     const journeyPath = paths.find((row) => row.path === 'JOURNEY:META')!;
     const postPurchaseTarget = targets.find((row) => row.metaAdId === adAId)!;
 
-    expect(prePurchaseAd).toMatchObject({
-      linkedPurchaseSessionCount: 1,
-      lastTouchPurchaseSessionCount: 1,
-    });
+    expect(prePurchaseAd).toMatchObject({ linkedPurchaseSessionCount: 1, lastTouchPurchaseSessionCount: 1 });
     expect(postPurchaseAd).toMatchObject({
       touchedSessionCount: 1,
       linkedPurchaseSessionCount: 0,
@@ -241,18 +199,20 @@ describe('PixelAttributionService', () => {
     expect(postPurchaseTarget.linkedPurchaseSessionCount).toBe(0);
   });
 
-  it('rebuilds downstream purchase dates but acknowledges only the exact selected dirty attribution version', async () => {
+  it('rebuilds downstream dates for old and new visitor/start identities before acknowledging', async () => {
     const repository = repositoryMock();
     const acknowledgedAt = new Date('2026-09-05T01:00:00.000Z');
     const orderUpdatedAt = new Date('2026-09-05T00:59:00.000Z');
+    const oldVisitor = 'visitor_old_abcdefgh';
     const dirty = {
       id: 'session-selected',
       startedAt: new Date('2026-09-04T10:00:00.000Z'),
-      previousStartedAt: null,
+      previousStartedAt: new Date('2026-09-02T10:00:00.000Z'),
       rollupDirtyAt: acknowledgedAt,
       orderUpdatedAt,
       dirtyAt: acknowledgedAt,
       anonymousVisitorId: visitorId,
+      visitorIds: [oldVisitor, visitorId],
     };
     vi.mocked(repository.findDirtyStoreIds).mockResolvedValue([storeId]);
     vi.mocked(repository.getStoreContext).mockResolvedValue({
@@ -266,14 +226,19 @@ describe('PixelAttributionService', () => {
       { startedAt: new Date('2026-09-05T12:00:00.000Z') },
     ] as never);
     const service = new PixelAttributionService(repository, () => acknowledgedAt);
-    const rebuild = vi
-      .spyOn(service, 'rebuildStoreDate')
-      .mockResolvedValue({ attribution: 0, paths: 0, targets: 0 });
+    const rebuild = vi.spyOn(service, 'rebuildStoreDate').mockResolvedValue({ attribution: 0, paths: 0, targets: 0 });
 
     await service.rollupDirtyStores();
 
-    expect(rebuild.mock.calls.map((call) => call[2])).toEqual(['2026-09-04', '2026-09-05']);
+    expect(repository.findLaterPurchaseSessions).toHaveBeenCalledWith(
+      storeId,
+      expect.arrayContaining([oldVisitor, visitorId]),
+      dirty.previousStartedAt,
+      new Date(dirty.startedAt.getTime() + 30 * 86_400_000),
+    );
+    expect(rebuild.mock.calls.map((call) => call[2])).toEqual(['2026-09-02', '2026-09-04', '2026-09-05']);
     expect(repository.acknowledgeSessions).toHaveBeenCalledWith(storeId, [dirty], acknowledgedAt);
+    expect(repository.withStoreRollupLock).toHaveBeenCalledWith(storeId, expect.any(Function));
   });
 
   it('caps Pixel-only mapping suggestions below the exact mapping threshold and never activates them', async () => {
