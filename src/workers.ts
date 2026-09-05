@@ -1,5 +1,6 @@
 import { logger } from './lib/logger.js';
 import { PollingWorker } from './lib/polling-worker.js';
+import { pixelAttributionService } from './modules/pixel/attribution/pixel-attribution.service.js';
 import { pixelBehaviorService } from './modules/pixel/behavior/pixel-behavior.service.js';
 import { pixelJourneyService } from './modules/pixel/journey/pixel-journey.service.js';
 import { pixelService } from './modules/pixel/pixel.service.js';
@@ -59,6 +60,17 @@ const pixelBehaviorWorker = new PollingWorker(
   'Stride Pixel behavioral rollup failed',
 );
 
+const pixelAttributionWorker = new PollingWorker(
+  30_000,
+  async () => {
+    const result = await pixelAttributionService.rollupDirtyStores(10);
+    if (result.storesRolled > 0 || result.failed > 0) {
+      logger.info(result, 'Rolled up privacy-safe Stride Pixel attribution evidence');
+    }
+  },
+  'Stride Pixel attribution rollup failed',
+);
+
 const pixelRetentionWorker = new PollingWorker(
   60_000,
   async () => {
@@ -77,6 +89,7 @@ const workers = [
   reconciliationWorker,
   pixelJourneyWorker,
   pixelBehaviorWorker,
+  pixelAttributionWorker,
   pixelRetentionWorker,
 ];
 
