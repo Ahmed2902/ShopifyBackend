@@ -7,6 +7,7 @@ const browserSessionId = 'event_session_001';
 const visitorId = 'visitor_abcdefgh';
 const retention = new Date('2026-12-03T12:00:00.000Z');
 const fixedNow = new Date('2026-09-04T15:00:00.000Z');
+const repairMarkerId = '11111111-1111-4111-8111-111111111111';
 
 function event(input: Record<string, unknown>) {
   return {
@@ -43,6 +44,7 @@ function event(input: Record<string, unknown>) {
 
 function buildRepository(events: Array<Record<string, unknown>>) {
   return {
+    findSessionRepairMarker: vi.fn().mockResolvedValue({ id: repairMarkerId }),
     findSessionEvents: vi.fn().mockResolvedValue(events),
     resolveMetaHierarchy: vi.fn().mockResolvedValue({ campaigns: [], adSets: [], ads: [] }),
     resolveCommerceEntities: vi.fn().mockResolvedValue({ products: [], variants: [], collections: [] }),
@@ -220,7 +222,24 @@ describe('PixelJourneyService', () => {
     expect(repository.clearSessionRepair).toHaveBeenCalledWith(
       storeId,
       browserSessionId,
-      fixedNow,
+      repairMarkerId,
+    );
+  });
+
+  it('clears only the repair generation captured before reading session events', async () => {
+    const repository = buildRepository([event({ eventId: 'event_generation' })]);
+    const service = new PixelJourneyService(repository, () => fixedNow);
+
+    await service.materializeSession(storeId, browserSessionId);
+
+    expect(repository.findSessionRepairMarker).toHaveBeenCalledWith(storeId, browserSessionId);
+    expect(vi.mocked(repository.findSessionRepairMarker).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(repository.findSessionEvents).mock.invocationCallOrder[0]!,
+    );
+    expect(repository.clearSessionRepair).toHaveBeenCalledWith(
+      storeId,
+      browserSessionId,
+      repairMarkerId,
     );
   });
 
