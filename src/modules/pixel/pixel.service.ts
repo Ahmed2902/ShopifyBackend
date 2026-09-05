@@ -24,6 +24,7 @@ import {
 
 const COLLECTOR_PATH = '/v1/pixel/events';
 const TOKEN_PREFIX_LENGTH = 8;
+const PROVISIONING_STALE_MS = 15 * 60_000;
 const REQUIRED_SHOPIFY_SCOPES = ['write_pixels', 'read_pixels', 'read_customer_events'] as const;
 type StoreScopedEventInput = Omit<Prisma.StorefrontEventCreateManyInput, 'storeId'>;
 
@@ -65,7 +66,74 @@ export class PixelService {
 
   async installShopifyPixel(storeId: string) {
     const collectorUrl = this.getCollectorUrl();
-    const existing = await this.repository.findInstallationForProvisioning(storeId);
+    let existing = await this.repository.findInstallationForProvisioning(storeId);
+
+    // A process can die after Shopify accepts the staged token but before local finalization (and
+    // even before recordInstallationError succeeds). Fresh in-flight operations still fail closed;
+    // only an old operation is reconciled by inspecting Shopify's current settings.
+    if (existing?.pendingCollectorTokenHash && !existing.lastError) {
+      const operationAgeMs = this.now().getTime() - existing.updatedAt.getTime();
+      if (operationAgeMs < PROVISIONING_STALE_MS) {
+        throw new AppError(
+          'A pixel installation is already in progress for this store',
+          409,
+          'PIXEL_INSTALLATION_IN_PROGRESS',
+        );
+      }
+
+      const remote = await this.shopifyProvisioner.inspect(storeId);
+      const remoteToken =
+        typeof remote?.settings?.collectorToken === 'string'
+          ? remote.settings.collectorToken
+          : null;
+      const remoteInstallationId =
+        typeof remote?.settings?.installationId === 'string'
+          ? remote.settings.installationId
+          : null;
+
+      if (
+        remote &&
+        remoteInstallationId === existing.id &&
+        remoteToken &&
+        tokenMatches(remoteToken, existing.pendingCollectorTokenHash)
+      ) {
+        const recovered = await this.repository.finalizeInstallation({
+          id: existing.id,
+          expectedPendingTokenHash: existing.pendingCollectorTokenHash,
+          shopifyWebPixelId: remote.id,
+          installedAt: this.now(),
+        });
+        if (recovered) {
+          return {
+            ...recovered,
+            collectorUrl,
+            requiredShopifyScopes: REQUIRED_SHOPIFY_SCOPES,
+          };
+        }
+        throw new AppError(
+          'Pixel installation ownership changed during recovery',
+          409,
+          'PIXEL_INSTALLATION_SUPERSEDED',
+        );
+      }
+
+      const rollbackStatus = existing.status === 'ACTIVE' ? 'ACTIVE' : 'ERROR';
+      const rolledBack = await this.repository.rollbackStagedInstallation(
+        existing.id,
+        existing.pendingCollectorTokenHash,
+        rollbackStatus,
+        'Recovered stale pixel provisioning state before retry',
+      );
+      if (!rolledBack) {
+        throw new AppError(
+          'Pixel installation ownership changed during recovery',
+          409,
+          'PIXEL_INSTALLATION_SUPERSEDED',
+        );
+      }
+      existing = await this.repository.findInstallationForProvisioning(storeId);
+    }
+
     const requestedInstallationId = existing?.id ?? randomUUID();
     const collectorToken = randomBytes(PIXEL_COLLECTOR_TOKEN_BYTES).toString('base64url');
     const collectorTokenHash = serializeTokenHash(collectorToken);
@@ -80,11 +148,6 @@ export class PixelService {
         ? ('PROVISIONING' as const)
         : ('ERROR' as const);
 
-    // The pending hash doubles as an ownership token. A healthy in-flight install cannot be
-    // overwritten by a second request. When an earlier provider write succeeded but local
-    // finalization failed, stageInstallation first promotes that known-live pending hash to the
-    // accepted collector hash before staging the replacement, so a retry failure cannot strand
-    // Shopify on an unaccepted credential.
     const staged = await this.repository.stageInstallation({
       id: requestedInstallationId,
       storeId,
@@ -145,8 +208,6 @@ export class PixelService {
         requiredShopifyScopes: REQUIRED_SHOPIFY_SCOPES,
       };
     } catch (error) {
-      // Shopify already accepted these settings. Keep the staged token recoverable, but only if
-      // this request still owns that staged hash; a stale request must never mutate a newer one.
       await this.repository
         .recordInstallationError(installationId, collectorTokenHash, errorMessage(error))
         .catch(() => undefined);
@@ -188,8 +249,6 @@ export class PixelService {
       isStorefrontBehaviorCaptureAllowed(event.consentState),
     );
     const normalized = eligible.map((event) => this.normalizeEvent(event, receivedAt));
-    // Raw events and their repair markers commit together. A process exit can no longer leave a
-    // durable event with no way for the repair worker to discover its session.
     const inserted = await this.repository.insertEvents(installation.storeId, normalized, receivedAt);
 
     if (eligible.length > 0) {
