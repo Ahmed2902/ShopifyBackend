@@ -1,7 +1,10 @@
 import { Prisma } from '../../../generated/prisma/client.js';
 import { AppError } from '../../../errors/app-error.js';
 import { prisma } from '../../../lib/prisma.js';
-import { enqueueMetaHierarchyPixelRepairs } from '../../pixel/pixel-source-invalidation.js';
+import {
+  enqueueMetaHierarchyPixelRepairs,
+  type MetaHierarchyRepairEvidence,
+} from '../../pixel/pixel-source-invalidation.js';
 import { parseMetaMinorAmount } from '../meta.utils.js';
 import type {
   MetaAdPayload,
@@ -34,10 +37,12 @@ function creativeDestinationUrls(creative: MetaCreativePayload): string[] {
 }
 
 export class MetaAdsRepository {
-  // Commit each source mutation and its repair generation together. A later row failure or
-  // process exit cannot strand the earlier, already-committed hierarchy snapshot.
+  // Couple each resolver-relevant provider mutation to only the materialized Pixel sessions that
+  // reference that provider identity. This preserves crash safety without rotating every Meta
+  // session once per campaign/ad-set/ad row in a large account.
   private mutateHierarchy<T>(
     adAccountId: string,
+    evidence: MetaHierarchyRepairEvidence,
     mutate: (tx: Prisma.TransactionClient) => Promise<T>,
   ): Promise<T> {
     return prisma.$transaction(async (tx) => {
@@ -46,7 +51,7 @@ export class MetaAdsRepository {
         where: { id: adAccountId },
         select: { storeId: true },
       });
-      await enqueueMetaHierarchyPixelRepairs(account.storeId, tx);
+      await enqueueMetaHierarchyPixelRepairs(account.storeId, tx, evidence);
       return result;
     });
   }
@@ -112,7 +117,7 @@ export class MetaAdsRepository {
       rawJson: campaign as unknown as Prisma.InputJsonValue,
     };
 
-    return this.mutateHierarchy(adAccountId, (tx) =>
+    return this.mutateHierarchy(adAccountId, { campaignIds: [campaign.id] }, (tx) =>
       tx.metaCampaign.upsert({
         where: { adAccountId_metaCampaignId: { adAccountId, metaCampaignId: campaign.id } },
         create: { adAccountId, metaCampaignId: campaign.id, ...data },
@@ -153,7 +158,7 @@ export class MetaAdsRepository {
       rawJson: adSet as unknown as Prisma.InputJsonValue,
     };
 
-    return this.mutateHierarchy(adAccountId, (tx) =>
+    return this.mutateHierarchy(adAccountId, { adSetIds: [adSet.id] }, (tx) =>
       tx.metaAdSet.upsert({
         where: { adAccountId_metaAdSetId: { adAccountId, metaAdSetId: adSet.id } },
         create: { adAccountId, metaAdSetId: adSet.id, ...data },
@@ -195,14 +200,14 @@ export class MetaAdsRepository {
       rawJson: creative as unknown as Prisma.InputJsonValue,
     };
 
-    return this.mutateHierarchy(adAccountId, (tx) =>
-      tx.metaCreative.upsert({
-        where: { adAccountId_metaCreativeId: { adAccountId, metaCreativeId: creative.id } },
-        create: { adAccountId, metaCreativeId: creative.id, ...data },
-        update: data,
-        select: { id: true, metaCreativeId: true },
-      }),
-    );
+    // Pixel hierarchy resolution stores campaign/ad-set/ad identity only; creative metadata changes
+    // do not alter a materialized touch's EXACT/PARTIAL/UNRESOLVED/CONFLICT result.
+    return prisma.metaCreative.upsert({
+      where: { adAccountId_metaCreativeId: { adAccountId, metaCreativeId: creative.id } },
+      create: { adAccountId, metaCreativeId: creative.id, ...data },
+      update: data,
+      select: { id: true, metaCreativeId: true },
+    });
   }
 
   upsertAd(
@@ -233,7 +238,7 @@ export class MetaAdsRepository {
       rawJson: ad as unknown as Prisma.InputJsonValue,
     };
 
-    return this.mutateHierarchy(adAccountId, (tx) =>
+    return this.mutateHierarchy(adAccountId, { adIds: [ad.id] }, (tx) =>
       tx.metaAd.upsert({
         where: { adAccountId_metaAdId: { adAccountId, metaAdId: ad.id } },
         create: {
@@ -254,8 +259,26 @@ export class MetaAdsRepository {
     adAccountId: string,
     snapshot: { campaignIds: string[]; adSetIds: string[]; creativeIds: string[]; adIds: string[] },
   ) {
-    return this.mutateHierarchy(adAccountId, async (tx) => {
+    return prisma.$transaction(async (tx) => {
+      const account = await tx.metaAdAccount.findUniqueOrThrow({
+        where: { id: adAccountId },
+        select: { storeId: true },
+      });
       const now = new Date();
+      const [missingCampaigns, missingAdSets, missingAds] = await Promise.all([
+        tx.metaCampaign.findMany({
+          where: { adAccountId, deletedAt: null, metaCampaignId: { notIn: snapshot.campaignIds } },
+          select: { metaCampaignId: true },
+        }),
+        tx.metaAdSet.findMany({
+          where: { adAccountId, deletedAt: null, metaAdSetId: { notIn: snapshot.adSetIds } },
+          select: { metaAdSetId: true },
+        }),
+        tx.metaAd.findMany({
+          where: { adAccountId, deletedAt: null, metaAdId: { notIn: snapshot.adIds } },
+          select: { metaAdId: true },
+        }),
+      ]);
       const [campaigns, adSets, creatives, ads] = await Promise.all([
         tx.metaCampaign.updateMany({
           where: { adAccountId, deletedAt: null, metaCampaignId: { notIn: snapshot.campaignIds } },
@@ -274,6 +297,13 @@ export class MetaAdsRepository {
           data: { deletedAt: now },
         }),
       ]);
+
+      await enqueueMetaHierarchyPixelRepairs(account.storeId, tx, {
+        campaignIds: missingCampaigns.map((row) => row.metaCampaignId),
+        adSetIds: missingAdSets.map((row) => row.metaAdSetId),
+        adIds: missingAds.map((row) => row.metaAdId),
+      });
+
       return {
         campaigns: campaigns.count,
         adSets: adSets.count,
