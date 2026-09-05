@@ -4,6 +4,8 @@ import { prisma } from '../../lib/prisma.js';
 
 type StoreScopedEventInput = Omit<Prisma.StorefrontEventCreateManyInput, 'storeId'>;
 
+const ATTRIBUTION_INVALIDATION_WINDOW_MS = 32 * 86_400_000;
+
 export class PixelRepository {
   findInstallationByStoreId(storeId: string) {
     return prisma.pixelInstallation.findUnique({
@@ -278,12 +280,46 @@ export class PixelRepository {
         });
       }
 
-      // Every source deletion rotates the repair generation. When the final source disappears,
-      // atomically turn the retained session into a zero-evidence dirty tombstone first. The
-      // tombstone preserves only cohort/visitor identity needed to remove its prior behavior and
-      // downstream attribution contributions. It cannot be retention-deleted until the repair
-      // marker is consumed and both rollups acknowledge the new dirty generation.
+      // Every source deletion rotates the repair generation. Before the surviving raw events can
+      // rematerialize a different primary visitor, dirty every retained purchase session that may
+      // still depend on the session's previously materialized visitor. This captures the old
+      // identity while it is still durable and prevents partial source expiry from orphaning stale
+      // cross-session attribution.
       for (const { storeId, browserSessionId, latestDeletedReceivedAt } of affectedSessions.values()) {
+        const currentSession = await tx.storefrontSession.findUnique({
+          where: { storeId_browserSessionId: { storeId, browserSessionId } },
+          select: {
+            id: true,
+            anonymousVisitorId: true,
+            startedAt: true,
+            attributionRolledStartedAt: true,
+          },
+        });
+        if (currentSession?.anonymousVisitorId) {
+          const starts = currentSession.attributionRolledStartedAt
+            ? [currentSession.startedAt, currentSession.attributionRolledStartedAt]
+            : [currentSession.startedAt];
+          const from = starts.reduce(
+            (earliest, value) => (value < earliest ? value : earliest),
+            starts[0]!,
+          );
+          const latest = starts.reduce(
+            (latestValue, value) => (value > latestValue ? value : latestValue),
+            starts[0]!,
+          );
+          const through = new Date(latest.getTime() + ATTRIBUTION_INVALIDATION_WINDOW_MS);
+          await tx.storefrontSession.updateMany({
+            where: {
+              storeId,
+              anonymousVisitorId: currentSession.anonymousVisitorId,
+              orderLinkStatus: 'LINKED',
+              orderId: { not: null },
+              startedAt: { gte: from, lte: through },
+            },
+            data: { rollupDirtyAt: new Date() },
+          });
+        }
+
         const remaining = await tx.storefrontEvent.findFirst({
           where: { storeId, sessionId: browserSessionId },
           orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],
@@ -294,44 +330,38 @@ export class PixelRepository {
             ? remaining.receivedAt
             : latestDeletedReceivedAt;
 
-        if (!remaining) {
+        if (!remaining && currentSession) {
           const invalidatedAt = new Date();
-          const session = await tx.storefrontSession.findUnique({
-            where: { storeId_browserSessionId: { storeId, browserSessionId } },
-            select: { id: true },
+          await tx.storefrontSession.update({
+            where: { id: currentSession.id },
+            data: {
+              eventCount: 0,
+              pageViewCount: 0,
+              productViewCount: 0,
+              collectionViewCount: 0,
+              searchCount: 0,
+              addToCartCount: 0,
+              removeFromCartCount: 0,
+              checkoutProgressCount: 0,
+              checkoutStartedAt: null,
+              checkoutCompletedAt: null,
+              shopifyCheckoutToken: null,
+              shopifyOrderExternalId: null,
+              orderId: null,
+              orderLinkStatus: 'NONE',
+              orderLinkAttemptCount: 0,
+              orderLinkNextAttemptAt: null,
+              landingPageUrl: null,
+              initialReferrerUrl: null,
+              dataQualityFlags: [],
+              retentionExpiresAt: invalidatedAt,
+              materializedAt: invalidatedAt,
+              rollupDirtyAt: invalidatedAt,
+            },
           });
-          if (session) {
-            await tx.storefrontSession.update({
-              where: { id: session.id },
-              data: {
-                eventCount: 0,
-                pageViewCount: 0,
-                productViewCount: 0,
-                collectionViewCount: 0,
-                searchCount: 0,
-                addToCartCount: 0,
-                removeFromCartCount: 0,
-                checkoutProgressCount: 0,
-                checkoutStartedAt: null,
-                checkoutCompletedAt: null,
-                shopifyCheckoutToken: null,
-                shopifyOrderExternalId: null,
-                orderId: null,
-                orderLinkStatus: 'NONE',
-                orderLinkAttemptCount: 0,
-                orderLinkNextAttemptAt: null,
-                landingPageUrl: null,
-                initialReferrerUrl: null,
-                dataQualityFlags: [],
-                retentionExpiresAt: invalidatedAt,
-                materializedAt: invalidatedAt,
-                rollupDirtyAt: invalidatedAt,
-              },
-            });
-            await tx.storefrontSessionTouch.deleteMany({ where: { sessionId: session.id } });
-            await tx.storefrontSessionProduct.deleteMany({ where: { sessionId: session.id } });
-            await tx.storefrontSessionCollection.deleteMany({ where: { sessionId: session.id } });
-          }
+          await tx.storefrontSessionTouch.deleteMany({ where: { sessionId: currentSession.id } });
+          await tx.storefrontSessionProduct.deleteMany({ where: { sessionId: currentSession.id } });
+          await tx.storefrontSessionCollection.deleteMany({ where: { sessionId: currentSession.id } });
         }
 
         const repairId = randomUUID();
