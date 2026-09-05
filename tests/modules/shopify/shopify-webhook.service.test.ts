@@ -79,6 +79,7 @@ function buildService(currentDelivery = delivery('products/update', { id: 1 })) 
       found: true,
       variantIds: ['gid://shopify/ProductVariant/10'],
     }),
+    invalidatePixelResolution: vi.fn().mockResolvedValue(0),
   } as unknown as ShopifyCatalogService;
   const inventoryService = {
     reconcileLocation: vi.fn().mockResolvedValue({ found: true }),
@@ -182,6 +183,10 @@ describe('ShopifyWebhookService', () => {
       storeId,
       'gid://shopify/Product/1',
       ['gid://shopify/ProductVariant/10'],
+    );
+    expect(catalogService.invalidatePixelResolution).toHaveBeenCalledWith(
+      storeId,
+      'gid://shopify/Product/1',
     );
     expect(repository.markProcessed).toHaveBeenCalledWith(deliveryId);
   });
