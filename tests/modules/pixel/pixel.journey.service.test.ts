@@ -48,9 +48,11 @@ function buildRepository(events: Array<Record<string, unknown>>) {
     resolveCommerceEntities: vi.fn().mockResolvedValue({ products: [], variants: [], collections: [] }),
     findOrderByExternalId: vi.fn().mockResolvedValue(null),
     replaceSessionReadModel: vi.fn().mockResolvedValue({ id: 'session-db-id' }),
+    clearSessionRepair: vi.fn().mockResolvedValue({ count: 1 }),
     findDirtySessionKeys: vi.fn().mockResolvedValue([]),
     findPendingOrderSessions: vi.fn().mockResolvedValue([]),
     setOrderLink: vi.fn().mockResolvedValue({ id: 'session-db-id' }),
+    scheduleOrderLinkRetry: vi.fn().mockResolvedValue({ id: 'session-db-id' }),
     deleteExpiredSessions: vi.fn().mockResolvedValue({ selected: 0, deleted: 0 }),
     listSessions: vi.fn().mockResolvedValue({ items: [], total: 0 }),
     getSession: vi.fn().mockResolvedValue(null),
@@ -187,16 +189,21 @@ describe('PixelJourneyService', () => {
       shopifyOrderExternalId: orderGid,
       orderId: 'order-db',
       orderLinkStatus: 'LINKED',
+      orderLinkAttemptCount: 0,
+      orderLinkNextAttemptAt: null,
       dataQualityFlags: [],
       materializedAt: fixedNow,
+      rollupDirtyAt: fixedNow,
     });
     expect(touches).toHaveLength(2);
-    expect(touches.map((touch) => ({
-      ordinal: touch.ordinal,
-      ad: touch.metaAdExternalId,
-      localAd: touch.metaAdId,
-      status: touch.metaResolutionStatus,
-    }))).toEqual([
+    expect(
+      touches.map((touch) => ({
+        ordinal: touch.ordinal,
+        ad: touch.metaAdExternalId,
+        localAd: touch.metaAdId,
+        status: touch.metaResolutionStatus,
+      })),
+    ).toEqual([
       { ordinal: 1, ad: '300', localAd: 'ad-a-db', status: 'EXACT' },
       { ordinal: 2, ad: '301', localAd: 'ad-b-db', status: 'EXACT' },
     ]);
@@ -210,6 +217,44 @@ describe('PixelJourneyService', () => {
       viewCount: 1,
       addToCartCount: 1,
     });
+    expect(repository.clearSessionRepair).toHaveBeenCalledWith(
+      storeId,
+      browserSessionId,
+      fixedNow,
+    );
+  });
+
+  it('does not collapse source changes driven only by page/referrer URLs', async () => {
+    const repository = buildRepository([
+      event({
+        eventId: 'event_unknown',
+        pageUrl: null,
+        landingPageUrl: null,
+        referrerUrl: null,
+      }),
+      event({
+        eventId: 'event_direct',
+        eventAt: new Date('2026-09-04T10:01:00.000Z'),
+        receivedAt: new Date('2026-09-04T10:01:01.000Z'),
+        pageUrl: 'https://shop.example/',
+        landingPageUrl: null,
+        referrerUrl: null,
+      }),
+      event({
+        eventId: 'event_referrer',
+        eventAt: new Date('2026-09-04T10:02:00.000Z'),
+        receivedAt: new Date('2026-09-04T10:02:01.000Z'),
+        pageUrl: 'https://shop.example/',
+        landingPageUrl: null,
+        referrerUrl: 'https://example.org/',
+      }),
+    ]);
+    const service = new PixelJourneyService(repository, () => fixedNow);
+
+    await service.materializeSession(storeId, browserSessionId);
+
+    const touches = vi.mocked(repository.replaceSessionReadModel).mock.calls[0]?.[3] ?? [];
+    expect(touches.map((touch) => touch.source)).toEqual(['UNKNOWN', 'DIRECT', 'REFERRER']);
   });
 
   it('keeps exact checkout evidence pending when Shopify order ingestion has not arrived yet', async () => {
@@ -234,6 +279,8 @@ describe('PixelJourneyService', () => {
       shopifyOrderExternalId: orderGid,
       orderId: null,
       orderLinkStatus: 'PENDING',
+      orderLinkAttemptCount: 0,
+      orderLinkNextAttemptAt: null,
     });
     expect(touches[0]).toMatchObject({
       metaAdExternalId: '999',
@@ -245,7 +292,7 @@ describe('PixelJourneyService', () => {
     const orderGid = 'gid://shopify/Order/7777';
     const repository = buildRepository([]);
     vi.mocked(repository.findPendingOrderSessions).mockResolvedValue([
-      { id: 'session-db', storeId, shopifyOrderExternalId: orderGid },
+      { id: 'session-db', storeId, shopifyOrderExternalId: orderGid, orderLinkAttemptCount: 2 },
     ] as never);
     vi.mocked(repository.findOrderByExternalId).mockResolvedValue({
       id: 'order-db',
@@ -256,8 +303,46 @@ describe('PixelJourneyService', () => {
     await expect(service.linkPendingOrders()).resolves.toEqual({
       selected: 1,
       linked: 1,
+      deferred: 0,
       stillPending: 0,
     });
-    expect(repository.setOrderLink).toHaveBeenCalledWith('session-db', 'order-db');
+    expect(repository.findPendingOrderSessions).toHaveBeenCalledWith(fixedNow, 100);
+    expect(repository.setOrderLink).toHaveBeenCalledWith('session-db', 'order-db', fixedNow);
+  });
+
+  it('backs off unresolved orders so they rotate out of the next reconciliation batch', async () => {
+    const orderGid = 'gid://shopify/Order/never-arrives';
+    const repository = buildRepository([]);
+    vi.mocked(repository.findPendingOrderSessions).mockResolvedValue([
+      { id: 'session-db', storeId, shopifyOrderExternalId: orderGid, orderLinkAttemptCount: 0 },
+    ] as never);
+    const service = new PixelJourneyService(repository, () => fixedNow);
+
+    await expect(service.linkPendingOrders()).resolves.toEqual({
+      selected: 1,
+      linked: 0,
+      deferred: 1,
+      stillPending: 1,
+    });
+    expect(repository.scheduleOrderLinkRetry).toHaveBeenCalledWith(
+      'session-db',
+      1,
+      new Date('2026-09-04T15:05:00.000Z'),
+    );
+  });
+
+  it('repairs only explicit dirty-session queue entries', async () => {
+    const repository = buildRepository([event({ eventId: 'event_repair' })]);
+    vi.mocked(repository.findDirtySessionKeys).mockResolvedValue([
+      { storeId, browserSessionId },
+    ] as never);
+    const service = new PixelJourneyService(repository, () => fixedNow);
+
+    await expect(service.repairDirtySessions()).resolves.toEqual({
+      selected: 1,
+      materialized: 1,
+      failed: 0,
+    });
+    expect(repository.findDirtySessionKeys).toHaveBeenCalledWith(100);
   });
 });
