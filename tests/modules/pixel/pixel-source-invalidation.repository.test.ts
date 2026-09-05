@@ -214,7 +214,7 @@ describeDatabase('Pixel source-domain invalidation', () => {
     expect(repair.sourceReceivedAt).toEqual(receivedAt);
   });
 
-  it('keeps the ingestion repair generation for raw-only sessions until materialization', async () => {
+  it('rotates the ingestion repair generation for raw-only sessions when provider truth changes', async () => {
     const store = await createStore();
     const connection = await prisma.metaConnection.create({
       data: {
@@ -249,7 +249,7 @@ describeDatabase('Pixel source-domain invalidation', () => {
     const repair = await prisma.storefrontSessionRepair.findUniqueOrThrow({
       where: { storeId_browserSessionId: { storeId: store.id, browserSessionId: sessionId } },
     });
-    expect(repair.id).toBe(originalRepair.id);
+    expect(repair.id).not.toBe(originalRepair.id);
     expect(repair.sourceReceivedAt).toEqual(receivedAt);
   });
 });
