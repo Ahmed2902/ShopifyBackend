@@ -224,6 +224,7 @@ function buildService(connectionOverrides: Record<string, unknown> = {}) {
     persistCollections: vi.fn().mockResolvedValue(undefined),
     replaceCollectionProducts: vi.fn().mockResolvedValue(true),
     markMissingCollectionsDeleted: vi.fn().mockResolvedValue(0),
+    enqueuePixelResolutionRepairs: vi.fn().mockResolvedValue(0),
   } as unknown as ShopifyCatalogRepository;
   const inventorySyncRepository = {
     persistLocations: vi.fn().mockResolvedValue(undefined),
@@ -321,6 +322,7 @@ describe('Shopify catalog and inventory sync', () => {
     expect(catalogSyncRepository.markMissingCollectionsDeleted).toHaveBeenCalledWith(storeId, [
       'gid://shopify/Collection/1',
     ]);
+    expect(catalogSyncRepository.enqueuePixelResolutionRepairs).toHaveBeenCalledWith(storeId);
     expect(inventorySyncRepository.persistLocations).toHaveBeenCalledWith(
       storeId,
       expect.arrayContaining([expect.objectContaining({ id: 'gid://shopify/Location/1' })]),
