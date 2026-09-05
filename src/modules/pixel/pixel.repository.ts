@@ -34,6 +34,7 @@ export class PixelRepository {
         installedAt: true,
         lastError: true,
         pendingCollectorTokenHash: true,
+        updatedAt: true,
       },
     });
   }
@@ -227,8 +228,7 @@ export class PixelRepository {
         "lastEventAt" = CASE
           WHEN "lastEventAt" IS NULL THEN ${lastEventAt}
           ELSE GREATEST("lastEventAt", ${lastEventAt})
-        END,
-        "updatedAt" = CURRENT_TIMESTAMP
+        END
       WHERE "id" = ${id}::uuid
       RETURNING "id"
     `;
