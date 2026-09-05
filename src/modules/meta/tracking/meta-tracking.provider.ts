@@ -45,15 +45,19 @@ export class MetaTrackingProvider {
       createParams.object_story_id = creative.objectStoryId;
     } else if (creative.objectStorySpec && !creative.assetFeedSpec) {
       createParams.object_story_spec = JSON.stringify(creative.objectStorySpec);
-      if (creative.degreesOfFreedomSpec) {
-        createParams.degrees_of_freedom_spec = JSON.stringify(creative.degreesOfFreedomSpec);
-      }
     } else {
       throw new AppError(
         'This Meta creative shape is not safe for automatic tracking setup',
         409,
         'META_TRACKING_AUTOMATION_UNSUPPORTED',
       );
+    }
+
+    // Preserve the synced creative-enhancement configuration regardless of whether the source
+    // creative references an existing post or carries an object_story_spec. Automatic setup is
+    // tracking-only and must not silently change Meta's enhancement behavior.
+    if (creative.degreesOfFreedomSpec) {
+      createParams.degrees_of_freedom_spec = JSON.stringify(creative.degreesOfFreedomSpec);
     }
 
     const created = metaIdResponseSchema.safeParse(
