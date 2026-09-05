@@ -7,8 +7,15 @@ import type {
 } from '../shopify.schema.js';
 
 const DB_WRITE_CONCURRENCY = 12;
+const CATALOG_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 30_000 } as const;
 
 type RepairSqlClient = Pick<Prisma.TransactionClient, '$executeRaw'>;
+
+interface CatalogRepairEvidence {
+  productIds?: string[];
+  variantIds?: string[];
+  collectionIds?: string[];
+}
 
 function optionalDate(value: string | null | undefined): Date | null {
   return value ? new Date(value) : null;
@@ -18,6 +25,14 @@ async function runBatched<T>(items: T[], task: (item: T) => Promise<unknown>): P
   for (let index = 0; index < items.length; index += DB_WRITE_CONCURRENCY) {
     await Promise.all(items.slice(index, index + DB_WRITE_CONCURRENCY).map(task));
   }
+}
+
+function distinct(values: string[] | undefined): string[] {
+  return [...new Set(values ?? [])];
+}
+
+function sqlValues(values: string[]) {
+  return Prisma.join(values.map((value) => Prisma.sql`${value}`));
 }
 
 function productData(product: ShopifyProduct) {
@@ -88,41 +103,72 @@ function collectionData(collection: ShopifyCollection) {
 async function enqueuePixelResolutionRepairsWith(
   db: RepairSqlClient,
   storeId: string,
-  productExternalId?: string,
+  evidence?: CatalogRepairEvidence,
 ) {
-  const evidencePredicate = productExternalId
-    ? Prisma.sql`(
-        e."productExternalId" = ${productExternalId}
-        OR e."variantExternalId" IN (
-          SELECT pv."shopifyVariantId"
-          FROM "ProductVariant" pv
-          INNER JOIN "Product" p ON p."id" = pv."productId"
-          WHERE pv."storeId" = ${storeId}::uuid
-            AND p."storeId" = ${storeId}::uuid
-            AND p."shopifyProductId" = ${productExternalId}
-        )
-      )`
+  const productIds = distinct(evidence?.productIds);
+  const variantIds = distinct(evidence?.variantIds);
+  const collectionIds = distinct(evidence?.collectionIds);
+  if (evidence && productIds.length === 0 && variantIds.length === 0 && collectionIds.length === 0) {
+    return 0;
+  }
+
+  const productConditions: Prisma.Sql[] = [];
+  if (productIds.length > 0) {
+    productConditions.push(
+      Prisma.sql`p."shopifyProductExternalId" IN (${sqlValues(productIds)})`,
+      Prisma.sql`p."shopifyVariantExternalId" IN (
+        SELECT pv."shopifyVariantId"
+        FROM "ProductVariant" pv
+        INNER JOIN "Product" product ON product."id" = pv."productId"
+        WHERE pv."storeId" = ${storeId}::uuid
+          AND product."storeId" = ${storeId}::uuid
+          AND product."shopifyProductId" IN (${sqlValues(productIds)})
+      )`,
+    );
+  }
+  if (variantIds.length > 0) {
+    productConditions.push(
+      Prisma.sql`p."shopifyVariantExternalId" IN (${sqlValues(variantIds)})`,
+    );
+  }
+  const productPredicate = evidence
+    ? productConditions.length > 0
+      ? Prisma.join(productConditions, ' OR ')
+      : Prisma.sql`FALSE`
     : Prisma.sql`(
-        e."productExternalId" IS NOT NULL
-        OR e."variantExternalId" IS NOT NULL
-        OR e."collectionExternalId" IS NOT NULL
+        p."shopifyProductExternalId" IS NOT NULL
+        OR p."shopifyVariantExternalId" IS NOT NULL
       )`;
+  const collectionPredicate = evidence
+    ? collectionIds.length > 0
+      ? Prisma.sql`c."shopifyCollectionExternalId" IN (${sqlValues(collectionIds)})`
+      : Prisma.sql`FALSE`
+    : Prisma.sql`c."shopifyCollectionExternalId" IS NOT NULL`;
 
   return db.$executeRaw`
     INSERT INTO "StorefrontSessionRepair"
       ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
     SELECT
       gen_random_uuid(),
-      e."storeId",
-      e."sessionId",
-      MAX(e."receivedAt"),
+      affected."storeId",
+      affected."browserSessionId",
+      MAX(affected."sourceReceivedAt"),
       CURRENT_TIMESTAMP,
       CURRENT_TIMESTAMP
-    FROM "StorefrontEvent" e
-    WHERE e."storeId" = ${storeId}::uuid
-      AND e."sessionId" IS NOT NULL
-      AND ${evidencePredicate}
-    GROUP BY e."storeId", e."sessionId"
+    FROM (
+      SELECT s."storeId", s."browserSessionId", s."lastSourceReceivedAt" AS "sourceReceivedAt"
+      FROM "StorefrontSession" s
+      INNER JOIN "StorefrontSessionProduct" p ON p."sessionId" = s."id"
+      WHERE s."storeId" = ${storeId}::uuid
+        AND (${productPredicate})
+      UNION ALL
+      SELECT s."storeId", s."browserSessionId", s."lastSourceReceivedAt" AS "sourceReceivedAt"
+      FROM "StorefrontSession" s
+      INNER JOIN "StorefrontSessionCollection" c ON c."sessionId" = s."id"
+      WHERE s."storeId" = ${storeId}::uuid
+        AND (${collectionPredicate})
+    ) affected
+    GROUP BY affected."storeId", affected."browserSessionId"
     ON CONFLICT ("storeId", "browserSessionId")
     DO UPDATE SET
       "id" = EXCLUDED."id",
@@ -142,8 +188,8 @@ export class ShopifyCatalogRepository {
   async persistProducts(storeId: string, products: ShopifyProduct[]): Promise<void> {
     if (products.length === 0) return;
 
+    const ids = products.map((product) => product.id);
     await prisma.$transaction(async (tx) => {
-      const ids = products.map((product) => product.id);
       const existing = await tx.product.findMany({
         where: { storeId, shopifyProductId: { in: ids } },
         select: { id: true, shopifyProductId: true },
@@ -173,16 +219,16 @@ export class ShopifyCatalogRepository {
         }),
       );
 
-      await enqueuePixelResolutionRepairsWith(tx, storeId);
-    });
+      await enqueuePixelResolutionRepairsWith(tx, storeId, { productIds: ids });
+    }, CATALOG_TRANSACTION_OPTIONS);
   }
 
   async persistVariants(storeId: string, variants: ShopifyVariant[]): Promise<boolean> {
     if (variants.length === 0) return true;
 
+    const variantExternalIds = variants.map((variant) => variant.id);
     const persisted = await prisma.$transaction(async (tx) => {
       const productExternalIds = [...new Set(variants.map((variant) => variant.product.id))];
-      const variantExternalIds = variants.map((variant) => variant.id);
 
       const [products, existingVariants] = await Promise.all([
         tx.product.findMany({
@@ -228,7 +274,7 @@ export class ShopifyCatalogRepository {
         select: { id: true, shopifyVariantId: true },
       });
       if (persistedVariants.length !== variants.length) {
-        await enqueuePixelResolutionRepairsWith(tx, storeId);
+        await enqueuePixelResolutionRepairsWith(tx, storeId, { variantIds: variantExternalIds });
         return false;
       }
 
@@ -287,9 +333,9 @@ export class ShopifyCatalogRepository {
         where: { storeId, variantId: { in: persistedIds }, deletedAt: null },
       });
 
-      await enqueuePixelResolutionRepairsWith(tx, storeId);
+      await enqueuePixelResolutionRepairsWith(tx, storeId, { variantIds: variantExternalIds });
       return inventoryItemCount === persistedIds.length;
-    });
+    }, CATALOG_TRANSACTION_OPTIONS);
 
     if (!persisted) return false;
 
@@ -355,6 +401,7 @@ export class ShopifyCatalogRepository {
 
   async persistCollections(storeId: string, collections: ShopifyCollection[]): Promise<void> {
     if (collections.length === 0) return;
+    const collectionIds = collections.map((collection) => collection.id);
 
     await prisma.$transaction(async (tx) => {
       await runBatched(collections, (collection) =>
@@ -374,8 +421,8 @@ export class ShopifyCatalogRepository {
           select: { id: true },
         }),
       );
-      await enqueuePixelResolutionRepairsWith(tx, storeId);
-    });
+      await enqueuePixelResolutionRepairsWith(tx, storeId, { collectionIds });
+    }, CATALOG_TRANSACTION_OPTIONS);
   }
 
   async replaceCollectionProducts(
@@ -413,27 +460,95 @@ export class ShopifyCatalogRepository {
           skipDuplicates: true,
         });
       }
-      await enqueuePixelResolutionRepairsWith(tx, storeId);
+      await enqueuePixelResolutionRepairsWith(tx, storeId, { collectionIds: [shopifyCollectionId] });
       return true;
-    });
+    }, CATALOG_TRANSACTION_OPTIONS);
+  }
+
+  async markMissingCatalogDeleted(
+    storeId: string,
+    activeShopifyProductIds: string[],
+    activeShopifyVariantIds: string[],
+  ): Promise<{ products: number; variants: number }> {
+    return prisma.$transaction(async (tx) => {
+      const now = new Date();
+      const [missingVariants, missingProducts] = await Promise.all([
+        tx.productVariant.findMany({
+          where: {
+            storeId,
+            deletedAt: null,
+            ...(activeShopifyVariantIds.length > 0
+              ? { shopifyVariantId: { notIn: activeShopifyVariantIds } }
+              : {}),
+          },
+          select: { id: true, shopifyVariantId: true },
+        }),
+        tx.product.findMany({
+          where: {
+            storeId,
+            deletedAt: null,
+            ...(activeShopifyProductIds.length > 0
+              ? { shopifyProductId: { notIn: activeShopifyProductIds } }
+              : {}),
+          },
+          select: { id: true, shopifyProductId: true },
+        }),
+      ]);
+      const missingVariantIds = missingVariants.map((variant) => variant.id);
+      if (missingVariantIds.length > 0) {
+        await tx.inventoryItem.updateMany({
+          where: { storeId, variantId: { in: missingVariantIds } },
+          data: { deletedAt: now },
+        });
+        await tx.productVariant.updateMany({
+          where: { id: { in: missingVariantIds } },
+          data: { deletedAt: now },
+        });
+      }
+
+      if (missingProducts.length > 0) {
+        await tx.product.updateMany({
+          where: { id: { in: missingProducts.map((product) => product.id) } },
+          data: { deletedAt: now },
+        });
+      }
+
+      await enqueuePixelResolutionRepairsWith(tx, storeId, {
+        productIds: missingProducts.map((product) => product.shopifyProductId),
+        variantIds: missingVariants.map((variant) => variant.shopifyVariantId),
+      });
+      return { products: missingProducts.length, variants: missingVariants.length };
+    }, CATALOG_TRANSACTION_OPTIONS);
   }
 
   async markMissingCollectionsDeleted(storeId: string, activeIds: string[]): Promise<number> {
     return prisma.$transaction(async (tx) => {
-      const result = await tx.collection.updateMany({
+      const missing = await tx.collection.findMany({
         where: {
           storeId,
           deletedAt: null,
           ...(activeIds.length > 0 ? { shopifyCollectionId: { notIn: activeIds } } : {}),
         },
+        select: { id: true, shopifyCollectionId: true },
+      });
+      if (missing.length === 0) return 0;
+
+      await tx.collection.updateMany({
+        where: { id: { in: missing.map((collection) => collection.id) } },
         data: { deletedAt: new Date() },
       });
-      if (result.count > 0) await enqueuePixelResolutionRepairsWith(tx, storeId);
-      return result.count;
-    });
+      await enqueuePixelResolutionRepairsWith(tx, storeId, {
+        collectionIds: missing.map((collection) => collection.shopifyCollectionId),
+      });
+      return missing.length;
+    }, CATALOG_TRANSACTION_OPTIONS);
   }
 
   enqueuePixelResolutionRepairs(storeId: string, productExternalId?: string) {
-    return enqueuePixelResolutionRepairsWith(prisma, storeId, productExternalId);
+    return enqueuePixelResolutionRepairsWith(
+      prisma,
+      storeId,
+      productExternalId ? { productIds: [productExternalId] } : undefined,
+    );
   }
 }
