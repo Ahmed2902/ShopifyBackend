@@ -20,11 +20,16 @@ function signOAuthPayload(payload: string): string {
   return createHmac('sha256', env.META_STATE_SECRET).update(payload).digest('base64url');
 }
 
-export function createMetaOAuthState(userId: string, storeId: string): string {
+export function createMetaOAuthState(
+  userId: string,
+  storeId: string,
+  authorizationMode: MetaAuthorizationMode = 'READ_ONLY',
+): string {
   const context: MetaOAuthContext = {
     nonce: randomBytes(32).toString('base64url'),
     userId,
     storeId,
+    authorizationMode,
     expiresAt: Date.now() + META_OAUTH_CONTEXT_TTL_MS,
   };
   const payload = Buffer.from(JSON.stringify(context), 'utf8').toString('base64url');
@@ -46,6 +51,7 @@ export function verifyMetaOAuthState(state: string | undefined): MetaOAuthContex
       context.nonce.length < 32 ||
       typeof context.userId !== 'string' ||
       typeof context.storeId !== 'string' ||
+      (context.authorizationMode !== 'READ_ONLY' && context.authorizationMode !== 'ADS_MANAGEMENT') ||
       typeof context.expiresAt !== 'number' ||
       context.expiresAt < Date.now()
     ) {
@@ -62,7 +68,7 @@ export function buildMetaAuthorizationUrl(
   storeId: string,
   mode: MetaAuthorizationMode = 'READ_ONLY',
 ) {
-  const state = createMetaOAuthState(userId, storeId);
+  const state = createMetaOAuthState(userId, storeId, mode);
   const url = new URL(`https://www.facebook.com/${env.META_API_VERSION}/dialog/oauth`);
   url.searchParams.set('client_id', env.META_APP_ID);
   url.searchParams.set('redirect_uri', metaCallbackUrl());
