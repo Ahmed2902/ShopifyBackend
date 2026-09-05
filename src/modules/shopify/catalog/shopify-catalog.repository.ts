@@ -112,6 +112,19 @@ async function enqueuePixelResolutionRepairsWith(
     return 0;
   }
 
+  // A raw-only or currently-materializing browser session already owns a repair row. Rotate every
+  // outstanding generation for this store inside the same source mutation transaction so a worker
+  // that resolved against the pre-mutation catalog can never consume its old generation and commit
+  // stale identity after this transaction succeeds. Clean materialized sessions are handled by the
+  // targeted compact-evidence insert below, avoiding a retained raw-event scan per catalog write.
+  await db.$executeRaw`
+    UPDATE "StorefrontSessionRepair"
+    SET
+      "id" = gen_random_uuid(),
+      "updatedAt" = CURRENT_TIMESTAMP
+    WHERE "storeId" = ${storeId}::uuid
+  `;
+
   const productConditions: Prisma.Sql[] = [];
   if (productIds.length > 0) {
     productConditions.push(
