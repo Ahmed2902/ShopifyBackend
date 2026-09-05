@@ -66,28 +66,36 @@ export class PixelService {
   async installShopifyPixel(storeId: string) {
     const collectorUrl = this.getCollectorUrl();
     const existing = await this.repository.findInstallationByStoreId(storeId);
-    const installationId = existing?.id ?? randomUUID();
+    const requestedInstallationId = existing?.id ?? randomUUID();
     const collectorToken = randomBytes(PIXEL_COLLECTOR_TOKEN_BYTES).toString('base64url');
     const collectorTokenHash = serializeTokenHash(collectorToken);
     const collectorTokenPrefix = collectorToken.slice(0, TOKEN_PREFIX_LENGTH);
     const hadWorkingInstallation = existing?.status === 'ACTIVE';
 
-    // Preserve ACTIVE while rotating a working installation so the old token keeps flowing.
-    // New/failed installations enter PROVISIONING so a Shopify-success/local-finalize failure can
-    // still accept the staged token and recover without another storefront outage.
-    await this.repository.stageInstallation({
-      id: installationId,
+    // The pending hash doubles as an ownership token. A healthy in-flight install cannot be
+    // overwritten by a second request; a previously failed operation (lastError != null) can be
+    // reclaimed on the next explicit retry.
+    const staged = await this.repository.stageInstallation({
+      id: requestedInstallationId,
       storeId,
       collectorTokenHash,
       collectorTokenPrefix,
       status: hadWorkingInstallation ? 'ACTIVE' : 'PROVISIONING',
     });
+    if (!staged) {
+      throw new AppError(
+        'A pixel installation is already in progress for this store',
+        409,
+        'PIXEL_INSTALLATION_IN_PROGRESS',
+      );
+    }
+    const installationId = staged.id;
 
     let webPixel: { id: string };
     try {
       webPixel = await this.shopifyProvisioner.upsert({
         storeId,
-        existingWebPixelId: existing?.shopifyWebPixelId ?? null,
+        existingWebPixelId: existing?.shopifyWebPixelId ?? staged.shopifyWebPixelId ?? null,
         settings: {
           collectorUrl,
           installationId,
@@ -96,7 +104,12 @@ export class PixelService {
       });
     } catch (error) {
       await this.repository
-        .rollbackStagedInstallation(installationId, hadWorkingInstallation, errorMessage(error))
+        .rollbackStagedInstallation(
+          installationId,
+          collectorTokenHash,
+          hadWorkingInstallation,
+          errorMessage(error),
+        )
         .catch(() => undefined);
       throw error;
     }
@@ -104,14 +117,15 @@ export class PixelService {
     try {
       const installation = await this.repository.finalizeInstallation({
         id: installationId,
+        expectedPendingTokenHash: collectorTokenHash,
         shopifyWebPixelId: webPixel.id,
         installedAt: this.now(),
       });
       if (!installation) {
         throw new AppError(
-          'Pixel installation disappeared during finalization',
+          'Pixel installation ownership changed before finalization',
           409,
-          'PIXEL_INSTALLATION_MISSING',
+          'PIXEL_INSTALLATION_SUPERSEDED',
         );
       }
 
@@ -121,10 +135,10 @@ export class PixelService {
         requiredShopifyScopes: REQUIRED_SHOPIFY_SCOPES,
       };
     } catch (error) {
-      // Do not roll the staged hash back here: Shopify already accepted the new settings. Keeping
-      // the staged credential recoverable is what prevents split-brain credential rejection.
+      // Shopify already accepted these settings. Keep the staged token recoverable, but only if
+      // this request still owns that staged hash; a stale request must never mutate a newer one.
       await this.repository
-        .recordInstallationError(installationId, errorMessage(error))
+        .recordInstallationError(installationId, collectorTokenHash, errorMessage(error))
         .catch(() => undefined);
       throw error;
     }
@@ -164,7 +178,9 @@ export class PixelService {
       isStorefrontBehaviorCaptureAllowed(event.consentState),
     );
     const normalized = eligible.map((event) => this.normalizeEvent(event, receivedAt));
-    const inserted = await this.repository.insertEvents(installation.storeId, normalized);
+    // Raw events and their repair markers commit together. A process exit can no longer leave a
+    // durable event with no way for the repair worker to discover its session.
+    const inserted = await this.repository.insertEvents(installation.storeId, normalized, receivedAt);
 
     if (eligible.length > 0) {
       const latestEventAt = eligible.reduce((latest, event) => {
@@ -182,10 +198,6 @@ export class PixelService {
       ),
     ];
     if (sessionIds.length > 0) {
-      // The explicit repair queue makes steady-state repair O(dirty sessions) rather than scanning
-      // retained raw events. Mark only after the event write succeeds; immediate materialization
-      // then clears markers it actually covered, while concurrent newer writes remain dirty.
-      await this.repository.markSessionRepairs(installation.storeId, sessionIds, receivedAt);
       await this.journeyService
         .materializeSessions(installation.storeId, sessionIds)
         .catch(() => undefined);
