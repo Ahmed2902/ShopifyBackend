@@ -1,4 +1,4 @@
-import type { Prisma, StorefrontBehaviorDimension } from '../../../generated/prisma/client.js';
+import { Prisma, type StorefrontBehaviorDimension } from '../../../generated/prisma/client.js';
 import { prisma } from '../../../lib/prisma.js';
 
 const BEHAVIOR_SUM_FIELDS = {
@@ -172,7 +172,9 @@ export class PixelBehaviorRepository {
     });
   }
 
-  async acknowledgeWindow(storeId: string, instantFrom: Date, instantTo: Date, acknowledgedAt: Date) {
+  async acknowledgeSessions(storeId: string, sessionIds: string[], acknowledgedAt: Date) {
+    if (sessionIds.length === 0) return 0;
+    const ids = Prisma.join(sessionIds.map((id) => Prisma.sql`${id}::uuid`));
     return prisma.$executeRaw`
       UPDATE "StorefrontSession" s
       SET
@@ -180,8 +182,7 @@ export class PixelBehaviorRepository {
         "behaviorRolledStartedAt" = s."startedAt",
         "updatedAt" = CURRENT_TIMESTAMP
       WHERE s."storeId" = ${storeId}::uuid
-        AND s."startedAt" >= ${instantFrom}
-        AND s."startedAt" <= ${instantTo}
+        AND s."id" IN (${ids})
         AND s."rollupDirtyAt" <= ${acknowledgedAt}
         AND NOT EXISTS (
           SELECT 1
