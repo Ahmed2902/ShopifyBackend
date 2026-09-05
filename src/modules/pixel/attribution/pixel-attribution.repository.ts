@@ -145,11 +145,16 @@ export class PixelAttributionRepository {
     to: Date,
   ) {
     if (anonymousVisitorIds.length === 0) return Promise.resolve([]);
+    // The attribution journey uses store-local calendar dates, so an exact 30*24h upper bound can
+    // end before the last instant of the 30th local boundary date (and DST can widen the gap).
+    // Conservatively pad two UTC days here. This can rebuild a small amount of extra data but
+    // guarantees every purchase that could be inside the 30-calendar-day journey window is dirtied.
+    const conservativeTo = new Date(to.getTime() + 2 * 86_400_000);
     return prisma.storefrontSession.findMany({
       where: {
         storeId,
         anonymousVisitorId: { in: anonymousVisitorIds },
-        startedAt: { gte: from, lte: to },
+        startedAt: { gte: from, lte: conservativeTo },
         orderLinkStatus: 'LINKED',
         orderId: { not: null },
       },
@@ -159,7 +164,7 @@ export class PixelAttributionRepository {
 
   findSessionsForWindow(storeId: string, from: Date, to: Date, skip: number, take: number) {
     return prisma.storefrontSession.findMany({
-      where: { storeId, startedAt: { gte: from, lte: to } },
+      where: { storeId, eventCount: { gt: 0 }, startedAt: { gte: from, lte: to } },
       orderBy: [{ startedAt: 'asc' }, { id: 'asc' }],
       skip,
       take,
@@ -215,6 +220,7 @@ export class PixelAttributionRepository {
       where: {
         storeId,
         anonymousVisitorId,
+        eventCount: { gt: 0 },
         startedAt: { gte: from, lte: to },
       },
       orderBy: [{ startedAt: 'asc' }, { id: 'asc' }],
