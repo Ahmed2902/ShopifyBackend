@@ -360,6 +360,7 @@ export class PixelAttributionService {
       if (!context) continue;
       const dirty = await this.repository.findDirtySessions(storeId, DIRTY_SESSION_BATCH);
       if (dirty.length === 0) continue;
+      const acknowledgedAt = this.now();
 
       const dirtyDates = new Set<string>();
       for (const row of dirty) {
@@ -395,6 +396,11 @@ export class PixelAttributionService {
           await this.rebuildStoreDate(storeId, context.ianaTimezone, date);
           datesRebuilt += 1;
         }
+        await this.repository.acknowledgeSessions(
+          storeId,
+          dirty.map((row) => row.id),
+          acknowledgedAt,
+        );
         const watermark = dirty.reduce(
           (latest, row) => (row.dirtyAt > latest ? row.dirtyAt : latest),
           dirty[0]!.dirtyAt,
@@ -412,7 +418,6 @@ export class PixelAttributionService {
   }
 
   async rebuildStoreDate(storeId: string, timeZone: string, date: string) {
-    const acknowledgedAt = this.now();
     const window = dateWindow(date, date, timeZone);
     const day = bucketDate(date);
     const attribution = new Map<string, AttributionAccumulator>();
@@ -611,20 +616,13 @@ export class PixelAttributionService {
       if (sessions.length < SESSION_PAGE_SIZE) break;
     }
 
-    const result = await this.repository.replaceDailyRows(
+    return this.repository.replaceDailyRows(
       storeId,
       day,
       [...attribution.values()],
       [...paths.values()],
       [...targets.values()],
     );
-    await this.repository.acknowledgeWindow(
-      storeId,
-      window.instantFrom,
-      window.instantTo,
-      acknowledgedAt,
-    );
-    return result;
   }
 
   sources(storeId: string, query: AnalyticsListQuery, now = this.now()) {
