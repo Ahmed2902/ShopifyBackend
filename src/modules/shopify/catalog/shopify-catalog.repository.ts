@@ -1,4 +1,4 @@
-import type { Prisma } from '../../../generated/prisma/client.js';
+import { Prisma } from '../../../generated/prisma/client.js';
 import { prisma } from '../../../lib/prisma.js';
 import type {
   ShopifyCollection,
@@ -356,5 +356,50 @@ export class ShopifyCatalogRepository {
       data: { deletedAt: new Date() },
     });
     return result.count;
+  }
+
+  async enqueuePixelResolutionRepairs(storeId: string, productExternalId?: string) {
+    const evidencePredicate = productExternalId
+      ? Prisma.sql`(
+          e."productExternalId" = ${productExternalId}
+          OR e."variantExternalId" IN (
+            SELECT pv."shopifyVariantId"
+            FROM "ProductVariant" pv
+            INNER JOIN "Product" p ON p."id" = pv."productId"
+            WHERE pv."storeId" = ${storeId}::uuid
+              AND p."storeId" = ${storeId}::uuid
+              AND p."shopifyProductId" = ${productExternalId}
+          )
+        )`
+      : Prisma.sql`(
+          e."productExternalId" IS NOT NULL
+          OR e."variantExternalId" IS NOT NULL
+          OR e."collectionExternalId" IS NOT NULL
+        )`;
+
+    return prisma.$executeRaw`
+      INSERT INTO "StorefrontSessionRepair"
+        ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
+      SELECT
+        gen_random_uuid(),
+        e."storeId",
+        e."sessionId",
+        MAX(e."receivedAt"),
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+      FROM "StorefrontEvent" e
+      WHERE e."storeId" = ${storeId}::uuid
+        AND e."sessionId" IS NOT NULL
+        AND ${evidencePredicate}
+      GROUP BY e."storeId", e."sessionId"
+      ON CONFLICT ("storeId", "browserSessionId")
+      DO UPDATE SET
+        "id" = EXCLUDED."id",
+        "sourceReceivedAt" = GREATEST(
+          "StorefrontSessionRepair"."sourceReceivedAt",
+          EXCLUDED."sourceReceivedAt"
+        ),
+        "updatedAt" = CURRENT_TIMESTAMP
+    `;
   }
 }
