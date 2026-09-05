@@ -267,14 +267,39 @@ export class PixelAttributionRepository {
     paths: AttributionPathDailyInput[],
     targets: MetaTargetEvidenceDailyInput[],
   ) {
+    // Daily purchase credit is bucketed by the purchase session's store-local date. A credited
+    // identity can originate in an earlier retained session, so the purchase-date row may not have
+    // received the current-session touch increment. Persist a cohort-aligned denominator rather
+    // than allowing durable facts such as 1 purchase / 0 touched sessions. JOURNEY paths are
+    // purchase-only descriptive cohorts, so their sessionCount is the number of represented
+    // purchase journeys (their API purchase rate remains intentionally null).
+    const normalizedAttribution = attribution.map((row) => ({
+      ...row,
+      touchedSessionCount: Math.max(row.touchedSessionCount ?? 0, row.linkedPurchaseSessionCount ?? 0),
+    }));
+    const normalizedPaths = paths.map((row) => ({
+      ...row,
+      sessionCount: row.path.startsWith('JOURNEY:')
+        ? Math.max(row.sessionCount ?? 0, row.linkedPurchaseSessionCount ?? 0)
+        : row.sessionCount,
+    }));
+
     return prisma.$transaction(async (tx) => {
       await tx.storefrontAttributionDaily.deleteMany({ where: { storeId, bucketDate } });
       await tx.storefrontAttributionPathDaily.deleteMany({ where: { storeId, bucketDate } });
       await tx.storefrontMetaTargetEvidenceDaily.deleteMany({ where: { storeId, bucketDate } });
-      if (attribution.length > 0) await tx.storefrontAttributionDaily.createMany({ data: attribution });
-      if (paths.length > 0) await tx.storefrontAttributionPathDaily.createMany({ data: paths });
+      if (normalizedAttribution.length > 0) {
+        await tx.storefrontAttributionDaily.createMany({ data: normalizedAttribution });
+      }
+      if (normalizedPaths.length > 0) {
+        await tx.storefrontAttributionPathDaily.createMany({ data: normalizedPaths });
+      }
       if (targets.length > 0) await tx.storefrontMetaTargetEvidenceDaily.createMany({ data: targets });
-      return { attribution: attribution.length, paths: paths.length, targets: targets.length };
+      return {
+        attribution: normalizedAttribution.length,
+        paths: normalizedPaths.length,
+        targets: targets.length,
+      };
     });
   }
 
