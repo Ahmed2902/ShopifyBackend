@@ -228,6 +228,9 @@ model StorefrontSessionTouch {
   @@index([metaAdId, eventAt])
   @@index([metaAdSetId, eventAt])
   @@index([metaCampaignId, eventAt])
+  @@index([metaAdExternalId, eventAt], map: "StorefrontSessionTouch_meta_ad_external_idx")
+  @@index([metaAdSetExternalId, eventAt], map: "StorefrontSessionTouch_meta_adset_external_idx")
+  @@index([metaCampaignExternalId, eventAt], map: "StorefrontSessionTouch_meta_campaign_external_idx")
   @@index([source, eventAt])
 }
 
@@ -252,6 +255,8 @@ model StorefrontSessionProduct {
   @@unique([sessionId, identityKey])
   @@index([productId, firstSeenAt])
   @@index([variantId, firstSeenAt])
+  @@index([shopifyProductExternalId, firstSeenAt], map: "StorefrontSessionProduct_product_external_idx")
+  @@index([shopifyVariantExternalId, firstSeenAt], map: "StorefrontSessionProduct_variant_external_idx")
 }
 
 model StorefrontSessionCollection {
@@ -269,6 +274,7 @@ model StorefrontSessionCollection {
 
   @@unique([sessionId, shopifyCollectionExternalId])
   @@index([collectionId, firstSeenAt])
+  @@index([shopifyCollectionExternalId, firstSeenAt], map: "StorefrontSessionCollection_external_idx")
 }
 
 model StorefrontBehaviorDaily {
