@@ -11,6 +11,8 @@ const DEFAULT_REPAIR_BATCH = 100;
 const MAX_REPAIR_BATCH = 500;
 const DEFAULT_RETENTION_BATCH = 1_000;
 const MAX_VISITOR_SESSIONS = 100;
+const ORDER_LINK_BASE_RETRY_MS = 5 * 60_000;
+const ORDER_LINK_MAX_RETRY_MS = 6 * 60 * 60_000;
 
 type JourneyEvent = Awaited<
   ReturnType<PixelJourneyRepository['findSessionEvents']>
@@ -48,7 +50,12 @@ function minDate(values: Date[]): Date {
 }
 
 function sourceFor(event: JourneyEvent): StorefrontJourneySource {
-  if (event.metaAdExternalId || event.metaAdSetExternalId || event.metaCampaignExternalId || event.metaClickId) {
+  if (
+    event.metaAdExternalId ||
+    event.metaAdSetExternalId ||
+    event.metaCampaignExternalId ||
+    event.metaClickId
+  ) {
     return 'META';
   }
   if (event.googleClickId) return 'GOOGLE';
@@ -62,7 +69,11 @@ function sourceFor(event: JourneyEvent): StorefrontJourneySource {
 }
 
 function touchSignature(event: JourneyEvent): string {
+  // Every field that can change sourceFor() must participate in dedupe. Otherwise an
+  // UNKNOWN -> DIRECT or referrer-only transition can be silently collapsed.
   return JSON.stringify([
+    event.pageUrl,
+    event.referrerUrl,
     event.landingPageUrl,
     event.utmSource,
     event.utmMedium,
@@ -182,6 +193,10 @@ function buildRawCollections(events: JourneyEvent[]): SessionCollectionAggregate
   return [...aggregates.values()].sort((a, b) => a.firstSeenAt.getTime() - b.firstSeenAt.getTime());
 }
 
+function orderRetryDelayMs(attemptCount: number): number {
+  return Math.min(ORDER_LINK_BASE_RETRY_MS * 2 ** Math.min(Math.max(attemptCount - 1, 0), 7), ORDER_LINK_MAX_RETRY_MS);
+}
+
 export class PixelJourneyService {
   constructor(
     private readonly repository: PixelJourneyRepository = new PixelJourneyRepository(),
@@ -204,8 +219,12 @@ export class PixelJourneyService {
   }
 
   async materializeSession(storeId: string, browserSessionId: string) {
+    const materializationStartedAt = this.now();
     const events = await this.repository.findSessionEvents(storeId, browserSessionId);
-    if (events.length === 0) return null;
+    if (events.length === 0) {
+      await this.repository.clearSessionRepair(storeId, browserSessionId, materializationStartedAt);
+      return null;
+    }
 
     const touches = buildRawTouches(events);
     const products = buildRawProducts(events);
@@ -236,6 +255,7 @@ export class PixelJourneyService {
       : null;
     const checkoutStartedEvents = events.filter((event) => event.eventName === 'BEGIN_CHECKOUT');
     const checkoutCompletedEvents = events.filter((event) => event.eventName === 'CHECKOUT_COMPLETED');
+    const materializedAt = this.now();
 
     const aggregate = {
       anonymousVisitorId: visitorIds[0] ?? null,
@@ -266,14 +286,17 @@ export class PixelJourneyService {
           ? ('LINKED' as const)
           : ('PENDING' as const)
         : ('NONE' as const),
+      orderLinkAttemptCount: 0,
+      orderLinkNextAttemptAt: null,
       landingPageUrl: events[0]?.landingPageUrl ?? events[0]?.pageUrl ?? null,
       initialReferrerUrl: events[0]?.referrerUrl ?? null,
       dataQualityFlags,
       retentionExpiresAt: maxDate(events.map((event) => event.retentionExpiresAt)),
-      materializedAt: this.now(),
+      materializedAt,
+      rollupDirtyAt: materializedAt,
     };
 
-    return this.repository.replaceSessionReadModel(
+    const result = await this.repository.replaceSessionReadModel(
       storeId,
       browserSessionId,
       aggregate,
@@ -281,6 +304,8 @@ export class PixelJourneyService {
       products,
       collections,
     );
+    await this.repository.clearSessionRepair(storeId, browserSessionId, materializationStartedAt);
+    return result;
   }
 
   async repairDirtySessions(limit = DEFAULT_REPAIR_BATCH) {
@@ -301,19 +326,36 @@ export class PixelJourneyService {
 
   async linkPendingOrders(limit = DEFAULT_REPAIR_BATCH) {
     const bounded = Math.min(Math.max(1, Math.trunc(limit)), MAX_REPAIR_BATCH);
-    const sessions = await this.repository.findPendingOrderSessions(bounded);
+    const now = this.now();
+    const sessions = await this.repository.findPendingOrderSessions(now, bounded);
     let linked = 0;
+    let deferred = 0;
     for (const session of sessions) {
       if (!session.shopifyOrderExternalId) continue;
       const order = await this.repository.findOrderByExternalId(
         session.storeId,
         session.shopifyOrderExternalId,
       );
-      if (!order) continue;
-      await this.repository.setOrderLink(session.id, order.id);
-      linked += 1;
+      if (order) {
+        await this.repository.setOrderLink(session.id, order.id, this.now());
+        linked += 1;
+        continue;
+      }
+
+      const attemptCount = session.orderLinkAttemptCount + 1;
+      await this.repository.scheduleOrderLinkRetry(
+        session.id,
+        attemptCount,
+        new Date(now.getTime() + orderRetryDelayMs(attemptCount)),
+      );
+      deferred += 1;
     }
-    return { selected: sessions.length, linked, stillPending: sessions.length - linked };
+    return {
+      selected: sessions.length,
+      linked,
+      deferred,
+      stillPending: sessions.length - linked,
+    };
   }
 
   cleanupExpiredSessions(limit = DEFAULT_RETENTION_BATCH) {
