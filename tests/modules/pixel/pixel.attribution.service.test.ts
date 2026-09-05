@@ -241,9 +241,19 @@ describe('PixelAttributionService', () => {
     expect(postPurchaseTarget.linkedPurchaseSessionCount).toBe(0);
   });
 
-  it('rebuilds downstream purchase dates but acknowledges only the selected dirty attribution session', async () => {
+  it('rebuilds downstream purchase dates but acknowledges only the exact selected dirty attribution version', async () => {
     const repository = repositoryMock();
     const acknowledgedAt = new Date('2026-09-05T01:00:00.000Z');
+    const orderUpdatedAt = new Date('2026-09-05T00:59:00.000Z');
+    const dirty = {
+      id: 'session-selected',
+      startedAt: new Date('2026-09-04T10:00:00.000Z'),
+      previousStartedAt: null,
+      rollupDirtyAt: acknowledgedAt,
+      orderUpdatedAt,
+      dirtyAt: acknowledgedAt,
+      anonymousVisitorId: visitorId,
+    };
     vi.mocked(repository.findDirtyStoreIds).mockResolvedValue([storeId]);
     vi.mocked(repository.getStoreContext).mockResolvedValue({
       id: storeId,
@@ -251,15 +261,7 @@ describe('PixelAttributionService', () => {
       pixelInstallation: { status: 'ACTIVE', lastEventAt: acknowledgedAt },
       storefrontAttributionRollup: null,
     } as never);
-    vi.mocked(repository.findDirtySessions).mockResolvedValue([
-      {
-        id: 'session-selected',
-        startedAt: new Date('2026-09-04T10:00:00.000Z'),
-        previousStartedAt: null,
-        dirtyAt: acknowledgedAt,
-        anonymousVisitorId: visitorId,
-      },
-    ] as never);
+    vi.mocked(repository.findDirtySessions).mockResolvedValue([dirty] as never);
     vi.mocked(repository.findLaterPurchaseSessions).mockResolvedValue([
       { startedAt: new Date('2026-09-05T12:00:00.000Z') },
     ] as never);
@@ -271,11 +273,7 @@ describe('PixelAttributionService', () => {
     await service.rollupDirtyStores();
 
     expect(rebuild.mock.calls.map((call) => call[2])).toEqual(['2026-09-04', '2026-09-05']);
-    expect(repository.acknowledgeSessions).toHaveBeenCalledWith(
-      storeId,
-      ['session-selected'],
-      acknowledgedAt,
-    );
+    expect(repository.acknowledgeSessions).toHaveBeenCalledWith(storeId, [dirty], acknowledgedAt);
   });
 
   it('caps Pixel-only mapping suggestions below the exact mapping threshold and never activates them', async () => {
