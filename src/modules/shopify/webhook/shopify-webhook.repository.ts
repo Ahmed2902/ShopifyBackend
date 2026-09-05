@@ -281,6 +281,35 @@ export class ShopifyWebhookRepository {
       if (!order) return false;
 
       const dirtyAt = new Date();
+
+      // Rotate the repair generation before unlinking/deleting Shopify order truth. A materializer
+      // that read the old Order and old repair generation can no longer claim that generation after
+      // this transaction commits, so it cannot resurrect a LINKED session pointing at the deleted
+      // local Order UUID. If the materializer already claimed first, the session-row update below
+      // serializes after it and unlinks its result.
+      await tx.$executeRaw`
+        INSERT INTO "StorefrontSessionRepair"
+          ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
+        SELECT
+          gen_random_uuid(),
+          s."storeId",
+          s."browserSessionId",
+          s."lastSourceReceivedAt",
+          CURRENT_TIMESTAMP,
+          CURRENT_TIMESTAMP
+        FROM "StorefrontSession" s
+        WHERE s."storeId" = ${storeId}::uuid
+          AND s."orderId" = ${order.id}::uuid
+        ON CONFLICT ("storeId", "browserSessionId")
+        DO UPDATE SET
+          "id" = EXCLUDED."id",
+          "sourceReceivedAt" = GREATEST(
+            "StorefrontSessionRepair"."sourceReceivedAt",
+            EXCLUDED."sourceReceivedAt"
+          ),
+          "updatedAt" = CURRENT_TIMESTAMP
+      `;
+
       await tx.storefrontSession.updateMany({
         where: { storeId, orderId: order.id },
         data: {
