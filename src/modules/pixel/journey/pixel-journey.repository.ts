@@ -174,12 +174,26 @@ export class PixelJourneyRepository {
   async replaceSessionReadModel(
     storeId: string,
     browserSessionId: string,
+    expectedRepairMarkerId: string,
     aggregate: SessionAggregateInput,
     touches: SessionTouchInput[],
     products: SessionProductInput[],
     collections: SessionCollectionInput[],
   ) {
     return prisma.$transaction(async (tx) => {
+      // Claim exactly the repair generation that was observed before reading raw events. If a
+      // newer ingestion rotated the marker—or another materializer already claimed this one—this
+      // stale materialization must not overwrite the read model. The marker delete and read-model
+      // replacement commit atomically in the same transaction.
+      const claimed = await tx.storefrontSessionRepair.deleteMany({
+        where: {
+          id: expectedRepairMarkerId,
+          storeId,
+          browserSessionId,
+        },
+      });
+      if (claimed.count === 0) return null;
+
       const session = await tx.storefrontSession.upsert({
         where: { storeId_browserSessionId: { storeId, browserSessionId } },
         create: { storeId, browserSessionId, ...aggregate },
