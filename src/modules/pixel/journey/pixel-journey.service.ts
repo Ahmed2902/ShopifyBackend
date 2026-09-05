@@ -219,10 +219,15 @@ export class PixelJourneyService {
   }
 
   async materializeSession(storeId: string, browserSessionId: string) {
-    const materializationStartedAt = this.now();
+    // Capture the repair generation before reading raw events. Every ingestion rotates the
+    // marker UUID, so clearing this exact generation is a CAS: a concurrent event write leaves a
+    // newer marker behind even if its transaction began before this materialization.
+    const repairMarker = await this.repository.findSessionRepairMarker(storeId, browserSessionId);
     const events = await this.repository.findSessionEvents(storeId, browserSessionId);
     if (events.length === 0) {
-      await this.repository.clearSessionRepair(storeId, browserSessionId, materializationStartedAt);
+      if (repairMarker) {
+        await this.repository.clearSessionRepair(storeId, browserSessionId, repairMarker.id);
+      }
       return null;
     }
 
@@ -304,7 +309,9 @@ export class PixelJourneyService {
       products,
       collections,
     );
-    await this.repository.clearSessionRepair(storeId, browserSessionId, materializationStartedAt);
+    if (repairMarker) {
+      await this.repository.clearSessionRepair(storeId, browserSessionId, repairMarker.id);
+    }
     return result;
   }
 
