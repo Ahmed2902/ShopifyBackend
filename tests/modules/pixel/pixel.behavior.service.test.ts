@@ -12,6 +12,7 @@ function repositoryMock() {
   return {
     getStoreContext: vi.fn(),
     findDirtyStoreIds: vi.fn().mockResolvedValue([]),
+    withStoreRollupLock: vi.fn(async (_storeId: string, work: () => Promise<unknown>) => work()),
     findDirtySessions: vi.fn().mockResolvedValue([]),
     findSessionsForWindow: vi.fn(),
     findValidOrders: vi.fn(),
@@ -192,6 +193,7 @@ describe('PixelBehaviorService', () => {
 
     expect(rebuild.mock.calls.map((call) => call[2])).toEqual(['2026-09-04', '2026-09-05']);
     expect(repository.acknowledgeSessions).toHaveBeenCalledWith(storeId, [dirty], dirtyAt);
+    expect(repository.withStoreRollupLock).toHaveBeenCalledWith(storeId, expect.any(Function));
   });
 
   it('returns current/comparison first-party funnel rates using store-timezone windows', async () => {
