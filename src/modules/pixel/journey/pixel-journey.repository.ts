@@ -294,32 +294,40 @@ export class PixelJourneyRepository {
   }
 
   async deleteExpiredSessions(now: Date, limit: number) {
-    const rows = await prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT s."id"
-      FROM "StorefrontSession" s
-      LEFT JOIN "Order" o ON o."id" = s."orderId"
-      WHERE s."retentionExpiresAt" <= ${now}
-        AND s."behaviorRolledUpAt" IS NOT NULL
-        AND s."attributionRolledUpAt" IS NOT NULL
-        AND s."behaviorRolledUpAt" >= s."rollupDirtyAt"
-        AND s."attributionRolledUpAt" >= s."rollupDirtyAt"
-        AND s."behaviorRolledStartedAt" = s."startedAt"
-        AND s."attributionRolledStartedAt" = s."startedAt"
-        AND (
-          o."id" IS NULL
-          OR (
-            o."updatedAt" <= s."behaviorRolledUpAt"
-            AND o."updatedAt" <= s."attributionRolledUpAt"
+    return prisma.$transaction(async (tx) => {
+      // Lock the exact session rows while evaluating every retention/rollup guard. A concurrent
+      // materializer must then either finish first (causing these predicates to be re-evaluated
+      // against its newer row) or wait until cleanup commits and recreate the session from its
+      // still-durable raw event. This removes the select-then-delete race without broad locks.
+      const rows = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT s."id"
+        FROM "StorefrontSession" s
+        LEFT JOIN "Order" o ON o."id" = s."orderId"
+        WHERE s."retentionExpiresAt" <= ${now}
+          AND s."behaviorRolledUpAt" IS NOT NULL
+          AND s."attributionRolledUpAt" IS NOT NULL
+          AND s."behaviorRolledUpAt" >= s."rollupDirtyAt"
+          AND s."attributionRolledUpAt" >= s."rollupDirtyAt"
+          AND s."behaviorRolledStartedAt" = s."startedAt"
+          AND s."attributionRolledStartedAt" = s."startedAt"
+          AND (
+            o."id" IS NULL
+            OR (
+              o."updatedAt" <= s."behaviorRolledUpAt"
+              AND o."updatedAt" <= s."attributionRolledUpAt"
+            )
           )
-        )
-      ORDER BY s."retentionExpiresAt" ASC, s."id" ASC
-      LIMIT ${limit}
-    `;
-    if (rows.length === 0) return { selected: 0, deleted: 0 };
-    const result = await prisma.storefrontSession.deleteMany({
-      where: { id: { in: rows.map((row) => row.id) } },
+        ORDER BY s."retentionExpiresAt" ASC, s."id" ASC
+        LIMIT ${limit}
+        FOR UPDATE OF s SKIP LOCKED
+      `;
+      if (rows.length === 0) return { selected: 0, deleted: 0 };
+
+      const result = await tx.storefrontSession.deleteMany({
+        where: { id: { in: rows.map((row) => row.id) } },
+      });
+      return { selected: rows.length, deleted: result.count };
     });
-    return { selected: rows.length, deleted: result.count };
   }
 
   async listSessions(
