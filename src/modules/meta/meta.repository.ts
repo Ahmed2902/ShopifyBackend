@@ -144,6 +144,10 @@ export class MetaRepository {
         });
       }
 
+      // Selected account scope is part of provider truth. A deselected account stops syncing, so
+      // retained Pixel touches must re-resolve immediately rather than continuing to treat stale
+      // rows from that account as current exact provider identity.
+      await enqueueMetaHierarchyPixelRepairs(input.storeId, tx);
       return connection;
     });
   }
