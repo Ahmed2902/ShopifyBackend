@@ -50,6 +50,12 @@ export class ShopifyCatalogService {
       this.repository.markMissingCatalogDeleted(input.storeId, products.ids, variants.ids),
       this.syncRepository.markMissingCollectionsDeleted(input.storeId, collections.ids),
     ]);
+
+    // Product/variant/collection synchronization can change whether retained first-party evidence
+    // resolves EXACT/PARTIAL/UNRESOLVED/CONFLICT. Rotate repair generations only after the source
+    // catalog and deletion markers are fully committed so the next materialization sees one coherent
+    // Shopify snapshot.
+    await this.syncRepository.enqueuePixelResolutionRepairs(input.storeId);
     return { products, variants, collections };
   }
 
@@ -130,6 +136,10 @@ export class ShopifyCatalogService {
     }
 
     return { found: true, variantIds };
+  }
+
+  invalidatePixelResolution(storeId: string, productExternalId?: string) {
+    return this.syncRepository.enqueuePixelResolutionRepairs(storeId, productExternalId);
   }
 
   private async syncProducts(input: ShopifySyncContext): Promise<ShopifyResourceSyncStats> {
