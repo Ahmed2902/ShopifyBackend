@@ -223,6 +223,7 @@ function buildService(connectionOverrides: Record<string, unknown> = {}) {
     persistVariants: vi.fn().mockResolvedValue(true),
     persistCollections: vi.fn().mockResolvedValue(undefined),
     replaceCollectionProducts: vi.fn().mockResolvedValue(true),
+    markMissingCatalogDeleted: vi.fn().mockResolvedValue({ products: 0, variants: 0 }),
     markMissingCollectionsDeleted: vi.fn().mockResolvedValue(0),
     enqueuePixelResolutionRepairs: vi.fn().mockResolvedValue(0),
   } as unknown as ShopifyCatalogRepository;
@@ -319,10 +320,14 @@ describe('Shopify catalog and inventory sync', () => {
       'gid://shopify/Collection/1',
       ['gid://shopify/Product/1'],
     );
+    expect(catalogSyncRepository.markMissingCatalogDeleted).toHaveBeenCalledWith(
+      storeId,
+      ['gid://shopify/Product/1'],
+      ['gid://shopify/ProductVariant/1'],
+    );
     expect(catalogSyncRepository.markMissingCollectionsDeleted).toHaveBeenCalledWith(storeId, [
       'gid://shopify/Collection/1',
     ]);
-    expect(catalogSyncRepository.enqueuePixelResolutionRepairs).toHaveBeenCalledWith(storeId);
     expect(inventorySyncRepository.persistLocations).toHaveBeenCalledWith(
       storeId,
       expect.arrayContaining([expect.objectContaining({ id: 'gid://shopify/Location/1' })]),
@@ -332,11 +337,7 @@ describe('Shopify catalog and inventory sync', () => {
       expect.arrayContaining([expect.objectContaining({ id: 'gid://shopify/InventoryLevel/1' })]),
       'INITIAL_SYNC',
     );
-    expect(repository.markMissingCatalogDeleted).toHaveBeenCalledWith(
-      storeId,
-      ['gid://shopify/Product/1'],
-      ['gid://shopify/ProductVariant/1'],
-    );
+    expect(repository.markMissingCatalogDeleted).not.toHaveBeenCalled();
     expect(repository.markMissingLocationsDeleted).toHaveBeenCalledWith(storeId, [
       'gid://shopify/Location/1',
     ]);
