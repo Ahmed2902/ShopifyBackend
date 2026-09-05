@@ -36,44 +36,58 @@ export class PixelRepository {
     });
   }
 
-  stageInstallation(input: {
+  async stageInstallation(input: {
     id: string;
     storeId: string;
     collectorTokenHash: string;
     collectorTokenPrefix: string;
     status: 'ACTIVE' | 'PROVISIONING';
   }) {
-    return prisma.pixelInstallation.upsert({
-      where: { storeId: input.storeId },
-      create: {
-        id: input.id,
-        storeId: input.storeId,
-        collectorTokenHash: input.collectorTokenHash,
-        collectorTokenPrefix: input.collectorTokenPrefix,
-        pendingCollectorTokenHash: input.collectorTokenHash,
-        pendingCollectorTokenPrefix: input.collectorTokenPrefix,
-        shopifyWebPixelId: null,
-        status: input.status,
-        installedAt: null,
-        lastError: null,
-      },
-      update: {
-        pendingCollectorTokenHash: input.collectorTokenHash,
-        pendingCollectorTokenPrefix: input.collectorTokenPrefix,
-        status: input.status,
-        lastError: null,
-      },
-      select: {
-        id: true,
-        storeId: true,
-        status: true,
-        shopifyWebPixelId: true,
-      },
-    });
+    const rows = await prisma.$queryRaw<
+      Array<{
+        id: string;
+        storeId: string;
+        status: 'ACTIVE' | 'PROVISIONING' | 'ERROR' | 'DISABLED';
+        shopifyWebPixelId: string | null;
+      }>
+    >`
+      INSERT INTO "PixelInstallation" (
+        "id", "storeId", "collectorTokenHash", "collectorTokenPrefix",
+        "pendingCollectorTokenHash", "pendingCollectorTokenPrefix",
+        "shopifyWebPixelId", "status", "installedAt", "lastError",
+        "createdAt", "updatedAt"
+      )
+      VALUES (
+        ${input.id}::uuid,
+        ${input.storeId}::uuid,
+        ${input.collectorTokenHash},
+        ${input.collectorTokenPrefix},
+        ${input.collectorTokenHash},
+        ${input.collectorTokenPrefix},
+        NULL,
+        ${input.status}::"PixelInstallationStatus",
+        NULL,
+        NULL,
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+      )
+      ON CONFLICT ("storeId")
+      DO UPDATE SET
+        "pendingCollectorTokenHash" = EXCLUDED."pendingCollectorTokenHash",
+        "pendingCollectorTokenPrefix" = EXCLUDED."pendingCollectorTokenPrefix",
+        "status" = EXCLUDED."status",
+        "lastError" = NULL,
+        "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "PixelInstallation"."pendingCollectorTokenHash" IS NULL
+         OR "PixelInstallation"."lastError" IS NOT NULL
+      RETURNING "id", "storeId", "status", "shopifyWebPixelId"
+    `;
+    return rows[0] ?? null;
   }
 
   async finalizeInstallation(input: {
     id: string;
+    expectedPendingTokenHash: string;
     shopifyWebPixelId: string;
     installedAt: Date;
   }) {
@@ -92,7 +106,7 @@ export class PixelRepository {
     >`
       UPDATE "PixelInstallation"
       SET
-        "collectorTokenHash" = COALESCE("pendingCollectorTokenHash", "collectorTokenHash"),
+        "collectorTokenHash" = "pendingCollectorTokenHash",
         "collectorTokenPrefix" = COALESCE("pendingCollectorTokenPrefix", "collectorTokenPrefix"),
         "pendingCollectorTokenHash" = NULL,
         "pendingCollectorTokenPrefix" = NULL,
@@ -102,6 +116,7 @@ export class PixelRepository {
         "lastError" = NULL,
         "updatedAt" = CURRENT_TIMESTAMP
       WHERE "id" = ${input.id}::uuid
+        AND "pendingCollectorTokenHash" = ${input.expectedPendingTokenHash}
       RETURNING
         "id", "storeId", "collectorTokenPrefix", "shopifyWebPixelId", "status",
         "installedAt", "lastEventAt", "lastError", "updatedAt"
@@ -109,62 +124,73 @@ export class PixelRepository {
     return rows[0] ?? null;
   }
 
-  rollbackStagedInstallation(id: string, hadWorkingInstallation: boolean, lastError: string) {
-    if (hadWorkingInstallation) {
-      return prisma.pixelInstallation.update({
-        where: { id },
-        data: {
-          pendingCollectorTokenHash: null,
-          pendingCollectorTokenPrefix: null,
-          lastError,
-        },
-        select: { id: true, status: true },
-      });
-    }
-    return prisma.pixelInstallation.update({
-      where: { id },
-      data: {
-        pendingCollectorTokenHash: null,
-        pendingCollectorTokenPrefix: null,
-        status: 'ERROR',
-        lastError,
-      },
-      select: { id: true, status: true },
-    });
+  async rollbackStagedInstallation(
+    id: string,
+    expectedPendingTokenHash: string,
+    hadWorkingInstallation: boolean,
+    lastError: string,
+  ) {
+    const status = hadWorkingInstallation ? 'ACTIVE' : 'ERROR';
+    const rows = await prisma.$queryRaw<Array<{ id: string; status: string }>>`
+      UPDATE "PixelInstallation"
+      SET
+        "pendingCollectorTokenHash" = NULL,
+        "pendingCollectorTokenPrefix" = NULL,
+        "status" = ${status}::"PixelInstallationStatus",
+        "lastError" = ${lastError},
+        "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = ${id}::uuid
+        AND "pendingCollectorTokenHash" = ${expectedPendingTokenHash}
+      RETURNING "id", "status"
+    `;
+    return rows[0] ?? null;
   }
 
-  recordInstallationError(id: string, lastError: string) {
-    return prisma.pixelInstallation.update({
-      where: { id },
-      data: { lastError },
-      select: { id: true, status: true },
-    });
+  async recordInstallationError(id: string, expectedPendingTokenHash: string, lastError: string) {
+    const rows = await prisma.$queryRaw<Array<{ id: string; status: string }>>`
+      UPDATE "PixelInstallation"
+      SET
+        "lastError" = ${lastError},
+        "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = ${id}::uuid
+        AND "pendingCollectorTokenHash" = ${expectedPendingTokenHash}
+      RETURNING "id", "status"
+    `;
+    return rows[0] ?? null;
   }
 
-  async insertEvents(storeId: string, events: StoreScopedEventInput[]) {
+  async insertEvents(storeId: string, events: StoreScopedEventInput[], sourceReceivedAt: Date) {
     if (events.length === 0) return 0;
 
-    const result = await prisma.storefrontEvent.createMany({
-      data: events.map((event) => ({ ...event, storeId })),
-      skipDuplicates: true,
-    });
-    return result.count;
-  }
+    return prisma.$transaction(async (tx) => {
+      const result = await tx.storefrontEvent.createMany({
+        data: events.map((event) => ({ ...event, storeId })),
+        skipDuplicates: true,
+      });
 
-  async markSessionRepairs(storeId: string, browserSessionIds: string[], sourceReceivedAt: Date) {
-    for (const browserSessionId of [...new Set(browserSessionIds)]) {
-      const id = randomUUID();
-      await prisma.$executeRaw`
-        INSERT INTO "StorefrontSessionRepair"
-          ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
-        VALUES
-          (${id}::uuid, ${storeId}::uuid, ${browserSessionId}, ${sourceReceivedAt}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        ON CONFLICT ("storeId", "browserSessionId")
-        DO UPDATE SET
-          "sourceReceivedAt" = GREATEST("StorefrontSessionRepair"."sourceReceivedAt", EXCLUDED."sourceReceivedAt"),
-          "updatedAt" = CURRENT_TIMESTAMP
-      `;
-    }
+      const sessionIds = [
+        ...new Set(
+          events
+            .map((event) => event.sessionId)
+            .filter((sessionId): sessionId is string => Boolean(sessionId)),
+        ),
+      ];
+      for (const browserSessionId of sessionIds) {
+        const id = randomUUID();
+        await tx.$executeRaw`
+          INSERT INTO "StorefrontSessionRepair"
+            ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
+          VALUES
+            (${id}::uuid, ${storeId}::uuid, ${browserSessionId}, ${sourceReceivedAt}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          ON CONFLICT ("storeId", "browserSessionId")
+          DO UPDATE SET
+            "sourceReceivedAt" = GREATEST("StorefrontSessionRepair"."sourceReceivedAt", EXCLUDED."sourceReceivedAt"),
+            "updatedAt" = CURRENT_TIMESTAMP
+        `;
+      }
+
+      return result.count;
+    });
   }
 
   async touchInstallation(id: string, lastEventAt: Date) {
