@@ -54,30 +54,43 @@ export class PixelBehaviorRepository {
     const rows = await prisma.$queryRaw<Array<{ storeId: string }>>`
       SELECT DISTINCT s."storeId" AS "storeId"
       FROM "StorefrontSession" s
-      LEFT JOIN "StorefrontBehaviorRollupState" r ON r."storeId" = s."storeId"
-      WHERE r."rolledThroughMaterializedAt" IS NULL
-         OR s."updatedAt" > r."rolledThroughMaterializedAt"
+      LEFT JOIN "Order" o ON o."id" = s."orderId"
+      WHERE s."behaviorRolledUpAt" IS NULL
+         OR s."behaviorRolledUpAt" < s."rollupDirtyAt"
+         OR s."behaviorRolledStartedAt" IS DISTINCT FROM s."startedAt"
+         OR (o."id" IS NOT NULL AND o."updatedAt" > s."behaviorRolledUpAt")
       ORDER BY s."storeId"
       LIMIT ${limit}
     `;
     return rows.map((row) => row.storeId);
   }
 
-  async findDirtySessions(storeId: string, after: Date | null, limit: number) {
-    const rows = await prisma.storefrontSession.findMany({
-      where: {
-        storeId,
-        ...(after ? { updatedAt: { gt: after } } : {}),
-      },
-      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
-      take: limit,
-      select: { id: true, startedAt: true, updatedAt: true },
-    });
-    return rows.map((row) => ({
-      id: row.id,
-      startedAt: row.startedAt,
-      materializedAt: row.updatedAt,
-    }));
+  findDirtySessions(storeId: string, limit: number) {
+    return prisma.$queryRaw<
+      Array<{
+        id: string;
+        startedAt: Date;
+        previousStartedAt: Date | null;
+        dirtyAt: Date;
+      }>
+    >`
+      SELECT
+        s."id",
+        s."startedAt",
+        s."behaviorRolledStartedAt" AS "previousStartedAt",
+        GREATEST(s."rollupDirtyAt", COALESCE(o."updatedAt", s."rollupDirtyAt")) AS "dirtyAt"
+      FROM "StorefrontSession" s
+      LEFT JOIN "Order" o ON o."id" = s."orderId"
+      WHERE s."storeId" = ${storeId}::uuid
+        AND (
+          s."behaviorRolledUpAt" IS NULL
+          OR s."behaviorRolledUpAt" < s."rollupDirtyAt"
+          OR s."behaviorRolledStartedAt" IS DISTINCT FROM s."startedAt"
+          OR (o."id" IS NOT NULL AND o."updatedAt" > s."behaviorRolledUpAt")
+        )
+      ORDER BY "dirtyAt" ASC, s."id" ASC
+      LIMIT ${limit}
+    `;
   }
 
   findSessionsForWindow(storeId: string, instantFrom: Date, instantTo: Date, skip: number, take: number) {
@@ -157,6 +170,26 @@ export class PixelBehaviorRepository {
       }
       return { rows: rows.length };
     });
+  }
+
+  async acknowledgeWindow(storeId: string, instantFrom: Date, instantTo: Date, acknowledgedAt: Date) {
+    return prisma.$executeRaw`
+      UPDATE "StorefrontSession" s
+      SET
+        "behaviorRolledUpAt" = ${acknowledgedAt},
+        "behaviorRolledStartedAt" = s."startedAt",
+        "updatedAt" = CURRENT_TIMESTAMP
+      WHERE s."storeId" = ${storeId}::uuid
+        AND s."startedAt" >= ${instantFrom}
+        AND s."startedAt" <= ${instantTo}
+        AND s."rollupDirtyAt" <= ${acknowledgedAt}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "Order" o
+          WHERE o."id" = s."orderId"
+            AND o."updatedAt" > ${acknowledgedAt}
+        )
+    `;
   }
 
   advanceRollupState(storeId: string, watermark: Date, rolledUpAt: Date) {
@@ -283,7 +316,14 @@ export class PixelBehaviorRepository {
     if (productIds.length === 0) return Promise.resolve([]);
     return prisma.product.findMany({
       where: { storeId, id: { in: productIds } },
-      select: { id: true, shopifyProductId: true, title: true, handle: true, status: true, deletedAt: true },
+      select: {
+        id: true,
+        shopifyProductId: true,
+        title: true,
+        handle: true,
+        status: true,
+        deletedAt: true,
+      },
     });
   }
 
