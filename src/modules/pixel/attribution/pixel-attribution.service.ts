@@ -396,11 +396,7 @@ export class PixelAttributionService {
           await this.rebuildStoreDate(storeId, context.ianaTimezone, date);
           datesRebuilt += 1;
         }
-        await this.repository.acknowledgeSessions(
-          storeId,
-          dirty.map((row) => row.id),
-          acknowledgedAt,
-        );
+        await this.repository.acknowledgeSessions(storeId, dirty, acknowledgedAt);
         const watermark = dirty.reduce(
           (latest, row) => (row.dirtyAt > latest ? row.dirtyAt : latest),
           dirty[0]!.dirtyAt,
