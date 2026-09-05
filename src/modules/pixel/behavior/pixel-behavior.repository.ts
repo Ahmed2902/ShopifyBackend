@@ -29,6 +29,15 @@ export type BehaviorDailyInput = Omit<
   'id' | 'createdAt' | 'updatedAt'
 >;
 
+export interface BehaviorDirtySession {
+  id: string;
+  startedAt: Date;
+  previousStartedAt: Date | null;
+  rollupDirtyAt: Date;
+  orderUpdatedAt: Date | null;
+  dirtyAt: Date;
+}
+
 export class PixelBehaviorRepository {
   getStoreContext(storeId: string) {
     return prisma.store.findUnique({
@@ -66,18 +75,13 @@ export class PixelBehaviorRepository {
   }
 
   findDirtySessions(storeId: string, limit: number) {
-    return prisma.$queryRaw<
-      Array<{
-        id: string;
-        startedAt: Date;
-        previousStartedAt: Date | null;
-        dirtyAt: Date;
-      }>
-    >`
+    return prisma.$queryRaw<BehaviorDirtySession[]>`
       SELECT
         s."id",
         s."startedAt",
         s."behaviorRolledStartedAt" AS "previousStartedAt",
+        s."rollupDirtyAt" AS "rollupDirtyAt",
+        o."updatedAt" AS "orderUpdatedAt",
         GREATEST(s."rollupDirtyAt", COALESCE(o."updatedAt", s."rollupDirtyAt")) AS "dirtyAt"
       FROM "StorefrontSession" s
       LEFT JOIN "Order" o ON o."id" = s."orderId"
@@ -172,24 +176,34 @@ export class PixelBehaviorRepository {
     });
   }
 
-  async acknowledgeSessions(storeId: string, sessionIds: string[], acknowledgedAt: Date) {
-    if (sessionIds.length === 0) return 0;
-    const ids = Prisma.join(sessionIds.map((id) => Prisma.sql`${id}::uuid`));
+  async acknowledgeSessions(storeId: string, sessions: BehaviorDirtySession[], acknowledgedAt: Date) {
+    if (sessions.length === 0) return 0;
+    const versions = Prisma.join(
+      sessions.map(
+        (row) => Prisma.sql`(
+          ${row.id}::uuid,
+          ${row.startedAt}::timestamp(3),
+          ${row.rollupDirtyAt}::timestamp(3),
+          ${row.orderUpdatedAt}::timestamp(3)
+        )`,
+      ),
+    );
     return prisma.$executeRaw`
       UPDATE "StorefrontSession" s
       SET
         "behaviorRolledUpAt" = ${acknowledgedAt},
         "behaviorRolledStartedAt" = s."startedAt",
         "updatedAt" = CURRENT_TIMESTAMP
+      FROM (VALUES ${versions}) AS v("id", "startedAt", "rollupDirtyAt", "orderUpdatedAt")
       WHERE s."storeId" = ${storeId}::uuid
-        AND s."id" IN (${ids})
-        AND s."rollupDirtyAt" <= ${acknowledgedAt}
-        AND NOT EXISTS (
-          SELECT 1
+        AND s."id" = v."id"
+        AND s."startedAt" = v."startedAt"
+        AND s."rollupDirtyAt" = v."rollupDirtyAt"
+        AND (
+          SELECT o."updatedAt"
           FROM "Order" o
           WHERE o."id" = s."orderId"
-            AND o."updatedAt" > ${acknowledgedAt}
-        )
+        ) IS NOT DISTINCT FROM v."orderUpdatedAt"
     `;
   }
 
