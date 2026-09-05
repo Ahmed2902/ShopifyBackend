@@ -23,6 +23,20 @@ async function createStore() {
   return store;
 }
 
+async function createMaterializedSession(storeId: string, browserSessionId: string, receivedAt: Date) {
+  return prisma.storefrontSession.create({
+    data: {
+      storeId,
+      browserSessionId,
+      startedAt: receivedAt,
+      endedAt: receivedAt,
+      lastSourceReceivedAt: receivedAt,
+      eventCount: 1,
+      retentionExpiresAt: new Date(receivedAt.getTime() + 90 * 86_400_000),
+    },
+  });
+}
+
 afterEach(async () => {
   while (createdStoreIds.length > 0) {
     const storeId = createdStoreIds.pop()!;
@@ -92,7 +106,7 @@ describeDatabase('Pixel source-domain invalidation', () => {
     expect(repair.sourceReceivedAt).toEqual(session.lastSourceReceivedAt);
   });
 
-  it('rotates retained Pixel repair generations after Meta hierarchy sync', async () => {
+  it('rotates materialized Pixel repair generations after Meta hierarchy sync', async () => {
     const store = await createStore();
     const connection = await prisma.metaConnection.create({
       data: {
@@ -120,6 +134,19 @@ describeDatabase('Pixel source-domain invalidation', () => {
         retentionExpiresAt: new Date('2026-12-04T12:00:00.000Z'),
       },
     });
+    const session = await createMaterializedSession(store.id, sessionId, receivedAt);
+    await prisma.storefrontSessionTouch.create({
+      data: {
+        sessionId: session.id,
+        ordinal: 0,
+        eventAt: receivedAt,
+        source: 'META',
+        metaCampaignExternalId: '1001',
+        metaAdSetExternalId: '2002',
+        metaAdExternalId: '3003',
+        metaResolutionStatus: 'UNRESOLVED',
+      },
+    });
     const originalRepair = await prisma.storefrontSessionRepair.create({
       data: {
         storeId: store.id,
@@ -137,7 +164,7 @@ describeDatabase('Pixel source-domain invalidation', () => {
     expect(repair.sourceReceivedAt).toEqual(receivedAt);
   });
 
-  it('rotates retained Pixel repair generations after Shopify catalog resolution changes', async () => {
+  it('rotates materialized Pixel repair generations after Shopify catalog resolution changes', async () => {
     const store = await createStore();
     const productExternalId = `gid://shopify/Product/${Date.now()}`;
     const sessionId = `session-shopify-${randomUUID()}`;
@@ -153,6 +180,18 @@ describeDatabase('Pixel source-domain invalidation', () => {
         consentState: 'GRANTED',
         productExternalId,
         retentionExpiresAt: new Date('2026-12-04T12:10:00.000Z'),
+      },
+    });
+    const session = await createMaterializedSession(store.id, sessionId, receivedAt);
+    await prisma.storefrontSessionProduct.create({
+      data: {
+        sessionId: session.id,
+        identityKey: `product:${productExternalId}`,
+        shopifyProductExternalId: productExternalId,
+        resolutionStatus: 'UNRESOLVED',
+        viewCount: 1,
+        firstSeenAt: receivedAt,
+        lastSeenAt: receivedAt,
       },
     });
     const originalRepair = await prisma.storefrontSessionRepair.create({
@@ -172,6 +211,45 @@ describeDatabase('Pixel source-domain invalidation', () => {
       where: { storeId_browserSessionId: { storeId: store.id, browserSessionId: sessionId } },
     });
     expect(repair.id).not.toBe(originalRepair.id);
+    expect(repair.sourceReceivedAt).toEqual(receivedAt);
+  });
+
+  it('keeps the ingestion repair generation for raw-only sessions until materialization', async () => {
+    const store = await createStore();
+    const connection = await prisma.metaConnection.create({
+      data: {
+        storeId: store.id,
+        metaUserId: 'meta-user-raw',
+        accessTokenCiphertext: 'ciphertext',
+        scopes: ['ads_read'],
+        apiVersion: 'v25.0',
+      },
+    });
+    const sessionId = `raw-only-${randomUUID()}`;
+    const receivedAt = new Date('2026-09-05T13:00:00.000Z');
+    await prisma.storefrontEvent.create({
+      data: {
+        storeId: store.id,
+        eventId: `event-${randomUUID()}`,
+        eventName: 'PAGE_VIEW',
+        eventAt: receivedAt,
+        receivedAt,
+        sessionId,
+        consentState: 'GRANTED',
+        metaCampaignExternalId: 'raw-campaign',
+        retentionExpiresAt: new Date('2026-12-04T13:00:00.000Z'),
+      },
+    });
+    const originalRepair = await prisma.storefrontSessionRepair.create({
+      data: { storeId: store.id, browserSessionId: sessionId, sourceReceivedAt: receivedAt },
+    });
+
+    await new MetaRepository().markConnectionSynced(connection.id, new Date('2026-09-05T13:05:00.000Z'));
+
+    const repair = await prisma.storefrontSessionRepair.findUniqueOrThrow({
+      where: { storeId_browserSessionId: { storeId: store.id, browserSessionId: sessionId } },
+    });
+    expect(repair.id).toBe(originalRepair.id);
     expect(repair.sourceReceivedAt).toEqual(receivedAt);
   });
 });
