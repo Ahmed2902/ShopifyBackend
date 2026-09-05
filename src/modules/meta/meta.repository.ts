@@ -1,5 +1,6 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
+import { enqueueMetaHierarchyPixelRepairs } from '../pixel/pixel-source-invalidation.js';
 import type { MetaAdAccountAsset } from './meta.types.js';
 
 const adAccountSelect = {
@@ -90,39 +91,10 @@ export class MetaRepository {
         data: { lastSyncedAt: syncedAt },
       });
 
-      // Meta hierarchy sync can turn a previously unresolved Pixel touch into an exact identity,
-      // or invalidate/reparent a previously exact one. Rotate repair generations for every
-      // retained browser session carrying Meta hierarchy IDs so session materialization resolves
-      // against the newly synced hierarchy before behavior/attribution rollups are acknowledged.
-      await tx.$executeRaw`
-        INSERT INTO "StorefrontSessionRepair"
-          ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
-        SELECT
-          gen_random_uuid(),
-          e."storeId",
-          e."sessionId",
-          MAX(e."receivedAt"),
-          CURRENT_TIMESTAMP,
-          CURRENT_TIMESTAMP
-        FROM "StorefrontEvent" e
-        WHERE e."storeId" = ${connection.storeId}::uuid
-          AND e."sessionId" IS NOT NULL
-          AND (
-            e."metaCampaignExternalId" IS NOT NULL
-            OR e."metaAdSetExternalId" IS NOT NULL
-            OR e."metaAdExternalId" IS NOT NULL
-          )
-        GROUP BY e."storeId", e."sessionId"
-        ON CONFLICT ("storeId", "browserSessionId")
-        DO UPDATE SET
-          "id" = EXCLUDED."id",
-          "sourceReceivedAt" = GREATEST(
-            "StorefrontSessionRepair"."sourceReceivedAt",
-            EXCLUDED."sourceReceivedAt"
-          ),
-          "updatedAt" = CURRENT_TIMESTAMP
-      `;
-
+      // Resolver-relevant row writes already rotate targeted repair generations atomically. Keep
+      // one bounded final safety pass over the compact materialized touch model so a completed
+      // hierarchy sync leaves every retained Meta touch aligned with the final account snapshot.
+      await enqueueMetaHierarchyPixelRepairs(connection.storeId, tx);
       return connection;
     });
   }
