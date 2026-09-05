@@ -1,5 +1,6 @@
 import { logger } from './lib/logger.js';
 import { PollingWorker } from './lib/polling-worker.js';
+import { pixelService } from './modules/pixel/pixel.service.js';
 import { reconciliationService } from './modules/reconciliation/reconciliation.service.js';
 import { shopifyService } from './modules/shopify/shopify.service.js';
 import { tiktokWebhookService } from './modules/tiktok/webhook/tiktok-webhook.service.js';
@@ -31,7 +32,21 @@ const reconciliationWorker = new PollingWorker(
   'Scheduled reconciliation worker failed',
 );
 
-const workers = [shopifyWebhookWorker, tiktokWebhookWorker, reconciliationWorker];
+const pixelRetentionWorker = new PollingWorker(
+  60_000,
+  async () => {
+    const result = await pixelService.cleanupExpiredEvents();
+    if (result.deleted > 0) logger.info(result, 'Deleted expired raw storefront events');
+  },
+  'Stride Pixel retention cleanup failed',
+);
+
+const workers = [
+  shopifyWebhookWorker,
+  tiktokWebhookWorker,
+  reconciliationWorker,
+  pixelRetentionWorker,
+];
 
 export function startWorkers(): void {
   for (const worker of workers) worker.start();

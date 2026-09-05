@@ -24,6 +24,9 @@ export type StorefrontConsentState = (typeof STOREFRONT_CONSENT_STATES)[number];
 export const PIXEL_EVENT_VERSION = 1 as const;
 export const PIXEL_DEFAULT_RETENTION_DAYS = 90;
 export const PIXEL_MAX_RETENTION_DAYS = 365;
+export const PIXEL_MAX_BATCH_SIZE = 50;
+export const PIXEL_COLLECTOR_TOKEN_BYTES = 32;
+export const PIXEL_CLEANUP_BATCH_SIZE = 1_000;
 
 export interface StorefrontAttributionInput {
   utmSource?: string;

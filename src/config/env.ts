@@ -32,6 +32,8 @@ const envSchema = z.object({
     .regex(/^\d{4}-\d{2}$/)
     .default('2026-07'),
   SHOPIFY_STATE_SECRET: z.string().min(32),
+  PIXEL_COLLECTOR_URL: z.string().url().optional(),
+  PIXEL_RAW_EVENT_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(90),
   META_APP_ID: z.string().min(1),
   META_APP_SECRET: z.string().min(1),
   META_SCOPES: z.string().min(1).default('ads_read'),
