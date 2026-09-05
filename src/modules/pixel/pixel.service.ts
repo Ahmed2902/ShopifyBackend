@@ -25,6 +25,8 @@ import {
 const COLLECTOR_PATH = '/v1/pixel/events';
 const TOKEN_PREFIX_LENGTH = 8;
 const PROVISIONING_STALE_MS = 15 * 60_000;
+const MAX_EVENT_PAST_SKEW_MS = 7 * 24 * 60 * 60_000;
+const MAX_EVENT_FUTURE_SKEW_MS = 10 * 60_000;
 const REQUIRED_SHOPIFY_SCOPES = ['write_pixels', 'read_pixels', 'read_customer_events'] as const;
 type StoreScopedEventInput = Omit<Prisma.StorefrontEventCreateManyInput, 'storeId'>;
 
@@ -252,11 +254,8 @@ export class PixelService {
     const inserted = await this.repository.insertEvents(installation.storeId, normalized, receivedAt);
 
     if (eligible.length > 0) {
-      const latestEventAt = eligible.reduce((latest, event) => {
-        const eventAt = new Date(event.eventAt);
-        return eventAt > latest ? eventAt : latest;
-      }, new Date(0));
-      await this.repository.touchInstallation(installation.id, latestEventAt);
+      // Operational freshness is server-observed receipt time, never a browser-supplied timestamp.
+      await this.repository.touchInstallation(installation.id, receivedAt);
     }
 
     const sessionIds = [
@@ -305,13 +304,28 @@ export class PixelService {
     event: StorefrontEventInput,
     receivedAt: Date,
   ): StoreScopedEventInput {
+    const eventAt = new Date(event.eventAt);
+    const eventAgeMs = receivedAt.getTime() - eventAt.getTime();
+    if (eventAgeMs > MAX_EVENT_PAST_SKEW_MS || eventAgeMs < -MAX_EVENT_FUTURE_SKEW_MS) {
+      throw new AppError(
+        'Pixel event timestamp is outside the accepted client clock/retry window',
+        400,
+        'PIXEL_EVENT_TIME_INVALID',
+        {
+          eventId: event.eventId,
+          maxPastSkewMs: MAX_EVENT_PAST_SKEW_MS,
+          maxFutureSkewMs: MAX_EVENT_FUTURE_SKEW_MS,
+        },
+      );
+    }
+
     const attribution = mergeAttribution(event);
 
     return {
       eventId: event.eventId,
       eventVersion: event.eventVersion,
       eventName: event.eventName,
-      eventAt: new Date(event.eventAt),
+      eventAt,
       receivedAt,
       anonymousVisitorId: event.anonymousVisitorId ?? null,
       sessionId: event.sessionId ?? null,
