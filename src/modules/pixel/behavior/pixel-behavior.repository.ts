@@ -61,17 +61,36 @@ export class PixelBehaviorRepository {
 
   async findDirtyStoreIds(limit: number) {
     const rows = await prisma.$queryRaw<Array<{ storeId: string }>>`
-      SELECT DISTINCT s."storeId" AS "storeId"
+      SELECT
+        s."storeId" AS "storeId",
+        GREATEST(
+          COALESCE(r."lastRolledUpAt", TIMESTAMP 'epoch'),
+          COALESCE(r."updatedAt", TIMESTAMP 'epoch')
+        ) AS "lastAttemptAt"
       FROM "StorefrontSession" s
       LEFT JOIN "Order" o ON o."id" = s."orderId"
+      LEFT JOIN "StorefrontBehaviorRollupState" r ON r."storeId" = s."storeId"
       WHERE s."behaviorRolledUpAt" IS NULL
          OR s."behaviorRolledUpAt" < s."rollupDirtyAt"
          OR s."behaviorRolledStartedAt" IS DISTINCT FROM s."startedAt"
          OR (o."id" IS NOT NULL AND o."updatedAt" > s."behaviorRolledUpAt")
-      ORDER BY s."storeId"
+      GROUP BY s."storeId", r."lastRolledUpAt", r."updatedAt"
+      ORDER BY "lastAttemptAt" ASC, s."storeId" ASC
       LIMIT ${limit}
     `;
     return rows.map((row) => row.storeId);
+  }
+
+  async withStoreRollupLock<T>(storeId: string, work: () => Promise<T>): Promise<T> {
+    return prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`
+          SELECT pg_advisory_xact_lock(hashtextextended(${`stride:pixel:behavior:${storeId}`}, 0))
+        `;
+        return work();
+      },
+      { maxWait: 30_000, timeout: 120_000 },
+    );
   }
 
   findDirtySessions(storeId: string, limit: number) {
