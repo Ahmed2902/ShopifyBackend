@@ -28,6 +28,30 @@ CREATE UNIQUE INDEX "StorefrontSessionRepair_store_session_key"
 CREATE INDEX "StorefrontSessionRepair_source_id_idx"
   ON "StorefrontSessionRepair"("sourceReceivedAt", "id");
 
+-- Preserve any raw-event backlog that existed before the explicit repair queue was introduced.
+-- The deterministic UUID is only an internal row key; correctness is enforced by the unique
+-- (storeId, browserSessionId) constraint.
+INSERT INTO "StorefrontSessionRepair"
+  ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
+SELECT
+  md5(e."storeId"::text || ':' || e."sessionId")::uuid,
+  e."storeId",
+  e."sessionId",
+  MAX(e."receivedAt"),
+  CURRENT_TIMESTAMP,
+  CURRENT_TIMESTAMP
+FROM "StorefrontEvent" e
+LEFT JOIN "StorefrontSession" s
+  ON s."storeId" = e."storeId"
+ AND s."browserSessionId" = e."sessionId"
+WHERE e."sessionId" IS NOT NULL
+  AND (s."id" IS NULL OR e."receivedAt" > s."lastSourceReceivedAt")
+GROUP BY e."storeId", e."sessionId"
+ON CONFLICT ("storeId", "browserSessionId")
+DO UPDATE SET
+  "sourceReceivedAt" = GREATEST("StorefrontSessionRepair"."sourceReceivedAt", EXCLUDED."sourceReceivedAt"),
+  "updatedAt" = CURRENT_TIMESTAMP;
+
 CREATE INDEX "StorefrontEvent_storeId_sessionId_receivedAt_idx"
   ON "StorefrontEvent"("storeId", "sessionId", "receivedAt");
 
