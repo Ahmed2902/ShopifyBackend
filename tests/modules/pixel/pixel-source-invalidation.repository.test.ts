@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { prisma } from '../../../src/lib/prisma.js';
 import { MetaRepository } from '../../../src/modules/meta/meta.repository.js';
+import { ShopifyCatalogRepository } from '../../../src/modules/shopify/catalog/shopify-catalog.repository.js';
 import { ShopifyWebhookRepository } from '../../../src/modules/shopify/webhook/shopify-webhook.repository.js';
 
 const describeDatabase = process.env.RUN_DB_TESTS === 'true' ? describe : describe.skip;
@@ -114,6 +115,44 @@ describeDatabase('Pixel source-domain invalidation', () => {
     });
 
     await new MetaRepository().markConnectionSynced(connection.id, new Date('2026-09-05T12:05:00.000Z'));
+
+    const repair = await prisma.storefrontSessionRepair.findUniqueOrThrow({
+      where: { storeId_browserSessionId: { storeId: store.id, browserSessionId: sessionId } },
+    });
+    expect(repair.id).not.toBe(originalRepair.id);
+    expect(repair.sourceReceivedAt).toEqual(receivedAt);
+  });
+
+  it('rotates retained Pixel repair generations after Shopify catalog resolution changes', async () => {
+    const store = await createStore();
+    const productExternalId = `gid://shopify/Product/${Date.now()}`;
+    const sessionId = `session-shopify-${randomUUID()}`;
+    const receivedAt = new Date('2026-09-05T12:10:00.000Z');
+    await prisma.storefrontEvent.create({
+      data: {
+        storeId: store.id,
+        eventId: `event-${randomUUID()}`,
+        eventName: 'PRODUCT_VIEW',
+        eventAt: receivedAt,
+        receivedAt,
+        sessionId,
+        consentState: 'GRANTED',
+        productExternalId,
+        retentionExpiresAt: new Date('2026-12-04T12:10:00.000Z'),
+      },
+    });
+    const originalRepair = await prisma.storefrontSessionRepair.create({
+      data: {
+        storeId: store.id,
+        browserSessionId: sessionId,
+        sourceReceivedAt: new Date('2026-09-05T12:00:00.000Z'),
+      },
+    });
+
+    await new ShopifyCatalogRepository().enqueuePixelResolutionRepairs(
+      store.id,
+      productExternalId,
+    );
 
     const repair = await prisma.storefrontSessionRepair.findUniqueOrThrow({
       where: { storeId_browserSessionId: { storeId: store.id, browserSessionId: sessionId } },
