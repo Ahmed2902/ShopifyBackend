@@ -23,6 +23,7 @@ function buildService(input?: {
 
   const repository = {
     findInstallationByStoreId: vi.fn().mockResolvedValue(installation),
+    findInstallationForProvisioning: vi.fn().mockResolvedValue(installation),
     findInstallationForIngress: vi.fn().mockResolvedValue(installation),
     stageInstallation: vi.fn().mockImplementation(async (value) => {
       if (input && 'stageResult' in input) return input.stageResult;
@@ -123,6 +124,7 @@ describe('PixelService', () => {
       installedAt: new Date('2026-09-01T12:00:00.000Z'),
       lastEventAt: null,
       lastError: null,
+      pendingCollectorTokenHash: null,
       createdAt: new Date('2026-09-01T12:00:00.000Z'),
       updatedAt: fixedNow,
     };
@@ -145,6 +147,7 @@ describe('PixelService', () => {
       installedAt: null,
       lastEventAt: null,
       lastError: 'previous failure',
+      pendingCollectorTokenHash: null,
       createdAt: new Date('2026-09-01T12:00:00.000Z'),
       updatedAt: fixedNow,
     };
@@ -175,6 +178,7 @@ describe('PixelService', () => {
       installedAt: new Date('2026-09-01T12:00:00.000Z'),
       lastEventAt: new Date('2026-09-04T11:00:00.000Z'),
       lastError: null,
+      pendingCollectorTokenHash: null,
       createdAt: new Date('2026-09-01T12:00:00.000Z'),
       updatedAt: new Date('2026-09-04T11:00:00.000Z'),
     };
@@ -187,10 +191,40 @@ describe('PixelService', () => {
     expect(repository.rollbackStagedInstallation).toHaveBeenCalledWith(
       installationId,
       stagedHash,
-      true,
+      'ACTIVE',
       'provider failed',
     );
     expect(repository.finalizeInstallation).not.toHaveBeenCalled();
+  });
+
+  it('preserves a previously provider-accepted staged credential if its retry fails at Shopify', async () => {
+    const previousCollectorToken = 'R'.repeat(43);
+    const existing = {
+      id: installationId,
+      storeId,
+      collectorTokenPrefix: 'FAILED',
+      shopifyWebPixelId: null,
+      status: 'PROVISIONING',
+      installedAt: null,
+      lastEventAt: null,
+      lastError: 'database unavailable',
+      pendingCollectorTokenHash: tokenHash(previousCollectorToken),
+      createdAt: new Date('2026-09-01T12:00:00.000Z'),
+      updatedAt: fixedNow,
+    };
+    const { repository, shopifyProvisioner, service } = buildService({ installation: existing });
+    vi.mocked(shopifyProvisioner.upsert).mockRejectedValue(new Error('provider retry failed'));
+
+    await expect(service.installShopifyPixel(storeId)).rejects.toThrow('provider retry failed');
+
+    const stagedHash = vi.mocked(repository.stageInstallation).mock.calls[0]?.[0].collectorTokenHash;
+    expect(repository.findInstallationForProvisioning).toHaveBeenCalledWith(storeId);
+    expect(repository.rollbackStagedInstallation).toHaveBeenCalledWith(
+      installationId,
+      stagedHash,
+      'PROVISIONING',
+      'provider retry failed',
+    );
   });
 
   it('keeps the owned staged credential recoverable when Shopify succeeds but local finalization fails', async () => {
@@ -203,6 +237,7 @@ describe('PixelService', () => {
       installedAt: new Date('2026-09-01T12:00:00.000Z'),
       lastEventAt: null,
       lastError: null,
+      pendingCollectorTokenHash: null,
       createdAt: new Date('2026-09-01T12:00:00.000Z'),
       updatedAt: fixedNow,
     };
