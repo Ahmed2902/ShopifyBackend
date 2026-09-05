@@ -312,6 +312,16 @@ function pathSnapshot(path: string, sum: Record<string, number | bigint | null> 
   };
 }
 
+function pathMetricValues(snapshot: ReturnType<typeof pathSnapshot>) {
+  return {
+    sessions: snapshot.sessions,
+    linkedPurchaseSessions: snapshot.linkedPurchaseSessions,
+    crossSessionPurchaseSessions: snapshot.crossSessionPurchaseSessions,
+    purchaseRate: snapshot.purchaseRate,
+    averageJourneyToPurchaseMs: snapshot.averageJourneyToPurchaseMs,
+  };
+}
+
 function quality(context: Awaited<ReturnType<PixelAttributionRepository['getStoreContext']>>) {
   if (!context) return { state: 'NOT_READY' as const, limitations: ['PIXEL_STORE_NOT_FOUND'] };
   const rollup = context.storefrontAttributionRollup;
@@ -443,9 +453,8 @@ export class PixelAttributionService {
           attribution.set(mapKey, row);
         }
 
-        const purchaseCutoff = validPurchase && session.checkoutCompletedAt
-          ? session.checkoutCompletedAt
-          : session.endedAt;
+        const purchaseCutoff =
+          validPurchase && session.checkoutCompletedAt ? session.checkoutCompletedAt : session.endedAt;
         const sessionPathTouches = session.touches.filter((touch) => touch.eventAt <= purchaseCutoff);
         const sessionPath = `SESSION:${sourcePath(sessionPathTouches)}`;
         const sessionPathKey = hash(sessionPath);
@@ -664,7 +673,7 @@ export class PixelAttributionService {
           path: row.path,
           current,
           comparison,
-          change: metricChanges(current, comparison),
+          change: metricChanges(pathMetricValues(current), pathMetricValues(comparison)),
         };
       }),
       pagination: { page: query.page, limit: query.limit, total },
@@ -898,7 +907,8 @@ export class PixelAttributionService {
       source: 'STRIDE_FIRST_PARTY_JOURNEY_PLUS_SHOPIFY_ORDER_TRUTH',
       lookbackDays: LOOKBACK_DAYS,
       firstTouch: 'First observed touch inside the retained 30-day first-party journey window.',
-      lastTouch: 'Last observed touch at or before checkout completion inside the retained 30-day journey window.',
+      lastTouch:
+        'Last observed touch at or before checkout completion inside the retained 30-day journey window.',
       assistedTouch:
         'An observed touch before the final pre-purchase touch in a Shopify-linked purchase journey.',
       purchaseTruth: 'Only exact non-test, non-cancelled Shopify order links count as purchases.',
