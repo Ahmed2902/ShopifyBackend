@@ -110,4 +110,5 @@ model Store {
   locations         Location[]
   orders            Order[]
   restocks          Restock[]
+  storefrontEvents  StorefrontEvent[]
 }
