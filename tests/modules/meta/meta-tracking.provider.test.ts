@@ -63,13 +63,16 @@ describe('MetaTrackingProvider', () => {
     expect(fetchMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ method: 'GET' }));
   });
 
-  it('mutates only after the live creative still matches the synced snapshot', async () => {
+  it('mutates only after the live creative matches before creation and immediately before assignment', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ id: '3003', creative: { id: '4004' } }), { status: 200 }),
       )
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: '5005' }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: '3003', creative: { id: '4004' } }), { status: 200 }),
+      )
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: '3003' }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -77,10 +80,40 @@ describe('MetaTrackingProvider', () => {
       new MetaTrackingProvider().cloneCreativeAndAssign(context, ad, 'stride_meta_ad_id={{ad.id}}'),
     ).resolves.toEqual({ newCreativeId: '5005' });
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(fetchMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ method: 'GET' }));
     expect(fetchMock.mock.calls[1]?.[1]).toEqual(expect.objectContaining({ method: 'POST' }));
-    expect(fetchMock.mock.calls[2]?.[1]).toEqual(expect.objectContaining({ method: 'POST' }));
+    expect(fetchMock.mock.calls[2]?.[1]).toEqual(expect.objectContaining({ method: 'GET' }));
+    expect(fetchMock.mock.calls[3]?.[1]).toEqual(expect.objectContaining({ method: 'POST' }));
+  });
+
+  it('aborts assignment if the merchant changes the creative while the clone is being created', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: '3003', creative: { id: '4004' } }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: '5005' }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: '3003', creative: { id: '9999' } }), { status: 200 }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      new MetaTrackingProvider().cloneCreativeAndAssign(context, ad, 'stride_meta_ad_id={{ad.id}}'),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'META_TRACKING_SNAPSHOT_STALE',
+      details: {
+        metaAdId: '3003',
+        syncedCreativeId: '4004',
+        liveCreativeId: '9999',
+        createdCreativeId: '5005',
+      },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2]?.[1]).toEqual(expect.objectContaining({ method: 'GET' }));
   });
 
   it('preserves degrees-of-freedom enhancements when cloning a post-based creative', async () => {
@@ -101,6 +134,9 @@ describe('MetaTrackingProvider', () => {
         new Response(JSON.stringify({ id: '3003', creative: { id: '4004' } }), { status: 200 }),
       )
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: '5005' }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: '3003', creative: { id: '4004' } }), { status: 200 }),
+      )
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: '3003' }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
