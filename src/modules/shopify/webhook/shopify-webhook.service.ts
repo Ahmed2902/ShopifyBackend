@@ -165,6 +165,7 @@ export class ShopifyWebhookService {
             reconciled.variantIds,
           );
         }
+        await this.catalogService.invalidatePixelResolution(context.storeId, productId);
         return true;
       }
 
@@ -172,6 +173,7 @@ export class ShopifyWebhookService {
         const resource = shopifyResourceWebhookSchema.parse(payload);
         const productId = shopifyGid('Product', resource.admin_graphql_api_id ?? resource.id);
         await this.repository.markProductDeleted(context.storeId, productId);
+        await this.catalogService.invalidatePixelResolution(context.storeId, productId);
         return true;
       }
 
