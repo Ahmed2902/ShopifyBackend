@@ -19,7 +19,7 @@ function repositoryMock() {
     findVisitorJourneySessions: vi.fn(),
     findValidOrders: vi.fn(),
     replaceDailyRows: vi.fn().mockResolvedValue({ attribution: 0, paths: 0, targets: 0 }),
-    acknowledgeWindow: vi.fn().mockResolvedValue(1),
+    acknowledgeSessions: vi.fn().mockResolvedValue(1),
     advanceRollupState: vi.fn(),
     recordRollupError: vi.fn(),
     groupAttribution: vi.fn().mockResolvedValue([]),
@@ -133,8 +133,7 @@ describe('PixelAttributionService', () => {
       },
     ] as never);
 
-    const now = new Date('2026-09-05T00:00:00.000Z');
-    const service = new PixelAttributionService(repository, () => now);
+    const service = new PixelAttributionService(repository, () => new Date('2026-09-05T00:00:00.000Z'));
     await service.rebuildStoreDate(storeId, 'UTC', '2026-09-04');
 
     const [, , attribution, paths, targets] = vi.mocked(repository.replaceDailyRows).mock.calls[0]!;
@@ -175,12 +174,7 @@ describe('PixelAttributionService', () => {
       ]),
     );
     expect(targets.some((row) => row.metaAdId === adAId)).toBe(false);
-    expect(repository.acknowledgeWindow).toHaveBeenCalledWith(
-      storeId,
-      expect.any(Date),
-      expect.any(Date),
-      now,
-    );
+    expect(repository.acknowledgeSessions).not.toHaveBeenCalled();
   });
 
   it('excludes post-checkout touches from purchase credit and keeps a coherent session denominator', async () => {
@@ -245,6 +239,43 @@ describe('PixelAttributionService', () => {
     expect(sessionPath).toMatchObject({ sessionCount: 1, linkedPurchaseSessionCount: 1 });
     expect(journeyPath).toMatchObject({ sessionCount: 0, linkedPurchaseSessionCount: 1 });
     expect(postPurchaseTarget.linkedPurchaseSessionCount).toBe(0);
+  });
+
+  it('rebuilds downstream purchase dates but acknowledges only the selected dirty attribution session', async () => {
+    const repository = repositoryMock();
+    const acknowledgedAt = new Date('2026-09-05T01:00:00.000Z');
+    vi.mocked(repository.findDirtyStoreIds).mockResolvedValue([storeId]);
+    vi.mocked(repository.getStoreContext).mockResolvedValue({
+      id: storeId,
+      ianaTimezone: 'UTC',
+      pixelInstallation: { status: 'ACTIVE', lastEventAt: acknowledgedAt },
+      storefrontAttributionRollup: null,
+    } as never);
+    vi.mocked(repository.findDirtySessions).mockResolvedValue([
+      {
+        id: 'session-selected',
+        startedAt: new Date('2026-09-04T10:00:00.000Z'),
+        previousStartedAt: null,
+        dirtyAt: acknowledgedAt,
+        anonymousVisitorId: visitorId,
+      },
+    ] as never);
+    vi.mocked(repository.findLaterPurchaseSessions).mockResolvedValue([
+      { startedAt: new Date('2026-09-05T12:00:00.000Z') },
+    ] as never);
+    const service = new PixelAttributionService(repository, () => acknowledgedAt);
+    const rebuild = vi
+      .spyOn(service, 'rebuildStoreDate')
+      .mockResolvedValue({ attribution: 0, paths: 0, targets: 0 });
+
+    await service.rollupDirtyStores();
+
+    expect(rebuild.mock.calls.map((call) => call[2])).toEqual(['2026-09-04', '2026-09-05']);
+    expect(repository.acknowledgeSessions).toHaveBeenCalledWith(
+      storeId,
+      ['session-selected'],
+      acknowledgedAt,
+    );
   });
 
   it('caps Pixel-only mapping suggestions below the exact mapping threshold and never activates them', async () => {
