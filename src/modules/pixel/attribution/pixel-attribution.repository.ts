@@ -57,6 +57,7 @@ export interface AttributionDirtySession {
   orderUpdatedAt: Date | null;
   dirtyAt: Date;
   anonymousVisitorId: string | null;
+  visitorIds: string[];
 }
 
 export class PixelAttributionRepository {
@@ -80,17 +81,36 @@ export class PixelAttributionRepository {
 
   async findDirtyStoreIds(limit: number) {
     const rows = await prisma.$queryRaw<Array<{ storeId: string }>>`
-      SELECT DISTINCT s."storeId" AS "storeId"
+      SELECT
+        s."storeId" AS "storeId",
+        GREATEST(
+          COALESCE(r."lastRolledUpAt", TIMESTAMP 'epoch'),
+          COALESCE(r."updatedAt", TIMESTAMP 'epoch')
+        ) AS "lastAttemptAt"
       FROM "StorefrontSession" s
       LEFT JOIN "Order" o ON o."id" = s."orderId"
+      LEFT JOIN "StorefrontAttributionRollupState" r ON r."storeId" = s."storeId"
       WHERE s."attributionRolledUpAt" IS NULL
          OR s."attributionRolledUpAt" < s."rollupDirtyAt"
          OR s."attributionRolledStartedAt" IS DISTINCT FROM s."startedAt"
          OR (o."id" IS NOT NULL AND o."updatedAt" > s."attributionRolledUpAt")
-      ORDER BY s."storeId"
+      GROUP BY s."storeId", r."lastRolledUpAt", r."updatedAt"
+      ORDER BY "lastAttemptAt" ASC, s."storeId" ASC
       LIMIT ${limit}
     `;
     return rows.map((row) => row.storeId);
+  }
+
+  async withStoreRollupLock<T>(storeId: string, work: () => Promise<T>): Promise<T> {
+    return prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`
+          SELECT pg_advisory_xact_lock(hashtextextended(${`stride:pixel:attribution:${storeId}`}, 0))
+        `;
+        return work();
+      },
+      { maxWait: 30_000, timeout: 120_000 },
+    );
   }
 
   findDirtySessions(storeId: string, limit: number) {
@@ -102,7 +122,15 @@ export class PixelAttributionRepository {
         s."rollupDirtyAt" AS "rollupDirtyAt",
         o."updatedAt" AS "orderUpdatedAt",
         GREATEST(s."rollupDirtyAt", COALESCE(o."updatedAt", s."rollupDirtyAt")) AS "dirtyAt",
-        s."anonymousVisitorId"
+        s."anonymousVisitorId",
+        ARRAY(
+          SELECT DISTINCT e."anonymousVisitorId"
+          FROM "StorefrontEvent" e
+          WHERE e."storeId" = s."storeId"
+            AND e."sessionId" = s."browserSessionId"
+            AND e."anonymousVisitorId" IS NOT NULL
+          ORDER BY e."anonymousVisitorId"
+        ) AS "visitorIds"
       FROM "StorefrontSession" s
       LEFT JOIN "Order" o ON o."id" = s."orderId"
       WHERE s."storeId" = ${storeId}::uuid
