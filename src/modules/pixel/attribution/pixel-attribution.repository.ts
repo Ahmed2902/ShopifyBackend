@@ -1,7 +1,7 @@
-import type {
+import {
   Prisma,
-  StorefrontAttributionDimension,
-  StorefrontAttributionTargetType,
+  type StorefrontAttributionDimension,
+  type StorefrontAttributionTargetType,
 } from '../../../generated/prisma/client.js';
 import { prisma } from '../../../lib/prisma.js';
 
@@ -253,7 +253,9 @@ export class PixelAttributionRepository {
     });
   }
 
-  async acknowledgeWindow(storeId: string, from: Date, to: Date, acknowledgedAt: Date) {
+  async acknowledgeSessions(storeId: string, sessionIds: string[], acknowledgedAt: Date) {
+    if (sessionIds.length === 0) return 0;
+    const ids = Prisma.join(sessionIds.map((id) => Prisma.sql`${id}::uuid`));
     return prisma.$executeRaw`
       UPDATE "StorefrontSession" s
       SET
@@ -261,8 +263,7 @@ export class PixelAttributionRepository {
         "attributionRolledStartedAt" = s."startedAt",
         "updatedAt" = CURRENT_TIMESTAMP
       WHERE s."storeId" = ${storeId}::uuid
-        AND s."startedAt" >= ${from}
-        AND s."startedAt" <= ${to}
+        AND s."id" IN (${ids})
         AND s."rollupDirtyAt" <= ${acknowledgedAt}
         AND NOT EXISTS (
           SELECT 1
