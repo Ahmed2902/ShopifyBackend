@@ -23,6 +23,21 @@ export class PixelRepository {
     });
   }
 
+  findInstallationForProvisioning(storeId: string) {
+    return prisma.pixelInstallation.findUnique({
+      where: { storeId },
+      select: {
+        id: true,
+        storeId: true,
+        shopifyWebPixelId: true,
+        status: true,
+        installedAt: true,
+        lastError: true,
+        pendingCollectorTokenHash: true,
+      },
+    });
+  }
+
   findInstallationForIngress(id: string) {
     return prisma.pixelInstallation.findUnique({
       where: { id },
@@ -73,6 +88,18 @@ export class PixelRepository {
       )
       ON CONFLICT ("storeId")
       DO UPDATE SET
+        "collectorTokenHash" = CASE
+          WHEN "PixelInstallation"."lastError" IS NOT NULL
+            AND "PixelInstallation"."pendingCollectorTokenHash" IS NOT NULL
+          THEN "PixelInstallation"."pendingCollectorTokenHash"
+          ELSE "PixelInstallation"."collectorTokenHash"
+        END,
+        "collectorTokenPrefix" = CASE
+          WHEN "PixelInstallation"."lastError" IS NOT NULL
+            AND "PixelInstallation"."pendingCollectorTokenPrefix" IS NOT NULL
+          THEN "PixelInstallation"."pendingCollectorTokenPrefix"
+          ELSE "PixelInstallation"."collectorTokenPrefix"
+        END,
         "pendingCollectorTokenHash" = EXCLUDED."pendingCollectorTokenHash",
         "pendingCollectorTokenPrefix" = EXCLUDED."pendingCollectorTokenPrefix",
         "status" = EXCLUDED."status",
@@ -127,16 +154,15 @@ export class PixelRepository {
   async rollbackStagedInstallation(
     id: string,
     expectedPendingTokenHash: string,
-    hadWorkingInstallation: boolean,
+    rollbackStatus: 'ACTIVE' | 'PROVISIONING' | 'ERROR',
     lastError: string,
   ) {
-    const status = hadWorkingInstallation ? 'ACTIVE' : 'ERROR';
     const rows = await prisma.$queryRaw<Array<{ id: string; status: string }>>`
       UPDATE "PixelInstallation"
       SET
         "pendingCollectorTokenHash" = NULL,
         "pendingCollectorTokenPrefix" = NULL,
-        "status" = ${status}::"PixelInstallationStatus",
+        "status" = ${rollbackStatus}::"PixelInstallationStatus",
         "lastError" = ${lastError},
         "updatedAt" = CURRENT_TIMESTAMP
       WHERE "id" = ${id}::uuid
@@ -184,6 +210,7 @@ export class PixelRepository {
             (${id}::uuid, ${storeId}::uuid, ${browserSessionId}, ${sourceReceivedAt}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
           ON CONFLICT ("storeId", "browserSessionId")
           DO UPDATE SET
+            "id" = EXCLUDED."id",
             "sourceReceivedAt" = GREATEST("StorefrontSessionRepair"."sourceReceivedAt", EXCLUDED."sourceReceivedAt"),
             "updatedAt" = CURRENT_TIMESTAMP
         `;
