@@ -29,6 +29,7 @@ function repositoryMock() {
     groupPathHashes: vi.fn().mockResolvedValue([]),
     countPaths: vi.fn().mockResolvedValue(0),
     groupTargetEvidence: vi.fn().mockResolvedValue([]),
+    groupTargetEvidenceForAds: vi.fn().mockResolvedValue([]),
     countTargetEvidence: vi.fn().mockResolvedValue(0),
     findTargetMetadata: vi.fn().mockResolvedValue([]),
     findMetaAdsForDisplay: vi.fn().mockResolvedValue([]),
@@ -168,21 +169,21 @@ describe('PixelAttributionService', () => {
         lastError: null,
       },
     } as never);
-    vi.mocked(repository.groupTargetEvidence).mockResolvedValue([
-      {
-        metaAdId: adBId,
-        targetKey: `product:${productId}`,
-        _sum: {
-          interactedSessionCount: 20,
-          viewedSessionCount: 18,
-          addToCartSessionCount: 8,
-          linkedPurchaseSessionCount: 5,
-          firstTouchPurchaseSessionCount: 2,
-          lastTouchPurchaseSessionCount: 4,
-          assistedPurchaseSessionCount: 2,
-        },
+    const targetEvidence = {
+      metaAdId: adBId,
+      targetKey: `product:${productId}`,
+      _sum: {
+        interactedSessionCount: 20,
+        viewedSessionCount: 18,
+        addToCartSessionCount: 8,
+        linkedPurchaseSessionCount: 5,
+        firstTouchPurchaseSessionCount: 2,
+        lastTouchPurchaseSessionCount: 4,
+        assistedPurchaseSessionCount: 2,
       },
-    ] as never);
+    };
+    vi.mocked(repository.groupTargetEvidence).mockResolvedValue([targetEvidence] as never);
+    vi.mocked(repository.groupTargetEvidenceForAds).mockResolvedValue([targetEvidence] as never);
     vi.mocked(repository.countTargetEvidence).mockResolvedValue(1);
     vi.mocked(repository.findTargetMetadata).mockResolvedValue([
       {
