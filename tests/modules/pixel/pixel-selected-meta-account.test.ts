@@ -22,9 +22,22 @@ async function createStore() {
   return store;
 }
 
+async function cleanupStore(storeId: string) {
+  await prisma.storefrontSessionTouch.deleteMany({ where: { session: { storeId } } });
+  await prisma.storefrontSessionRepair.deleteMany({ where: { storeId } });
+  await prisma.storefrontSession.deleteMany({ where: { storeId } });
+  await prisma.metaAd.deleteMany({ where: { adAccount: { storeId } } });
+  await prisma.metaAdSet.deleteMany({ where: { adAccount: { storeId } } });
+  await prisma.metaCampaign.deleteMany({ where: { adAccount: { storeId } } });
+  await prisma.metaCreative.deleteMany({ where: { adAccount: { storeId } } });
+  await prisma.metaAdAccount.deleteMany({ where: { storeId } });
+  await prisma.metaConnection.deleteMany({ where: { storeId } });
+  await prisma.store.delete({ where: { id: storeId } });
+}
+
 afterEach(async () => {
   for (const storeId of stores.splice(0)) {
-    await prisma.store.delete({ where: { id: storeId } });
+    await cleanupStore(storeId);
   }
 });
 
