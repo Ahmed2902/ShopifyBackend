@@ -1,4 +1,5 @@
 import { Prisma, type StorefrontBehaviorDimension } from '../../../generated/prisma/client.js';
+import { withPostgresAdvisoryLock } from '../../../lib/postgres-advisory-lock.js';
 import { prisma } from '../../../lib/prisma.js';
 
 const BEHAVIOR_SUM_FIELDS = {
@@ -81,16 +82,8 @@ export class PixelBehaviorRepository {
     return rows.map((row) => row.storeId);
   }
 
-  async withStoreRollupLock<T>(storeId: string, work: () => Promise<T>): Promise<T> {
-    return prisma.$transaction(
-      async (tx) => {
-        await tx.$queryRaw`
-          SELECT pg_advisory_xact_lock(hashtextextended(${`stride:pixel:behavior:${storeId}`}, 0))
-        `;
-        return work();
-      },
-      { maxWait: 30_000, timeout: 120_000 },
-    );
+  withStoreRollupLock<T>(storeId: string, work: () => Promise<T>): Promise<T> {
+    return withPostgresAdvisoryLock(`stride:pixel:behavior:${storeId}`, work);
   }
 
   findDirtySessions(storeId: string, limit: number) {
