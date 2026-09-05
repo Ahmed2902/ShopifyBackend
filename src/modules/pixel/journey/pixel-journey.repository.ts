@@ -318,6 +318,12 @@ export class PixelJourneyRepository {
           AND s."attributionRolledUpAt" >= s."rollupDirtyAt"
           AND s."behaviorRolledStartedAt" = s."startedAt"
           AND s."attributionRolledStartedAt" = s."startedAt"
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "StorefrontSessionRepair" r
+            WHERE r."storeId" = s."storeId"
+              AND r."browserSessionId" = s."browserSessionId"
+          )
         ORDER BY s."retentionExpiresAt" ASC, s."id" ASC
         LIMIT ${limit}
         FOR UPDATE OF s SKIP LOCKED
@@ -346,6 +352,12 @@ export class PixelJourneyRepository {
           AND s."attributionRolledUpAt" >= s."rollupDirtyAt"
           AND s."behaviorRolledStartedAt" = s."startedAt"
           AND s."attributionRolledStartedAt" = s."startedAt"
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "StorefrontSessionRepair" r
+            WHERE r."storeId" = s."storeId"
+              AND r."browserSessionId" = s."browserSessionId"
+          )
           AND NOT EXISTS (
             SELECT 1
             FROM "Order" o
