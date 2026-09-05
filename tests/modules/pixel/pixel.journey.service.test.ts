@@ -53,8 +53,8 @@ function buildRepository(events: Array<Record<string, unknown>>) {
     clearSessionRepair: vi.fn().mockResolvedValue({ count: 1 }),
     findDirtySessionKeys: vi.fn().mockResolvedValue([]),
     findPendingOrderSessions: vi.fn().mockResolvedValue([]),
-    setOrderLink: vi.fn().mockResolvedValue({ id: 'session-db-id' }),
-    scheduleOrderLinkRetry: vi.fn().mockResolvedValue({ id: 'session-db-id' }),
+    setOrderLink: vi.fn().mockResolvedValue({ count: 1 }),
+    scheduleOrderLinkRetry: vi.fn().mockResolvedValue({ count: 1 }),
     deleteExpiredSessions: vi.fn().mockResolvedValue({ selected: 0, deleted: 0 }),
     listSessions: vi.fn().mockResolvedValue({ items: [], total: 0 }),
     getSession: vi.fn().mockResolvedValue(null),
@@ -336,10 +336,16 @@ describe('PixelJourneyService', () => {
       selected: 1,
       linked: 1,
       deferred: 0,
+      stale: 0,
       stillPending: 0,
     });
     expect(repository.findPendingOrderSessions).toHaveBeenCalledWith(fixedNow, 100);
-    expect(repository.setOrderLink).toHaveBeenCalledWith('session-db', 'order-db', fixedNow);
+    expect(repository.setOrderLink).toHaveBeenCalledWith(
+      'session-db',
+      orderGid,
+      'order-db',
+      fixedNow,
+    );
   });
 
   it('backs off unresolved orders so they rotate out of the next reconciliation batch', async () => {
@@ -354,10 +360,12 @@ describe('PixelJourneyService', () => {
       selected: 1,
       linked: 0,
       deferred: 1,
+      stale: 0,
       stillPending: 1,
     });
     expect(repository.scheduleOrderLinkRetry).toHaveBeenCalledWith(
       'session-db',
+      orderGid,
       1,
       new Date('2026-09-04T15:05:00.000Z'),
     );
