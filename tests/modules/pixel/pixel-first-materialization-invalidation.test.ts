@@ -110,4 +110,79 @@ describeDatabase('Pixel source invalidation during first materialization', () =>
     expect(after.id).not.toBe(before.id);
     expect(await prisma.storefrontSession.count({ where: { storeId: store.id } })).toBe(0);
   });
+
+  it('invalidates an ad-only materialized touch when its resolved ad set is reparented', async () => {
+    const store = await createStore();
+    const connection = await prisma.metaConnection.create({
+      data: {
+        storeId: store.id,
+        accessTokenCiphertext: 'test',
+        apiVersion: 'v26.0',
+      },
+    });
+    const account = await prisma.metaAdAccount.create({
+      data: {
+        storeId: store.id,
+        metaConnectionId: connection.id,
+        metaAccountId: 'act_200',
+        name: 'Account',
+        currency: 'USD',
+      },
+    });
+    const repository = new MetaAdsRepository();
+    const campaignA = await repository.upsertCampaign(account.id, { id: '2001', name: 'A' });
+    const campaignB = await repository.upsertCampaign(account.id, { id: '2002', name: 'B' });
+    const adSet = await repository.upsertAdSet(account.id, campaignA.id, {
+      id: '2101',
+      campaign_id: '2001',
+      name: 'Set',
+    });
+    const ad = await repository.upsertAd(account.id, campaignA.id, adSet.id, null, {
+      id: '2201',
+      campaign_id: '2001',
+      adset_id: '2101',
+      name: 'Ad',
+    });
+
+    const now = new Date();
+    const session = await prisma.storefrontSession.create({
+      data: {
+        storeId: store.id,
+        browserSessionId: randomUUID(),
+        startedAt: now,
+        endedAt: now,
+        lastSourceReceivedAt: now,
+        eventCount: 1,
+        retentionExpiresAt: new Date(now.getTime() + 86_400_000),
+      },
+    });
+    await prisma.storefrontSessionTouch.create({
+      data: {
+        sessionId: session.id,
+        ordinal: 1,
+        eventAt: now,
+        source: 'META',
+        metaAdExternalId: '2201',
+        metaAdId: ad.id,
+        metaAdSetId: adSet.id,
+        metaCampaignId: campaignA.id,
+        metaResolutionStatus: 'EXACT',
+      },
+    });
+
+    await repository.upsertAdSet(account.id, campaignB.id, {
+      id: '2101',
+      campaign_id: '2002',
+      name: 'Set',
+    });
+
+    expect(await prisma.storefrontSessionRepair.findUnique({
+      where: {
+        storeId_browserSessionId: {
+          storeId: store.id,
+          browserSessionId: session.browserSessionId,
+        },
+      },
+    })).not.toBeNull();
+  });
 });
