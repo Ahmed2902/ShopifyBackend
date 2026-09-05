@@ -282,11 +282,37 @@ export class ShopifyWebhookRepository {
 
       const dirtyAt = new Date();
 
-      // Rotate the repair generation before unlinking/deleting Shopify order truth. A materializer
-      // that read the old Order and old repair generation can no longer claim that generation after
-      // this transaction commits, so it cannot resurrect a LINKED session pointing at the deleted
-      // local Order UUID. If the materializer already claimed first, the session-row update below
-      // serializes after it and unlinks its result.
+      // Invalidate every retained browser session whose raw checkout evidence names this Shopify
+      // order, even if the session is still PENDING or has not been materialized yet. This repair
+      // generation survives a stale pending-link write that races after deletion; the repair pass
+      // will rematerialize against current Shopify truth and return the link to PENDING.
+      await tx.$executeRaw`
+        INSERT INTO "StorefrontSessionRepair"
+          ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
+        SELECT
+          gen_random_uuid(),
+          e."storeId",
+          e."sessionId",
+          MAX(e."receivedAt"),
+          CURRENT_TIMESTAMP,
+          CURRENT_TIMESTAMP
+        FROM "StorefrontEvent" e
+        WHERE e."storeId" = ${storeId}::uuid
+          AND e."sessionId" IS NOT NULL
+          AND e."shopifyOrderExternalId" = ${shopifyOrderId}
+        GROUP BY e."storeId", e."sessionId"
+        ON CONFLICT ("storeId", "browserSessionId")
+        DO UPDATE SET
+          "id" = EXCLUDED."id",
+          "sourceReceivedAt" = GREATEST(
+            "StorefrontSessionRepair"."sourceReceivedAt",
+            EXCLUDED."sourceReceivedAt"
+          ),
+          "updatedAt" = CURRENT_TIMESTAMP
+      `;
+
+      // Also rotate repair state for an already-linked session even if its retained raw checkout
+      // source is absent for any reason.
       await tx.$executeRaw`
         INSERT INTO "StorefrontSessionRepair"
           ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
@@ -299,7 +325,10 @@ export class ShopifyWebhookRepository {
           CURRENT_TIMESTAMP
         FROM "StorefrontSession" s
         WHERE s."storeId" = ${storeId}::uuid
-          AND s."orderId" = ${order.id}::uuid
+          AND (
+            s."orderId" = ${order.id}::uuid
+            OR s."shopifyOrderExternalId" = ${shopifyOrderId}
+          )
         ON CONFLICT ("storeId", "browserSessionId")
         DO UPDATE SET
           "id" = EXCLUDED."id",
@@ -311,7 +340,10 @@ export class ShopifyWebhookRepository {
       `;
 
       await tx.storefrontSession.updateMany({
-        where: { storeId, orderId: order.id },
+        where: {
+          storeId,
+          OR: [{ orderId: order.id }, { shopifyOrderExternalId: shopifyOrderId }],
+        },
         data: {
           orderId: null,
           orderLinkStatus: 'PENDING',
