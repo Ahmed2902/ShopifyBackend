@@ -19,11 +19,17 @@ function sqlValues(values: string[]) {
 
 /**
  * Meta hierarchy rows are provider identity evidence used by the retained Pixel read model.
- * Raw-only sessions already have a durable repair marker from ingestion, so source changes only
- * need to rotate generations for materialized sessions whose compact touch evidence is affected.
- * Passing no evidence intentionally invalidates every retained materialized Meta touch for a store.
+ *
+ * Two populations must be protected whenever resolver truth changes:
+ * 1. already-materialized sessions whose compact touch evidence references the changed identity;
+ * 2. raw-only / currently-materializing sessions that still have an outstanding repair marker.
+ *
+ * Rotating existing repair generations first closes the race where a first materializer reads old
+ * provider truth, the provider mutation commits, and the materializer otherwise consumes the same
+ * marker while writing stale resolution. The targeted compact-evidence insert then handles clean
+ * materialized sessions without rescanning retained raw history.
  */
-export function enqueueMetaHierarchyPixelRepairs(
+export async function enqueueMetaHierarchyPixelRepairs(
   storeId: string,
   db: RepairSqlClient = prisma,
   evidence?: MetaHierarchyRepairEvidence,
@@ -33,8 +39,16 @@ export function enqueueMetaHierarchyPixelRepairs(
   const adIds = distinct(evidence?.adIds);
 
   if (evidence && campaignIds.length === 0 && adSetIds.length === 0 && adIds.length === 0) {
-    return Promise.resolve(0);
+    return 0;
   }
+
+  await db.$executeRaw`
+    UPDATE "StorefrontSessionRepair"
+    SET
+      "id" = gen_random_uuid(),
+      "updatedAt" = CURRENT_TIMESTAMP
+    WHERE "storeId" = ${storeId}::uuid
+  `;
 
   const evidencePredicate = evidence
     ? Prisma.join(
