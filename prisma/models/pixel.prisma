@@ -54,6 +54,16 @@ enum StorefrontBehaviorDimension {
   LANDING_PAGE
 }
 
+enum StorefrontAttributionDimension {
+  SOURCE
+  META_AD
+}
+
+enum StorefrontAttributionTargetType {
+  PRODUCT
+  COLLECTION
+}
+
 model PixelInstallation {
   id                   String                  @id @default(uuid()) @db.Uuid
   storeId              String                  @unique @db.Uuid
@@ -289,6 +299,102 @@ model StorefrontBehaviorRollupState {
   lastError                   String?  @db.Text
   createdAt                   DateTime @default(now())
   updatedAt                   DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+}
+
+model StorefrontAttributionDaily {
+  id                              String                       @id @default(uuid()) @db.Uuid
+  storeId                         String                       @db.Uuid
+  bucketDate                      DateTime                     @db.Date
+  dimension                       StorefrontAttributionDimension
+  dimensionKey                    String                       @db.VarChar(320)
+  source                          StorefrontJourneySource
+  metaCampaignId                  String?                      @db.Uuid
+  metaAdSetId                     String?                      @db.Uuid
+  metaAdId                        String?                      @db.Uuid
+  metaCampaignExternalId          String?                      @db.VarChar(128)
+  metaAdSetExternalId             String?                      @db.VarChar(128)
+  metaAdExternalId                String?                      @db.VarChar(128)
+  touchedSessionCount             Int                          @default(0)
+  linkedPurchaseSessionCount      Int                          @default(0)
+  firstTouchPurchaseSessionCount  Int                          @default(0)
+  lastTouchPurchaseSessionCount   Int                          @default(0)
+  assistedPurchaseSessionCount    Int                          @default(0)
+  singleTouchPurchaseSessionCount Int                          @default(0)
+  crossSessionPurchaseCount       Int                          @default(0)
+  conversionDelayMsTotal          BigInt                       @default(0)
+  conversionDelayCount            Int                          @default(0)
+  exactMetaResolutionSessionCount Int                          @default(0)
+  createdAt                       DateTime                     @default(now())
+  updatedAt                       DateTime                     @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, bucketDate, dimension, dimensionKey], map: "StorefrontAttributionDaily_store_date_dim_key")
+  @@index([storeId, bucketDate, dimension], map: "StorefrontAttributionDaily_store_date_dim_idx")
+  @@index([storeId, metaAdId, bucketDate], map: "StorefrontAttributionDaily_meta_ad_date_idx")
+}
+
+model StorefrontAttributionPathDaily {
+  id                        String   @id @default(uuid()) @db.Uuid
+  storeId                   String   @db.Uuid
+  bucketDate                DateTime @db.Date
+  pathHash                  String   @db.VarChar(64)
+  path                      String   @db.VarChar(512)
+  sessionCount              Int      @default(0)
+  linkedPurchaseSessionCount Int     @default(0)
+  crossSessionPurchaseCount Int      @default(0)
+  conversionDelayMsTotal    BigInt   @default(0)
+  conversionDelayCount      Int      @default(0)
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, bucketDate, pathHash], map: "StorefrontAttributionPathDaily_store_date_path_key")
+  @@index([storeId, bucketDate], map: "StorefrontAttributionPathDaily_store_date_idx")
+}
+
+model StorefrontMetaTargetEvidenceDaily {
+  id                              String                         @id @default(uuid()) @db.Uuid
+  storeId                         String                         @db.Uuid
+  bucketDate                      DateTime                       @db.Date
+  metaAdId                        String                         @db.Uuid
+  metaAdExternalId                String                         @db.VarChar(128)
+  targetType                      StorefrontAttributionTargetType
+  targetKey                       String                         @db.VarChar(320)
+  productId                       String?                        @db.Uuid
+  collectionId                    String?                        @db.Uuid
+  productExternalId               String?                        @db.VarChar(128)
+  variantExternalId               String?                        @db.VarChar(128)
+  collectionExternalId            String?                        @db.VarChar(128)
+  interactedSessionCount          Int                            @default(0)
+  viewedSessionCount              Int                            @default(0)
+  addToCartSessionCount           Int                            @default(0)
+  linkedPurchaseSessionCount      Int                            @default(0)
+  firstTouchPurchaseSessionCount  Int                            @default(0)
+  lastTouchPurchaseSessionCount   Int                            @default(0)
+  assistedPurchaseSessionCount    Int                            @default(0)
+  createdAt                       DateTime                       @default(now())
+  updatedAt                       DateTime                       @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, bucketDate, metaAdId, targetType, targetKey], map: "StorefrontMetaTargetEvidenceDaily_store_date_target_key")
+  @@index([storeId, metaAdId, bucketDate], map: "StorefrontMetaTargetEvidenceDaily_meta_ad_date_idx")
+  @@index([storeId, productId, bucketDate], map: "StorefrontMetaTargetEvidenceDaily_product_date_idx")
+  @@index([storeId, collectionId, bucketDate], map: "StorefrontMetaTargetEvidenceDaily_collection_date_idx")
+}
+
+model StorefrontAttributionRollupState {
+  id                            String   @id @default(uuid()) @db.Uuid
+  storeId                       String   @unique(map: "StorefrontAttributionRollupState_store_key") @db.Uuid
+  rolledThroughSessionUpdatedAt DateTime?
+  lastRolledUpAt                DateTime?
+  lastError                     String?  @db.Text
+  createdAt                     DateTime @default(now())
+  updatedAt                     DateTime @updatedAt
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 }
