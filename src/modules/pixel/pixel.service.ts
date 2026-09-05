@@ -24,6 +24,7 @@ import {
 
 const COLLECTOR_PATH = '/v1/pixel/events';
 const TOKEN_PREFIX_LENGTH = 8;
+const REQUIRED_SHOPIFY_SCOPES = ['write_pixels', 'read_pixels', 'read_customer_events'] as const;
 type StoreScopedEventInput = Omit<Prisma.StorefrontEventCreateManyInput, 'storeId'>;
 
 function hashCollectorToken(token: string): Buffer {
@@ -34,7 +35,8 @@ function serializeTokenHash(token: string): string {
   return hashCollectorToken(token).toString('hex');
 }
 
-function tokenMatches(token: string, expectedHexHash: string): boolean {
+function tokenMatches(token: string, expectedHexHash: string | null | undefined): boolean {
+  if (!expectedHexHash) return false;
   const actual = hashCollectorToken(token);
   const expected = Buffer.from(expectedHexHash, 'hex');
   return actual.length === expected.length && timingSafeEqual(actual, expected);
@@ -68,9 +70,21 @@ export class PixelService {
     const collectorToken = randomBytes(PIXEL_COLLECTOR_TOKEN_BYTES).toString('base64url');
     const collectorTokenHash = serializeTokenHash(collectorToken);
     const collectorTokenPrefix = collectorToken.slice(0, TOKEN_PREFIX_LENGTH);
+    const hadWorkingInstallation = existing?.status === 'ACTIVE';
 
+    // Stage the credential durably before changing Shopify. During rotation ingress accepts both
+    // the active and staged hashes, so a provider-success/local-finalize failure cannot take a
+    // producing storefront offline.
+    await this.repository.stageInstallation({
+      id: installationId,
+      storeId,
+      collectorTokenHash,
+      collectorTokenPrefix,
+    });
+
+    let webPixel: { id: string };
     try {
-      const webPixel = await this.shopifyProvisioner.upsert({
+      webPixel = await this.shopifyProvisioner.upsert({
         storeId,
         existingWebPixelId: existing?.shopifyWebPixelId ?? null,
         settings: {
@@ -79,42 +93,38 @@ export class PixelService {
           collectorToken,
         },
       });
+    } catch (error) {
+      await this.repository
+        .rollbackStagedInstallation(installationId, hadWorkingInstallation, errorMessage(error))
+        .catch(() => undefined);
+      throw error;
+    }
 
-      const installedAt = this.now();
-      const installation = await this.repository.upsertInstallation({
+    try {
+      const installation = await this.repository.finalizeInstallation({
         id: installationId,
-        storeId,
-        collectorTokenHash,
-        collectorTokenPrefix,
         shopifyWebPixelId: webPixel.id,
-        status: 'ACTIVE',
-        installedAt,
-        lastError: null,
+        installedAt: this.now(),
       });
+      if (!installation) {
+        throw new AppError(
+          'Pixel installation disappeared during finalization',
+          409,
+          'PIXEL_INSTALLATION_MISSING',
+        );
+      }
 
       return {
         ...installation,
         collectorUrl,
-        requiredShopifyScopes: ['write_pixels', 'read_customer_events'] as const,
+        requiredShopifyScopes: REQUIRED_SHOPIFY_SCOPES,
       };
     } catch (error) {
-      const message = errorMessage(error);
-      if (existing) {
-        await this.repository.recordInstallationError(existing.id, message).catch(() => undefined);
-      } else {
-        await this.repository
-          .upsertInstallation({
-            id: installationId,
-            storeId,
-            collectorTokenHash,
-            collectorTokenPrefix,
-            shopifyWebPixelId: null,
-            status: 'ERROR',
-            installedAt: null,
-            lastError: message,
-          })
-          .catch(() => undefined);
-      }
+      // Do not roll the staged hash back here: Shopify already accepted the new settings. Keeping
+      // the staged credential recoverable is what prevents split-brain credential rejection.
+      await this.repository
+        .recordInstallationError(installationId, errorMessage(error))
+        .catch(() => undefined);
       throw error;
     }
   }
@@ -125,24 +135,26 @@ export class PixelService {
       return {
         status: 'NOT_INSTALLED' as const,
         collectorUrl: this.getCollectorUrl(false),
-        requiredShopifyScopes: ['write_pixels', 'read_customer_events'] as const,
+        requiredShopifyScopes: REQUIRED_SHOPIFY_SCOPES,
       };
     }
 
     return {
       ...installation,
       collectorUrl: this.getCollectorUrl(false),
-      requiredShopifyScopes: ['write_pixels', 'read_customer_events'] as const,
+      requiredShopifyScopes: REQUIRED_SHOPIFY_SCOPES,
     };
   }
 
   async ingest(batch: PixelIngestBatchInput) {
     const installation = await this.repository.findInstallationForIngress(batch.installationId);
-    if (
-      !installation ||
-      installation.status !== 'ACTIVE' ||
-      !tokenMatches(batch.collectorToken, installation.collectorTokenHash)
-    ) {
+    const acceptedStatus = installation?.status === 'ACTIVE' || installation?.status === 'PROVISIONING';
+    const credentialMatches = Boolean(
+      installation &&
+        (tokenMatches(batch.collectorToken, installation.collectorTokenHash) ||
+          tokenMatches(batch.collectorToken, installation.pendingCollectorTokenHash)),
+    );
+    if (!installation || !acceptedStatus || !credentialMatches) {
       throw new AppError('Pixel collector credentials are invalid', 401, 'PIXEL_UNAUTHORIZED');
     }
 
@@ -169,9 +181,10 @@ export class PixelService {
       ),
     ];
     if (sessionIds.length > 0) {
-      // Raw event durability is the collector contract. Session materialization is derived and
-      // repaired by a worker, so a temporary read-model failure must not turn a valid collector
-      // write into an endless browser retry loop.
+      // The explicit repair queue makes steady-state repair O(dirty sessions) rather than scanning
+      // retained raw events. Mark only after the event write succeeds; immediate materialization
+      // then clears markers it actually covered, while concurrent newer writes remain dirty.
+      await this.repository.markSessionRepairs(installation.storeId, sessionIds, receivedAt);
       await this.journeyService
         .materializeSessions(installation.storeId, sessionIds)
         .catch(() => undefined);
