@@ -1,4 +1,5 @@
 import { AppError } from '../../../errors/app-error.js';
+import { enqueueMetaHierarchyPixelRepairs } from '../../pixel/pixel-source-invalidation.js';
 import type { MetaApiContext } from '../meta.types.js';
 import { parseMetaRecord, toJsonSafe } from '../meta.utils.js';
 import type { MetaApiService } from '../shared/meta-api.service.js';
@@ -162,6 +163,11 @@ export class MetaAdsService {
       adIds: ads.map((ad) => ad.id),
     });
     await this.repository.markAccountSynced(account.id);
+
+    // Each account snapshot above commits independently. Rotate retained Pixel repair generations
+    // immediately after this account is fully persisted, before the caller starts the next selected
+    // account. If a later account fails, identities from this successful account still re-resolve.
+    await enqueueMetaHierarchyPixelRepairs(context.storeId);
 
     const recordsRead = 1 + campaigns.length + adSets.length + creatives.length + ads.length;
     const softDeleted = deleted.campaigns + deleted.adSets + deleted.creatives + deleted.ads;
