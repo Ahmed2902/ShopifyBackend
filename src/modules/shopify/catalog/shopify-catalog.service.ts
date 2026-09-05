@@ -46,16 +46,13 @@ export class ShopifyCatalogService {
     const products = await this.syncProducts(input);
     const variants = await this.syncVariants(input);
     const collections = await this.syncCollections(input);
-    await Promise.all([
-      this.repository.markMissingCatalogDeleted(input.storeId, products.ids, variants.ids),
-      this.syncRepository.markMissingCollectionsDeleted(input.storeId, collections.ids),
-    ]);
 
-    // Product/variant/collection synchronization can change whether retained first-party evidence
-    // resolves EXACT/PARTIAL/UNRESOLVED/CONFLICT. Rotate repair generations only after the source
-    // catalog and deletion markers are fully committed so the next materialization sees one coherent
-    // Shopify snapshot.
+    await this.repository.markMissingCatalogDeleted(input.storeId, products.ids, variants.ids);
     await this.syncRepository.enqueuePixelResolutionRepairs(input.storeId);
+
+    await this.syncRepository.markMissingCollectionsDeleted(input.storeId, collections.ids);
+    await this.syncRepository.enqueuePixelResolutionRepairs(input.storeId);
+
     return { products, variants, collections };
   }
 
@@ -167,6 +164,7 @@ export class ShopifyCatalogService {
     for await (const products of pages) {
       read += products.length;
       await this.syncRepository.persistProducts(input.storeId, products);
+      await this.syncRepository.enqueuePixelResolutionRepairs(input.storeId);
       ids.push(...products.map((product) => product.id));
       written += products.length;
     }
@@ -206,6 +204,7 @@ export class ShopifyCatalogService {
           'SHOPIFY_CATALOG_INCONSISTENT',
         );
       }
+      await this.syncRepository.enqueuePixelResolutionRepairs(input.storeId);
       ids.push(...variants.map((variant) => variant.id));
       written += variants.length;
     }
@@ -242,6 +241,7 @@ export class ShopifyCatalogService {
     for await (const collections of pages) {
       read += collections.length;
       await this.syncRepository.persistCollections(input.storeId, collections);
+      await this.syncRepository.enqueuePixelResolutionRepairs(input.storeId);
       for (const collection of collections) {
         const productIds = await this.loadCollectionProductIds(input, collection.id);
         const persisted = await this.syncRepository.replaceCollectionProducts(
@@ -256,6 +256,7 @@ export class ShopifyCatalogService {
             'SHOPIFY_CATALOG_INCONSISTENT',
           );
         }
+        await this.syncRepository.enqueuePixelResolutionRepairs(input.storeId);
       }
       ids.push(...collections.map((collection) => collection.id));
       written += collections.length;
