@@ -112,6 +112,7 @@ model Store {
   orders                          Order[]
   restocks                        Restock[]
   storefrontEvents                StorefrontEvent[]
+  storefrontSessionRepairs        StorefrontSessionRepair[]
   storefrontSessions              StorefrontSession[]
   storefrontBehaviorDaily         StorefrontBehaviorDaily[]
   storefrontBehaviorRollup        StorefrontBehaviorRollupState?

@@ -72,27 +72,45 @@ export class PixelAttributionRepository {
     const rows = await prisma.$queryRaw<Array<{ storeId: string }>>`
       SELECT DISTINCT s."storeId" AS "storeId"
       FROM "StorefrontSession" s
-      LEFT JOIN "StorefrontAttributionRollupState" r ON r."storeId" = s."storeId"
-      WHERE r."rolledThroughSessionUpdatedAt" IS NULL
-         OR s."updatedAt" > r."rolledThroughSessionUpdatedAt"
+      LEFT JOIN "Order" o ON o."id" = s."orderId"
+      WHERE s."attributionRolledUpAt" IS NULL
+         OR s."attributionRolledUpAt" < s."rollupDirtyAt"
+         OR s."attributionRolledStartedAt" IS DISTINCT FROM s."startedAt"
+         OR (o."id" IS NOT NULL AND o."updatedAt" > s."attributionRolledUpAt")
       ORDER BY s."storeId"
       LIMIT ${limit}
     `;
     return rows.map((row) => row.storeId);
   }
 
-  findDirtySessions(storeId: string, after: Date | null, limit: number) {
-    return prisma.storefrontSession.findMany({
-      where: { storeId, ...(after ? { updatedAt: { gt: after } } : {}) },
-      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
-      take: limit,
-      select: {
-        id: true,
-        startedAt: true,
-        updatedAt: true,
-        anonymousVisitorId: true,
-      },
-    });
+  findDirtySessions(storeId: string, limit: number) {
+    return prisma.$queryRaw<
+      Array<{
+        id: string;
+        startedAt: Date;
+        previousStartedAt: Date | null;
+        dirtyAt: Date;
+        anonymousVisitorId: string | null;
+      }>
+    >`
+      SELECT
+        s."id",
+        s."startedAt",
+        s."attributionRolledStartedAt" AS "previousStartedAt",
+        GREATEST(s."rollupDirtyAt", COALESCE(o."updatedAt", s."rollupDirtyAt")) AS "dirtyAt",
+        s."anonymousVisitorId"
+      FROM "StorefrontSession" s
+      LEFT JOIN "Order" o ON o."id" = s."orderId"
+      WHERE s."storeId" = ${storeId}::uuid
+        AND (
+          s."attributionRolledUpAt" IS NULL
+          OR s."attributionRolledUpAt" < s."rollupDirtyAt"
+          OR s."attributionRolledStartedAt" IS DISTINCT FROM s."startedAt"
+          OR (o."id" IS NOT NULL AND o."updatedAt" > s."attributionRolledUpAt")
+        )
+      ORDER BY "dirtyAt" ASC, s."id" ASC
+      LIMIT ${limit}
+    `;
   }
 
   findLaterPurchaseSessions(
@@ -179,6 +197,7 @@ export class PixelAttributionRepository {
         id: true,
         startedAt: true,
         touches: {
+          where: { eventAt: { lte: to } },
           orderBy: { ordinal: 'asc' },
           select: {
             ordinal: true,
@@ -232,6 +251,26 @@ export class PixelAttributionRepository {
       if (targets.length > 0) await tx.storefrontMetaTargetEvidenceDaily.createMany({ data: targets });
       return { attribution: attribution.length, paths: paths.length, targets: targets.length };
     });
+  }
+
+  async acknowledgeWindow(storeId: string, from: Date, to: Date, acknowledgedAt: Date) {
+    return prisma.$executeRaw`
+      UPDATE "StorefrontSession" s
+      SET
+        "attributionRolledUpAt" = ${acknowledgedAt},
+        "attributionRolledStartedAt" = s."startedAt",
+        "updatedAt" = CURRENT_TIMESTAMP
+      WHERE s."storeId" = ${storeId}::uuid
+        AND s."startedAt" >= ${from}
+        AND s."startedAt" <= ${to}
+        AND s."rollupDirtyAt" <= ${acknowledgedAt}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "Order" o
+          WHERE o."id" = s."orderId"
+            AND o."updatedAt" > ${acknowledgedAt}
+        )
+    `;
   }
 
   advanceRollupState(storeId: string, watermark: Date, rolledUpAt: Date) {
@@ -475,11 +514,23 @@ export class PixelAttributionRepository {
     return Promise.all([
       prisma.adProductMapping.findMany({
         where: { metaAdId: { in: metaAdIds }, validUntil: null, ad: { adAccount: { storeId } } },
-        select: { metaAdId: true, productId: true, confidence: true, isMerchantConfirmed: true, source: true },
+        select: {
+          metaAdId: true,
+          productId: true,
+          confidence: true,
+          isMerchantConfirmed: true,
+          source: true,
+        },
       }),
       prisma.adCollectionMapping.findMany({
         where: { metaAdId: { in: metaAdIds }, validUntil: null, ad: { adAccount: { storeId } } },
-        select: { metaAdId: true, collectionId: true, confidence: true, isMerchantConfirmed: true, source: true },
+        select: {
+          metaAdId: true,
+          collectionId: true,
+          confidence: true,
+          isMerchantConfirmed: true,
+          source: true,
+        },
       }),
     ]).then(([products, collections]) => ({ products, collections }));
   }

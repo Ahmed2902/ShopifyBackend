@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
+import type { PixelJourneyService } from '../../../src/modules/pixel/journey/pixel-journey.service.js';
 import type { PixelRepository } from '../../../src/modules/pixel/pixel.repository.js';
 import { pixelIngestBatchSchema } from '../../../src/modules/pixel/pixel.schema.js';
 import { PixelService } from '../../../src/modules/pixel/pixel.service.js';
@@ -22,19 +23,30 @@ function buildService(input?: {
   const repository = {
     findInstallationByStoreId: vi.fn().mockResolvedValue(installation),
     findInstallationForIngress: vi.fn().mockResolvedValue(installation),
-    upsertInstallation: vi.fn().mockImplementation(async (value) => ({
+    stageInstallation: vi.fn().mockImplementation(async (value) => ({
       id: value.id,
       storeId: value.storeId,
-      collectorTokenPrefix: value.collectorTokenPrefix,
+      status: installation?.status ?? 'PROVISIONING',
+      shopifyWebPixelId: installation?.shopifyWebPixelId ?? null,
+    })),
+    finalizeInstallation: vi.fn().mockImplementation(async (value) => ({
+      id: value.id,
+      storeId,
+      collectorTokenPrefix: 'NEWTOKEN',
       shopifyWebPixelId: value.shopifyWebPixelId,
-      status: value.status,
+      status: 'ACTIVE',
       installedAt: value.installedAt,
       lastEventAt: null,
-      lastError: value.lastError,
+      lastError: null,
       updatedAt: fixedNow,
     })),
+    rollbackStagedInstallation: vi.fn().mockResolvedValue({
+      id: installationId,
+      status: installation?.status ?? 'ERROR',
+    }),
     recordInstallationError: vi.fn().mockResolvedValue({ id: installationId, status: 'ACTIVE' }),
     insertEvents: vi.fn().mockResolvedValue(input?.inserted ?? 1),
+    markSessionRepairs: vi.fn().mockResolvedValue(undefined),
     touchInstallation: vi.fn().mockResolvedValue({ id: installationId }),
     findExpiredEventIds: vi.fn().mockResolvedValue(['event-db-id']),
     deleteEventsByIds: vi.fn().mockResolvedValue(1),
@@ -44,37 +56,48 @@ function buildService(input?: {
     upsert: vi.fn().mockResolvedValue({ id: 'gid://shopify/WebPixel/1' }),
   } as unknown as ShopifyPixelProvisioner;
 
+  const journeyService = {
+    materializeSessions: vi.fn().mockResolvedValue({ requested: 1, materialized: 1, failed: 0 }),
+  } as unknown as PixelJourneyService;
+
   return {
     repository,
     shopifyProvisioner,
-    service: new PixelService(repository, shopifyProvisioner, () => fixedNow),
+    journeyService,
+    service: new PixelService(repository, shopifyProvisioner, () => fixedNow, journeyService),
   };
 }
 
 describe('PixelService', () => {
-  it('rotates a collector credential without returning or persisting the raw token', async () => {
+  it('stages and then promotes a collector credential without returning the raw token', async () => {
     const { repository, shopifyProvisioner, service } = buildService();
 
     const result = await service.installShopifyPixel(storeId);
 
     const provisionCall = vi.mocked(shopifyProvisioner.upsert).mock.calls[0]?.[0];
-    const persistCall = vi.mocked(repository.upsertInstallation).mock.calls[0]?.[0];
+    const stageCall = vi.mocked(repository.stageInstallation).mock.calls[0]?.[0];
     const rawToken = provisionCall?.settings.collectorToken;
 
     expect(rawToken).toBeTruthy();
     expect(rawToken).toHaveLength(43);
-    expect(persistCall?.collectorTokenHash).toBe(tokenHash(rawToken!));
-    expect(persistCall?.collectorTokenPrefix).toBe(rawToken!.slice(0, 8));
-    expect(JSON.stringify(persistCall)).not.toContain(rawToken!);
+    expect(stageCall?.collectorTokenHash).toBe(tokenHash(rawToken!));
+    expect(stageCall?.collectorTokenPrefix).toBe(rawToken!.slice(0, 8));
+    expect(JSON.stringify(stageCall)).not.toContain(rawToken!);
+    expect(repository.finalizeInstallation).toHaveBeenCalledWith({
+      id: installationId,
+      shopifyWebPixelId: 'gid://shopify/WebPixel/1',
+      installedAt: fixedNow,
+    });
     expect(result).not.toHaveProperty('collectorToken');
     expect(result).toMatchObject({
       status: 'ACTIVE',
       shopifyWebPixelId: 'gid://shopify/WebPixel/1',
       collectorUrl: 'http://localhost:3001/v1/pixel/events',
+      requiredShopifyScopes: ['write_pixels', 'read_pixels', 'read_customer_events'],
     });
   });
 
-  it('does not rotate or disable a working installation when Shopify reprovision fails', async () => {
+  it('rolls back only the staged credential when Shopify reprovision fails', async () => {
     const existing = {
       id: installationId,
       storeId,
@@ -92,11 +115,68 @@ describe('PixelService', () => {
 
     await expect(service.installShopifyPixel(storeId)).rejects.toThrow('provider failed');
 
-    expect(repository.recordInstallationError).toHaveBeenCalledWith(
+    expect(repository.stageInstallation).toHaveBeenCalledTimes(1);
+    expect(repository.rollbackStagedInstallation).toHaveBeenCalledWith(
       installationId,
+      true,
       'provider failed',
     );
-    expect(repository.upsertInstallation).not.toHaveBeenCalled();
+    expect(repository.finalizeInstallation).not.toHaveBeenCalled();
+  });
+
+  it('keeps the staged credential recoverable when Shopify succeeds but local finalization fails', async () => {
+    const existing = {
+      id: installationId,
+      storeId,
+      collectorTokenPrefix: 'OLDTOKEN',
+      shopifyWebPixelId: 'gid://shopify/WebPixel/42',
+      status: 'ACTIVE',
+      installedAt: new Date('2026-09-01T12:00:00.000Z'),
+      lastEventAt: null,
+      lastError: null,
+      createdAt: new Date('2026-09-01T12:00:00.000Z'),
+      updatedAt: fixedNow,
+    };
+    const { repository, service } = buildService({ installation: existing });
+    vi.mocked(repository.finalizeInstallation).mockRejectedValue(new Error('database unavailable'));
+
+    await expect(service.installShopifyPixel(storeId)).rejects.toThrow('database unavailable');
+
+    expect(repository.rollbackStagedInstallation).not.toHaveBeenCalled();
+    expect(repository.recordInstallationError).toHaveBeenCalledWith(
+      installationId,
+      'database unavailable',
+    );
+  });
+
+  it('accepts a staged collector token during a provisioning transition', async () => {
+    const collectorToken = 'P'.repeat(43);
+    const { repository, service } = buildService({
+      installation: {
+        id: installationId,
+        storeId,
+        collectorTokenHash: tokenHash('O'.repeat(43)),
+        pendingCollectorTokenHash: tokenHash(collectorToken),
+        status: 'PROVISIONING',
+      },
+      inserted: 1,
+    });
+
+    const batch = pixelIngestBatchSchema.parse({
+      installationId,
+      collectorToken,
+      events: [
+        {
+          eventId: 'event_pending_token',
+          eventName: 'PAGE_VIEW',
+          eventAt: '2026-09-04T11:59:00.000Z',
+          consentState: 'GRANTED',
+        },
+      ],
+    });
+
+    await expect(service.ingest(batch)).resolves.toMatchObject({ persisted: 1 });
+    expect(repository.insertEvents).toHaveBeenCalledTimes(1);
   });
 
   it('suppresses denied events and stores only privacy-normalized allowlisted attribution', async () => {
@@ -106,6 +186,7 @@ describe('PixelService', () => {
         id: installationId,
         storeId,
         collectorTokenHash: tokenHash(collectorToken),
+        pendingCollectorTokenHash: null,
         status: 'ACTIVE',
       },
       inserted: 1,
@@ -167,6 +248,41 @@ describe('PixelService', () => {
     );
   });
 
+  it('marks session repair state before attempting immediate materialization', async () => {
+    const collectorToken = 'S'.repeat(43);
+    const { repository, journeyService, service } = buildService({
+      installation: {
+        id: installationId,
+        storeId,
+        collectorTokenHash: tokenHash(collectorToken),
+        pendingCollectorTokenHash: null,
+        status: 'ACTIVE',
+      },
+      inserted: 1,
+    });
+
+    const batch = pixelIngestBatchSchema.parse({
+      installationId,
+      collectorToken,
+      events: [
+        {
+          eventId: 'event_session',
+          eventName: 'PAGE_VIEW',
+          eventAt: '2026-09-04T11:59:00.000Z',
+          consentState: 'GRANTED',
+          sessionId: 'session-1',
+        },
+      ],
+    });
+
+    await service.ingest(batch);
+
+    expect(repository.markSessionRepairs).toHaveBeenCalledWith(storeId, ['session-1'], fixedNow);
+    expect(vi.mocked(repository.markSessionRepairs).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(journeyService.materializeSessions).mock.invocationCallOrder[0]!,
+    );
+  });
+
   it('ignores unresolved or non-numeric Meta IDs extracted from URLs', async () => {
     const collectorToken = 'E'.repeat(43);
     const { repository, service } = buildService({
@@ -174,6 +290,7 @@ describe('PixelService', () => {
         id: installationId,
         storeId,
         collectorTokenHash: tokenHash(collectorToken),
+        pendingCollectorTokenHash: null,
         status: 'ACTIVE',
       },
       inserted: 1,
@@ -210,6 +327,7 @@ describe('PixelService', () => {
         id: installationId,
         storeId,
         collectorTokenHash: tokenHash(collectorToken),
+        pendingCollectorTokenHash: null,
         status: 'ACTIVE',
       },
       inserted: 0,
@@ -242,6 +360,7 @@ describe('PixelService', () => {
         id: installationId,
         storeId,
         collectorTokenHash: tokenHash('C'.repeat(43)),
+        pendingCollectorTokenHash: null,
         status: 'ACTIVE',
       },
     });
@@ -266,7 +385,7 @@ describe('PixelService', () => {
     expect(repository.insertEvents).not.toHaveBeenCalled();
   });
 
-  it('deletes expired events in bounded batches', async () => {
+  it('deletes only expired events selected by the repair-aware repository gate', async () => {
     const { repository, service } = buildService();
 
     await expect(service.cleanupExpiredEvents(500_000)).resolves.toEqual({

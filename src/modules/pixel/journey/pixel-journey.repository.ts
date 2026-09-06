@@ -21,11 +21,14 @@ export interface SessionAggregateInput {
   shopifyOrderExternalId: string | null;
   orderId: string | null;
   orderLinkStatus: 'NONE' | 'PENDING' | 'LINKED';
+  orderLinkAttemptCount: number;
+  orderLinkNextAttemptAt: Date | null;
   landingPageUrl: string | null;
   initialReferrerUrl: string | null;
   dataQualityFlags: string[];
   retentionExpiresAt: Date;
   materializedAt: Date;
+  rollupDirtyAt: Date;
 }
 
 export type SessionTouchInput = Omit<
@@ -208,43 +211,89 @@ export class PixelJourneyRepository {
     });
   }
 
-  async findDirtySessionKeys(limit: number) {
-    return prisma.$queryRaw<Array<{ storeId: string; browserSessionId: string }>>`
-      SELECT DISTINCT e."storeId" AS "storeId", e."sessionId" AS "browserSessionId"
-      FROM "StorefrontEvent" e
-      LEFT JOIN "StorefrontSession" s
-        ON s."storeId" = e."storeId" AND s."browserSessionId" = e."sessionId"
-      WHERE e."sessionId" IS NOT NULL
-        AND (s."id" IS NULL OR e."receivedAt" > s."lastSourceReceivedAt")
-      ORDER BY e."storeId", e."sessionId"
-      LIMIT ${limit}
-    `;
-  }
-
-  findPendingOrderSessions(limit: number) {
-    return prisma.storefrontSession.findMany({
-      where: { orderLinkStatus: 'PENDING', shopifyOrderExternalId: { not: null } },
-      orderBy: [{ checkoutCompletedAt: 'asc' }, { id: 'asc' }],
-      take: limit,
-      select: { id: true, storeId: true, shopifyOrderExternalId: true },
+  clearSessionRepair(storeId: string, browserSessionId: string, materializationStartedAt: Date) {
+    return prisma.storefrontSessionRepair.deleteMany({
+      where: {
+        storeId,
+        browserSessionId,
+        updatedAt: { lte: materializationStartedAt },
+      },
     });
   }
 
-  setOrderLink(sessionId: string, orderId: string) {
+  findDirtySessionKeys(limit: number) {
+    return prisma.storefrontSessionRepair.findMany({
+      orderBy: [{ sourceReceivedAt: 'asc' }, { id: 'asc' }],
+      take: limit,
+      select: { storeId: true, browserSessionId: true },
+    });
+  }
+
+  findPendingOrderSessions(now: Date, limit: number) {
+    return prisma.storefrontSession.findMany({
+      where: {
+        orderLinkStatus: 'PENDING',
+        shopifyOrderExternalId: { not: null },
+        OR: [{ orderLinkNextAttemptAt: null }, { orderLinkNextAttemptAt: { lte: now } }],
+      },
+      orderBy: [{ orderLinkNextAttemptAt: 'asc' }, { checkoutCompletedAt: 'asc' }, { id: 'asc' }],
+      take: limit,
+      select: {
+        id: true,
+        storeId: true,
+        shopifyOrderExternalId: true,
+        orderLinkAttemptCount: true,
+      },
+    });
+  }
+
+  setOrderLink(sessionId: string, orderId: string, dirtyAt: Date) {
     return prisma.storefrontSession.update({
       where: { id: sessionId },
-      data: { orderId, orderLinkStatus: 'LINKED' },
+      data: {
+        orderId,
+        orderLinkStatus: 'LINKED',
+        orderLinkAttemptCount: 0,
+        orderLinkNextAttemptAt: null,
+        rollupDirtyAt: dirtyAt,
+      },
+      select: { id: true },
+    });
+  }
+
+  scheduleOrderLinkRetry(sessionId: string, attemptCount: number, nextAttemptAt: Date) {
+    return prisma.storefrontSession.update({
+      where: { id: sessionId },
+      data: {
+        orderLinkAttemptCount: attemptCount,
+        orderLinkNextAttemptAt: nextAttemptAt,
+      },
       select: { id: true },
     });
   }
 
   async deleteExpiredSessions(now: Date, limit: number) {
-    const rows = await prisma.storefrontSession.findMany({
-      where: { retentionExpiresAt: { lte: now } },
-      orderBy: [{ retentionExpiresAt: 'asc' }, { id: 'asc' }],
-      take: limit,
-      select: { id: true },
-    });
+    const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT s."id"
+      FROM "StorefrontSession" s
+      LEFT JOIN "Order" o ON o."id" = s."orderId"
+      WHERE s."retentionExpiresAt" <= ${now}
+        AND s."behaviorRolledUpAt" IS NOT NULL
+        AND s."attributionRolledUpAt" IS NOT NULL
+        AND s."behaviorRolledUpAt" >= s."rollupDirtyAt"
+        AND s."attributionRolledUpAt" >= s."rollupDirtyAt"
+        AND s."behaviorRolledStartedAt" = s."startedAt"
+        AND s."attributionRolledStartedAt" = s."startedAt"
+        AND (
+          o."id" IS NULL
+          OR (
+            o."updatedAt" <= s."behaviorRolledUpAt"
+            AND o."updatedAt" <= s."attributionRolledUpAt"
+          )
+        )
+      ORDER BY s."retentionExpiresAt" ASC, s."id" ASC
+      LIMIT ${limit}
+    `;
     if (rows.length === 0) return { selected: 0, deleted: 0 };
     const result = await prisma.storefrontSession.deleteMany({
       where: { id: { in: rows.map((row) => row.id) } },
@@ -337,10 +386,10 @@ export class PixelJourneyRepository {
     });
   }
 
-  listVisitorSessions(storeId: string, anonymousVisitorId: string, limit: number) {
-    return prisma.storefrontSession.findMany({
+  async listVisitorSessions(storeId: string, anonymousVisitorId: string, limit: number) {
+    const rows = await prisma.storefrontSession.findMany({
       where: { storeId, anonymousVisitorId },
-      orderBy: [{ startedAt: 'asc' }, { id: 'asc' }],
+      orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
       take: limit,
       include: {
         touches: { orderBy: { ordinal: 'asc' } },
@@ -348,6 +397,7 @@ export class PixelJourneyRepository {
         collections: { orderBy: { firstSeenAt: 'asc' } },
       },
     });
+    return rows.reverse();
   }
 
   findDisplayEntities(
