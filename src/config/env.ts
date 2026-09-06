@@ -21,8 +21,8 @@ const envSchema = z.object({
   GOOGLE_FRONTEND_REDIRECT_URI: z.string().url().optional(),
   RESEND_API_KEY: z.string().min(1).optional(),
   RESEND_FROM: z.string().min(3).optional(),
-  EMAIL_VERIFICATION_URL: z.string().url(),
-  PASSWORD_RESET_URL: z.string().url(),
+  EMAIL_VERIFICATION_URL: z.string().url().optional(),
+  PASSWORD_RESET_URL: z.string().url().optional(),
   SHOPIFY_CLIENT_ID: z.string().min(1),
   SHOPIFY_CLIENT_SECRET: z.string().min(1),
   SHOPIFY_SCOPES: z.string().min(1),
@@ -45,17 +45,29 @@ const envSchema = z.object({
   META_STATE_SECRET: z.string().min(32),
   META_INITIAL_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(365).default(365),
   META_REFRESH_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(365).default(35),
-  TIKTOK_APP_ID: z.string().min(1),
-  TIKTOK_APP_SECRET: z.string().min(1),
+  // TikTok is optional until a merchant actually connects it.
+  TIKTOK_APP_ID: z.string().default(''),
+  TIKTOK_APP_SECRET: z.string().default(''),
   TIKTOK_SCOPES: z.string().default(''),
   TIKTOK_REDIRECT_URI: z.string().url().optional(),
   TIKTOK_API_VERSION: z
     .string()
     .regex(/^v\d+\.\d+$/)
     .default('v1.3'),
-  TIKTOK_STATE_SECRET: z.string().min(32),
+  TIKTOK_STATE_SECRET: z.string().default(''),
   TIKTOK_WEBHOOK_URL: z.string().url(),
   TIKTOK_WEBHOOK_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(300),
 });
 
-export const env = envSchema.parse(process.env);
+const parsedEnv = envSchema.parse(process.env);
+const frontendOrigin = new URL(parsedEnv.CORS_ORIGIN).origin;
+
+export const env = {
+  ...parsedEnv,
+  EMAIL_VERIFICATION_URL:
+    parsedEnv.EMAIL_VERIFICATION_URL ??
+    new URL('/auth/verify-email', `${frontendOrigin}/`).toString(),
+  PASSWORD_RESET_URL:
+    parsedEnv.PASSWORD_RESET_URL ??
+    new URL('/auth/reset-password', `${frontendOrigin}/`).toString(),
+};
