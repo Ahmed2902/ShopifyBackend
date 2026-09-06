@@ -1,6 +1,7 @@
 import { env } from '../../../config/env.js';
 import { AppError } from '../../../errors/app-error.js';
 import { decryptSecret, encryptSecret } from '../../integrations/integration.utils.js';
+import { requireTikTokAppCredentials } from '../tiktok.config.js';
 import type { TikTokRepository } from '../tiktok.repository.js';
 import type { TikTokApiContext } from '../tiktok.types.js';
 import {
@@ -22,6 +23,7 @@ export class TikTokAuthService {
   }
 
   async completeInstall(authCode: string, state: string) {
+    requireTikTokAppCredentials();
     const oauth = verifyTikTokOAuthState(state);
     await this.assertCanManageStore(oauth.userId, oauth.storeId);
 
@@ -52,6 +54,7 @@ export class TikTokAuthService {
   }
 
   async getApiContext(storeId: string): Promise<TikTokApiContext> {
+    requireTikTokAppCredentials();
     const connection = await this.repository.findConnectionForStore(storeId);
     if (!connection) throw new AppError('TikTok is not connected for this store', 409, 'TIKTOK_NOT_CONNECTED');
     if (connection.status !== 'ACTIVE') {
