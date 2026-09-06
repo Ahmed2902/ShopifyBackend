@@ -14,6 +14,7 @@ const opaqueIdSchema = z
   .regex(/^[A-Za-z0-9_-]+$/);
 
 const externalIdSchema = z.string().trim().min(1).max(128);
+const providerNumericIdSchema = z.string().trim().regex(/^\d+$/).max(128);
 const attributionValueSchema = z.string().trim().min(1).max(255);
 const clickIdSchema = z.string().trim().min(1).max(512);
 const urlSchema = z.string().url().max(2048);
@@ -34,6 +35,9 @@ export const storefrontAttributionSchema = z
     metaClickId: clickIdSchema.optional(),
     googleClickId: clickIdSchema.optional(),
     tiktokClickId: clickIdSchema.optional(),
+    metaCampaignExternalId: providerNumericIdSchema.optional(),
+    metaAdSetExternalId: providerNumericIdSchema.optional(),
+    metaAdExternalId: providerNumericIdSchema.optional(),
   })
   .strict();
 

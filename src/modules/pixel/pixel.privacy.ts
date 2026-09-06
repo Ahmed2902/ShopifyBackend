@@ -18,6 +18,9 @@ const ATTRIBUTION_QUERY_KEYS: ReadonlyArray<[string, AttributionKey]> = [
   ['fbclid', 'metaClickId'],
   ['gclid', 'googleClickId'],
   ['ttclid', 'tiktokClickId'],
+  ['stride_meta_campaign_id', 'metaCampaignExternalId'],
+  ['stride_meta_adset_id', 'metaAdSetExternalId'],
+  ['stride_meta_ad_id', 'metaAdExternalId'],
 ];
 
 function truncate(value: string | null, maxLength: number): string | undefined {
@@ -60,8 +63,17 @@ export function extractStorefrontAttribution(
     const attribution: StorefrontAttributionInput = {};
 
     for (const [queryKey, outputKey] of ATTRIBUTION_QUERY_KEYS) {
+      const raw = url.searchParams.get(queryKey)?.trim();
+      if (!raw) continue;
+
+      if (outputKey.endsWith('ExternalId')) {
+        if (raw.length > 128 || !/^\d+$/.test(raw)) continue;
+        attribution[outputKey] = raw;
+        continue;
+      }
+
       const maxLength = outputKey.endsWith('ClickId') ? 512 : 255;
-      const normalized = truncate(url.searchParams.get(queryKey), maxLength);
+      const normalized = truncate(raw, maxLength);
       if (normalized) attribution[outputKey] = normalized;
     }
 

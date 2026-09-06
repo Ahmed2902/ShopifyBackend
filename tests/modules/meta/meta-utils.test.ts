@@ -25,9 +25,10 @@ describe('Meta OAuth utilities', () => {
   });
 
   it('builds the initial read-only authorization URL with only the core ads permission', () => {
-    const { authorizationUrl } = buildMetaAuthorizationUrl(userId, storeId);
+    const { authorizationUrl, mode } = buildMetaAuthorizationUrl(userId, storeId);
     const url = new URL(authorizationUrl);
 
+    expect(mode).toBe('READ_ONLY');
     expect(url.origin).toBe('https://www.facebook.com');
     expect(url.pathname).toBe(`/${env.META_API_VERSION}/dialog/oauth`);
     expect(url.searchParams.get('client_id')).toBe(env.META_APP_ID);
@@ -36,6 +37,24 @@ describe('Meta OAuth utilities', () => {
     expect(url.searchParams.get('scope')).not.toContain('ads_management');
     expect(url.searchParams.get('scope')).not.toContain('business_management');
     expect(url.searchParams.get('scope')).not.toContain('catalog_management');
+    expect(url.searchParams.get('auth_type')).toBeNull();
+    expect(verifyMetaOAuthState(url.searchParams.get('state') ?? '')).toMatchObject({
+      userId,
+      storeId,
+    });
+  });
+
+  it('builds a merchant-triggered ads-management upgrade without changing the base install flow', () => {
+    const { authorizationUrl, mode } = buildMetaAuthorizationUrl(
+      userId,
+      storeId,
+      'ADS_MANAGEMENT',
+    );
+    const url = new URL(authorizationUrl);
+
+    expect(mode).toBe('ADS_MANAGEMENT');
+    expect(url.searchParams.get('scope')).toBe('ads_read,ads_management');
+    expect(url.searchParams.get('auth_type')).toBe('rerequest');
     expect(verifyMetaOAuthState(url.searchParams.get('state') ?? '')).toMatchObject({
       userId,
       storeId,
