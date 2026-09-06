@@ -4,6 +4,8 @@ import { prisma } from '../../lib/prisma.js';
 
 type StoreScopedEventInput = Omit<Prisma.StorefrontEventCreateManyInput, 'storeId'>;
 
+const ATTRIBUTION_INVALIDATION_WINDOW_MS = 32 * 86_400_000;
+
 export class PixelRepository {
   findInstallationByStoreId(storeId: string) {
     return prisma.pixelInstallation.findUnique({
@@ -23,6 +25,22 @@ export class PixelRepository {
     });
   }
 
+  findInstallationForProvisioning(storeId: string) {
+    return prisma.pixelInstallation.findUnique({
+      where: { storeId },
+      select: {
+        id: true,
+        storeId: true,
+        shopifyWebPixelId: true,
+        status: true,
+        installedAt: true,
+        lastError: true,
+        pendingCollectorTokenHash: true,
+        updatedAt: true,
+      },
+    });
+  }
+
   findInstallationForIngress(id: string) {
     return prisma.pixelInstallation.findUnique({
       where: { id },
@@ -36,42 +54,70 @@ export class PixelRepository {
     });
   }
 
-  stageInstallation(input: {
+  async stageInstallation(input: {
     id: string;
     storeId: string;
     collectorTokenHash: string;
     collectorTokenPrefix: string;
+    status: 'ACTIVE' | 'PROVISIONING';
   }) {
-    return prisma.pixelInstallation.upsert({
-      where: { storeId: input.storeId },
-      create: {
-        id: input.id,
-        storeId: input.storeId,
-        collectorTokenHash: input.collectorTokenHash,
-        collectorTokenPrefix: input.collectorTokenPrefix,
-        pendingCollectorTokenHash: input.collectorTokenHash,
-        pendingCollectorTokenPrefix: input.collectorTokenPrefix,
-        shopifyWebPixelId: null,
-        status: 'PROVISIONING',
-        installedAt: null,
-        lastError: null,
-      },
-      update: {
-        pendingCollectorTokenHash: input.collectorTokenHash,
-        pendingCollectorTokenPrefix: input.collectorTokenPrefix,
-        lastError: null,
-      },
-      select: {
-        id: true,
-        storeId: true,
-        status: true,
-        shopifyWebPixelId: true,
-      },
-    });
+    const rows = await prisma.$queryRaw<
+      Array<{
+        id: string;
+        storeId: string;
+        status: 'ACTIVE' | 'PROVISIONING' | 'ERROR' | 'DISABLED';
+        shopifyWebPixelId: string | null;
+      }>
+    >`
+      INSERT INTO "PixelInstallation" (
+        "id", "storeId", "collectorTokenHash", "collectorTokenPrefix",
+        "pendingCollectorTokenHash", "pendingCollectorTokenPrefix",
+        "shopifyWebPixelId", "status", "installedAt", "lastError",
+        "createdAt", "updatedAt"
+      )
+      VALUES (
+        ${input.id}::uuid,
+        ${input.storeId}::uuid,
+        ${input.collectorTokenHash},
+        ${input.collectorTokenPrefix},
+        ${input.collectorTokenHash},
+        ${input.collectorTokenPrefix},
+        NULL,
+        ${input.status}::"PixelInstallationStatus",
+        NULL,
+        NULL,
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+      )
+      ON CONFLICT ("storeId")
+      DO UPDATE SET
+        "collectorTokenHash" = CASE
+          WHEN "PixelInstallation"."lastError" IS NOT NULL
+            AND "PixelInstallation"."pendingCollectorTokenHash" IS NOT NULL
+          THEN "PixelInstallation"."pendingCollectorTokenHash"
+          ELSE "PixelInstallation"."collectorTokenHash"
+        END,
+        "collectorTokenPrefix" = CASE
+          WHEN "PixelInstallation"."lastError" IS NOT NULL
+            AND "PixelInstallation"."pendingCollectorTokenPrefix" IS NOT NULL
+          THEN "PixelInstallation"."pendingCollectorTokenPrefix"
+          ELSE "PixelInstallation"."collectorTokenPrefix"
+        END,
+        "pendingCollectorTokenHash" = EXCLUDED."pendingCollectorTokenHash",
+        "pendingCollectorTokenPrefix" = EXCLUDED."pendingCollectorTokenPrefix",
+        "status" = EXCLUDED."status",
+        "lastError" = NULL,
+        "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "PixelInstallation"."pendingCollectorTokenHash" IS NULL
+         OR "PixelInstallation"."lastError" IS NOT NULL
+      RETURNING "id", "storeId", "status", "shopifyWebPixelId"
+    `;
+    return rows[0] ?? null;
   }
 
   async finalizeInstallation(input: {
     id: string;
+    expectedPendingTokenHash: string;
     shopifyWebPixelId: string;
     installedAt: Date;
   }) {
@@ -90,7 +136,7 @@ export class PixelRepository {
     >`
       UPDATE "PixelInstallation"
       SET
-        "collectorTokenHash" = COALESCE("pendingCollectorTokenHash", "collectorTokenHash"),
+        "collectorTokenHash" = "pendingCollectorTokenHash",
         "collectorTokenPrefix" = COALESCE("pendingCollectorTokenPrefix", "collectorTokenPrefix"),
         "pendingCollectorTokenHash" = NULL,
         "pendingCollectorTokenPrefix" = NULL,
@@ -100,6 +146,7 @@ export class PixelRepository {
         "lastError" = NULL,
         "updatedAt" = CURRENT_TIMESTAMP
       WHERE "id" = ${input.id}::uuid
+        AND "pendingCollectorTokenHash" = ${input.expectedPendingTokenHash}
       RETURNING
         "id", "storeId", "collectorTokenPrefix", "shopifyWebPixelId", "status",
         "installedAt", "lastEventAt", "lastError", "updatedAt"
@@ -107,62 +154,73 @@ export class PixelRepository {
     return rows[0] ?? null;
   }
 
-  rollbackStagedInstallation(id: string, hadWorkingInstallation: boolean, lastError: string) {
-    if (hadWorkingInstallation) {
-      return prisma.pixelInstallation.update({
-        where: { id },
-        data: {
-          pendingCollectorTokenHash: null,
-          pendingCollectorTokenPrefix: null,
-          lastError,
-        },
-        select: { id: true, status: true },
-      });
-    }
-    return prisma.pixelInstallation.update({
-      where: { id },
-      data: {
-        pendingCollectorTokenHash: null,
-        pendingCollectorTokenPrefix: null,
-        status: 'ERROR',
-        lastError,
-      },
-      select: { id: true, status: true },
-    });
+  async rollbackStagedInstallation(
+    id: string,
+    expectedPendingTokenHash: string,
+    rollbackStatus: 'ACTIVE' | 'PROVISIONING' | 'ERROR',
+    lastError: string,
+  ) {
+    const rows = await prisma.$queryRaw<Array<{ id: string; status: string }>>`
+      UPDATE "PixelInstallation"
+      SET
+        "pendingCollectorTokenHash" = NULL,
+        "pendingCollectorTokenPrefix" = NULL,
+        "status" = ${rollbackStatus}::"PixelInstallationStatus",
+        "lastError" = ${lastError},
+        "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = ${id}::uuid
+        AND "pendingCollectorTokenHash" = ${expectedPendingTokenHash}
+      RETURNING "id", "status"
+    `;
+    return rows[0] ?? null;
   }
 
-  recordInstallationError(id: string, lastError: string) {
-    return prisma.pixelInstallation.update({
-      where: { id },
-      data: { lastError },
-      select: { id: true, status: true },
-    });
+  async recordInstallationError(id: string, expectedPendingTokenHash: string, lastError: string) {
+    const rows = await prisma.$queryRaw<Array<{ id: string; status: string }>>`
+      UPDATE "PixelInstallation"
+      SET
+        "lastError" = ${lastError},
+        "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = ${id}::uuid
+        AND "pendingCollectorTokenHash" = ${expectedPendingTokenHash}
+      RETURNING "id", "status"
+    `;
+    return rows[0] ?? null;
   }
 
-  async insertEvents(storeId: string, events: StoreScopedEventInput[]) {
+  async insertEvents(storeId: string, events: StoreScopedEventInput[], sourceReceivedAt: Date) {
     if (events.length === 0) return 0;
 
-    const result = await prisma.storefrontEvent.createMany({
-      data: events.map((event) => ({ ...event, storeId })),
-      skipDuplicates: true,
-    });
-    return result.count;
-  }
+    return prisma.$transaction(async (tx) => {
+      const result = await tx.storefrontEvent.createMany({
+        data: events.map((event) => ({ ...event, storeId })),
+        skipDuplicates: true,
+      });
 
-  async markSessionRepairs(storeId: string, browserSessionIds: string[], sourceReceivedAt: Date) {
-    for (const browserSessionId of [...new Set(browserSessionIds)]) {
-      const id = randomUUID();
-      await prisma.$executeRaw`
-        INSERT INTO "StorefrontSessionRepair"
-          ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
-        VALUES
-          (${id}::uuid, ${storeId}::uuid, ${browserSessionId}, ${sourceReceivedAt}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        ON CONFLICT ("storeId", "browserSessionId")
-        DO UPDATE SET
-          "sourceReceivedAt" = GREATEST("StorefrontSessionRepair"."sourceReceivedAt", EXCLUDED."sourceReceivedAt"),
-          "updatedAt" = CURRENT_TIMESTAMP
-      `;
-    }
+      const sessionIds = [
+        ...new Set(
+          events
+            .map((event) => event.sessionId)
+            .filter((sessionId): sessionId is string => Boolean(sessionId)),
+        ),
+      ];
+      for (const browserSessionId of sessionIds) {
+        const id = randomUUID();
+        await tx.$executeRaw`
+          INSERT INTO "StorefrontSessionRepair"
+            ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
+          VALUES
+            (${id}::uuid, ${storeId}::uuid, ${browserSessionId}, ${sourceReceivedAt}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          ON CONFLICT ("storeId", "browserSessionId")
+          DO UPDATE SET
+            "id" = EXCLUDED."id",
+            "sourceReceivedAt" = GREATEST("StorefrontSessionRepair"."sourceReceivedAt", EXCLUDED."sourceReceivedAt"),
+            "updatedAt" = CURRENT_TIMESTAMP
+        `;
+      }
+
+      return result.count;
+    });
   }
 
   async touchInstallation(id: string, lastEventAt: Date) {
@@ -172,9 +230,7 @@ export class PixelRepository {
         "lastEventAt" = CASE
           WHEN "lastEventAt" IS NULL THEN ${lastEventAt}
           ELSE GREATEST("lastEventAt", ${lastEventAt})
-        END,
-        "lastError" = NULL,
-        "updatedAt" = CURRENT_TIMESTAMP
+        END
       WHERE "id" = ${id}::uuid
       RETURNING "id"
     `;
@@ -186,15 +242,6 @@ export class PixelRepository {
       SELECT e."id"
       FROM "StorefrontEvent" e
       WHERE e."retentionExpiresAt" <= ${now}
-        AND (
-          e."sessionId" IS NULL
-          OR NOT EXISTS (
-            SELECT 1
-            FROM "StorefrontSessionRepair" r
-            WHERE r."storeId" = e."storeId"
-              AND r."browserSessionId" = e."sessionId"
-          )
-        )
       ORDER BY e."retentionExpiresAt" ASC, e."id" ASC
       LIMIT ${limit}
     `;
@@ -203,7 +250,135 @@ export class PixelRepository {
 
   async deleteEventsByIds(ids: string[]) {
     if (ids.length === 0) return 0;
-    const result = await prisma.storefrontEvent.deleteMany({ where: { id: { in: ids } } });
-    return result.count;
+
+    return prisma.$transaction(async (tx) => {
+      const selected = await tx.storefrontEvent.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, storeId: true, sessionId: true, receivedAt: true },
+      });
+      if (selected.length === 0) return 0;
+
+      const result = await tx.storefrontEvent.deleteMany({
+        where: { id: { in: selected.map((row) => row.id) } },
+      });
+
+      const affectedSessions = new Map<
+        string,
+        { storeId: string; browserSessionId: string; latestDeletedReceivedAt: Date }
+      >();
+      for (const row of selected) {
+        if (!row.sessionId) continue;
+        const key = `${row.storeId}:${row.sessionId}`;
+        const existing = affectedSessions.get(key);
+        affectedSessions.set(key, {
+          storeId: row.storeId,
+          browserSessionId: row.sessionId,
+          latestDeletedReceivedAt:
+            existing && existing.latestDeletedReceivedAt > row.receivedAt
+              ? existing.latestDeletedReceivedAt
+              : row.receivedAt,
+        });
+      }
+
+      // Every source deletion rotates the repair generation. Before the surviving raw events can
+      // rematerialize a different primary visitor, dirty every retained purchase session that may
+      // still depend on the session's previously materialized visitor. This captures the old
+      // identity while it is still durable and prevents partial source expiry from orphaning stale
+      // cross-session attribution.
+      for (const { storeId, browserSessionId, latestDeletedReceivedAt } of affectedSessions.values()) {
+        const currentSession = await tx.storefrontSession.findUnique({
+          where: { storeId_browserSessionId: { storeId, browserSessionId } },
+          select: {
+            id: true,
+            anonymousVisitorId: true,
+            startedAt: true,
+            attributionRolledStartedAt: true,
+          },
+        });
+        if (currentSession?.anonymousVisitorId) {
+          const starts = currentSession.attributionRolledStartedAt
+            ? [currentSession.startedAt, currentSession.attributionRolledStartedAt]
+            : [currentSession.startedAt];
+          const from = starts.reduce(
+            (earliest, value) => (value < earliest ? value : earliest),
+            starts[0]!,
+          );
+          const latest = starts.reduce(
+            (latestValue, value) => (value > latestValue ? value : latestValue),
+            starts[0]!,
+          );
+          const through = new Date(latest.getTime() + ATTRIBUTION_INVALIDATION_WINDOW_MS);
+          await tx.storefrontSession.updateMany({
+            where: {
+              storeId,
+              anonymousVisitorId: currentSession.anonymousVisitorId,
+              orderLinkStatus: 'LINKED',
+              orderId: { not: null },
+              startedAt: { gte: from, lte: through },
+            },
+            data: { rollupDirtyAt: new Date() },
+          });
+        }
+
+        const remaining = await tx.storefrontEvent.findFirst({
+          where: { storeId, sessionId: browserSessionId },
+          orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],
+          select: { receivedAt: true },
+        });
+        const sourceReceivedAt =
+          remaining && remaining.receivedAt > latestDeletedReceivedAt
+            ? remaining.receivedAt
+            : latestDeletedReceivedAt;
+
+        if (!remaining && currentSession) {
+          const invalidatedAt = new Date();
+          await tx.storefrontSession.update({
+            where: { id: currentSession.id },
+            data: {
+              eventCount: 0,
+              pageViewCount: 0,
+              productViewCount: 0,
+              collectionViewCount: 0,
+              searchCount: 0,
+              addToCartCount: 0,
+              removeFromCartCount: 0,
+              checkoutProgressCount: 0,
+              checkoutStartedAt: null,
+              checkoutCompletedAt: null,
+              shopifyCheckoutToken: null,
+              shopifyOrderExternalId: null,
+              orderId: null,
+              orderLinkStatus: 'NONE',
+              orderLinkAttemptCount: 0,
+              orderLinkNextAttemptAt: null,
+              landingPageUrl: null,
+              initialReferrerUrl: null,
+              dataQualityFlags: [],
+              retentionExpiresAt: invalidatedAt,
+              materializedAt: invalidatedAt,
+              rollupDirtyAt: invalidatedAt,
+            },
+          });
+          await tx.storefrontSessionTouch.deleteMany({ where: { sessionId: currentSession.id } });
+          await tx.storefrontSessionProduct.deleteMany({ where: { sessionId: currentSession.id } });
+          await tx.storefrontSessionCollection.deleteMany({ where: { sessionId: currentSession.id } });
+        }
+
+        const repairId = randomUUID();
+        await tx.$executeRaw`
+          INSERT INTO "StorefrontSessionRepair"
+            ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
+          VALUES
+            (${repairId}::uuid, ${storeId}::uuid, ${browserSessionId}, ${sourceReceivedAt}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          ON CONFLICT ("storeId", "browserSessionId")
+          DO UPDATE SET
+            "id" = EXCLUDED."id",
+            "sourceReceivedAt" = GREATEST("StorefrontSessionRepair"."sourceReceivedAt", EXCLUDED."sourceReceivedAt"),
+            "updatedAt" = CURRENT_TIMESTAMP
+        `;
+      }
+
+      return result.count;
+    });
   }
 }

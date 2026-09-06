@@ -3,7 +3,9 @@ import {register} from '@shopify/web-pixels-extension';
 const FLUSH_DELAY_MS = 750;
 const MAX_BATCH_SIZE = 20;
 const MAX_DELIVERY_ATTEMPTS = 3;
+const SESSION_INACTIVITY_MS = 30 * 60 * 1000;
 const SESSION_KEY = 'stride_pixel_session_id';
+const SESSION_LAST_ACTIVITY_KEY = 'stride_pixel_session_last_activity_at';
 const LANDING_KEY = 'stride_pixel_landing';
 
 const EVENT_NAMES = [
@@ -157,6 +159,15 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
 
   let privacy = init.customerPrivacy;
   let sessionId = await browser.sessionStorage.get(SESSION_KEY);
+  let lastActivityAtMs = 0;
+  const storedLastActivity = await browser.sessionStorage.get(SESSION_LAST_ACTIVITY_KEY);
+  if (storedLastActivity) {
+    const parsedLastActivity = Number(storedLastActivity);
+    if (Number.isFinite(parsedLastActivity) && parsedLastActivity > 0) {
+      lastActivityAtMs = parsedLastActivity;
+    }
+  }
+
   let landing = null;
   const storedLanding = await browser.sessionStorage.get(LANDING_KEY);
   if (storedLanding) {
@@ -170,6 +181,7 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
   const queue = [];
   let flushTimer = null;
   let flushing = false;
+  let handling = Promise.resolve();
 
   customerPrivacy.subscribe('visitorConsentCollected', (event) => {
     privacy = event.customerPrivacy;
@@ -221,7 +233,52 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
       return;
     }
     if (flushTimer) return;
-    flushTimer = setTimeout(() => void flush(), FLUSH_DELAY_MS);
+    flushTimer = setTimeout(() => {
+      // Clear the handle before entering flush(). If this timer fires while another delivery is
+      // active, flush() may return early, but future low-volume events must still be able to arm a
+      // new timer.
+      flushTimer = null;
+      void flush();
+    }, FLUSH_DELAY_MS);
+  }
+
+  async function startNewSession(eventId) {
+    sessionId = eventId;
+    landing = null;
+    lastActivityAtMs = 0;
+    await Promise.all([
+      browser.sessionStorage.set(SESSION_KEY, sessionId),
+      browser.sessionStorage.set(LANDING_KEY, ''),
+      browser.sessionStorage.set(SESSION_LAST_ACTIVITY_KEY, ''),
+    ]);
+  }
+
+  async function clearSessionBoundary() {
+    sessionId = null;
+    landing = null;
+    lastActivityAtMs = 0;
+    await Promise.all([
+      browser.sessionStorage.set(SESSION_KEY, ''),
+      browser.sessionStorage.set(LANDING_KEY, ''),
+      browser.sessionStorage.set(SESSION_LAST_ACTIVITY_KEY, ''),
+    ]);
+  }
+
+  async function ensureSession(event) {
+    const parsedEventAt = Date.parse(event.timestamp);
+    const eventAtMs = Number.isFinite(parsedEventAt) ? parsedEventAt : Date.now();
+    const inactivityBoundary =
+      Boolean(sessionId) &&
+      lastActivityAtMs > 0 &&
+      eventAtMs >= lastActivityAtMs &&
+      eventAtMs - lastActivityAtMs >= SESSION_INACTIVITY_MS;
+
+    if (!sessionId || inactivityBoundary) {
+      await startNewSession(event.id);
+    }
+
+    lastActivityAtMs = Math.max(lastActivityAtMs, eventAtMs);
+    await browser.sessionStorage.set(SESSION_LAST_ACTIVITY_KEY, String(lastActivityAtMs));
   }
 
   async function handle(event) {
@@ -230,10 +287,7 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
     const eventName = mapEventName(event.name);
     if (!eventName) return;
 
-    if (!sessionId) {
-      sessionId = event.id;
-      await browser.sessionStorage.set(SESSION_KEY, sessionId);
-    }
+    await ensureSession(event);
 
     const current = safeUrl(event.context?.document?.location?.href);
     if (!landing || hasAttribution(current.attribution)) {
@@ -258,11 +312,20 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
       attribution: landing?.attribution,
     });
     scheduleFlush();
+
+    // A completed checkout closes this observed visit. The completion event stays attached to the
+    // old session; the next storefront event starts a fresh session and landing context so multiple
+    // purchases in one browser tab cannot overwrite each other in the session read model.
+    if (eventName === 'CHECKOUT_COMPLETED') {
+      await clearSessionBoundary();
+    }
   }
 
   for (const eventName of EVENT_NAMES) {
     analytics.subscribe(eventName, (event) => {
-      void handle(event);
+      // Shopify can emit adjacent customer events while storage writes are still pending. Serialize
+      // handling so checkout/session boundaries cannot race with the next event.
+      handling = handling.then(() => handle(event)).catch(() => undefined);
     });
   }
 });

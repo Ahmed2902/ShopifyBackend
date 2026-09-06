@@ -141,8 +141,19 @@ describe('ShopifyPixelProvisioner', () => {
     );
   });
 
-  it('updates the existing provider WebPixel instead of looking it up or creating another', async () => {
+  it('verifies the live WebPixel before updating a locally stored provider id', async () => {
     const { apiService, provisioner } = buildProvisioner();
+    vi.mocked(apiService.requestAdminGraphql).mockImplementation(async (input: { query: string }) => {
+      if (input.query.includes('StrideWebPixel {')) {
+        return { webPixel: { id: 'gid://shopify/WebPixel/42', settings: '{}' } };
+      }
+      return {
+        webPixelUpdate: {
+          userErrors: [],
+          webPixel: { id: 'gid://shopify/WebPixel/42', settings: {} },
+        },
+      };
+    });
     const settings = {
       collectorUrl: 'https://api.stride.example/v1/pixel/events',
       installationId: 'installation-id',
@@ -157,14 +168,39 @@ describe('ShopifyPixelProvisioner', () => {
       }),
     ).resolves.toEqual({ id: 'gid://shopify/WebPixel/42' });
 
-    expect(apiService.requestAdminGraphql).toHaveBeenCalledTimes(1);
-    expect(apiService.requestAdminGraphql).toHaveBeenCalledWith(
+    expect(apiService.requestAdminGraphql).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(apiService.requestAdminGraphql).mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({
         query: expect.stringContaining('webPixelUpdate'),
         variables: {
           id: 'gid://shopify/WebPixel/42',
           webPixel: { settings: JSON.stringify(settings) },
         },
+      }),
+    );
+  });
+
+  it('creates a replacement when the locally stored WebPixel id is stale remotely', async () => {
+    const { apiService, provisioner } = buildProvisioner();
+    const settings = {
+      collectorUrl: 'https://api.stride.example/v1/pixel/events',
+      installationId: 'installation-id',
+      collectorToken: 'replacement-token',
+    };
+
+    await expect(
+      provisioner.upsert({
+        storeId,
+        existingWebPixelId: 'gid://shopify/WebPixel/stale',
+        settings,
+      }),
+    ).resolves.toEqual({ id: 'gid://shopify/WebPixel/1' });
+
+    expect(apiService.requestAdminGraphql).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(apiService.requestAdminGraphql).mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        query: expect.stringContaining('webPixelCreate'),
+        variables: { webPixel: { settings: JSON.stringify(settings) } },
       }),
     );
   });

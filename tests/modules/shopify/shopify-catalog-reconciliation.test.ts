@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { IntegrationService } from '../../../src/modules/integrations/integration.service.js';
+import type { ShopifyCatalogRepository } from '../../../src/modules/shopify/catalog/shopify-catalog.repository.js';
 import { ShopifyCatalogService } from '../../../src/modules/shopify/catalog/shopify-catalog.service.js';
 import type { ShopifyRepository } from '../../../src/modules/shopify/shopify.repository.js';
 import type { ShopifyApiService } from '../../../src/modules/shopify/shared/shopify-api.service.js';
@@ -56,11 +57,12 @@ function variant(id: string) {
 }
 
 describe('ShopifyCatalogService webhook reconciliation', () => {
-  it('refetches a product and all of its variant pages through focused GraphQL queries', async () => {
-    const repository = {
-      upsertProduct: vi.fn().mockResolvedValue(undefined),
-      upsertVariant: vi.fn().mockResolvedValue(true),
-    } as unknown as ShopifyRepository;
+  it('refetches a product and all variant pages through atomic catalog persistence', async () => {
+    const repository = {} as ShopifyRepository;
+    const syncRepository = {
+      persistProducts: vi.fn().mockResolvedValue(undefined),
+      persistVariants: vi.fn().mockResolvedValue(true),
+    } as unknown as ShopifyCatalogRepository;
     const requestAdminGraphql = vi
       .fn()
       .mockResolvedValueOnce({ product })
@@ -84,6 +86,7 @@ describe('ShopifyCatalogService webhook reconciliation', () => {
       repository,
       {} as IntegrationService,
       { requestAdminGraphql } as unknown as ShopifyApiService,
+      syncRepository,
     );
 
     const result = await service.reconcileProduct(context, product.id);
@@ -92,29 +95,41 @@ describe('ShopifyCatalogService webhook reconciliation', () => {
       found: true,
       variantIds: ['gid://shopify/ProductVariant/1', 'gid://shopify/ProductVariant/2'],
     });
-    expect(repository.upsertProduct).toHaveBeenCalledWith(context.storeId, product);
-    expect(repository.upsertVariant).toHaveBeenCalledTimes(2);
+    expect(syncRepository.persistProducts).toHaveBeenCalledWith(context.storeId, [product]);
+    expect(syncRepository.persistVariants).toHaveBeenCalledTimes(2);
+    expect(syncRepository.persistVariants).toHaveBeenNthCalledWith(
+      1,
+      context.storeId,
+      [variant('gid://shopify/ProductVariant/1')],
+    );
+    expect(syncRepository.persistVariants).toHaveBeenNthCalledWith(
+      2,
+      context.storeId,
+      [variant('gid://shopify/ProductVariant/2')],
+    );
     expect(requestAdminGraphql).toHaveBeenCalledTimes(3);
     expect(requestAdminGraphql.mock.calls[2]?.[0].variables).toMatchObject({ after: 'cursor-1' });
   });
 
   it('returns not found without inventing catalog state when Shopify no longer has the product', async () => {
-    const repository = {
-      upsertProduct: vi.fn(),
-      upsertVariant: vi.fn(),
-    } as unknown as ShopifyRepository;
+    const syncRepository = {
+      persistProducts: vi.fn(),
+      persistVariants: vi.fn(),
+    } as unknown as ShopifyCatalogRepository;
     const service = new ShopifyCatalogService(
-      repository,
+      {} as ShopifyRepository,
       {} as IntegrationService,
       {
         requestAdminGraphql: vi.fn().mockResolvedValue({ product: null }),
       } as unknown as ShopifyApiService,
+      syncRepository,
     );
 
     await expect(service.reconcileProduct(context, product.id)).resolves.toEqual({
       found: false,
       variantIds: [],
     });
-    expect(repository.upsertProduct).not.toHaveBeenCalled();
+    expect(syncRepository.persistProducts).not.toHaveBeenCalled();
+    expect(syncRepository.persistVariants).not.toHaveBeenCalled();
   });
 });

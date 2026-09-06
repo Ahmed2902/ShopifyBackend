@@ -24,6 +24,9 @@ import {
 
 const COLLECTOR_PATH = '/v1/pixel/events';
 const TOKEN_PREFIX_LENGTH = 8;
+const PROVISIONING_STALE_MS = 15 * 60_000;
+const MAX_EVENT_PAST_SKEW_MS = 7 * 24 * 60 * 60_000;
+const MAX_EVENT_FUTURE_SKEW_MS = 10 * 60_000;
 const REQUIRED_SHOPIFY_SCOPES = ['write_pixels', 'read_pixels', 'read_customer_events'] as const;
 type StoreScopedEventInput = Omit<Prisma.StorefrontEventCreateManyInput, 'storeId'>;
 
@@ -65,28 +68,106 @@ export class PixelService {
 
   async installShopifyPixel(storeId: string) {
     const collectorUrl = this.getCollectorUrl();
-    const existing = await this.repository.findInstallationByStoreId(storeId);
-    const installationId = existing?.id ?? randomUUID();
+    let existing = await this.repository.findInstallationForProvisioning(storeId);
+
+    if (existing?.pendingCollectorTokenHash && !existing.lastError) {
+      const operationAgeMs = this.now().getTime() - existing.updatedAt.getTime();
+      if (operationAgeMs < PROVISIONING_STALE_MS) {
+        throw new AppError(
+          'A pixel installation is already in progress for this store',
+          409,
+          'PIXEL_INSTALLATION_IN_PROGRESS',
+        );
+      }
+
+      const remote = await this.shopifyProvisioner.inspect(storeId);
+      const remoteToken =
+        typeof remote?.settings?.collectorToken === 'string'
+          ? remote.settings.collectorToken
+          : null;
+      const remoteInstallationId =
+        typeof remote?.settings?.installationId === 'string'
+          ? remote.settings.installationId
+          : null;
+
+      if (
+        remote &&
+        remoteInstallationId === existing.id &&
+        remoteToken &&
+        tokenMatches(remoteToken, existing.pendingCollectorTokenHash)
+      ) {
+        const recovered = await this.repository.finalizeInstallation({
+          id: existing.id,
+          expectedPendingTokenHash: existing.pendingCollectorTokenHash,
+          shopifyWebPixelId: remote.id,
+          installedAt: this.now(),
+        });
+        if (recovered) {
+          return {
+            ...recovered,
+            collectorUrl,
+            requiredShopifyScopes: REQUIRED_SHOPIFY_SCOPES,
+          };
+        }
+        throw new AppError(
+          'Pixel installation ownership changed during recovery',
+          409,
+          'PIXEL_INSTALLATION_SUPERSEDED',
+        );
+      }
+
+      const rollbackStatus = existing.status === 'ACTIVE' ? 'ACTIVE' : 'ERROR';
+      const rolledBack = await this.repository.rollbackStagedInstallation(
+        existing.id,
+        existing.pendingCollectorTokenHash,
+        rollbackStatus,
+        'Recovered stale pixel provisioning state before retry',
+      );
+      if (!rolledBack) {
+        throw new AppError(
+          'Pixel installation ownership changed during recovery',
+          409,
+          'PIXEL_INSTALLATION_SUPERSEDED',
+        );
+      }
+      existing = await this.repository.findInstallationForProvisioning(storeId);
+    }
+
+    const requestedInstallationId = existing?.id ?? randomUUID();
     const collectorToken = randomBytes(PIXEL_COLLECTOR_TOKEN_BYTES).toString('base64url');
     const collectorTokenHash = serializeTokenHash(collectorToken);
     const collectorTokenPrefix = collectorToken.slice(0, TOKEN_PREFIX_LENGTH);
     const hadWorkingInstallation = existing?.status === 'ACTIVE';
+    const hadRecoverablePendingCredential = Boolean(
+      existing?.pendingCollectorTokenHash && existing.lastError,
+    );
+    const rollbackStatus = hadWorkingInstallation
+      ? ('ACTIVE' as const)
+      : existing?.status === 'PROVISIONING' || hadRecoverablePendingCredential
+        ? ('PROVISIONING' as const)
+        : ('ERROR' as const);
 
-    // Stage the credential durably before changing Shopify. During rotation ingress accepts both
-    // the active and staged hashes, so a provider-success/local-finalize failure cannot take a
-    // producing storefront offline.
-    await this.repository.stageInstallation({
-      id: installationId,
+    const staged = await this.repository.stageInstallation({
+      id: requestedInstallationId,
       storeId,
       collectorTokenHash,
       collectorTokenPrefix,
+      status: hadWorkingInstallation ? 'ACTIVE' : 'PROVISIONING',
     });
+    if (!staged) {
+      throw new AppError(
+        'A pixel installation is already in progress for this store',
+        409,
+        'PIXEL_INSTALLATION_IN_PROGRESS',
+      );
+    }
+    const installationId = staged.id;
 
     let webPixel: { id: string };
     try {
       webPixel = await this.shopifyProvisioner.upsert({
         storeId,
-        existingWebPixelId: existing?.shopifyWebPixelId ?? null,
+        existingWebPixelId: existing?.shopifyWebPixelId ?? staged.shopifyWebPixelId ?? null,
         settings: {
           collectorUrl,
           installationId,
@@ -95,7 +176,12 @@ export class PixelService {
       });
     } catch (error) {
       await this.repository
-        .rollbackStagedInstallation(installationId, hadWorkingInstallation, errorMessage(error))
+        .rollbackStagedInstallation(
+          installationId,
+          collectorTokenHash,
+          rollbackStatus,
+          errorMessage(error),
+        )
         .catch(() => undefined);
       throw error;
     }
@@ -103,14 +189,15 @@ export class PixelService {
     try {
       const installation = await this.repository.finalizeInstallation({
         id: installationId,
+        expectedPendingTokenHash: collectorTokenHash,
         shopifyWebPixelId: webPixel.id,
         installedAt: this.now(),
       });
       if (!installation) {
         throw new AppError(
-          'Pixel installation disappeared during finalization',
+          'Pixel installation ownership changed before finalization',
           409,
-          'PIXEL_INSTALLATION_MISSING',
+          'PIXEL_INSTALLATION_SUPERSEDED',
         );
       }
 
@@ -120,10 +207,8 @@ export class PixelService {
         requiredShopifyScopes: REQUIRED_SHOPIFY_SCOPES,
       };
     } catch (error) {
-      // Do not roll the staged hash back here: Shopify already accepted the new settings. Keeping
-      // the staged credential recoverable is what prevents split-brain credential rejection.
       await this.repository
-        .recordInstallationError(installationId, errorMessage(error))
+        .recordInstallationError(installationId, collectorTokenHash, errorMessage(error))
         .catch(() => undefined);
       throw error;
     }
@@ -163,7 +248,7 @@ export class PixelService {
       isStorefrontBehaviorCaptureAllowed(event.consentState),
     );
     const normalized = eligible.map((event) => this.normalizeEvent(event, receivedAt));
-    const inserted = await this.repository.insertEvents(installation.storeId, normalized);
+    const inserted = await this.repository.insertEvents(installation.storeId, normalized, receivedAt);
 
     if (eligible.length > 0) {
       const latestEventAt = eligible.reduce((latest, event) => {
@@ -181,10 +266,6 @@ export class PixelService {
       ),
     ];
     if (sessionIds.length > 0) {
-      // The explicit repair queue makes steady-state repair O(dirty sessions) rather than scanning
-      // retained raw events. Mark only after the event write succeeds; immediate materialization
-      // then clears markers it actually covered, while concurrent newer writes remain dirty.
-      await this.repository.markSessionRepairs(installation.storeId, sessionIds, receivedAt);
       await this.journeyService
         .materializeSessions(installation.storeId, sessionIds)
         .catch(() => undefined);
@@ -219,17 +300,29 @@ export class PixelService {
     return { selected: ids.length, deleted };
   }
 
-  private normalizeEvent(
-    event: StorefrontEventInput,
-    receivedAt: Date,
-  ): StoreScopedEventInput {
+  private normalizeEvent(event: StorefrontEventInput, receivedAt: Date): StoreScopedEventInput {
+    const eventAt = new Date(event.eventAt);
+    const eventAgeMs = receivedAt.getTime() - eventAt.getTime();
+    if (eventAgeMs > MAX_EVENT_PAST_SKEW_MS || eventAgeMs < -MAX_EVENT_FUTURE_SKEW_MS) {
+      throw new AppError(
+        'Pixel event timestamp is outside the accepted client clock/retry window',
+        400,
+        'PIXEL_EVENT_TIME_INVALID',
+        {
+          eventId: event.eventId,
+          maxPastSkewMs: MAX_EVENT_PAST_SKEW_MS,
+          maxFutureSkewMs: MAX_EVENT_FUTURE_SKEW_MS,
+        },
+      );
+    }
+
     const attribution = mergeAttribution(event);
 
     return {
       eventId: event.eventId,
       eventVersion: event.eventVersion,
       eventName: event.eventName,
-      eventAt: new Date(event.eventAt),
+      eventAt,
       receivedAt,
       anonymousVisitorId: event.anonymousVisitorId ?? null,
       sessionId: event.sessionId ?? null,

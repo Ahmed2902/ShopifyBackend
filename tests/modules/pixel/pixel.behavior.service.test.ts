@@ -12,11 +12,12 @@ function repositoryMock() {
   return {
     getStoreContext: vi.fn(),
     findDirtyStoreIds: vi.fn().mockResolvedValue([]),
+    withStoreRollupLock: vi.fn(async (_storeId: string, work: () => Promise<unknown>) => work()),
     findDirtySessions: vi.fn().mockResolvedValue([]),
     findSessionsForWindow: vi.fn(),
     findValidOrders: vi.fn(),
     replaceDailyRows: vi.fn().mockResolvedValue({ rows: 0 }),
-    acknowledgeWindow: vi.fn().mockResolvedValue(1),
+    acknowledgeSessions: vi.fn().mockResolvedValue(1),
     advanceRollupState: vi.fn().mockResolvedValue({ storeId }),
     recordRollupError: vi.fn(),
     aggregateStore: vi.fn(),
@@ -83,6 +84,10 @@ function validOrder() {
   };
 }
 
+function stringify(value: unknown) {
+  return JSON.stringify(value, (_key, item) => (typeof item === 'bigint' ? item.toString() : item));
+}
+
 describe('PixelBehaviorService', () => {
   it('rolls a product view -> cart -> exact Shopify purchase into privacy-safe daily facts', async () => {
     const repository = repositoryMock();
@@ -131,15 +136,8 @@ describe('PixelBehaviorService', () => {
       landingPageUrl: 'https://shop.example/products/shoe',
       linkedPurchaseSessionCount: 1,
     });
-    expect(repository.acknowledgeWindow).toHaveBeenCalledWith(
-      storeId,
-      expect.any(Date),
-      expect.any(Date),
-      now,
-    );
-    expect(
-      JSON.stringify(rows, (_key, value) => (typeof value === 'bigint' ? value.toString() : value)),
-    ).not.toContain('anonymousVisitorId');
+    expect(repository.acknowledgeSessions).not.toHaveBeenCalled();
+    expect(stringify(rows)).not.toContain('anonymousVisitorId');
   });
 
   it('redacts arbitrary user-specific landing paths before durable storage', async () => {
@@ -164,13 +162,22 @@ describe('PixelBehaviorService', () => {
     const rows = vi.mocked(repository.replaceDailyRows).mock.calls[0]?.[2] ?? [];
     const landing = rows.find((row) => row.dimension === 'LANDING_PAGE');
     expect(landing?.landingPageUrl).toBe('https://shop.example/:other');
-    expect(JSON.stringify(landing)).not.toContain('customer@example.com');
-    expect(JSON.stringify(landing)).not.toContain('order-token-123');
+    expect(stringify(landing)).not.toContain('customer@example.com');
+    expect(stringify(landing)).not.toContain('order-token-123');
   });
 
-  it('rebuilds both previous and current cohort dates when a late event moves a session', async () => {
+  it('rebuilds both previous and current cohort dates and acknowledges only the exact selected dirty version', async () => {
     const repository = repositoryMock();
     const dirtyAt = new Date('2026-09-05T01:00:00.000Z');
+    const orderUpdatedAt = new Date('2026-09-05T00:59:00.000Z');
+    const dirty = {
+      id: 'session-db-id',
+      startedAt: new Date('2026-09-04T23:30:00.000Z'),
+      previousStartedAt: new Date('2026-09-05T00:30:00.000Z'),
+      rollupDirtyAt: dirtyAt,
+      orderUpdatedAt,
+      dirtyAt,
+    };
     vi.mocked(repository.findDirtyStoreIds).mockResolvedValue([storeId]);
     vi.mocked(repository.getStoreContext).mockResolvedValue({
       id: storeId,
@@ -178,21 +185,15 @@ describe('PixelBehaviorService', () => {
       pixelInstallation: { status: 'ACTIVE', lastEventAt: dirtyAt },
       storefrontBehaviorRollup: null,
     } as never);
-    vi.mocked(repository.findDirtySessions).mockResolvedValue([
-      {
-        id: 'session-db-id',
-        startedAt: new Date('2026-09-04T23:30:00.000Z'),
-        previousStartedAt: new Date('2026-09-05T00:30:00.000Z'),
-        dirtyAt,
-      },
-    ] as never);
-    vi.mocked(repository.findSessionsForWindow).mockResolvedValue([] as never);
+    vi.mocked(repository.findDirtySessions).mockResolvedValue([dirty] as never);
     const service = new PixelBehaviorService(repository, () => dirtyAt);
     const rebuild = vi.spyOn(service, 'rebuildStoreDate').mockResolvedValue({ date: '', rows: 0 });
 
     await service.rollupDirtyStores();
 
     expect(rebuild.mock.calls.map((call) => call[2])).toEqual(['2026-09-04', '2026-09-05']);
+    expect(repository.acknowledgeSessions).toHaveBeenCalledWith(storeId, [dirty], dirtyAt);
+    expect(repository.withStoreRollupLock).toHaveBeenCalledWith(storeId, expect.any(Function));
   });
 
   it('returns current/comparison first-party funnel rates using store-timezone windows', async () => {

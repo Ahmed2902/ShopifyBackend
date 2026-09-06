@@ -1,8 +1,9 @@
-import type {
+import {
   Prisma,
-  StorefrontAttributionDimension,
-  StorefrontAttributionTargetType,
+  type StorefrontAttributionDimension,
+  type StorefrontAttributionTargetType,
 } from '../../../generated/prisma/client.js';
+import { withPostgresAdvisoryLock } from '../../../lib/postgres-advisory-lock.js';
 import { prisma } from '../../../lib/prisma.js';
 
 const ATTRIBUTION_SUM_FIELDS = {
@@ -49,6 +50,17 @@ export type MetaTargetEvidenceDailyInput = Omit<
   'id' | 'createdAt' | 'updatedAt'
 >;
 
+export interface AttributionDirtySession {
+  id: string;
+  startedAt: Date;
+  previousStartedAt: Date | null;
+  rollupDirtyAt: Date;
+  orderUpdatedAt: Date | null;
+  dirtyAt: Date;
+  anonymousVisitorId: string | null;
+  visitorIds: string[];
+}
+
 export class PixelAttributionRepository {
   getStoreContext(storeId: string) {
     return prisma.store.findUnique({
@@ -70,35 +82,48 @@ export class PixelAttributionRepository {
 
   async findDirtyStoreIds(limit: number) {
     const rows = await prisma.$queryRaw<Array<{ storeId: string }>>`
-      SELECT DISTINCT s."storeId" AS "storeId"
+      SELECT
+        s."storeId" AS "storeId",
+        GREATEST(
+          COALESCE(r."lastRolledUpAt", TIMESTAMP 'epoch'),
+          COALESCE(r."updatedAt", TIMESTAMP 'epoch')
+        ) AS "lastAttemptAt"
       FROM "StorefrontSession" s
       LEFT JOIN "Order" o ON o."id" = s."orderId"
+      LEFT JOIN "StorefrontAttributionRollupState" r ON r."storeId" = s."storeId"
       WHERE s."attributionRolledUpAt" IS NULL
          OR s."attributionRolledUpAt" < s."rollupDirtyAt"
          OR s."attributionRolledStartedAt" IS DISTINCT FROM s."startedAt"
          OR (o."id" IS NOT NULL AND o."updatedAt" > s."attributionRolledUpAt")
-      ORDER BY s."storeId"
+      GROUP BY s."storeId", r."lastRolledUpAt", r."updatedAt"
+      ORDER BY "lastAttemptAt" ASC, s."storeId" ASC
       LIMIT ${limit}
     `;
     return rows.map((row) => row.storeId);
   }
 
+  withStoreRollupLock<T>(storeId: string, work: () => Promise<T>): Promise<T> {
+    return withPostgresAdvisoryLock(`stride:pixel:attribution:${storeId}`, work);
+  }
+
   findDirtySessions(storeId: string, limit: number) {
-    return prisma.$queryRaw<
-      Array<{
-        id: string;
-        startedAt: Date;
-        previousStartedAt: Date | null;
-        dirtyAt: Date;
-        anonymousVisitorId: string | null;
-      }>
-    >`
+    return prisma.$queryRaw<AttributionDirtySession[]>`
       SELECT
         s."id",
         s."startedAt",
         s."attributionRolledStartedAt" AS "previousStartedAt",
+        s."rollupDirtyAt" AS "rollupDirtyAt",
+        o."updatedAt" AS "orderUpdatedAt",
         GREATEST(s."rollupDirtyAt", COALESCE(o."updatedAt", s."rollupDirtyAt")) AS "dirtyAt",
-        s."anonymousVisitorId"
+        s."anonymousVisitorId",
+        ARRAY(
+          SELECT DISTINCT e."anonymousVisitorId"
+          FROM "StorefrontEvent" e
+          WHERE e."storeId" = s."storeId"
+            AND e."sessionId" = s."browserSessionId"
+            AND e."anonymousVisitorId" IS NOT NULL
+          ORDER BY e."anonymousVisitorId"
+        ) AS "visitorIds"
       FROM "StorefrontSession" s
       LEFT JOIN "Order" o ON o."id" = s."orderId"
       WHERE s."storeId" = ${storeId}::uuid
@@ -120,11 +145,16 @@ export class PixelAttributionRepository {
     to: Date,
   ) {
     if (anonymousVisitorIds.length === 0) return Promise.resolve([]);
+    // The attribution journey uses store-local calendar dates, so an exact 30*24h upper bound can
+    // end before the last instant of the 30th local boundary date (and DST can widen the gap).
+    // Conservatively pad two UTC days here. This can rebuild a small amount of extra data but
+    // guarantees every purchase that could be inside the 30-calendar-day journey window is dirtied.
+    const conservativeTo = new Date(to.getTime() + 2 * 86_400_000);
     return prisma.storefrontSession.findMany({
       where: {
         storeId,
         anonymousVisitorId: { in: anonymousVisitorIds },
-        startedAt: { gte: from, lte: to },
+        startedAt: { gte: from, lte: conservativeTo },
         orderLinkStatus: 'LINKED',
         orderId: { not: null },
       },
@@ -134,7 +164,7 @@ export class PixelAttributionRepository {
 
   findSessionsForWindow(storeId: string, from: Date, to: Date, skip: number, take: number) {
     return prisma.storefrontSession.findMany({
-      where: { storeId, startedAt: { gte: from, lte: to } },
+      where: { storeId, eventCount: { gt: 0 }, startedAt: { gte: from, lte: to } },
       orderBy: [{ startedAt: 'asc' }, { id: 'asc' }],
       skip,
       take,
@@ -190,6 +220,7 @@ export class PixelAttributionRepository {
       where: {
         storeId,
         anonymousVisitorId,
+        eventCount: { gt: 0 },
         startedAt: { gte: from, lte: to },
       },
       orderBy: [{ startedAt: 'asc' }, { id: 'asc' }],
@@ -242,34 +273,70 @@ export class PixelAttributionRepository {
     paths: AttributionPathDailyInput[],
     targets: MetaTargetEvidenceDailyInput[],
   ) {
+    // Daily purchase credit is bucketed by the purchase session's store-local date. A credited
+    // identity can originate in an earlier retained session, so the purchase-date row may not have
+    // received the current-session touch increment. Persist a cohort-aligned denominator rather
+    // than allowing durable facts such as 1 purchase / 0 touched sessions. JOURNEY paths are
+    // purchase-only descriptive cohorts, so their sessionCount is the number of represented
+    // purchase journeys (their API purchase rate remains intentionally null).
+    const normalizedAttribution = attribution.map((row) => ({
+      ...row,
+      touchedSessionCount: Math.max(row.touchedSessionCount ?? 0, row.linkedPurchaseSessionCount ?? 0),
+    }));
+    const normalizedPaths = paths.map((row) => ({
+      ...row,
+      sessionCount: row.path.startsWith('JOURNEY:')
+        ? Math.max(row.sessionCount ?? 0, row.linkedPurchaseSessionCount ?? 0)
+        : row.sessionCount,
+    }));
+
     return prisma.$transaction(async (tx) => {
       await tx.storefrontAttributionDaily.deleteMany({ where: { storeId, bucketDate } });
       await tx.storefrontAttributionPathDaily.deleteMany({ where: { storeId, bucketDate } });
       await tx.storefrontMetaTargetEvidenceDaily.deleteMany({ where: { storeId, bucketDate } });
-      if (attribution.length > 0) await tx.storefrontAttributionDaily.createMany({ data: attribution });
-      if (paths.length > 0) await tx.storefrontAttributionPathDaily.createMany({ data: paths });
+      if (normalizedAttribution.length > 0) {
+        await tx.storefrontAttributionDaily.createMany({ data: normalizedAttribution });
+      }
+      if (normalizedPaths.length > 0) {
+        await tx.storefrontAttributionPathDaily.createMany({ data: normalizedPaths });
+      }
       if (targets.length > 0) await tx.storefrontMetaTargetEvidenceDaily.createMany({ data: targets });
-      return { attribution: attribution.length, paths: paths.length, targets: targets.length };
+      return {
+        attribution: normalizedAttribution.length,
+        paths: normalizedPaths.length,
+        targets: targets.length,
+      };
     });
   }
 
-  async acknowledgeWindow(storeId: string, from: Date, to: Date, acknowledgedAt: Date) {
+  async acknowledgeSessions(storeId: string, sessions: AttributionDirtySession[], acknowledgedAt: Date) {
+    if (sessions.length === 0) return 0;
+    const versions = Prisma.join(
+      sessions.map(
+        (row) => Prisma.sql`(
+          ${row.id}::uuid,
+          ${row.startedAt}::timestamp(3),
+          ${row.rollupDirtyAt}::timestamp(3),
+          ${row.orderUpdatedAt}::timestamp(3)
+        )`,
+      ),
+    );
     return prisma.$executeRaw`
       UPDATE "StorefrontSession" s
       SET
         "attributionRolledUpAt" = ${acknowledgedAt},
         "attributionRolledStartedAt" = s."startedAt",
         "updatedAt" = CURRENT_TIMESTAMP
+      FROM (VALUES ${versions}) AS v("id", "startedAt", "rollupDirtyAt", "orderUpdatedAt")
       WHERE s."storeId" = ${storeId}::uuid
-        AND s."startedAt" >= ${from}
-        AND s."startedAt" <= ${to}
-        AND s."rollupDirtyAt" <= ${acknowledgedAt}
-        AND NOT EXISTS (
-          SELECT 1
+        AND s."id" = v."id"
+        AND s."startedAt" = v."startedAt"
+        AND s."rollupDirtyAt" = v."rollupDirtyAt"
+        AND (
+          SELECT o."updatedAt"
           FROM "Order" o
           WHERE o."id" = s."orderId"
-            AND o."updatedAt" > ${acknowledgedAt}
-        )
+        ) IS NOT DISTINCT FROM v."orderUpdatedAt"
     `;
   }
 

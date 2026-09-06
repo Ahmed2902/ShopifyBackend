@@ -1,6 +1,10 @@
 import { Prisma } from '../../../generated/prisma/client.js';
 import { AppError } from '../../../errors/app-error.js';
 import { prisma } from '../../../lib/prisma.js';
+import {
+  enqueueMetaHierarchyPixelRepairs,
+  type MetaHierarchyRepairEvidence,
+} from '../../pixel/pixel-source-invalidation.js';
 import { parseMetaMinorAmount } from '../meta.utils.js';
 import type {
   MetaAdPayload,
@@ -19,9 +23,7 @@ function optionalDate(value: string | null | undefined): Date | null {
 }
 
 function nullableJson(value: unknown) {
-  return value === null || value === undefined
-    ? Prisma.DbNull
-    : (value as Prisma.InputJsonValue);
+  return value === null || value === undefined ? Prisma.DbNull : (value as Prisma.InputJsonValue);
 }
 
 function creativeDestinationUrls(creative: MetaCreativePayload): string[] {
@@ -35,6 +37,25 @@ function creativeDestinationUrls(creative: MetaCreativePayload): string[] {
 }
 
 export class MetaAdsRepository {
+  // Couple each resolver-relevant provider mutation to only the materialized Pixel sessions that
+  // reference that provider identity. This preserves crash safety without rotating every Meta
+  // session once per campaign/ad-set/ad row in a large account.
+  private mutateHierarchy<T>(
+    adAccountId: string,
+    evidence: MetaHierarchyRepairEvidence,
+    mutate: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return prisma.$transaction(async (tx) => {
+      const result = await mutate(tx);
+      const account = await tx.metaAdAccount.findUniqueOrThrow({
+        where: { id: adAccountId },
+        select: { storeId: true },
+      });
+      await enqueueMetaHierarchyPixelRepairs(account.storeId, tx, evidence);
+      return result;
+    });
+  }
+
   findAccount(storeId: string, connectionId: string, metaAccountId: string) {
     return prisma.metaAdAccount.findFirst({
       where: { storeId, metaConnectionId: connectionId, metaAccountId },
@@ -96,12 +117,14 @@ export class MetaAdsRepository {
       rawJson: campaign as unknown as Prisma.InputJsonValue,
     };
 
-    return prisma.metaCampaign.upsert({
-      where: { adAccountId_metaCampaignId: { adAccountId, metaCampaignId: campaign.id } },
-      create: { adAccountId, metaCampaignId: campaign.id, ...data },
-      update: data,
-      select: { id: true, metaCampaignId: true },
-    });
+    return this.mutateHierarchy(adAccountId, { campaignIds: [campaign.id] }, (tx) =>
+      tx.metaCampaign.upsert({
+        where: { adAccountId_metaCampaignId: { adAccountId, metaCampaignId: campaign.id } },
+        create: { adAccountId, metaCampaignId: campaign.id, ...data },
+        update: data,
+        select: { id: true, metaCampaignId: true },
+      }),
+    );
   }
 
   upsertAdSet(adAccountId: string, campaignId: string, adSet: MetaAdSetPayload) {
@@ -135,12 +158,14 @@ export class MetaAdsRepository {
       rawJson: adSet as unknown as Prisma.InputJsonValue,
     };
 
-    return prisma.metaAdSet.upsert({
-      where: { adAccountId_metaAdSetId: { adAccountId, metaAdSetId: adSet.id } },
-      create: { adAccountId, metaAdSetId: adSet.id, ...data },
-      update: data,
-      select: { id: true, metaAdSetId: true },
-    });
+    return this.mutateHierarchy(adAccountId, { adSetIds: [adSet.id] }, (tx) =>
+      tx.metaAdSet.upsert({
+        where: { adAccountId_metaAdSetId: { adAccountId, metaAdSetId: adSet.id } },
+        create: { adAccountId, metaAdSetId: adSet.id, ...data },
+        update: data,
+        select: { id: true, metaAdSetId: true },
+      }),
+    );
   }
 
   upsertCreative(adAccountId: string, creative: MetaCreativePayload) {
@@ -175,6 +200,8 @@ export class MetaAdsRepository {
       rawJson: creative as unknown as Prisma.InputJsonValue,
     };
 
+    // Pixel hierarchy resolution stores campaign/ad-set/ad identity only; creative metadata changes
+    // do not alter a materialized touch's EXACT/PARTIAL/UNRESOLVED/CONFLICT result.
     return prisma.metaCreative.upsert({
       where: { adAccountId_metaCreativeId: { adAccountId, metaCreativeId: creative.id } },
       create: { adAccountId, metaCreativeId: creative.id, ...data },
@@ -211,53 +238,93 @@ export class MetaAdsRepository {
       rawJson: ad as unknown as Prisma.InputJsonValue,
     };
 
-    return prisma.metaAd.upsert({
-      where: { adAccountId_metaAdId: { adAccountId, metaAdId: ad.id } },
-      create: {
-        adAccountId,
-        metaAdId: ad.id,
-        targetScope: 'UNKNOWN',
-        targetScopeConfidence: null,
-        targetScopeEvidence: Prisma.DbNull,
-        ...providerData,
-      },
-      update: providerData,
-      select: { id: true, metaAdId: true },
-    });
+    return this.mutateHierarchy(adAccountId, { adIds: [ad.id] }, (tx) =>
+      tx.metaAd.upsert({
+        where: { adAccountId_metaAdId: { adAccountId, metaAdId: ad.id } },
+        create: {
+          adAccountId,
+          metaAdId: ad.id,
+          targetScope: 'UNKNOWN',
+          targetScopeConfidence: null,
+          targetScopeEvidence: Prisma.DbNull,
+          ...providerData,
+        },
+        update: providerData,
+        select: { id: true, metaAdId: true },
+      }),
+    );
   }
 
   async softDeleteMissing(
     adAccountId: string,
     snapshot: { campaignIds: string[]; adSetIds: string[]; creativeIds: string[]; adIds: string[] },
   ) {
-    const now = new Date();
-    const [campaigns, adSets, creatives, ads] = await prisma.$transaction([
-      prisma.metaCampaign.updateMany({
-        where: { adAccountId, deletedAt: null, metaCampaignId: { notIn: snapshot.campaignIds } },
-        data: { deletedAt: now },
-      }),
-      prisma.metaAdSet.updateMany({
-        where: { adAccountId, deletedAt: null, metaAdSetId: { notIn: snapshot.adSetIds } },
-        data: { deletedAt: now },
-      }),
-      prisma.metaCreative.updateMany({
-        where: { adAccountId, deletedAt: null, metaCreativeId: { notIn: snapshot.creativeIds } },
-        data: { deletedAt: now },
-      }),
-      prisma.metaAd.updateMany({
-        where: { adAccountId, deletedAt: null, metaAdId: { notIn: snapshot.adIds } },
-        data: { deletedAt: now },
-      }),
-    ]);
-    return { campaigns: campaigns.count, adSets: adSets.count, creatives: creatives.count, ads: ads.count };
+    return prisma.$transaction(async (tx) => {
+      const account = await tx.metaAdAccount.findUniqueOrThrow({
+        where: { id: adAccountId },
+        select: { storeId: true },
+      });
+      const now = new Date();
+      const [missingCampaigns, missingAdSets, missingAds] = await Promise.all([
+        tx.metaCampaign.findMany({
+          where: { adAccountId, deletedAt: null, metaCampaignId: { notIn: snapshot.campaignIds } },
+          select: { metaCampaignId: true },
+        }),
+        tx.metaAdSet.findMany({
+          where: { adAccountId, deletedAt: null, metaAdSetId: { notIn: snapshot.adSetIds } },
+          select: { metaAdSetId: true },
+        }),
+        tx.metaAd.findMany({
+          where: { adAccountId, deletedAt: null, metaAdId: { notIn: snapshot.adIds } },
+          select: { metaAdId: true },
+        }),
+      ]);
+      const [campaigns, adSets, creatives, ads] = await Promise.all([
+        tx.metaCampaign.updateMany({
+          where: { adAccountId, deletedAt: null, metaCampaignId: { notIn: snapshot.campaignIds } },
+          data: { deletedAt: now },
+        }),
+        tx.metaAdSet.updateMany({
+          where: { adAccountId, deletedAt: null, metaAdSetId: { notIn: snapshot.adSetIds } },
+          data: { deletedAt: now },
+        }),
+        tx.metaCreative.updateMany({
+          where: { adAccountId, deletedAt: null, metaCreativeId: { notIn: snapshot.creativeIds } },
+          data: { deletedAt: now },
+        }),
+        tx.metaAd.updateMany({
+          where: { adAccountId, deletedAt: null, metaAdId: { notIn: snapshot.adIds } },
+          data: { deletedAt: now },
+        }),
+      ]);
+
+      await enqueueMetaHierarchyPixelRepairs(account.storeId, tx, {
+        campaignIds: missingCampaigns.map((row) => row.metaCampaignId),
+        adSetIds: missingAdSets.map((row) => row.metaAdSetId),
+        adIds: missingAds.map((row) => row.metaAdId),
+      });
+
+      return {
+        campaigns: campaigns.count,
+        adSets: adSets.count,
+        creatives: creatives.count,
+        ads: ads.count,
+      };
+    });
   }
 
   markAccountSynced(accountId: string, syncedAt = new Date()) {
-    return prisma.metaAdAccount.update({ where: { id: accountId }, data: { lastSyncedAt: syncedAt } });
+    return prisma.metaAdAccount.update({
+      where: { id: accountId },
+      data: { lastSyncedAt: syncedAt },
+    });
   }
 
   markConnectionSynced(connectionId: string, syncedAt = new Date()) {
-    return prisma.metaConnection.update({ where: { id: connectionId }, data: { lastSyncedAt: syncedAt } });
+    return prisma.metaConnection.update({
+      where: { id: connectionId },
+      data: { lastSyncedAt: syncedAt },
+    });
   }
 
   private async selectedAccountIds(storeId: string): Promise<string[]> {

@@ -6,6 +6,10 @@ import { computeMetaAppSecretProof } from '../meta.utils.js';
 import type { MetaTrackingAd } from './meta-tracking.repository.js';
 
 const metaIdResponseSchema = z.object({ id: z.string().min(1) });
+const liveAdCreativeSchema = z.object({
+  id: z.string().min(1),
+  creative: z.object({ id: z.string().min(1) }).nullable().optional(),
+});
 
 export class MetaTrackingProvider {
   async cloneCreativeAndAssign(
@@ -18,6 +22,20 @@ export class MetaTrackingProvider {
       throw new AppError('Meta ad has no synced creative', 409, 'META_TRACKING_CREATIVE_MISSING');
     }
 
+    const liveCreativeId = await this.fetchLiveCreativeId(context, ad.metaAdId);
+    if (liveCreativeId !== creative.metaCreativeId) {
+      throw new AppError(
+        'Meta ad creative changed since the last Stride hierarchy sync; resync before applying tracking',
+        409,
+        'META_TRACKING_SNAPSHOT_STALE',
+        {
+          metaAdId: ad.metaAdId,
+          syncedCreativeId: creative.metaCreativeId,
+          liveCreativeId,
+        },
+      );
+    }
+
     const createParams: Record<string, string> = {
       name: `${creative.name ?? ad.name} [Stride tracking]`.slice(0, 255),
       url_tags: urlTags,
@@ -27,15 +45,19 @@ export class MetaTrackingProvider {
       createParams.object_story_id = creative.objectStoryId;
     } else if (creative.objectStorySpec && !creative.assetFeedSpec) {
       createParams.object_story_spec = JSON.stringify(creative.objectStorySpec);
-      if (creative.degreesOfFreedomSpec) {
-        createParams.degrees_of_freedom_spec = JSON.stringify(creative.degreesOfFreedomSpec);
-      }
     } else {
       throw new AppError(
         'This Meta creative shape is not safe for automatic tracking setup',
         409,
         'META_TRACKING_AUTOMATION_UNSUPPORTED',
       );
+    }
+
+    // Preserve the synced creative-enhancement configuration regardless of whether the source
+    // creative references an existing post or carries an object_story_spec. Automatic setup is
+    // tracking-only and must not silently change Meta's enhancement behavior.
+    if (creative.degreesOfFreedomSpec) {
+      createParams.degrees_of_freedom_spec = JSON.stringify(creative.degreesOfFreedomSpec);
     }
 
     const created = metaIdResponseSchema.safeParse(
@@ -46,6 +68,25 @@ export class MetaTrackingProvider {
         'Meta returned an invalid creative creation response',
         502,
         'META_BAD_RESPONSE',
+      );
+    }
+
+    // Creative creation is non-idempotent and can take long enough for a merchant or another
+    // automation to repoint the ad. Re-read immediately before the actual assignment so the final
+    // tracking-only mutation cannot overwrite a newer creative. The newly created clone is returned
+    // as orphan evidence if we abort here so it can be audited/cleaned up manually.
+    const liveCreativeIdBeforeAssignment = await this.fetchLiveCreativeId(context, ad.metaAdId);
+    if (liveCreativeIdBeforeAssignment !== creative.metaCreativeId) {
+      throw new AppError(
+        'Meta ad creative changed while Stride was preparing tracking; the new creative was not assigned',
+        409,
+        'META_TRACKING_SNAPSHOT_STALE',
+        {
+          metaAdId: ad.metaAdId,
+          syncedCreativeId: creative.metaCreativeId,
+          liveCreativeId: liveCreativeIdBeforeAssignment,
+          createdCreativeId: created.data.id,
+        },
       );
     }
 
@@ -63,6 +104,29 @@ export class MetaTrackingProvider {
     }
 
     return { newCreativeId: created.data.id };
+  }
+
+  private async fetchLiveCreativeId(context: MetaApiContext, metaAdId: string): Promise<string | null> {
+    const url = new URL(`https://graph.facebook.com/${context.apiVersion}/${metaAdId}`);
+    url.searchParams.set('fields', 'creative{id}');
+    url.searchParams.set('appsecret_proof', computeMetaAppSecretProof(context.accessToken));
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${context.accessToken}` },
+      });
+    } catch {
+      throw new AppError('Meta read request failed', 502, 'META_REQUEST_FAILED');
+    }
+
+    const payload = await this.parseResponse(response);
+    const parsed = liveAdCreativeSchema.safeParse(payload);
+    if (!parsed.success) {
+      throw new AppError('Meta returned an invalid ad creative response', 502, 'META_BAD_RESPONSE');
+    }
+    return parsed.data.creative?.id ?? null;
   }
 
   private async requestMutation(
@@ -93,6 +157,10 @@ export class MetaTrackingProvider {
       throw new AppError('Meta write request failed', 502, 'META_REQUEST_FAILED');
     }
 
+    return this.parseResponse(response);
+  }
+
+  private async parseResponse(response: Response): Promise<unknown> {
     const text = await response.text();
     let payload: unknown = null;
     if (text) {

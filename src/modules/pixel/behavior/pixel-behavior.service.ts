@@ -102,8 +102,6 @@ function durableLandingPage(url: string): string | null {
     }
     if (root === 'search' || root === 'cart') return `${parsed.origin}/${root}`;
 
-    // Arbitrary storefront routes can embed email addresses, customer ids, order tokens or app
-    // identifiers in path segments. Durable aggregates retain only a coarse route bucket.
     return `${parsed.origin}/:other`;
   } catch {
     return null;
@@ -320,28 +318,32 @@ export class PixelBehaviorService {
     let failed = 0;
 
     for (const storeId of storeIds) {
-      const context = await this.repository.getStoreContext(storeId);
-      if (!context) continue;
-      const dirty = await this.repository.findDirtySessions(storeId, DIRTY_SESSION_BATCH);
-      if (dirty.length === 0) continue;
-
-      const dates = new Set<string>();
-      for (const row of dirty) {
-        dates.add(storeDate(row.startedAt, context.ianaTimezone));
-        if (row.previousStartedAt) dates.add(storeDate(row.previousStartedAt, context.ianaTimezone));
-      }
-
       try {
-        for (const date of [...dates].sort()) {
-          await this.rebuildStoreDate(storeId, context.ianaTimezone, date);
-          datesRebuilt += 1;
-        }
-        const watermark = dirty.reduce(
-          (latest, row) => (row.dirtyAt > latest ? row.dirtyAt : latest),
-          dirty[0]!.dirtyAt,
-        );
-        await this.repository.advanceRollupState(storeId, watermark, this.now());
-        storesRolled += 1;
+        await this.repository.withStoreRollupLock(storeId, async () => {
+          const context = await this.repository.getStoreContext(storeId);
+          if (!context) return;
+          const dirty = await this.repository.findDirtySessions(storeId, DIRTY_SESSION_BATCH);
+          if (dirty.length === 0) return;
+          const acknowledgedAt = this.now();
+
+          const dates = new Set<string>();
+          for (const row of dirty) {
+            dates.add(storeDate(row.startedAt, context.ianaTimezone));
+            if (row.previousStartedAt) dates.add(storeDate(row.previousStartedAt, context.ianaTimezone));
+          }
+
+          for (const date of [...dates].sort()) {
+            await this.rebuildStoreDate(storeId, context.ianaTimezone, date);
+            datesRebuilt += 1;
+          }
+          await this.repository.acknowledgeSessions(storeId, dirty, acknowledgedAt);
+          const watermark = dirty.reduce(
+            (latest, row) => (row.dirtyAt > latest ? row.dirtyAt : latest),
+            dirty[0]!.dirtyAt,
+          );
+          await this.repository.advanceRollupState(storeId, watermark, this.now());
+          storesRolled += 1;
+        });
       } catch (error) {
         failed += 1;
         const message = error instanceof Error ? error.message.slice(0, 1_000) : 'Behavior rollup failed';
@@ -353,7 +355,6 @@ export class PixelBehaviorService {
   }
 
   async rebuildStoreDate(storeId: string, timeZone: string, date: string) {
-    const acknowledgedAt = this.now();
     const window = dateWindow(date, date, timeZone);
     const day = bucketDate(date);
     const aggregates = new Map<string, DailyAccumulator>();
@@ -477,12 +478,6 @@ export class PixelBehaviorService {
     }
 
     await this.repository.replaceDailyRows(storeId, day, [...aggregates.values()]);
-    await this.repository.acknowledgeWindow(
-      storeId,
-      window.instantFrom,
-      window.instantTo,
-      acknowledgedAt,
-    );
     return { date, rows: aggregates.size };
   }
 

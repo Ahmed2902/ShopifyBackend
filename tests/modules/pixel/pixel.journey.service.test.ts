@@ -7,6 +7,7 @@ const browserSessionId = 'event_session_001';
 const visitorId = 'visitor_abcdefgh';
 const retention = new Date('2026-12-03T12:00:00.000Z');
 const fixedNow = new Date('2026-09-04T15:00:00.000Z');
+const repairMarkerId = '11111111-1111-4111-8111-111111111111';
 
 function event(input: Record<string, unknown>) {
   return {
@@ -43,6 +44,7 @@ function event(input: Record<string, unknown>) {
 
 function buildRepository(events: Array<Record<string, unknown>>) {
   return {
+    findSessionRepairMarker: vi.fn().mockResolvedValue({ id: repairMarkerId }),
     findSessionEvents: vi.fn().mockResolvedValue(events),
     resolveMetaHierarchy: vi.fn().mockResolvedValue({ campaigns: [], adSets: [], ads: [] }),
     resolveCommerceEntities: vi.fn().mockResolvedValue({ products: [], variants: [], collections: [] }),
@@ -51,8 +53,8 @@ function buildRepository(events: Array<Record<string, unknown>>) {
     clearSessionRepair: vi.fn().mockResolvedValue({ count: 1 }),
     findDirtySessionKeys: vi.fn().mockResolvedValue([]),
     findPendingOrderSessions: vi.fn().mockResolvedValue([]),
-    setOrderLink: vi.fn().mockResolvedValue({ id: 'session-db-id' }),
-    scheduleOrderLinkRetry: vi.fn().mockResolvedValue({ id: 'session-db-id' }),
+    setOrderLink: vi.fn().mockResolvedValue({ count: 1 }),
+    scheduleOrderLinkRetry: vi.fn().mockResolvedValue({ count: 1 }),
     deleteExpiredSessions: vi.fn().mockResolvedValue({ selected: 0, deleted: 0 }),
     listSessions: vi.fn().mockResolvedValue({ items: [], total: 0 }),
     getSession: vi.fn().mockResolvedValue(null),
@@ -177,7 +179,10 @@ describe('PixelJourneyService', () => {
     const service = new PixelJourneyService(repository, () => fixedNow);
     await service.materializeSession(storeId, browserSessionId);
 
-    const [, , aggregate, touches, products] = vi.mocked(repository.replaceSessionReadModel).mock.calls[0]!;
+    const [, , claimedMarker, aggregate, touches, products] = vi.mocked(
+      repository.replaceSessionReadModel,
+    ).mock.calls[0]!;
+    expect(claimedMarker).toBe(repairMarkerId);
     expect(aggregate).toMatchObject({
       anonymousVisitorId: visitorId,
       eventCount: 6,
@@ -217,11 +222,38 @@ describe('PixelJourneyService', () => {
       viewCount: 1,
       addToCartCount: 1,
     });
-    expect(repository.clearSessionRepair).toHaveBeenCalledWith(
+    expect(repository.clearSessionRepair).not.toHaveBeenCalled();
+  });
+
+  it('claims the repair generation captured before reading session events with the read-model write', async () => {
+    const repository = buildRepository([event({ eventId: 'event_generation' })]);
+    const service = new PixelJourneyService(repository, () => fixedNow);
+
+    await service.materializeSession(storeId, browserSessionId);
+
+    expect(repository.findSessionRepairMarker).toHaveBeenCalledWith(storeId, browserSessionId);
+    expect(vi.mocked(repository.findSessionRepairMarker).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(repository.findSessionEvents).mock.invocationCallOrder[0]!,
+    );
+    expect(repository.replaceSessionReadModel).toHaveBeenCalledWith(
       storeId,
       browserSessionId,
-      fixedNow,
+      repairMarkerId,
+      expect.any(Object),
+      expect.any(Array),
+      expect.any(Array),
+      expect.any(Array),
     );
+    expect(repository.clearSessionRepair).not.toHaveBeenCalled();
+  });
+
+  it('does not report a stale materialization as applied when its repair generation was superseded', async () => {
+    const repository = buildRepository([event({ eventId: 'event_stale_generation' })]);
+    vi.mocked(repository.replaceSessionReadModel).mockResolvedValue(null);
+    const service = new PixelJourneyService(repository, () => fixedNow);
+
+    await expect(service.materializeSession(storeId, browserSessionId)).resolves.toBeNull();
+    expect(repository.clearSessionRepair).not.toHaveBeenCalled();
   });
 
   it('does not collapse source changes driven only by page/referrer URLs', async () => {
@@ -253,7 +285,7 @@ describe('PixelJourneyService', () => {
 
     await service.materializeSession(storeId, browserSessionId);
 
-    const touches = vi.mocked(repository.replaceSessionReadModel).mock.calls[0]?.[3] ?? [];
+    const touches = vi.mocked(repository.replaceSessionReadModel).mock.calls[0]?.[4] ?? [];
     expect(touches.map((touch) => touch.source)).toEqual(['UNKNOWN', 'DIRECT', 'REFERRER']);
   });
 
@@ -274,7 +306,7 @@ describe('PixelJourneyService', () => {
 
     await service.materializeSession(storeId, browserSessionId);
 
-    const [, , aggregate, touches] = vi.mocked(repository.replaceSessionReadModel).mock.calls[0]!;
+    const [, , , aggregate, touches] = vi.mocked(repository.replaceSessionReadModel).mock.calls[0]!;
     expect(aggregate).toMatchObject({
       shopifyOrderExternalId: orderGid,
       orderId: null,
@@ -304,10 +336,16 @@ describe('PixelJourneyService', () => {
       selected: 1,
       linked: 1,
       deferred: 0,
+      stale: 0,
       stillPending: 0,
     });
     expect(repository.findPendingOrderSessions).toHaveBeenCalledWith(fixedNow, 100);
-    expect(repository.setOrderLink).toHaveBeenCalledWith('session-db', 'order-db', fixedNow);
+    expect(repository.setOrderLink).toHaveBeenCalledWith(
+      'session-db',
+      orderGid,
+      'order-db',
+      fixedNow,
+    );
   });
 
   it('backs off unresolved orders so they rotate out of the next reconciliation batch', async () => {
@@ -322,10 +360,12 @@ describe('PixelJourneyService', () => {
       selected: 1,
       linked: 0,
       deferred: 1,
+      stale: 0,
       stillPending: 1,
     });
     expect(repository.scheduleOrderLinkRetry).toHaveBeenCalledWith(
       'session-db',
+      orderGid,
       1,
       new Date('2026-09-04T15:05:00.000Z'),
     );

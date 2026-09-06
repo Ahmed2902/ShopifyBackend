@@ -312,6 +312,16 @@ function pathSnapshot(path: string, sum: Record<string, number | bigint | null> 
   };
 }
 
+function pathMetricValues(snapshot: ReturnType<typeof pathSnapshot>) {
+  return {
+    sessions: snapshot.sessions,
+    linkedPurchaseSessions: snapshot.linkedPurchaseSessions,
+    crossSessionPurchaseSessions: snapshot.crossSessionPurchaseSessions,
+    purchaseRate: snapshot.purchaseRate,
+    averageJourneyToPurchaseMs: snapshot.averageJourneyToPurchaseMs,
+  };
+}
+
 function quality(context: Awaited<ReturnType<PixelAttributionRepository['getStoreContext']>>) {
   if (!context) return { state: 'NOT_READY' as const, limitations: ['PIXEL_STORE_NOT_FOUND'] };
   const rollup = context.storefrontAttributionRollup;
@@ -346,51 +356,64 @@ export class PixelAttributionService {
     let failed = 0;
 
     for (const storeId of storeIds) {
-      const context = await this.repository.getStoreContext(storeId);
-      if (!context) continue;
-      const dirty = await this.repository.findDirtySessions(storeId, DIRTY_SESSION_BATCH);
-      if (dirty.length === 0) continue;
-
-      const dirtyDates = new Set<string>();
-      for (const row of dirty) {
-        dirtyDates.add(storeDate(row.startedAt, context.ianaTimezone));
-        if (row.previousStartedAt) dirtyDates.add(storeDate(row.previousStartedAt, context.ianaTimezone));
-      }
-      const visitors = [
-        ...new Set(dirty.flatMap((row) => (row.anonymousVisitorId ? [row.anonymousVisitorId] : []))),
-      ];
-      if (visitors.length > 0) {
-        const earliest = dirty.reduce(
-          (value, row) => (row.startedAt < value ? row.startedAt : value),
-          dirty[0]!.startedAt,
-        );
-        const latest = dirty.reduce(
-          (value, row) => (row.startedAt > value ? row.startedAt : value),
-          dirty[0]!.startedAt,
-        );
-        const through = new Date(latest.getTime() + LOOKBACK_DAYS * 86_400_000);
-        const laterPurchases = await this.repository.findLaterPurchaseSessions(
-          storeId,
-          visitors,
-          earliest,
-          through,
-        );
-        for (const purchase of laterPurchases) {
-          dirtyDates.add(storeDate(purchase.startedAt, context.ianaTimezone));
-        }
-      }
-
       try {
-        for (const date of [...dirtyDates].sort()) {
-          await this.rebuildStoreDate(storeId, context.ianaTimezone, date);
-          datesRebuilt += 1;
-        }
-        const watermark = dirty.reduce(
-          (latest, row) => (row.dirtyAt > latest ? row.dirtyAt : latest),
-          dirty[0]!.dirtyAt,
-        );
-        await this.repository.advanceRollupState(storeId, watermark, this.now());
-        storesRolled += 1;
+        await this.repository.withStoreRollupLock(storeId, async () => {
+          const context = await this.repository.getStoreContext(storeId);
+          if (!context) return;
+          const dirty = await this.repository.findDirtySessions(storeId, DIRTY_SESSION_BATCH);
+          if (dirty.length === 0) return;
+          const acknowledgedAt = this.now();
+
+          const dirtyDates = new Set<string>();
+          for (const row of dirty) {
+            dirtyDates.add(storeDate(row.startedAt, context.ianaTimezone));
+            if (row.previousStartedAt) dirtyDates.add(storeDate(row.previousStartedAt, context.ianaTimezone));
+          }
+
+          const visitors = [
+            ...new Set(
+              dirty.flatMap((row) => [
+                ...row.visitorIds,
+                ...(row.anonymousVisitorId ? [row.anonymousVisitorId] : []),
+              ]),
+            ),
+          ];
+          if (visitors.length > 0) {
+            const startCandidates = dirty.flatMap((row) =>
+              row.previousStartedAt ? [row.startedAt, row.previousStartedAt] : [row.startedAt],
+            );
+            const earliest = startCandidates.reduce(
+              (value, candidate) => (candidate < value ? candidate : value),
+              startCandidates[0]!,
+            );
+            const latest = startCandidates.reduce(
+              (value, candidate) => (candidate > value ? candidate : value),
+              startCandidates[0]!,
+            );
+            const through = new Date(latest.getTime() + LOOKBACK_DAYS * 86_400_000);
+            const laterPurchases = await this.repository.findLaterPurchaseSessions(
+              storeId,
+              visitors,
+              earliest,
+              through,
+            );
+            for (const purchase of laterPurchases) {
+              dirtyDates.add(storeDate(purchase.startedAt, context.ianaTimezone));
+            }
+          }
+
+          for (const date of [...dirtyDates].sort()) {
+            await this.rebuildStoreDate(storeId, context.ianaTimezone, date);
+            datesRebuilt += 1;
+          }
+          await this.repository.acknowledgeSessions(storeId, dirty, acknowledgedAt);
+          const watermark = dirty.reduce(
+            (latest, row) => (row.dirtyAt > latest ? row.dirtyAt : latest),
+            dirty[0]!.dirtyAt,
+          );
+          await this.repository.advanceRollupState(storeId, watermark, this.now());
+          storesRolled += 1;
+        });
       } catch (error) {
         failed += 1;
         const message = error instanceof Error ? error.message.slice(0, 1_000) : 'Attribution rollup failed';
@@ -402,7 +425,6 @@ export class PixelAttributionService {
   }
 
   async rebuildStoreDate(storeId: string, timeZone: string, date: string) {
-    const acknowledgedAt = this.now();
     const window = dateWindow(date, date, timeZone);
     const day = bucketDate(date);
     const attribution = new Map<string, AttributionAccumulator>();
@@ -443,9 +465,8 @@ export class PixelAttributionService {
           attribution.set(mapKey, row);
         }
 
-        const purchaseCutoff = validPurchase && session.checkoutCompletedAt
-          ? session.checkoutCompletedAt
-          : session.endedAt;
+        const purchaseCutoff =
+          validPurchase && session.checkoutCompletedAt ? session.checkoutCompletedAt : session.endedAt;
         const sessionPathTouches = session.touches.filter((touch) => touch.eventAt <= purchaseCutoff);
         const sessionPath = `SESSION:${sourcePath(sessionPathTouches)}`;
         const sessionPathKey = hash(sessionPath);
@@ -602,20 +623,13 @@ export class PixelAttributionService {
       if (sessions.length < SESSION_PAGE_SIZE) break;
     }
 
-    const result = await this.repository.replaceDailyRows(
+    return this.repository.replaceDailyRows(
       storeId,
       day,
       [...attribution.values()],
       [...paths.values()],
       [...targets.values()],
     );
-    await this.repository.acknowledgeWindow(
-      storeId,
-      window.instantFrom,
-      window.instantTo,
-      acknowledgedAt,
-    );
-    return result;
   }
 
   sources(storeId: string, query: AnalyticsListQuery, now = this.now()) {
@@ -664,7 +678,7 @@ export class PixelAttributionService {
           path: row.path,
           current,
           comparison,
-          change: metricChanges(current, comparison),
+          change: metricChanges(pathMetricValues(current), pathMetricValues(comparison)),
         };
       }),
       pagination: { page: query.page, limit: query.limit, total },
@@ -898,7 +912,8 @@ export class PixelAttributionService {
       source: 'STRIDE_FIRST_PARTY_JOURNEY_PLUS_SHOPIFY_ORDER_TRUTH',
       lookbackDays: LOOKBACK_DAYS,
       firstTouch: 'First observed touch inside the retained 30-day first-party journey window.',
-      lastTouch: 'Last observed touch at or before checkout completion inside the retained 30-day journey window.',
+      lastTouch:
+        'Last observed touch at or before checkout completion inside the retained 30-day journey window.',
       assistedTouch:
         'An observed touch before the final pre-purchase touch in a Shopify-linked purchase journey.',
       purchaseTruth: 'Only exact non-test, non-cancelled Shopify order links count as purchases.',
