@@ -14,8 +14,9 @@ export class PollingWorker {
   start(): void {
     if (this.timer || this.stopping) return;
     void this.tick();
+    // Keep the interval referenced. In a dedicated worker process these timers are the
+    // long-lived runtime itself; unref() would allow Node to exit as soon as startup finishes.
     this.timer = setInterval(() => void this.tick(), this.intervalMs);
-    this.timer.unref();
   }
 
   async stop(): Promise<void> {
