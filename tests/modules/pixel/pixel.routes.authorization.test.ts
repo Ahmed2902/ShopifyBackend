@@ -3,9 +3,11 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StoreAccessClaim } from '../../../src/types/auth.js';
 
-const install = vi.fn((_req: Request, res: Response) => res.status(204).send());
-const debugValidate = vi.fn((_req: Request, res: Response) => res.status(204).send());
-const noop = vi.fn((_req: Request, res: Response) => res.status(204).send());
+const { install, debugValidate, noop } = vi.hoisted(() => ({
+  install: vi.fn(),
+  debugValidate: vi.fn(),
+  noop: vi.fn(),
+}));
 
 vi.mock('../../../src/middleware/auth.middleware.js', () => ({
   requireAuth: (_req: Request, _res: Response, next: NextFunction) => next(),
@@ -66,9 +68,12 @@ function buildApp(role: StoreAccessClaim['role']) {
 }
 
 beforeEach(() => {
-  install.mockClear();
-  debugValidate.mockClear();
-  noop.mockClear();
+  install.mockReset();
+  debugValidate.mockReset();
+  noop.mockReset();
+  install.mockImplementation((_req: Request, res: Response) => res.status(204).send());
+  debugValidate.mockImplementation((_req: Request, res: Response) => res.status(204).send());
+  noop.mockImplementation((_req: Request, res: Response) => res.status(204).send());
 });
 
 describe('production pixel route authorization', () => {
