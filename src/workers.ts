@@ -1,5 +1,6 @@
 import { logger } from './lib/logger.js';
 import { PollingWorker } from './lib/polling-worker.js';
+import { pixelJourneyService } from './modules/pixel/journey/pixel-journey.service.js';
 import { pixelService } from './modules/pixel/pixel.service.js';
 import { reconciliationService } from './modules/reconciliation/reconciliation.service.js';
 import { shopifyService } from './modules/shopify/shopify.service.js';
@@ -32,11 +33,28 @@ const reconciliationWorker = new PollingWorker(
   'Scheduled reconciliation worker failed',
 );
 
+const pixelJourneyWorker = new PollingWorker(
+  30_000,
+  async () => {
+    const [sessions, orders] = await Promise.all([
+      pixelJourneyService.repairDirtySessions(100),
+      pixelJourneyService.linkPendingOrders(100),
+    ]);
+    if (sessions.materialized > 0 || sessions.failed > 0 || orders.linked > 0) {
+      logger.info({ sessions, orders }, 'Reconciled Stride Pixel journey read model');
+    }
+  },
+  'Stride Pixel journey reconciliation failed',
+);
+
 const pixelRetentionWorker = new PollingWorker(
   60_000,
   async () => {
-    const result = await pixelService.cleanupExpiredEvents();
-    if (result.deleted > 0) logger.info(result, 'Deleted expired raw storefront events');
+    const sessions = await pixelJourneyService.cleanupExpiredSessions();
+    const events = await pixelService.cleanupExpiredEvents();
+    if (sessions.deleted > 0 || events.deleted > 0) {
+      logger.info({ sessions, events }, 'Deleted expired Stride Pixel behavioral data');
+    }
   },
   'Stride Pixel retention cleanup failed',
 );
@@ -45,6 +63,7 @@ const workers = [
   shopifyWebhookWorker,
   tiktokWebhookWorker,
   reconciliationWorker,
+  pixelJourneyWorker,
   pixelRetentionWorker,
 ];
 
