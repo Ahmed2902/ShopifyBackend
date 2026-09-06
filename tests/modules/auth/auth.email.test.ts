@@ -6,7 +6,7 @@ afterEach(() => {
 });
 
 describe('ResendAuthEmailSender', () => {
-  it('sends verification mail through Resend with the configured sender and token link', async () => {
+  it('sends a branded verification email through Resend with the configured sender and token link', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -29,12 +29,41 @@ describe('ResendAuthEmailSender', () => {
     const body = JSON.parse(init.body as string) as {
       from: string;
       to: string[];
+      subject: string;
+      text: string;
       html: string;
     };
     expect(body.from).toBe('Test App <onboarding@resend.dev>');
     expect(body.to).toEqual(['owner@example.com']);
+    expect(body.subject).toBe('Verify your Stride email');
+    expect(body.text).toContain('This link expires in 24 hours.');
+    expect(body.html).toContain('STRIDE');
+    expect(body.html).toContain('Verify your email');
     expect(body.html).toContain(
       'http://localhost:3000/auth/verify-email?token=verification-token-value',
+    );
+  });
+
+  it('sends a branded single-use password reset email', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await new ResendAuthEmailSender().sendPasswordResetEmail(
+      'owner@example.com',
+      'password-reset-token-value',
+    );
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse(init.body as string) as {
+      subject: string;
+      text: string;
+      html: string;
+    };
+    expect(body.subject).toBe('Reset your Stride password');
+    expect(body.text).toContain('one-time link expires in 30 minutes');
+    expect(body.html).toContain('Reset your password');
+    expect(body.html).toContain(
+      'http://localhost:3000/auth/reset-password?token=password-reset-token-value',
     );
   });
 
