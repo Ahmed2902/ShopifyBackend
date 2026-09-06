@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   PIXEL_EVENT_VERSION,
+  PIXEL_MAX_BATCH_SIZE,
   STOREFRONT_CONSENT_STATES,
   STOREFRONT_EVENT_NAMES,
 } from './pixel.types.js';
@@ -16,6 +17,12 @@ const externalIdSchema = z.string().trim().min(1).max(128);
 const attributionValueSchema = z.string().trim().min(1).max(255);
 const clickIdSchema = z.string().trim().min(1).max(512);
 const urlSchema = z.string().url().max(2048);
+const collectorTokenSchema = z
+  .string()
+  .trim()
+  .min(40)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+$/);
 
 export const storefrontAttributionSchema = z
   .object({
@@ -92,4 +99,20 @@ export const storefrontEventSchema = z
     }
   });
 
+export const pixelIngestBatchSchema = z
+  .object({
+    installationId: z.string().uuid(),
+    collectorToken: collectorTokenSchema,
+    events: z.array(storefrontEventSchema).min(1).max(PIXEL_MAX_BATCH_SIZE),
+  })
+  .strict();
+
+export const pixelDebugBatchSchema = z
+  .object({
+    events: z.array(storefrontEventSchema).min(1).max(PIXEL_MAX_BATCH_SIZE),
+  })
+  .strict();
+
 export type StorefrontEventInput = z.infer<typeof storefrontEventSchema>;
+export type PixelIngestBatchInput = z.infer<typeof pixelIngestBatchSchema>;
+export type PixelDebugBatchInput = z.infer<typeof pixelDebugBatchSchema>;

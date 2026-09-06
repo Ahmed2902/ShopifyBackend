@@ -4,6 +4,7 @@ import { authRouter } from './modules/auth/auth.routes.js';
 import { intelligenceRouter } from './modules/intelligence/intelligence.routes.js';
 import { integrationRouter } from './modules/integrations/integration.routes.js';
 import { metaRouter, metaStoreRouter } from './modules/meta/meta.routes.js';
+import { pixelPublicRouter, pixelStoreRouter } from './modules/pixel/pixel.routes.js';
 import { shopifyRouter, shopifyStoreRouter } from './modules/shopify/shopify.routes.js';
 import { storeRouter } from './modules/stores/store.routes.js';
 import { tiktokRouter, tiktokStoreRouter } from './modules/tiktok/tiktok.routes.js';
@@ -13,6 +14,7 @@ const router = Router();
 
 router.use('/health', healthRouter);
 router.use('/v1/auth', authRouter);
+router.use('/v1/pixel', pixelPublicRouter);
 router.use('/v1/integrations/shopify', shopifyRouter);
 router.use('/v1/integrations/meta', metaRouter);
 router.use('/v1/integrations/tiktok', tiktokRouter);
@@ -22,6 +24,7 @@ router.use('/v1/stores/:storeId/integrations/tiktok', tiktokStoreRouter);
 router.use('/v1/stores/:storeId/integrations', integrationRouter);
 router.use('/v1/stores/:storeId/intelligence', intelligenceRouter);
 router.use('/v1/stores/:storeId/analytics', analyticsRouter);
+router.use('/v1/stores/:storeId/pixel', pixelStoreRouter);
 router.use('/v1/stores', storeRouter);
 
 export { router };
