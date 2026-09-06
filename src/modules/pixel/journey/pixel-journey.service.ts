@@ -272,6 +272,7 @@ export class PixelJourneyService {
       searchCount: events.filter((event) => event.eventName === 'SEARCH').length,
       addToCartCount: events.filter((event) => event.eventName === 'ADD_TO_CART').length,
       removeFromCartCount: events.filter((event) => event.eventName === 'REMOVE_FROM_CART').length,
+      cartViewCount: events.filter((event) => event.eventName === 'CART_VIEW').length,
       checkoutProgressCount: events.filter((event) => event.eventName === 'CHECKOUT_PROGRESS').length,
       checkoutStartedAt:
         checkoutStartedEvents.length > 0
@@ -294,9 +295,6 @@ export class PixelJourneyService {
       landingPageUrl: events[0]?.landingPageUrl ?? events[0]?.pageUrl ?? null,
       initialReferrerUrl: events[0]?.referrerUrl ?? null,
       dataQualityFlags,
-      // Session-level pseudonymous evidence is retained no longer than its oldest source event.
-      // This is intentionally conservative: one long-lived browser session cannot extend an old
-      // touch, URL, or counter past the source event's own retention horizon.
       retentionExpiresAt: minDate(events.map((event) => event.retentionExpiresAt)),
       materializedAt,
       rollupDirtyAt: materializedAt,
