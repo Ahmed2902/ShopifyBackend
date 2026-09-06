@@ -4,10 +4,25 @@ import { logger } from './lib/logger.js';
 import { prisma } from './lib/prisma.js';
 import { startWorkers, stopWorkers } from './workers.js';
 
+const runningOnVercel = process.env.VERCEL === '1';
+const workersEnabled = !runningOnVercel;
+
 const server = app.listen(env.PORT, () => {
-  logger.info({ port: env.PORT, environment: env.NODE_ENV }, 'API listening');
+  logger.info(
+    { port: env.PORT, environment: env.NODE_ENV, workersEnabled },
+    'API listening',
+  );
 });
-startWorkers();
+
+// Vercel may create multiple autoscaled HTTP instances and recycle them when idle. Starting
+// polling loops in each instance would duplicate queue claims and still would not provide an
+// always-on worker guarantee. Keep the web process stateless there; production polling workers
+// must run in a dedicated persistent worker process until they are migrated to a queue/workflow.
+if (workersEnabled) {
+  startWorkers();
+} else {
+  logger.info('Polling workers disabled in Vercel HTTP runtime');
+}
 
 let shuttingDown = false;
 
@@ -22,7 +37,7 @@ async function shutdown(signal: string) {
       process.exitCode = 1;
     }
 
-    await stopWorkers();
+    if (workersEnabled) await stopWorkers();
     await prisma.$disconnect();
     process.exit();
   });
