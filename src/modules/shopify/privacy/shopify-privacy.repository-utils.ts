@@ -64,7 +64,9 @@ export async function findMatchingOrderWebhookDeliveries(
   let cursor: string | null = null;
 
   while (true) {
-    const page = await client.webhookDelivery.findMany({
+    // Keep this explicit rather than relying on Prisma's recursive generic inference around
+    // cursor pagination. TypeScript can otherwise report TS7022 for this self-updating loop.
+    const page: MatchingOrderWebhookDelivery[] = await client.webhookDelivery.findMany({
       where: {
         shopifyConnectionId: connection.id,
         topic: { in: [...ORDER_WEBHOOK_TOPICS] },
