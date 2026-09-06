@@ -30,10 +30,12 @@ type DailyAccumulator = BehaviorDailyInput & {
   searchCount: number;
   addToCartCount: number;
   removeFromCartCount: number;
+  cartViewCount: number;
   productViewSessionCount: number;
   collectionViewSessionCount: number;
   searchSessionCount: number;
   addToCartSessionCount: number;
+  cartViewSessionCount: number;
   checkoutStartSessionCount: number;
   checkoutCompletedSessionCount: number;
   linkedPurchaseSessionCount: number;
@@ -150,10 +152,12 @@ function newAccumulator(input: {
     searchCount: 0,
     addToCartCount: 0,
     removeFromCartCount: 0,
+    cartViewCount: 0,
     productViewSessionCount: 0,
     collectionViewSessionCount: 0,
     searchSessionCount: 0,
     addToCartSessionCount: 0,
+    cartViewSessionCount: 0,
     checkoutStartSessionCount: 0,
     checkoutCompletedSessionCount: 0,
     linkedPurchaseSessionCount: 0,
@@ -185,10 +189,12 @@ function addCommonSession(
   row.searchCount += session.searchCount;
   row.addToCartCount += session.addToCartCount;
   row.removeFromCartCount += session.removeFromCartCount;
+  row.cartViewCount += session.cartViewCount;
   if (session.productViewCount > 0) row.productViewSessionCount += 1;
   if (session.collectionViewCount > 0) row.collectionViewSessionCount += 1;
   if (session.searchCount > 0) row.searchSessionCount += 1;
   if (session.addToCartCount > 0) row.addToCartSessionCount += 1;
+  if (session.cartViewCount > 0) row.cartViewSessionCount += 1;
   if (session.checkoutStartedAt) row.checkoutStartSessionCount += 1;
   if (session.checkoutCompletedAt) row.checkoutCompletedSessionCount += 1;
   if (validPurchase) row.linkedPurchaseSessionCount += 1;
@@ -249,6 +255,7 @@ function snapshot(sum: Record<string, number | bigint | null> | null | undefined
   const sessions = numberValue(sum?.sessionCount);
   const productViewSessions = numberValue(sum?.productViewSessionCount);
   const addToCartSessions = numberValue(sum?.addToCartSessionCount);
+  const cartViewSessions = numberValue(sum?.cartViewSessionCount);
   const checkoutStartSessions = numberValue(sum?.checkoutStartSessionCount);
   const linkedPurchaseSessions = numberValue(sum?.linkedPurchaseSessionCount);
   const delayCount = numberValue(sum?.conversionDelayCount);
@@ -262,19 +269,24 @@ function snapshot(sum: Record<string, number | bigint | null> | null | undefined
     searches: numberValue(sum?.searchCount),
     addToCartEvents: numberValue(sum?.addToCartCount),
     removeFromCartEvents: numberValue(sum?.removeFromCartCount),
+    cartViews: numberValue(sum?.cartViewCount),
     productViewSessions,
     collectionViewSessions: numberValue(sum?.collectionViewSessionCount),
     searchSessions: numberValue(sum?.searchSessionCount),
     addToCartSessions,
+    cartViewSessions,
     checkoutStartSessions,
     checkoutCompletedSessions: numberValue(sum?.checkoutCompletedSessionCount),
     linkedPurchaseSessions,
     productViewRate: safeRate(productViewSessions, sessions),
     addToCartRate: safeRate(addToCartSessions, sessions),
+    cartViewRate: safeRate(cartViewSessions, sessions),
     viewToCartRate: safeRate(addToCartSessions, productViewSessions),
+    cartViewToCheckoutRate: safeRate(checkoutStartSessions, cartViewSessions),
     checkoutStartRate: safeRate(checkoutStartSessions, sessions),
     linkedPurchaseRate: safeRate(linkedPurchaseSessions, sessions),
     cartToPurchaseRate: safeRate(linkedPurchaseSessions, addToCartSessions),
+    cartViewToPurchaseRate: safeRate(linkedPurchaseSessions, cartViewSessions),
     checkoutToPurchaseRate: safeRate(linkedPurchaseSessions, checkoutStartSessions),
     averageSessionToPurchaseMs: delayCount > 0 ? delayTotal / delayCount : null,
     exactResolutionSessions: numberValue(sum?.exactResolutionSessionCount),
