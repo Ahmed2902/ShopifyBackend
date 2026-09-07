@@ -4,6 +4,7 @@ import { requireRole, requireStoreMembership } from '../../middleware/store.midd
 import { pixelAttributionController } from './attribution/pixel-attribution.controller.js';
 import { pixelBehaviorController } from './behavior/pixel-behavior.controller.js';
 import { pixelJourneyController } from './journey/pixel-journey.controller.js';
+import { pixelHealthController } from './pixel-health.controller.js';
 import { pixelController } from './pixel.controller.js';
 
 export const pixelPublicRouter = Router();
@@ -12,6 +13,7 @@ pixelPublicRouter.post('/events', pixelController.ingest);
 export const pixelStoreRouter = Router({ mergeParams: true });
 pixelStoreRouter.use(requireAuth, requireStoreMembership);
 pixelStoreRouter.get('/status', pixelController.status);
+pixelStoreRouter.get('/health', requireRole('OWNER', 'ADMIN'), pixelHealthController.read);
 pixelStoreRouter.get('/sessions', pixelJourneyController.sessions);
 pixelStoreRouter.get('/sessions/:sessionId', pixelJourneyController.session);
 pixelStoreRouter.get('/journeys/:anonymousVisitorId', pixelJourneyController.visitorJourney);
