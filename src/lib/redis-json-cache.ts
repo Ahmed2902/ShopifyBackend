@@ -81,14 +81,12 @@ export class CachedReadCoordinator {
       if (cached !== null) return cached;
     }
 
-    // Fresh and ordinary reads intentionally share the same in-flight key. If a
-    // manual refresh is already recomputing the workspace, a normal page load
-    // should reuse that fresher result instead of starting another expensive read.
+    // Fresh and ordinary reads intentionally share the same in-flight key. A
+    // cache miss already performed the one useful Redis lookup before this
+    // point; repeating GET inside the coalesced loader only adds a remote round
+    // trip. If another request is already computing the same key, the coalescer
+    // reuses that source result directly.
     return this.inFlight.run(key, async () => {
-      if (!fresh) {
-        const cached = await this.cache.get<T>(key);
-        if (cached !== null) return cached;
-      }
       const value = await loader();
       await this.cache.set(key, value);
       return value;
