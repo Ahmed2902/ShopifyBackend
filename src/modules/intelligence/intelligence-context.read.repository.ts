@@ -1,7 +1,7 @@
-import {
+import { Prisma } from '../../generated/prisma/client.js';
+import type {
   ConnectionStatus,
   InventoryIntelligenceMode,
-  Prisma,
   SyncStatus,
 } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
