@@ -33,6 +33,14 @@ const cases = [
     name: 'intelligence forced refresh',
     path: `/v1/stores/${encodeURIComponent(storeId)}/intelligence/snapshot?fresh=true`,
   },
+  {
+    name: 'tiktok monitor warm-cache page',
+    path: `/v1/stores/${encodeURIComponent(storeId)}/analytics/tiktok-monitor?days=30&level=campaigns&page=1&limit=50`,
+  },
+  {
+    name: 'tiktok monitor forced refresh page',
+    path: `/v1/stores/${encodeURIComponent(storeId)}/analytics/tiktok-monitor?days=30&level=campaigns&page=1&limit=50&fresh=true`,
+  },
 ];
 
 function percentile(sorted, quantile) {
@@ -105,6 +113,7 @@ for (const testCase of cases) {
 console.table(results);
 console.log('\nInterpretation:');
 console.log('- warm-cache cases measure normal unchanged-store reads');
-console.log('- forced-refresh cases advance the Store generation and measure source-query recomputation');
+console.log('- forced-refresh cases advance the relevant cache generation and measure source-query recomputation');
 console.log('- advertising overview is currently uncached and therefore measures the compact SQL read directly');
+console.log('- TikTok monitor measures one bounded hierarchy page; cost should stay independent of total advertiser history');
 console.log('- pair these numbers with LOG_REQUEST_PERFORMANCE=true to inspect DB query count/wall time');
