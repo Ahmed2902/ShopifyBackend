@@ -34,7 +34,7 @@ describe('RedisJsonCache / CachedReadCoordinator', () => {
     ]);
   });
 
-  it('fails open when Redis is unavailable', async () => {
+  it('fails open when Redis is unavailable without retrying the same cache miss', async () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error('redis offline'));
     vi.stubGlobal('fetch', fetchMock);
     const coordinator = new CachedReadCoordinator(new RedisJsonCache('test-cache', 30));
@@ -43,8 +43,8 @@ describe('RedisJsonCache / CachedReadCoordinator', () => {
     await expect(coordinator.run('store:overview', loader)).resolves.toEqual({ value: 7 });
 
     expect(loader).toHaveBeenCalledTimes(1);
-    // GET + the best-effort SET both fail, but the source result still succeeds.
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    // One GET miss/failure + one best-effort SET. The source result still succeeds.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('coalesces concurrent cache misses into one source computation', async () => {
