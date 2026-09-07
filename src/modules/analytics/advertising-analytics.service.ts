@@ -5,8 +5,12 @@ import {
   emptyMetaMetrics,
   metricChanges,
 } from './analytics.metrics.js';
+import {
+  AdvertisingAnalyticsReadRepository,
+  type AdvertisingOverviewMetricRow,
+} from './advertising-analytics.read.repository.js';
 import type { AnalyticsRepository } from './analytics.repository.js';
-import { groupMetaByCurrency, pagination, splitMeta, windowResponse } from './analytics.shared.js';
+import { inRange, pagination, splitMeta, windowResponse } from './analytics.shared.js';
 import type { AnalyticsWindows } from './analytics.shared.js';
 
 type StoreContext = NonNullable<Awaited<ReturnType<AnalyticsRepository['getStoreContext']>>>;
@@ -42,31 +46,60 @@ function daily(rows: MetaRow[]) {
     .map(([date, values]) => ({ date, ...aggregateMeta(values) }));
 }
 
+function overviewRowsByCurrency(rows: AdvertisingOverviewMetricRow[]) {
+  const groups = new Map<string, AdvertisingOverviewMetricRow[]>();
+  for (const row of rows) {
+    const group = groups.get(row.accountCurrency) ?? [];
+    group.push(row);
+    groups.set(row.accountCurrency, group);
+  }
+  return groups;
+}
+
 export class AdvertisingAnalyticsService {
-  constructor(private readonly repository: AnalyticsRepository) {}
+  constructor(
+    private readonly repository: AnalyticsRepository,
+    private readonly readRepository: AdvertisingAnalyticsReadRepository =
+      new AdvertisingAnalyticsReadRepository(),
+  ) {}
 
   async overview(store: StoreContext, windows: AnalyticsWindows) {
     const selectedAccounts = store.metaConnection?.selectedAdAccountIds ?? [];
-    const [rows, latestInsight] = await Promise.all([
-      this.repository.getMetaRows(
+    const [rows, overviewMeta] = await Promise.all([
+      this.readRepository.getOverviewMetricRows(
         store.id,
         selectedAccounts,
         windows.comparison.metaFrom,
         windows.current.metaTo,
       ),
-      this.repository.getLatestMetaInsightSyncedAt(store.id, selectedAccounts),
+      this.readRepository.getOverviewMeta(store.id, selectedAccounts),
     ]);
-    const split = splitMeta(rows, windows);
-    const currentByCurrency = groupMetaByCurrency(split.current);
-    const comparisonByCurrency = groupMetaByCurrency(split.comparison);
+    const currentRows = rows.filter((row) =>
+      inRange(row.date, windows.current.metaFrom, windows.current.metaTo),
+    );
+    const comparisonRows = rows.filter((row) =>
+      inRange(row.date, windows.comparison.metaFrom, windows.comparison.metaTo),
+    );
+    const currentByCurrency = overviewRowsByCurrency(currentRows);
+    const comparisonByCurrency = overviewRowsByCurrency(comparisonRows);
     const currencies = new Set([...currentByCurrency.keys(), ...comparisonByCurrency.keys()]);
+    const connectionStatus = store.metaConnection?.status ?? 'DISCONNECTED';
 
     return {
       window: windowResponse(windows),
+      connection: {
+        connected: connectionStatus === 'ACTIVE',
+        status: connectionStatus,
+        configured: selectedAccounts.length > 0,
+      },
       selectedAdAccounts: selectedAccounts.length,
-      lastInsightsSyncedAt: latestInsight?.syncedAt ?? null,
+      entityCounts: {
+        campaigns: overviewMeta.campaigns,
+        ads: overviewMeta.ads,
+      },
+      lastInsightsSyncedAt: overviewMeta.lastInsightsSyncedAt,
       attributionSettings: [
-        ...new Set(split.current.map((row) => row.attributionSetting).filter(Boolean)),
+        ...new Set(currentRows.map((row) => row.attributionSetting).filter(Boolean)),
       ],
       currencies: [...currencies].sort().map((currency) => {
         const current = aggregateMeta(currentByCurrency.get(currency) ?? []);
