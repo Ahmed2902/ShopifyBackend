@@ -1,5 +1,6 @@
 import { env } from '../../../config/env.js';
 import { AppError } from '../../../errors/app-error.js';
+import { invalidateStoreDecisionCaches } from '../../../lib/store-decision-cache.js';
 import { decryptSecret, encryptSecret } from '../../integrations/integration.utils.js';
 import type { MetaRepository } from '../meta.repository.js';
 import type { MetaApiContext } from '../meta.types.js';
@@ -69,6 +70,7 @@ export class MetaAuthService {
       apiVersion: env.META_API_VERSION,
     });
 
+    await invalidateStoreDecisionCaches(context.storeId);
     return {
       storeId: connection.storeId,
       connectionId: connection.id,
@@ -94,6 +96,7 @@ export class MetaAuthService {
       this.assertBasePermissions(connection.scopes);
     } catch (error) {
       await this.repository.markConnectionReauthRequired(connection.id);
+      await invalidateStoreDecisionCaches(storeId);
       throw error;
     }
 
@@ -102,6 +105,7 @@ export class MetaAuthService {
       connection.tokenExpiresAt.getTime() <= Date.now() + TOKEN_EXPIRY_SKEW_MS
     ) {
       await this.repository.markConnectionReauthRequired(connection.id);
+      await invalidateStoreDecisionCaches(storeId);
       throw new AppError('Meta access token requires reauthorization', 401, 'META_REAUTH_REQUIRED');
     }
 
