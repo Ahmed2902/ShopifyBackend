@@ -141,11 +141,12 @@ export class ShopifyWebhookService {
     const handled = await this.dispatch(delivery.id, delivery.topic, delivery.payload, context);
     if (handled) {
       await this.repository.markProcessed(delivery.id);
-      // A successfully processed Shopify webhook can change commerce, inventory, catalog identity,
-      // cost evidence, or connection freshness. Advance the Store generation only after the source
-      // mutation and durable delivery completion have succeeded so readers can never cache the
-      // pre-webhook decision state as current.
-      await invalidateStoreDecisionCaches(context.storeId);
+      // A normal webhook mutates commerce/inventory/catalog facts directly. Bulk completion is the
+      // exception: completeSyncRun already advances the Store generation after the backfill commit,
+      // so avoid paying for a second pair of Redis generation bumps here.
+      if (delivery.topic !== 'bulk_operations/finish') {
+        await invalidateStoreDecisionCaches(context.storeId);
+      }
     } else {
       await this.repository.markIgnored(delivery.id, `Unsupported Shopify topic ${delivery.topic}`);
     }
@@ -310,7 +311,7 @@ export class ShopifyWebhookService {
         'SHOPIFY_BULK_FAILED',
       );
       await this.integrationService.failSyncRun(syncRun.id, error);
-      throw error;
+      return;
     }
 
     await this.integrationService.completeSyncRun(syncRun.id, {
@@ -325,9 +326,9 @@ export class ShopifyWebhookService {
       payload: {
         providerStatus: inspection.providerStatus,
         breakdown: inspection.breakdown,
-        sourceDeliveryId: deliveryId,
       },
       syncRunId: syncRun.id,
+      webhookDeliveryId: deliveryId,
     });
   }
 }
