@@ -4,6 +4,7 @@ import { requireStoreMembership } from '../../middleware/store.middleware.js';
 import { adExposureController } from './ad-exposure.controller.js';
 import { analyticsController } from './analytics.controller.js';
 import { dashboardController } from './dashboard.controller.js';
+import { tiktokMonitorController } from './tiktok-monitor.controller.js';
 
 export const analyticsRouter = Router({ mergeParams: true });
 analyticsRouter.use(requireAuth, requireStoreMembership);
@@ -21,6 +22,7 @@ analyticsRouter.get('/customers', analyticsController.customers);
 analyticsRouter.get('/inventory', analyticsController.inventory);
 
 analyticsRouter.get('/advertising', analyticsController.advertising);
+analyticsRouter.get('/tiktok-monitor', tiktokMonitorController.read);
 analyticsRouter.get('/campaigns', analyticsController.campaigns);
 analyticsRouter.get('/campaigns/:campaignId', analyticsController.campaign);
 analyticsRouter.get('/adsets', analyticsController.adSets);
