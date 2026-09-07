@@ -1,5 +1,6 @@
 import { env } from '../../../config/env.js';
 import { AppError } from '../../../errors/app-error.js';
+import { invalidateStoreDecisionCaches } from '../../../lib/store-decision-cache.js';
 import { decryptSecret, encryptSecret } from '../../integrations/integration.utils.js';
 import type { ShopifyRepository } from '../shopify.repository.js';
 import { shopifyAccessTokenSchema } from '../shopify.schema.js';
@@ -80,6 +81,10 @@ export class ShopifyAuthService {
       );
     }
 
+    // OAuth can turn a previously disconnected Store into an active commerce source. Any cached
+    // dashboard/intelligence generation from before the connection must become unreachable before
+    // the browser lands back in the app.
+    await invalidateStoreDecisionCaches(store.id);
     return { storeId: store.id, shop: canonicalDomain };
   }
 
