@@ -67,10 +67,10 @@ model MetaConnection {
   accessTokenCiphertext String
   tokenExpiresAt        DateTime?
   scopes                String[]         @default([])
-  apiVersion            String
-  lastSyncedAt          DateTime?
-  createdAt             DateTime         @default(now())
-  updatedAt             DateTime         @updatedAt
+  apiVersion             String
+  lastSyncedAt           DateTime?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
 
   store             Store               @relation(fields: [storeId], references: [id], onDelete: Restrict)
   adAccounts        MetaAdAccount[]
@@ -156,16 +156,33 @@ model WebhookDelivery {
   payload              Json
   updatedAt            DateTime             @updatedAt
 
-  shopifyConnection ShopifyConnection? @relation(fields: [shopifyConnectionId], references: [id], onDelete: SetNull)
-  metaConnection    MetaConnection?    @relation(fields: [metaConnectionId], references: [id], onDelete: SetNull)
-  tiktokConnection  TikTokConnection?  @relation(fields: [tiktokConnectionId], references: [id], onDelete: SetNull)
+  shopifyConnection ShopifyConnection?  @relation(fields: [shopifyConnectionId], references: [id], onDelete: SetNull)
+  metaConnection    MetaConnection?     @relation(fields: [metaConnectionId], references: [id], onDelete: SetNull)
+  tiktokConnection  TikTokConnection?   @relation(fields: [tiktokConnectionId], references: [id], onDelete: SetNull)
   payloads          ExternalPayload[]
+  shopifyDataRequest ShopifyDataRequest?
 
   @@unique([provider, externalDeliveryId])
   @@index([provider, topic, receivedAt])
   @@index([status, nextAttemptAt, receivedAt])
   @@index([status, processingStartedAt])
   @@index([tiktokConnectionId, receivedAt])
+}
+
+model ShopifyDataRequest {
+  id                String   @id @default(uuid()) @db.Uuid
+  storeId           String   @db.Uuid
+  webhookDeliveryId String   @unique @db.Uuid
+  requestedOrderIds String[] @default([])
+  exportJson        Json
+  completedAt       DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  store           Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  webhookDelivery WebhookDelivery @relation(fields: [webhookDeliveryId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, createdAt])
 }
 
 model ExternalPayload {

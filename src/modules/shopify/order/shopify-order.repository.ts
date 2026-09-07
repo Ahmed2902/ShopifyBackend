@@ -19,8 +19,19 @@ export class ShopifyOrderRepository {
   async upsertOrderWithLineItems(
     storeId: string,
     order: ShopifyImportedOrder,
-  ): Promise<PersistedShopifyOrder> {
+  ): Promise<PersistedShopifyOrder | null> {
     return prisma.$transaction(async (tx) => {
+      const redaction = await tx.shopifyOrderRedaction.findUnique({
+        where: {
+          storeId_shopifyOrderId: {
+            storeId,
+            shopifyOrderId: order.id,
+          },
+        },
+        select: { id: true },
+      });
+      if (redaction) return null;
+
       const savedOrder = await tx.order.upsert({
         where: {
           storeId_shopifyOrderId: {

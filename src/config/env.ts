@@ -50,7 +50,8 @@ const envSchema = z.object({
   META_STATE_SECRET: z.string().min(32),
   META_INITIAL_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(365).default(365),
   META_REFRESH_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(365).default(35),
-  // TikTok is optional until a merchant actually connects it.
+  // TikTok is optional until a merchant actually connects it. Provider entry points
+  // validate the complete credential/public-URL set when used instead of blocking core boot.
   TIKTOK_APP_ID: z.string().default(''),
   TIKTOK_APP_SECRET: z.string().default(''),
   TIKTOK_SCOPES: z.string().default(''),
@@ -60,12 +61,15 @@ const envSchema = z.object({
     .regex(/^v\d+\.\d+$/)
     .default('v1.3'),
   TIKTOK_STATE_SECRET: z.string().default(''),
-  TIKTOK_WEBHOOK_URL: z.string().url(),
+  TIKTOK_WEBHOOK_URL: z.string().url().optional(),
   TIKTOK_WEBHOOK_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(300),
 });
 
 const parsedEnv = envSchema.parse(process.env);
 const frontendOrigin = new URL(parsedEnv.CORS_ORIGIN).origin;
+const backendOrigin = parsedEnv.APP_URL
+  ? new URL(parsedEnv.APP_URL).origin
+  : `http://localhost:${parsedEnv.PORT}`;
 
 export const env = {
   ...parsedEnv,
@@ -75,4 +79,11 @@ export const env = {
   PASSWORD_RESET_URL:
     parsedEnv.PASSWORD_RESET_URL ??
     new URL('/auth/reset-password', `${frontendOrigin}/`).toString(),
+  // Keep a concrete development fallback for existing TikTok API code, while remembering whether
+  // production supplied a real public webhook URL. Provider guards reject localhost-only
+  // production configuration before any outbound TikTok request is attempted.
+  TIKTOK_WEBHOOK_URL:
+    parsedEnv.TIKTOK_WEBHOOK_URL ??
+    new URL('/v1/integrations/tiktok/webhooks', `${backendOrigin}/`).toString(),
+  TIKTOK_WEBHOOK_URL_EXPLICIT: Boolean(parsedEnv.TIKTOK_WEBHOOK_URL),
 };

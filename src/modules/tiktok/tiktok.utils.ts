@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import { env } from '../../config/env.js';
 import { frontendUrl, tiktokCallbackUrl } from '../../config/public-urls.js';
 import { AppError } from '../../errors/app-error.js';
+import { requireTikTokAppCredentials, requireTikTokStateSecret } from './tiktok.config.js';
 import type { TikTokOAuthContext } from './tiktok.types.js';
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
@@ -13,7 +14,7 @@ function safeEqual(left: string, right: string): boolean {
 }
 
 function signState(payload: string): string {
-  return createHmac('sha256', env.TIKTOK_STATE_SECRET).update(payload).digest('base64url');
+  return createHmac('sha256', requireTikTokStateSecret()).update(payload).digest('base64url');
 }
 
 export function createTikTokOAuthState(userId: string, storeId: string): string {
@@ -57,9 +58,10 @@ export function configuredTikTokScopes(): string[] {
 }
 
 export function buildTikTokAuthorizationUrl(userId: string, storeId: string) {
+  const { appId } = requireTikTokAppCredentials();
   const state = createTikTokOAuthState(userId, storeId);
   const url = new URL('https://ads.tiktok.com/marketing_api/auth');
-  url.searchParams.set('app_id', env.TIKTOK_APP_ID);
+  url.searchParams.set('app_id', appId);
   url.searchParams.set('redirect_uri', tiktokCallbackUrl());
   url.searchParams.set('state', state);
   const scopes = configuredTikTokScopes();
@@ -180,6 +182,7 @@ export function verifyTikTokWebhookSignature(
     throw new AppError('TikTok webhook signature is missing', 401, 'INVALID_TIKTOK_WEBHOOK_SIGNATURE');
   }
 
+  const { appSecret } = requireTikTokAppCredentials();
   const parts = new Map(
     signatureHeader.split(',').map((item) => {
       const [key, ...rest] = item.trim().split('=');
@@ -197,7 +200,7 @@ export function verifyTikTokWebhookSignature(
     throw new AppError('TikTok webhook signature is expired', 401, 'EXPIRED_TIKTOK_WEBHOOK_SIGNATURE');
   }
 
-  const expected = createHmac('sha256', env.TIKTOK_APP_SECRET)
+  const expected = createHmac('sha256', appSecret)
     .update(`${timestamp}.${rawBody.toString('utf8')}`)
     .digest('hex');
   if (!safeEqual(expected, signature)) {

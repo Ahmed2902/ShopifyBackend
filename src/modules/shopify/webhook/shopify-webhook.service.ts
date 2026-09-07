@@ -5,6 +5,8 @@ import { toErrorMessage } from '../../integrations/integration.utils.js';
 import type { ShopifyCatalogService } from '../catalog/shopify-catalog.service.js';
 import type { ShopifyInventoryService } from '../inventory/shopify-inventory.service.js';
 import type { ShopifyOrderService } from '../order/shopify-order.service.js';
+import { isShopifyComplianceTopic } from '../privacy/shopify-privacy.schema.js';
+import { ShopifyPrivacyService } from '../privacy/shopify-privacy.service.js';
 import type { ShopifyAuthService } from '../shared/shopify-auth.service.js';
 import type { ShopifyRequestContext, ShopifySyncContext } from '../shopify.types.js';
 import { normalizeShopDomain } from '../shopify.utils.js';
@@ -32,6 +34,7 @@ export class ShopifyWebhookService {
     private readonly catalogService: ShopifyCatalogService,
     private readonly inventoryService: ShopifyInventoryService,
     private readonly orderService: ShopifyOrderService,
+    private readonly privacyService: ShopifyPrivacyService = new ShopifyPrivacyService(),
   ) {}
 
   async receive(
@@ -56,12 +59,16 @@ export class ShopifyWebhookService {
     const headers = shopifyWebhookHeadersSchema.parse(headersInput);
     verifyShopifyWebhookHmac(rawBody, headers.hmac);
     const shopDomain = normalizeShopDomain(headers.shopDomain);
-    const payload = parseShopifyWebhookJson(rawBody);
+    const topic = headers.topic.toLowerCase();
+    const parsedPayload = parseShopifyWebhookJson(rawBody);
+    // Compliance webhooks can contain customer email/phone. Validate the exact Shopify body, then
+    // remove those fields before the durable inbox sees the payload.
+    const payload = this.privacyService.sanitizeForInbox(topic, parsedPayload);
     const connection = await this.repository.findConnectionByShopDomain(shopDomain);
     const result = await this.repository.createDelivery({
       externalDeliveryId: headers.webhookId,
       shopifyConnectionId: connection?.id ?? null,
-      topic: headers.topic.toLowerCase(),
+      topic,
       apiVersion: headers.apiVersion ?? connection?.apiVersion ?? null,
       triggeredAt: headers.triggeredAt ? new Date(headers.triggeredAt) : null,
       payload,
@@ -100,12 +107,31 @@ export class ShopifyWebhookService {
   private async processClaimedDelivery(deliveryId: string): Promise<void> {
     const delivery = await this.repository.getDelivery(deliveryId);
     if (!delivery) return;
+
+    const connection = delivery.shopifyConnectionId
+      ? await this.repository.findConnectionById(delivery.shopifyConnectionId)
+      : null;
+    const storeId = connection?.store.id ?? null;
+
+    if (isShopifyComplianceTopic(delivery.topic)) {
+      await this.privacyService.process(
+        delivery.id,
+        delivery.topic,
+        delivery.payload,
+        connection?.store ?? null,
+      );
+      await this.repository.markProcessed(delivery.id);
+      if (storeId && delivery.topic !== 'customers/data_request') {
+        await invalidateStoreDecisionCaches(storeId);
+      }
+      return;
+    }
+
     if (!delivery.shopifyConnectionId) {
       await this.repository.markIgnored(delivery.id, 'Shopify connection was not found');
       return;
     }
 
-    const connection = await this.repository.findConnectionById(delivery.shopifyConnectionId);
     if (!connection) {
       await this.repository.markIgnored(delivery.id, 'Shopify connection no longer exists');
       return;

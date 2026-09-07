@@ -96,6 +96,22 @@ function refundFixture(): ShopifyRefund {
   };
 }
 
+async function createStore(label: string) {
+  const unique = randomUUID();
+  const store = await prisma.store.create({
+    data: {
+      shopifyShopId: `gid://shopify/Shop/${unique}`,
+      name: `${label} Store`,
+      myshopifyDomain: `${label.toLowerCase()}-${unique}.myshopify.com`,
+      currencyCode: 'USD',
+      ianaTimezone: 'UTC',
+    },
+    select: { id: true },
+  });
+  createdStoreIds.push(store.id);
+  return store;
+}
+
 afterEach(async () => {
   for (const storeId of createdStoreIds.splice(0)) {
     const orders = await prisma.order.findMany({ where: { storeId }, select: { id: true } });
@@ -119,28 +135,18 @@ afterEach(async () => {
 
 describeDatabase('ShopifyOrderRepository', () => {
   it('persists order/refund history idempotently with nullable refund IDs and source metadata', async () => {
-    const unique = randomUUID();
-    const store = await prisma.store.create({
-      data: {
-        shopifyShopId: `gid://shopify/Shop/${unique}`,
-        name: 'Order Repository Test Store',
-        myshopifyDomain: `order-repository-${unique}.myshopify.com`,
-        currencyCode: 'USD',
-        ianaTimezone: 'UTC',
-      },
-      select: { id: true },
-    });
-    createdStoreIds.push(store.id);
-
+    const store = await createStore('order-repository');
     const repository = new ShopifyOrderRepository();
     const order = orderFixture();
     const refund = refundFixture();
 
     const first = await repository.upsertOrderWithLineItems(store.id, order);
-    expect(await repository.upsertRefundWithLineItems(store.id, first, refund)).toBe(true);
+    expect(first).not.toBeNull();
+    expect(await repository.upsertRefundWithLineItems(store.id, first!, refund)).toBe(true);
 
     const second = await repository.upsertOrderWithLineItems(store.id, order);
-    expect(await repository.upsertRefundWithLineItems(store.id, second, refund)).toBe(true);
+    expect(second).not.toBeNull();
+    expect(await repository.upsertRefundWithLineItems(store.id, second!, refund)).toBe(true);
 
     const persisted = await prisma.order.findUniqueOrThrow({
       where: {
@@ -162,5 +168,30 @@ describeDatabase('ShopifyOrderRepository', () => {
     expect(persisted.refunds[0]?.shopifyCreatedAt).toBeNull();
     expect(persisted.refunds[0]?.lineItems).toHaveLength(1);
     expect(persisted.refunds[0]?.lineItems[0]?.shopifyRefundLineId).toBeNull();
+  });
+
+  it('refuses to recreate an order after a Shopify privacy redaction tombstone exists', async () => {
+    const store = await createStore('order-redaction');
+    const repository = new ShopifyOrderRepository();
+    const order = orderFixture();
+
+    await prisma.shopifyOrderRedaction.create({
+      data: {
+        storeId: store.id,
+        shopifyOrderId: order.id,
+      },
+    });
+
+    expect(await repository.upsertOrderWithLineItems(store.id, order)).toBeNull();
+    expect(
+      await prisma.order.findUnique({
+        where: {
+          storeId_shopifyOrderId: {
+            storeId: store.id,
+            shopifyOrderId: order.id,
+          },
+        },
+      }),
+    ).toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireRole, requireStoreMembership } from '../../middleware/store.middleware.js';
+import { shopifyPrivacyController } from './privacy/shopify-privacy.controller.js';
 import { shopifyReadController } from './read/shopify-read.controller.js';
 import { shopifyController } from './shopify.controller.js';
 
@@ -21,6 +22,16 @@ shopifyStoreRouter.get('/inventory', shopifyReadController.inventory);
 shopifyStoreRouter.get('/locations', shopifyReadController.locations);
 shopifyStoreRouter.get('/orders', shopifyReadController.orders);
 shopifyStoreRouter.get('/orders/:orderId', shopifyReadController.order);
+shopifyStoreRouter.get(
+  '/privacy/data-requests',
+  requireRole('OWNER', 'ADMIN'),
+  shopifyPrivacyController.listDataRequests,
+);
+shopifyStoreRouter.get(
+  '/privacy/data-requests/:requestId',
+  requireRole('OWNER', 'ADMIN'),
+  shopifyPrivacyController.getDataRequest,
+);
 
 shopifyStoreRouter.post('/sync', requireRole('OWNER', 'ADMIN'), shopifyController.sync);
 shopifyStoreRouter.post(
