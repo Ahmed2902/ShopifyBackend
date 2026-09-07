@@ -1,4 +1,7 @@
-import type { IntelligenceCommerceEvidenceRow } from './intelligence-commerce.read.repository.js';
+import type {
+  IntelligenceCommerceEvidenceRow,
+  IntelligenceInventoryEvidenceRow,
+} from './intelligence-commerce.read.repository.js';
 import type { IntelligenceRepository } from './intelligence.repository.js';
 import type {
   CampaignEvidence,
@@ -268,11 +271,23 @@ interface ExactProductMapping {
 
 interface ProductEvidenceContext {
   mappings: MappingRow[];
-  inventoryRows: InventoryRow[];
   metaRows: MetaRow[];
   storeCurrency: string;
   inventoryTrusted: boolean;
   windowDays: number;
+}
+
+type ProductStockRow = { productId: string; available: number };
+
+function rawProductStock(rows: InventoryRow[]): ProductStockRow[] {
+  return rows.map((row) => ({
+    productId: row.inventoryItem.variant.productId,
+    available: row.available,
+  }));
+}
+
+function compactProductStock(rows: IntelligenceInventoryEvidenceRow[]): ProductStockRow[] {
+  return rows.map((row) => ({ productId: row.productId, available: row.available }));
 }
 
 function costAt(costs: CostRow[], variantId: string, at: Date, currency: string): number | null {
@@ -322,6 +337,7 @@ function exactProductMappings(mappings: MappingRow[]): Map<string, ExactProductM
 function finishProductEvidence(
   products: Map<string, ProductAggregate>,
   input: ProductEvidenceContext,
+  stockRows: ProductStockRow[],
 ) {
   const exactMappings = exactProductMappings(input.mappings);
   for (const mapping of exactMappings.values()) {
@@ -389,9 +405,11 @@ function finishProductEvidence(
   }
 
   const stockByProduct = new Map<string, number>();
-  for (const row of input.inventoryRows) {
-    const productId = row.inventoryItem.variant.productId;
-    stockByProduct.set(productId, (stockByProduct.get(productId) ?? 0) + row.available);
+  for (const row of stockRows) {
+    stockByProduct.set(
+      row.productId,
+      (stockByProduct.get(row.productId) ?? 0) + row.available,
+    );
   }
 
   const mappingCoverage = totalMetaSpend > 0 ? exactMappedSpend / totalMetaSpend : 0;
@@ -461,6 +479,7 @@ function finishProductEvidence(
 export function buildProductEvidence(input: ProductEvidenceContext & {
   commerceRows: CommerceRow[];
   costRows: CostRow[];
+  inventoryRows: InventoryRow[];
 }) {
   const products = new Map<string, ProductAggregate>();
   for (const row of input.commerceRows) {
@@ -505,11 +524,12 @@ export function buildProductEvidence(input: ProductEvidenceContext & {
     products.set(row.productId, aggregate);
   }
 
-  return finishProductEvidence(products, input);
+  return finishProductEvidence(products, input, rawProductStock(input.inventoryRows));
 }
 
 export function buildProductEvidenceFromAggregates(input: ProductEvidenceContext & {
   commerceRows: IntelligenceCommerceEvidenceRow[];
+  inventoryRows: IntelligenceInventoryEvidenceRow[];
 }) {
   const products = new Map<string, ProductAggregate>();
   for (const row of input.commerceRows) {
@@ -525,5 +545,5 @@ export function buildProductEvidenceFromAggregates(input: ProductEvidenceContext
       costCoveredUnits: row.costCoveredUnits,
     });
   }
-  return finishProductEvidence(products, input);
+  return finishProductEvidence(products, input, compactProductStock(input.inventoryRows));
 }
