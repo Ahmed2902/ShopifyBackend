@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { invalidateStoreDecisionCaches } from '../../lib/store-decision-cache.js';
 import {
   intelligenceReadQuerySchema,
   inventoryModeUpdateSchema,
@@ -29,7 +30,8 @@ export class IntelligenceController {
     const storeId = req.context.storeId!;
     const { mode } = inventoryModeUpdateSchema.parse(req.body);
     const result = await this.service.updateInventoryMode(storeId, mode);
-    await this.snapshotReads.invalidate(storeId);
+    // Invalidate both decision surfaces only after the Store setting is committed.
+    await invalidateStoreDecisionCaches(storeId);
     res.status(200).json(result);
   };
 }
