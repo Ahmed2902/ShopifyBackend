@@ -5,33 +5,15 @@ import {
 } from '../intelligence/intelligence-snapshot.read.service.js';
 import type { AnalyticsRangeQuery } from './analytics.schema.js';
 import { analyticsWorkspace, type AnalyticsWorkspace } from './analytics.workspace.js';
-import { DashboardReadRepository, type DashboardRecentOrder } from './dashboard.read.repository.js';
+import {
+  DashboardReadRepository,
+  type DashboardInventoryPreview,
+  type DashboardRecentOrder,
+} from './dashboard.read.repository.js';
 
 type Section<T> =
   | { available: true; data: T }
   | { available: false; data: null };
-
-function compactInventory(
-  value: Awaited<ReturnType<AnalyticsWorkspace['inventory']>>,
-) {
-  return {
-    inventoryMode: value.inventoryMode,
-    items: value.items.map((row) => ({
-      inventoryItemId: row.inventoryItemId,
-      product: { id: row.product.id, title: row.product.title },
-      variant: {
-        id: row.variant.id,
-        title: row.variant.title,
-        displayName: row.variant.displayName,
-      },
-      available: row.available,
-      incoming: row.incoming,
-      unitsSoldInWindow: row.unitsSoldInWindow,
-      unitsPerDay: row.unitsPerDay,
-      daysCover: row.daysCover,
-    })),
-  };
-}
 
 function compactIntelligence(
   value: Awaited<ReturnType<IntelligenceSnapshotReadService['read']>>,
@@ -84,16 +66,17 @@ export class DashboardWorkspace {
     now = new Date(),
     options: { fresh?: boolean } = {},
   ) {
-    const inventoryQuery = {
-      ...query,
-      page: 1,
-      limit: 8,
-    };
-
     const [overview, inventory, intelligence, recentOrders] = await Promise.all([
       this.analytics.overview(storeId, query, now),
-      optionalSection(storeId, 'inventory', async () =>
-        compactInventory(await this.analytics.inventory(storeId, inventoryQuery, now)),
+      optionalSection<DashboardInventoryPreview>(storeId, 'inventory', () =>
+        this.readRepository.getInventoryPreview({
+          storeId,
+          days: query.days,
+          from: query.from,
+          to: query.to,
+          now,
+          limit: 8,
+        }),
       ),
       optionalSection(storeId, 'intelligence', async () =>
         compactIntelligence(
