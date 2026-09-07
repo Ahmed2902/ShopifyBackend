@@ -88,32 +88,34 @@ Login and refresh load the user's current `StoreMembership` rows and encode Stor
 }
 ```
 
-`requireAuth` verifies issuer, audience, algorithm and expiry, then writes trusted data to:
+`requireAuth` verifies issuer, audience, algorithm and expiry, then writes identity and token snapshot data to:
 
 ```ts
 req.context.userId
 req.context.storeAccess
 ```
 
+The Store claims are useful as a short-lived snapshot, but they are **not** the authorization source of truth for protected Store routes.
+
 ### Store membership
 
 For Store-scoped routes, `requireStoreMembership` runs after `requireAuth`:
 
 1. validate `:storeId`
-2. find the Store in verified access-token claims
-3. reject missing membership
-4. attach:
+2. load the current `StoreMembership` row by trusted `userId + storeId`
+3. reject a removed/missing membership without revealing whether the Store exists
+4. attach the current database role:
 
 ```ts
 req.context.storeId
 req.context.role
 ```
 
-It does not query Prisma.
+This makes membership revocation and OWNER/ADMIN/MEMBER role changes effective immediately instead of waiting for the access token to expire. Persistence stays behind `StoreRepository`; middleware does not access Prisma directly.
 
 ### Roles
 
-`requireRole(...roles)` checks the already-selected trusted Store role. Generic authentication/membership/role prerequisites belong in middleware; resource-specific authorization remains in the service when it is part of the business rule.
+`requireRole(...roles)` checks the already-selected current Store role. Generic authentication/membership/role prerequisites belong in middleware; resource-specific authorization remains in the service when it is part of the business rule.
 
 Repositories still scope tenant-owned queries by trusted `storeId`. Route authorization and Store-scoped persistence are separate isolation boundaries.
 
@@ -134,7 +136,7 @@ Readability must never be achieved by weakening boundaries. The backend keeps se
 - HttpOnly/Secure cookie policy where applicable
 - random double-submit CSRF protection on cross-site refresh/logout cookie mutations
 - strict frontend-origin validation on cookie-authenticated mutations
-- Store-scoped authorization middleware
+- current database-backed Store membership/role authorization
 - timing-safe OAuth/HMAC comparisons
 - OAuth state, PKCE and nonce validation where the provider supports them
 - encrypted provider credentials/tokens at rest
