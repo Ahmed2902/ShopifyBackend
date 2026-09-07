@@ -15,6 +15,7 @@ const EVENT_NAMES = [
   'search_submitted',
   'product_added_to_cart',
   'product_removed_from_cart',
+  'cart_viewed',
   'checkout_started',
   'checkout_contact_info_submitted',
   'checkout_address_info_submitted',
@@ -89,6 +90,7 @@ function mapEventName(name) {
   if (name === 'search_submitted') return 'SEARCH';
   if (name === 'product_added_to_cart') return 'ADD_TO_CART';
   if (name === 'product_removed_from_cart') return 'REMOVE_FROM_CART';
+  if (name === 'cart_viewed') return 'CART_VIEW';
   if (name === 'checkout_started') return 'BEGIN_CHECKOUT';
   if (name === 'checkout_completed') return 'CHECKOUT_COMPLETED';
   if (CHECKOUT_PROGRESS_EVENTS.has(name)) return 'CHECKOUT_PROGRESS';

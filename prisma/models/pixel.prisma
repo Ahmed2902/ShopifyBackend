@@ -5,6 +5,7 @@ enum StorefrontEventName {
   SEARCH
   ADD_TO_CART
   REMOVE_FROM_CART
+  CART_VIEW
   BEGIN_CHECKOUT
   CHECKOUT_PROGRESS
   CHECKOUT_COMPLETED
@@ -161,6 +162,7 @@ model StorefrontSession {
   searchCount                Int                       @default(0)
   addToCartCount             Int                       @default(0)
   removeFromCartCount        Int                       @default(0)
+  cartViewCount              Int                       @default(0)
   checkoutProgressCount      Int                       @default(0)
   checkoutStartedAt          DateTime?
   checkoutCompletedAt        DateTime?
@@ -298,10 +300,14 @@ model StorefrontBehaviorDaily {
   searchCount                      Int                        @default(0)
   addToCartCount                   Int                        @default(0)
   removeFromCartCount              Int                        @default(0)
+  cartViewCount                    Int                        @default(0)
   productViewSessionCount          Int                        @default(0)
   collectionViewSessionCount       Int                        @default(0)
   searchSessionCount               Int                        @default(0)
   addToCartSessionCount            Int                        @default(0)
+  cartViewSessionCount             Int                        @default(0)
+  cartViewCheckoutSessionCount     Int                        @default(0)
+  cartViewPurchaseSessionCount     Int                        @default(0)
   checkoutStartSessionCount        Int                        @default(0)
   checkoutCompletedSessionCount    Int                        @default(0)
   linkedPurchaseSessionCount       Int                        @default(0)
