@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { IntelligenceCommerceReadRepository } from '../../../src/modules/intelligence/intelligence-commerce.read.repository.js';
+import type { IntelligenceContextReadRepository } from '../../../src/modules/intelligence/intelligence-context.read.repository.js';
 import type { IntelligenceRepository } from '../../../src/modules/intelligence/intelligence.repository.js';
 import { IntelligenceService } from '../../../src/modules/intelligence/intelligence.service.js';
 import type { IntelligenceSharedExposureReadRepository } from '../../../src/modules/intelligence/intelligence-shared-exposure.read.repository.js';
@@ -23,18 +24,17 @@ function storeContext(shopifyStatus = 'ACTIVE') {
       status: 'ACTIVE',
       selectedAdAccountIds: ['act_101'],
     },
+    successfulOrderHistorySync: {
+      status: 'SUCCEEDED',
+      recordsRead: 0,
+      recordsWritten: 0,
+      finishedAt: now,
+    },
   };
 }
 
 function buildRepository(overrides: Partial<IntelligenceRepository> = {}) {
   return {
-    getStoreContext: vi.fn().mockResolvedValue(storeContext()),
-    getLatestOrderHistorySync: vi.fn().mockResolvedValue({
-      status: 'SUCCEEDED',
-      recordsRead: 0,
-      recordsWritten: 0,
-      finishedAt: now,
-    }),
     getLatestMetaInsightSyncedAt: vi.fn().mockResolvedValue({ syncedAt: now }),
     getMetaEvidenceRows: vi.fn().mockResolvedValue([]),
     getCommerceRows: vi.fn().mockResolvedValue([]),
@@ -70,15 +70,24 @@ function buildSharedExposureRead(
   } as unknown as IntelligenceSharedExposureReadRepository;
 }
 
+function buildContextRead(overrides: Partial<IntelligenceContextReadRepository> = {}) {
+  return {
+    getContext: vi.fn().mockResolvedValue(storeContext()),
+    ...overrides,
+  } as unknown as IntelligenceContextReadRepository;
+}
+
 function service(
   repository: IntelligenceRepository,
   commerceReadRepository = buildCommerceRead(),
   sharedExposureReadRepository = buildSharedExposureRead(),
+  contextReadRepository = buildContextRead(),
 ) {
   return new IntelligenceService(
     repository,
     commerceReadRepository,
     sharedExposureReadRepository,
+    contextReadRepository,
   );
 }
 
@@ -102,12 +111,18 @@ describe('IntelligenceService', () => {
   });
 
   it('does not treat missing Shopify evidence as a usable zero-sales baseline', async () => {
-    const repository = buildRepository({
-      getStoreContext: vi.fn().mockResolvedValue(storeContext('DISCONNECTED')),
-      getLatestOrderHistorySync: vi.fn().mockResolvedValue(null),
+    const context = storeContext('DISCONNECTED');
+    context.successfulOrderHistorySync = null as never;
+    const contextRead = buildContextRead({
+      getContext: vi.fn().mockResolvedValue(context),
     });
 
-    const result = await service(repository).snapshot(storeId, now);
+    const result = await service(
+      buildRepository(),
+      buildCommerceRead(),
+      buildSharedExposureRead(),
+      contextRead,
+    ).snapshot(storeId, now);
 
     expect(result.evidence.shopifyCommerceUsable).toBe(false);
     expect(result.dataQuality).toContainEqual(
@@ -176,6 +191,22 @@ describe('IntelligenceService', () => {
     await snapshot;
   });
 
+  it('uses the context read for Shopify freshness instead of a standalone sync query', async () => {
+    const contextRead = buildContextRead();
+    const repository = buildRepository();
+
+    const result = await service(
+      repository,
+      buildCommerceRead(),
+      buildSharedExposureRead(),
+      contextRead,
+    ).snapshot(storeId, now);
+
+    expect(contextRead.getContext).toHaveBeenCalledWith(storeId);
+    expect(result.evidence.shopifyCommerceUsable).toBe(true);
+    expect('getLatestOrderHistorySync' in repository).toBe(false);
+  });
+
   it('uses compact Shopify economics and stock instead of raw nested histories', async () => {
     const repository = buildRepository();
     const commerceReadRepository = buildCommerceRead({
@@ -224,8 +255,8 @@ describe('IntelligenceService', () => {
   it('keeps trusted-inventory data-quality semantics based on underlying level count', async () => {
     const trustedStore = storeContext();
     trustedStore.inventoryIntelligenceMode = 'TRUSTED';
-    const repository = buildRepository({
-      getStoreContext: vi.fn().mockResolvedValue(trustedStore),
+    const contextRead = buildContextRead({
+      getContext: vi.fn().mockResolvedValue(trustedStore),
     });
     const commerceReadRepository = buildCommerceRead({
       getInventoryEvidenceAggregates: vi.fn().mockResolvedValue([
@@ -237,7 +268,12 @@ describe('IntelligenceService', () => {
       ]),
     });
 
-    const result = await service(repository, commerceReadRepository).snapshot(storeId, now);
+    const result = await service(
+      buildRepository(),
+      commerceReadRepository,
+      buildSharedExposureRead(),
+      contextRead,
+    ).snapshot(storeId, now);
 
     expect(result.dataQuality).not.toContainEqual(
       expect.objectContaining({ code: 'INVENTORY_DATA_MISSING' }),
