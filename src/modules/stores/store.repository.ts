@@ -16,11 +16,15 @@ export class StoreRepository {
           where: { userId },
           select: { role: true },
         },
-        // The application shell only needs provider readiness/freshness. Keep this
-        // compact so GET /stores can replace the former 8-query Shopify /status read.
+        // The application shell only needs compact provider/Pixel readiness and freshness. Keep
+        // this on the already-required Store summary so feature pages do not perform standalone
+        // status reads before they can load their actual data.
         shopifyConnection: { select: { status: true, lastSyncedAt: true } },
         metaConnection: { select: { status: true, lastSyncedAt: true } },
         tiktokConnection: { select: { status: true, lastSyncedAt: true } },
+        pixelInstallation: {
+          select: { status: true, lastEventAt: true, lastError: true },
+        },
       },
     });
   }
@@ -42,6 +46,9 @@ export class StoreRepository {
         shopifyConnection: { select: { status: true, lastSyncedAt: true } },
         metaConnection: { select: { status: true, lastSyncedAt: true } },
         tiktokConnection: { select: { status: true, lastSyncedAt: true } },
+        pixelInstallation: {
+          select: { status: true, lastEventAt: true, lastError: true },
+        },
       },
     });
   }
