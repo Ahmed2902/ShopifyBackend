@@ -22,6 +22,13 @@ export class StoreRepository {
     });
   }
 
+  findMembership(userId: string, storeId: string) {
+    return prisma.storeMembership.findUnique({
+      where: { userId_storeId: { userId, storeId } },
+      select: { role: true },
+    });
+  }
+
   findById(storeId: string) {
     return prisma.store.findUnique({
       where: { id: storeId },
