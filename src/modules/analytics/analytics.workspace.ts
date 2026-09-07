@@ -6,10 +6,8 @@ import { metricChanges, percentChange } from './analytics.metrics.js';
 import { AnalyticsRepository } from './analytics.repository.js';
 import type { AnalyticsListQuery, AnalyticsRangeQuery } from './analytics.schema.js';
 import { windowResponse } from './analytics.shared.js';
-import {
-  CollectionAnalyticsReadService,
-  collectionAnalyticsReadService,
-} from './collection-analytics.read.service.js';
+import { collectionAnalyticsReadService } from './collection-analytics.read.service.js';
+import type { CollectionAnalyticsReadService } from './collection-analytics.read.service.js';
 import { CommerceAnalyticsReadRepository } from './commerce-analytics.read.repository.js';
 import { CommerceAnalyticsService } from './commerce-analytics.service.js';
 
