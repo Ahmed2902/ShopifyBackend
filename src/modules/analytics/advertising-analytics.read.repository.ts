@@ -271,12 +271,15 @@ export class AdvertisingAnalyticsReadRepository {
             AND ad."deletedAt" IS NULL
         ) AS ads,
         (
-          SELECT MAX(insight."syncedAt")
-          FROM "MetaInsightDaily" insight
-          INNER JOIN "MetaAdAccount" account ON account."id" = insight."adAccountId"
-          WHERE account."storeId" = ${storeId}::uuid
-            AND account."metaAccountId" IN (${accountIds})
-            AND insight."level" = 'AD'
+          SELECT sync."finishedAt"
+          FROM "SyncRun" sync
+          INNER JOIN "MetaConnection" connection ON connection."id" = sync."metaConnectionId"
+          WHERE connection."storeId" = ${storeId}::uuid
+            AND sync."provider" = 'META'
+            AND sync."resourceType" = 'AdInsightsDaily'
+            AND sync."status" = 'SUCCEEDED'
+          ORDER BY sync."createdAt" DESC
+          LIMIT 1
         ) AS last_insights_synced_at
     `);
 
