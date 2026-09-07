@@ -108,8 +108,6 @@ function aggregateOrderFacts(
     units,
     orderValue,
     refunds,
-    // Shopify currentTotalAmount is already the current order truth. Preserve the established
-    // semantics and expose linked refunds separately rather than subtracting them twice.
     netOrderValue: orderValue,
     discounts,
     aov: orders > 0 ? orderValue / orders : null,
@@ -137,6 +135,17 @@ function productMetricsFromAggregate(row: CommerceProductEconomicsAggregateRow):
     costCoverage,
     contributionBeforeAds: cogs === null ? null : netProductRevenue - cogs,
   };
+}
+
+function productMetricsByPeriod(
+  rows: CommerceProductEconomicsAggregateRow[],
+  period: CommerceOrderPeriod,
+): Map<string, ProductMetrics> {
+  return new Map(
+    rows
+      .filter((row) => row.period === period)
+      .map((row) => [row.productId, productMetricsFromAggregate(row)] as const),
+  );
 }
 
 export class CommerceAnalyticsService {
@@ -170,8 +179,6 @@ export class CommerceAnalyticsService {
       };
     }
 
-    // Characterization fallback used by isolated unit tests. Production injects the compact
-    // SQL read repository so it never materializes the full order/refund history for totals.
     const rows = await this.repository.getOrders(
       store.id,
       windows.comparison.instantFrom,
@@ -200,8 +207,35 @@ export class CommerceAnalyticsService {
       return {
         window: windowResponse(windows),
         currency: store.currencyCode,
+        methodology: 'SHOPIFY_PRODUCT_ORDER_COHORT_NET_OF_LINKED_REFUNDS',
         pagination: pagination(pageNumber, limit, page.total),
         items: [],
+      };
+    }
+
+    if (this.readRepository) {
+      const aggregateRows = await this.readRepository.getProductEconomicsAggregates({
+        ...this.orderAggregateInput(store, windows),
+        productIds,
+      });
+      const current = productMetricsByPeriod(aggregateRows, 'CURRENT');
+      const comparison = productMetricsByPeriod(aggregateRows, 'COMPARISON');
+
+      return {
+        window: windowResponse(windows),
+        currency: store.currencyCode,
+        methodology: 'SHOPIFY_PRODUCT_ORDER_COHORT_NET_OF_LINKED_REFUNDS',
+        pagination: pagination(pageNumber, limit, page.total),
+        items: page.items.map((product) => {
+          const currentMetrics = current.get(product.id) ?? emptyProductMetrics();
+          const comparisonMetrics = comparison.get(product.id) ?? emptyProductMetrics();
+          return {
+            product,
+            current: currentMetrics,
+            comparison: comparisonMetrics,
+            change: metricChanges(currentMetrics, comparisonMetrics),
+          };
+        }),
       };
     }
 
