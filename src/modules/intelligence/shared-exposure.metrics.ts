@@ -3,12 +3,13 @@ import type {
   IntelligenceInventoryEvidenceRow,
 } from './intelligence-commerce.read.repository.js';
 import type { IntelligenceRepository } from './intelligence.repository.js';
+import type { IntelligenceSharedExposureReadRepository } from './intelligence-shared-exposure.read.repository.js';
 import type { SharedExposureEvidence, SharedExposureProductEvidence } from './intelligence.types.js';
 
 type MetaRow = Awaited<ReturnType<IntelligenceRepository['getMetaEvidenceRows']>>[number];
 type CommerceRow = Awaited<ReturnType<IntelligenceRepository['getCommerceRows']>>[number];
 type InventoryRow = Awaited<ReturnType<IntelligenceRepository['getInventoryLevels']>>[number];
-type TargetRow = Awaited<ReturnType<IntelligenceRepository['getSharedExposureTargets']>>[number];
+type TargetRow = Awaited<ReturnType<IntelligenceSharedExposureReadRepository['getTargets']>>[number];
 
 const MIN_AUTOMATIC_CONFIDENCE = 0.7;
 
