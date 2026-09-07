@@ -30,28 +30,41 @@ export const requestPerformanceMiddleware: RequestHandler = (req, res, next) => 
   };
 
   runWithRequestPerformanceContext(context, () => {
-    res.once('finish', () => {
+    let recorded = false;
+    const record = (aborted: boolean) => {
+      if (recorded) return;
+      recorded = true;
+
       const durationMs = roundMs(performance.now() - context.startedAtMs);
       const prismaQueryDurationMs = roundMs(context.queryDurationMs);
       const prismaQueryWallTimeMs = roundMs(getPrismaQueryWallTimeMs(context));
       const nonDatabaseDurationMs = roundMs(Math.max(0, durationMs - prismaQueryWallTimeMs));
       const slow = durationMs >= env.SLOW_REQUEST_THRESHOLD_MS;
       const payload = {
-        event: slow ? 'slow_request' : 'request_performance',
+        event: aborted ? 'aborted_request' : slow ? 'slow_request' : 'request_performance',
         requestId,
         method: req.method,
         path: req.path || req.originalUrl.split('?', 1)[0] || '/',
         statusCode: res.statusCode,
+        aborted,
         durationMs,
         prismaQueryCount: context.queryCount,
         prismaQueryDurationMs,
         prismaQueryWallTimeMs,
         nonDatabaseDurationMs,
-        ...(slow ? { slowestQueries: context.slowestQueries } : {}),
+        ...(slow || aborted ? { slowestQueries: context.slowestQueries } : {}),
       };
 
-      if (slow) logger.warn(payload, 'Slow request');
+      if (aborted) logger.warn(payload, 'Aborted request');
+      else if (slow) logger.warn(payload, 'Slow request');
       else if (env.LOG_REQUEST_PERFORMANCE) logger.info(payload, 'Request performance');
+    };
+
+    res.once('finish', () => record(false));
+    res.once('close', () => {
+      // A normal completed response emits finish before close. The guard avoids double logging,
+      // while an early disconnect still records the DB work and elapsed time spent before abort.
+      record(!res.writableFinished);
     });
 
     next();
