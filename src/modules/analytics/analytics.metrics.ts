@@ -5,7 +5,8 @@ type OrderRow = Awaited<ReturnType<AnalyticsRepository['getOrders']>>[number];
 type CommerceRow = Awaited<ReturnType<AnalyticsRepository['getCommerceRows']>>[number];
 type CostRow = Awaited<ReturnType<AnalyticsRepository['getVariantCosts']>>[number];
 type VariantSalesRow = Awaited<ReturnType<AnalyticsRepository['getVariantSalesRows']>>[number];
-type MetaAction = MetaRow['actions'][number];
+export type MetaMetricRow = Pick<MetaRow, 'spend' | 'impressions' | 'clicks' | 'frequency' | 'actions'>;
+type MetaAction = MetaMetricRow['actions'][number];
 
 const PURCHASE_ACTION_PRIORITY = [
   'offsite_conversion.fb_pixel_purchase',
@@ -146,7 +147,7 @@ function emptyMeta(): MetaAccumulator {
   };
 }
 
-function addMeta(target: MetaAccumulator, row: MetaRow): void {
+function addMeta(target: MetaAccumulator, row: MetaMetricRow): void {
   const spend = numeric(row.spend);
   const impressions = numeric(row.impressions);
   const frequency = row.frequency === null ? null : numeric(row.frequency);
@@ -182,15 +183,15 @@ export function emptyMetaMetrics(): MetaMetrics {
   return finishMeta(emptyMeta());
 }
 
-export function aggregateMeta(rows: MetaRow[]): MetaMetrics {
+export function aggregateMeta(rows: MetaMetricRow[]): MetaMetrics {
   const total = emptyMeta();
   for (const row of rows) addMeta(total, row);
   return finishMeta(total);
 }
 
-export function aggregateMetaBy(
-  rows: MetaRow[],
-  entityId: (row: MetaRow) => string | null,
+export function aggregateMetaBy<T extends MetaMetricRow>(
+  rows: T[],
+  entityId: (row: T) => string | null,
 ): Map<string, MetaMetrics> {
   const groups = new Map<string, MetaAccumulator>();
   for (const row of rows) {
