@@ -28,7 +28,12 @@ export class DashboardController {
     const payload = await dashboardReads.run(
       cacheKey(storeId, query),
       async () => toJsonSafe(await this.workspace.read(storeId, query, new Date(), { fresh })),
-      { fresh },
+      {
+        fresh,
+        // All date-range variants share one Store generation. Once a Store mutation or manual
+        // Refresh advances that generation, no older range cache can become authoritative again.
+        versionScope: storeId,
+      },
     );
     res.status(200).json(payload);
   };
