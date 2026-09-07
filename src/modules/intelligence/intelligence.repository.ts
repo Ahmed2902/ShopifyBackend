@@ -64,19 +64,19 @@ export class IntelligenceRepository {
     });
   }
 
-  async getMetaEvidenceRows(storeId: string, from: Date, to: Date) {
-    const connection = await prisma.metaConnection.findUnique({
-      where: { storeId },
-      select: { selectedAdAccountIds: true },
-    });
-    const selectedIds = connection?.selectedAdAccountIds ?? [];
-    if (selectedIds.length === 0) return [];
+  getMetaEvidenceRows(
+    storeId: string,
+    selectedAccountIds: string[],
+    from: Date,
+    to: Date,
+  ) {
+    if (selectedAccountIds.length === 0) return Promise.resolve([]);
 
     return prisma.metaInsightDaily.findMany({
       where: {
         level: 'AD',
         date: { gte: from, lte: to },
-        adAccount: { storeId, metaAccountId: { in: selectedIds } },
+        adAccount: { storeId, metaAccountId: { in: selectedAccountIds } },
       },
       select: {
         date: true,
@@ -163,13 +163,8 @@ export class IntelligenceRepository {
     });
   }
 
-  async getActiveProductMappings(storeId: string) {
-    const connection = await prisma.metaConnection.findUnique({
-      where: { storeId },
-      select: { selectedAdAccountIds: true },
-    });
-    const selectedAccountIds = connection?.selectedAdAccountIds ?? [];
-    if (selectedAccountIds.length === 0) return [];
+  getActiveProductMappings(storeId: string, selectedAccountIds: string[]) {
+    if (selectedAccountIds.length === 0) return Promise.resolve([]);
 
     return prisma.adProductMapping.findMany({
       where: {
@@ -193,15 +188,13 @@ export class IntelligenceRepository {
     });
   }
 
-  async getSharedExposureTargets(storeId: string, adIds: string[]) {
+  getSharedExposureTargets(
+    storeId: string,
+    selectedAccountIds: string[],
+    adIds: string[],
+  ) {
     const uniqueAdIds = [...new Set(adIds)];
-    if (uniqueAdIds.length === 0) return [];
-    const connection = await prisma.metaConnection.findUnique({
-      where: { storeId },
-      select: { selectedAdAccountIds: true },
-    });
-    const selectedAccountIds = connection?.selectedAdAccountIds ?? [];
-    if (selectedAccountIds.length === 0) return [];
+    if (uniqueAdIds.length === 0 || selectedAccountIds.length === 0) return Promise.resolve([]);
 
     return prisma.metaAd.findMany({
       where: {
