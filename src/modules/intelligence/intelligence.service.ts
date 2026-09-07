@@ -78,9 +78,14 @@ export class IntelligenceService {
       successfulOrderHistorySync,
       latestMetaInsightSync,
     ] = await Promise.all([
-      this.repository.getMetaEvidenceRows(storeId, productWindow.metaFrom, current.metaTo),
+      this.repository.getMetaEvidenceRows(
+        storeId,
+        selectedMetaAccounts,
+        productWindow.metaFrom,
+        current.metaTo,
+      ),
       this.repository.getCommerceRows(storeId, productWindow.instantFrom, productWindow.instantTo),
-      this.repository.getActiveProductMappings(storeId),
+      this.repository.getActiveProductMappings(storeId, selectedMetaAccounts),
       this.repository.getInventoryLevels(storeId),
       this.repository.getLatestOrderHistorySync(storeId),
       this.repository.getLatestMetaInsightSyncedAt(storeId, selectedMetaAccounts),
@@ -93,7 +98,11 @@ export class IntelligenceService {
           .filter((adId): adId is string => adId !== null),
       ),
     ];
-    const sharedTargets = await this.repository.getSharedExposureTargets(storeId, observedAdIds);
+    const sharedTargets = await this.repository.getSharedExposureTargets(
+      storeId,
+      selectedMetaAccounts,
+      observedAdIds,
+    );
 
     const variantIds = [
       ...new Set(
