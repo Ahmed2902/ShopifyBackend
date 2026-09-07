@@ -78,12 +78,15 @@ export class IntelligenceService {
       successfulOrderHistorySync,
       latestMetaInsightSync,
     ] = await Promise.all([
-      this.repository.getMetaEvidenceRows(
+      this.repository.getMetaEvidenceRows({
         storeId,
-        selectedMetaAccounts,
-        productWindow.metaFrom,
-        current.metaTo,
-      ),
+        selectedAccountIds: selectedMetaAccounts,
+        productFrom: productWindow.metaFrom,
+        currentFrom: current.metaFrom,
+        currentTo: current.metaTo,
+        comparisonFrom: comparison.metaFrom,
+        comparisonTo: comparison.metaTo,
+      }),
       this.repository.getCommerceRows(storeId, productWindow.instantFrom, productWindow.instantTo),
       this.repository.getActiveProductMappings(storeId, selectedMetaAccounts),
       this.repository.getInventoryLevels(storeId),
@@ -91,6 +94,10 @@ export class IntelligenceService {
       this.repository.getLatestMetaInsightSyncedAt(storeId, selectedMetaAccounts),
     ]);
 
+    const metaSourceRowCount = metaRows.reduce(
+      (sum, row) => sum + (Number.isFinite(row.sourceRowCount) ? row.sourceRowCount : 1),
+      0,
+    );
     const observedAdIds = [
       ...new Set(
         metaRows
@@ -182,7 +189,7 @@ export class IntelligenceService {
     const latestMetaSyncedAt = latestMetaInsightSync?.syncedAt ?? null;
     const dataQuality = this.buildDataQuality({
       store,
-      metaRowsCount: metaRows.length,
+      metaRowsCount: metaSourceRowCount,
       latestMetaSyncedAt,
       inventoryRowsCount: inventoryRows.length,
       productResult,
@@ -202,7 +209,7 @@ export class IntelligenceService {
         creatives: creatives.length,
         products: productResult.products.length,
         sharedExposures: sharedExposure.length,
-        metaRows: metaRows.length,
+        metaRows: metaSourceRowCount,
         commerceRows: commerceRows.length,
         shopifyCommerceUsable,
         mappingCoverage: productResult.mappingCoverage,
