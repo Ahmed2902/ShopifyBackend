@@ -63,27 +63,38 @@ export type DashboardInventoryInput = {
 export class DashboardReadRepository {
   async getRecentOrders(storeId: string, limit = 6): Promise<DashboardRecentOrder[]> {
     const rows = await prisma.$queryRaw<RawRecentOrder[]>(Prisma.sql`
+      WITH recent_orders AS MATERIALIZED (
+        SELECT
+          o."id",
+          o."name",
+          o."shopifyCreatedAt" AS shopify_created_at,
+          o."processedAt" AS processed_at,
+          o."currencyCode" AS currency_code,
+          o."currentTotalAmount" AS current_total_amount
+        FROM "Order" o
+        WHERE o."storeId" = ${storeId}::uuid
+          AND o."isTest" = FALSE
+        ORDER BY o."shopifyCreatedAt" DESC, o."id" DESC
+        LIMIT ${limit}
+      )
       SELECT
-        o."id",
-        o."name",
-        o."shopifyCreatedAt" AS shopify_created_at,
-        o."processedAt" AS processed_at,
-        o."currencyCode" AS currency_code,
-        o."currentTotalAmount" AS current_total_amount,
+        recent."id",
+        recent."name",
+        recent.shopify_created_at,
+        recent.processed_at,
+        recent.currency_code,
+        recent.current_total_amount,
         COALESCE(SUM(li."currentQuantity"), 0) AS current_quantity
-      FROM "Order" o
-      LEFT JOIN "OrderLineItem" li ON li."orderId" = o."id"
-      WHERE o."storeId" = ${storeId}::uuid
-        AND o."isTest" = FALSE
+      FROM recent_orders recent
+      LEFT JOIN "OrderLineItem" li ON li."orderId" = recent."id"
       GROUP BY
-        o."id",
-        o."name",
-        o."shopifyCreatedAt",
-        o."processedAt",
-        o."currencyCode",
-        o."currentTotalAmount"
-      ORDER BY o."shopifyCreatedAt" DESC, o."id" DESC
-      LIMIT ${limit}
+        recent."id",
+        recent."name",
+        recent.shopify_created_at,
+        recent.processed_at,
+        recent.currency_code,
+        recent.current_total_amount
+      ORDER BY recent.shopify_created_at DESC, recent."id" DESC
     `);
 
     return rows.map((row) => ({
