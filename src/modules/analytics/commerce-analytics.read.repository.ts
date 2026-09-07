@@ -65,6 +65,11 @@ export type CommerceAggregateInput = {
   comparisonTo: Date;
 };
 
+export type CommerceProductAggregateInput = CommerceAggregateInput & {
+  /** Restrict list-page economics to already-paged product identities. Omit for store-wide totals. */
+  productIds?: string[];
+};
+
 /**
  * High-volume Shopify commerce analytics reads.
  *
@@ -156,8 +161,15 @@ export class CommerceAnalyticsReadRepository {
   }
 
   async getProductEconomicsAggregates(
-    input: CommerceAggregateInput,
+    input: CommerceProductAggregateInput,
   ): Promise<CommerceProductEconomicsAggregateRow[]> {
+    if (input.productIds?.length === 0) return [];
+    const productFilter = input.productIds
+      ? Prisma.sql`AND li."productId" IN (${Prisma.join(
+          input.productIds.map((productId) => Prisma.sql`${productId}::uuid`),
+        )})`
+      : Prisma.empty;
+
     const rows = await prisma.$queryRaw<RawCommerceProductEconomicsAggregateRow[]>(Prisma.sql`
       WITH scoped_lines AS (
         SELECT
@@ -181,6 +193,7 @@ export class CommerceAnalyticsReadRepository {
         FROM "OrderLineItem" li
         INNER JOIN "Order" o ON o."id" = li."orderId"
         WHERE li."productId" IS NOT NULL
+          ${productFilter}
           AND o."storeId" = ${input.storeId}::uuid
           AND o."isTest" = FALSE
           AND o."cancelledAt" IS NULL
