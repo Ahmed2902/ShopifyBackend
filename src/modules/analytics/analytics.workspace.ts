@@ -1,4 +1,5 @@
 import { AppError } from '../../errors/app-error.js';
+import { AdvertisingAnalyticsReadRepository } from './advertising-analytics.read.repository.js';
 import { AdvertisingAnalyticsService } from './advertising-analytics.service.js';
 import { resolveAnalyticsWindows } from './analytics.dates.js';
 import { metricChanges, percentChange } from './analytics.metrics.js';
@@ -20,9 +21,13 @@ export class AnalyticsWorkspace {
   private readonly commerce: CommerceAnalyticsService;
   private readonly advertisingService: AdvertisingAnalyticsService;
 
-  constructor(private readonly repository: AnalyticsRepository = new AnalyticsRepository()) {
+  constructor(
+    private readonly repository: AnalyticsRepository = new AnalyticsRepository(),
+    advertisingReadRepository: AdvertisingAnalyticsReadRepository =
+      new AdvertisingAnalyticsReadRepository(),
+  ) {
     this.commerce = new CommerceAnalyticsService(repository);
-    this.advertisingService = new AdvertisingAnalyticsService(repository);
+    this.advertisingService = new AdvertisingAnalyticsService(repository, advertisingReadRepository);
   }
 
   async overview(storeId: string, query: AnalyticsRangeQuery, now = new Date()) {
