@@ -4,13 +4,15 @@ import {
   aggregateMetaBy,
   emptyMetaMetrics,
   metricChanges,
+  type MetaMetrics,
 } from './analytics.metrics.js';
 import {
   AdvertisingAnalyticsReadRepository,
-  type AdvertisingOverviewMetricRow,
+  type AdvertisingOverviewAggregateRow,
+  type AdvertisingOverviewPeriod,
 } from './advertising-analytics.read.repository.js';
 import type { AnalyticsRepository } from './analytics.repository.js';
-import { inRange, pagination, splitMeta, windowResponse } from './analytics.shared.js';
+import { pagination, splitMeta, windowResponse } from './analytics.shared.js';
 import type { AnalyticsWindows } from './analytics.shared.js';
 
 type StoreContext = NonNullable<Awaited<ReturnType<AnalyticsRepository['getStoreContext']>>>;
@@ -46,14 +48,22 @@ function daily(rows: MetaRow[]) {
     .map(([date, values]) => ({ date, ...aggregateMeta(values) }));
 }
 
-function overviewRowsByCurrency(rows: AdvertisingOverviewMetricRow[]) {
-  const groups = new Map<string, AdvertisingOverviewMetricRow[]>();
-  for (const row of rows) {
-    const group = groups.get(row.accountCurrency) ?? [];
-    group.push(row);
-    groups.set(row.accountCurrency, group);
-  }
-  return groups;
+function overviewMetrics(row: AdvertisingOverviewAggregateRow | undefined): MetaMetrics {
+  if (!row) return emptyMetaMetrics();
+  return {
+    spend: row.spend,
+    impressions: row.impressions,
+    clicks: row.clicks,
+    purchases: row.purchases,
+    purchaseValue: row.purchaseValue,
+    providerRoas: row.spend > 0 ? row.purchaseValue / row.spend : null,
+    cpa: row.purchases > 0 ? row.spend / row.purchases : null,
+    ctr: row.impressions > 0 ? row.clicks / row.impressions : null,
+    cpc: row.clicks > 0 ? row.spend / row.clicks : null,
+    cpm: row.impressions > 0 ? (row.spend / row.impressions) * 1_000 : null,
+    averageDailyFrequency:
+      row.impressions > 0 ? row.weightedFrequency / row.impressions : null,
+  };
 }
 
 export class AdvertisingAnalyticsService {
@@ -66,23 +76,19 @@ export class AdvertisingAnalyticsService {
   async overview(store: StoreContext, windows: AnalyticsWindows) {
     const selectedAccounts = store.metaConnection?.selectedAdAccountIds ?? [];
     const [rows, overviewMeta] = await Promise.all([
-      this.readRepository.getOverviewMetricRows(
-        store.id,
-        selectedAccounts,
-        windows.comparison.metaFrom,
-        windows.current.metaTo,
-      ),
+      this.readRepository.getOverviewAggregateRows({
+        storeId: store.id,
+        selectedAccountIds: selectedAccounts,
+        currentFrom: windows.current.metaFrom,
+        currentTo: windows.current.metaTo,
+        comparisonFrom: windows.comparison.metaFrom,
+        comparisonTo: windows.comparison.metaTo,
+      }),
       this.readRepository.getOverviewMeta(store.id, selectedAccounts),
     ]);
-    const currentRows = rows.filter((row) =>
-      inRange(row.date, windows.current.metaFrom, windows.current.metaTo),
-    );
-    const comparisonRows = rows.filter((row) =>
-      inRange(row.date, windows.comparison.metaFrom, windows.comparison.metaTo),
-    );
-    const currentByCurrency = overviewRowsByCurrency(currentRows);
-    const comparisonByCurrency = overviewRowsByCurrency(comparisonRows);
-    const currencies = new Set([...currentByCurrency.keys(), ...comparisonByCurrency.keys()]);
+    const rowFor = (period: AdvertisingOverviewPeriod, currency: string) =>
+      rows.find((row) => row.period === period && row.accountCurrency === currency);
+    const currencies = new Set(rows.map((row) => row.accountCurrency));
     const connectionStatus = store.metaConnection?.status ?? 'DISCONNECTED';
 
     return {
@@ -99,11 +105,15 @@ export class AdvertisingAnalyticsService {
       },
       lastInsightsSyncedAt: overviewMeta.lastInsightsSyncedAt,
       attributionSettings: [
-        ...new Set(currentRows.map((row) => row.attributionSetting).filter(Boolean)),
-      ],
+        ...new Set(
+          rows
+            .filter((row) => row.period === 'CURRENT')
+            .flatMap((row) => row.attributionSettings),
+        ),
+      ].sort(),
       currencies: [...currencies].sort().map((currency) => {
-        const current = aggregateMeta(currentByCurrency.get(currency) ?? []);
-        const comparison = aggregateMeta(comparisonByCurrency.get(currency) ?? []);
+        const current = overviewMetrics(rowFor('CURRENT', currency));
+        const comparison = overviewMetrics(rowFor('COMPARISON', currency));
         return { currency, current, comparison, change: metricChanges(current, comparison) };
       }),
     };
