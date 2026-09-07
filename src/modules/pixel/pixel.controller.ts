@@ -1,5 +1,7 @@
 import type { Request, Response } from 'express';
+import { ZodError } from 'zod';
 import { AppError } from '../../errors/app-error.js';
+import { logger } from '../../lib/logger.js';
 import { pixelDebugBatchSchema, pixelIngestBatchSchema } from './pixel.schema.js';
 import { pixelService, type PixelService } from './pixel.service.js';
 
@@ -12,12 +14,36 @@ function parseCollectorBody(body: unknown): unknown {
   }
 }
 
+function collectorRejectionCode(error: unknown): string {
+  if (error instanceof AppError) return error.code;
+  if (error instanceof ZodError) return 'VALIDATION_ERROR';
+  return 'PIXEL_COLLECTOR_ERROR';
+}
+
 export class PixelController {
   constructor(private readonly service: PixelService) {}
 
   ingest = async (req: Request, res: Response) => {
-    const input = pixelIngestBatchSchema.parse(parseCollectorBody(req.body));
-    res.status(200).json(await this.service.ingest(input));
+    try {
+      const input = pixelIngestBatchSchema.parse(parseCollectorBody(req.body));
+      const result = await this.service.ingest(input);
+      logger.debug(
+        {
+          received: result.received,
+          persisted: result.persisted,
+          duplicates: result.duplicates,
+          suppressedForConsent: result.suppressedForConsent,
+        },
+        'Stride Pixel collector accepted batch',
+      );
+      res.status(200).json(result);
+    } catch (error) {
+      logger.warn(
+        { code: collectorRejectionCode(error) },
+        'Stride Pixel collector rejected batch',
+      );
+      throw error;
+    }
   };
 
   status = async (req: Request, res: Response) => {
