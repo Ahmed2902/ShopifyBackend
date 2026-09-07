@@ -1,18 +1,28 @@
 import type { Request, Response } from 'express';
-import { InFlightCoalescer } from '../../lib/in-flight-coalescer.js';
-import { inventoryModeUpdateSchema } from './intelligence.schema.js';
+import { CachedReadCoordinator, RedisJsonCache } from '../../lib/redis-json-cache.js';
+import {
+  intelligenceReadQuerySchema,
+  inventoryModeUpdateSchema,
+} from './intelligence.schema.js';
 import { intelligenceService, type IntelligenceService } from './intelligence.service.js';
 
-const snapshotInFlight = new InFlightCoalescer(250);
+const SNAPSHOT_CACHE_TTL_SECONDS = 30;
+const snapshotReads = new CachedReadCoordinator(
+  new RedisJsonCache('intelligence:snapshot:v1', SNAPSHOT_CACHE_TTL_SECONDS),
+  250,
+);
 
 export class IntelligenceController {
   constructor(private readonly service: IntelligenceService) {}
 
   snapshot = async (req: Request, res: Response) => {
     const storeId = req.context.storeId!;
+    const { fresh } = intelligenceReadQuerySchema.parse(req.query);
     res.status(200).json(
-      await snapshotInFlight.run(`intelligence:snapshot:${storeId}`, () =>
-        this.service.snapshot(storeId),
+      await snapshotReads.run(
+        storeId,
+        () => this.service.snapshot(storeId),
+        { fresh },
       ),
     );
   };
@@ -22,8 +32,11 @@ export class IntelligenceController {
   };
 
   updateInventoryMode = async (req: Request, res: Response) => {
+    const storeId = req.context.storeId!;
     const { mode } = inventoryModeUpdateSchema.parse(req.body);
-    res.status(200).json(await this.service.updateInventoryMode(req.context.storeId!, mode));
+    const result = await this.service.updateInventoryMode(storeId, mode);
+    await snapshotReads.invalidate(storeId);
+    res.status(200).json(result);
   };
 }
 
