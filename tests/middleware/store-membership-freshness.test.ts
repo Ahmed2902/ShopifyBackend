@@ -36,9 +36,13 @@ describe('fresh store authorization', () => {
     expect(req.context.role).toBe('MEMBER');
     expect(next).toHaveBeenCalledTimes(1);
 
-    expect(() => requireRole('OWNER', 'ADMIN')(req, response, vi.fn())).toThrowError(
-      expect.objectContaining({ statusCode: 403, code: 'FORBIDDEN' }),
-    );
+    let roleError: unknown;
+    try {
+      requireRole('OWNER', 'ADMIN')(req, response, vi.fn());
+    } catch (error) {
+      roleError = error;
+    }
+    expect(roleError).toMatchObject({ statusCode: 403, code: 'FORBIDDEN' });
   });
 
   it('revokes store access immediately when the membership row has been removed', async () => {
