@@ -1,0 +1,29 @@
+import { CachedReadCoordinator, RedisJsonCache } from './redis-json-cache.js';
+
+const DASHBOARD_CACHE_TTL_SECONDS = 30;
+const INTELLIGENCE_CACHE_TTL_SECONDS = 30;
+const MAX_IN_FLIGHT_READS = 250;
+
+/**
+ * Shared Store-scoped read caches for expensive decision surfaces.
+ *
+ * Both caches use Store-level generations. Any successful source-data mutation can therefore
+ * advance the generation once per namespace without enumerating date-range keys. Old values and
+ * old in-flight writers are harmless because they remain under the previous generation.
+ */
+export const dashboardCachedReads = new CachedReadCoordinator(
+  new RedisJsonCache('analytics:dashboard:v1', DASHBOARD_CACHE_TTL_SECONDS),
+  MAX_IN_FLIGHT_READS,
+);
+
+export const intelligenceSnapshotCachedReads = new CachedReadCoordinator(
+  new RedisJsonCache('intelligence:snapshot:v1', INTELLIGENCE_CACHE_TTL_SECONDS),
+  MAX_IN_FLIGHT_READS,
+);
+
+export async function invalidateStoreDecisionCaches(storeId: string): Promise<void> {
+  await Promise.all([
+    dashboardCachedReads.invalidate(storeId),
+    intelligenceSnapshotCachedReads.invalidate(storeId),
+  ]);
+}
