@@ -182,7 +182,8 @@ async function fixture() {
     ],
   });
 
-  // All of these must be excluded from the evidence window.
+  // All of these must be excluded from USD evidence. The raw characterization path is intentionally
+  // currency-agnostic, so the EUR row remains present there and is filtered by buildProductEvidence.
   for (const ignored of [
     await createOrder({
       suffix: 'test',
@@ -287,7 +288,9 @@ describeDatabase('IntelligenceCommerceReadRepository', () => {
       }),
     ]);
 
-    expect(rawRows).toHaveLength(3);
+    expect(rawRows).toHaveLength(4);
+    expect(rawRows.filter((row) => row.order.currencyCode === 'USD')).toHaveLength(3);
+    expect(rawRows.filter((row) => row.order.currencyCode === 'EUR')).toHaveLength(1);
     expect(compactRows).toHaveLength(1);
     expect(compactRows[0]).toMatchObject({
       productId: product.id,
