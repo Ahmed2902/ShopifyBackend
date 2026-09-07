@@ -1,3 +1,4 @@
+import type { IntelligenceCommerceEvidenceRow } from './intelligence-commerce.read.repository.js';
 import type { IntelligenceRepository } from './intelligence.repository.js';
 import type {
   CampaignEvidence,
@@ -265,6 +266,15 @@ interface ExactProductMapping {
   product: MappingRow['product'];
 }
 
+interface ProductEvidenceContext {
+  mappings: MappingRow[];
+  inventoryRows: InventoryRow[];
+  metaRows: MetaRow[];
+  storeCurrency: string;
+  inventoryTrusted: boolean;
+  windowDays: number;
+}
+
 function costAt(costs: CostRow[], variantId: string, at: Date, currency: string): number | null {
   const matching = costs
     .filter(
@@ -309,59 +319,10 @@ function exactProductMappings(mappings: MappingRow[]): Map<string, ExactProductM
   return exact;
 }
 
-export function buildProductEvidence(input: {
-  commerceRows: CommerceRow[];
-  costRows: CostRow[];
-  mappings: MappingRow[];
-  inventoryRows: InventoryRow[];
-  metaRows: MetaRow[];
-  storeCurrency: string;
-  inventoryTrusted: boolean;
-  windowDays: number;
-}) {
-  const products = new Map<string, ProductAggregate>();
-  for (const row of input.commerceRows) {
-    if (!row.product || !row.productId || row.order.currencyCode !== input.storeCurrency) continue;
-    const refunds = row.refundLines.reduce((sum, refund) => sum + number(refund.subtotal), 0);
-    const refundedUnits = row.refundLines.reduce((sum, refund) => sum + refund.quantity, 0);
-    const restockedUnits = row.refundLines.reduce(
-      (sum, refund) => sum + (refund.restocked ? refund.quantity : 0),
-      0,
-    );
-    const netUnits = Math.max(0, row.quantity - refundedUnits);
-    const cogsUnits = Math.max(0, row.quantity - restockedUnits);
-    const revenue = number(row.discountedTotal);
-    const aggregate = products.get(row.productId) ?? {
-      entityId: row.product.id,
-      externalEntityId: row.product.shopifyProductId,
-      name: row.product.title,
-      revenue: 0,
-      refunds: 0,
-      units: 0,
-      cogsUnits: 0,
-      cogs: 0,
-      costCoveredUnits: 0,
-    };
-    aggregate.revenue += revenue;
-    aggregate.refunds += refunds;
-    aggregate.units += netUnits;
-    aggregate.cogsUnits += cogsUnits;
-
-    if (row.variantId && cogsUnits > 0) {
-      const unitCost = costAt(
-        input.costRows,
-        row.variantId,
-        row.order.processedAt ?? row.order.shopifyCreatedAt,
-        input.storeCurrency,
-      );
-      if (unitCost !== null) {
-        aggregate.cogs += unitCost * cogsUnits;
-        aggregate.costCoveredUnits += cogsUnits;
-      }
-    }
-    products.set(row.productId, aggregate);
-  }
-
+function finishProductEvidence(
+  products: Map<string, ProductAggregate>,
+  input: ProductEvidenceContext,
+) {
   const exactMappings = exactProductMappings(input.mappings);
   for (const mapping of exactMappings.values()) {
     if (products.has(mapping.productId)) continue;
@@ -494,4 +455,75 @@ export function buildProductEvidence(input: {
     mappingCoverage,
     suppressedMetaSpend,
   };
+}
+
+/** Raw characterization path retained for unit tests and DB parity checks. */
+export function buildProductEvidence(input: ProductEvidenceContext & {
+  commerceRows: CommerceRow[];
+  costRows: CostRow[];
+}) {
+  const products = new Map<string, ProductAggregate>();
+  for (const row of input.commerceRows) {
+    if (!row.product || !row.productId || row.order.currencyCode !== input.storeCurrency) continue;
+    const refunds = row.refundLines.reduce((sum, refund) => sum + number(refund.subtotal), 0);
+    const refundedUnits = row.refundLines.reduce((sum, refund) => sum + refund.quantity, 0);
+    const restockedUnits = row.refundLines.reduce(
+      (sum, refund) => sum + (refund.restocked ? refund.quantity : 0),
+      0,
+    );
+    const netUnits = Math.max(0, row.quantity - refundedUnits);
+    const cogsUnits = Math.max(0, row.quantity - restockedUnits);
+    const revenue = number(row.discountedTotal);
+    const aggregate = products.get(row.productId) ?? {
+      entityId: row.product.id,
+      externalEntityId: row.product.shopifyProductId,
+      name: row.product.title,
+      revenue: 0,
+      refunds: 0,
+      units: 0,
+      cogsUnits: 0,
+      cogs: 0,
+      costCoveredUnits: 0,
+    };
+    aggregate.revenue += revenue;
+    aggregate.refunds += refunds;
+    aggregate.units += netUnits;
+    aggregate.cogsUnits += cogsUnits;
+
+    if (row.variantId && cogsUnits > 0) {
+      const unitCost = costAt(
+        input.costRows,
+        row.variantId,
+        row.order.processedAt ?? row.order.shopifyCreatedAt,
+        input.storeCurrency,
+      );
+      if (unitCost !== null) {
+        aggregate.cogs += unitCost * cogsUnits;
+        aggregate.costCoveredUnits += cogsUnits;
+      }
+    }
+    products.set(row.productId, aggregate);
+  }
+
+  return finishProductEvidence(products, input);
+}
+
+export function buildProductEvidenceFromAggregates(input: ProductEvidenceContext & {
+  commerceRows: IntelligenceCommerceEvidenceRow[];
+}) {
+  const products = new Map<string, ProductAggregate>();
+  for (const row of input.commerceRows) {
+    products.set(row.productId, {
+      entityId: row.productId,
+      externalEntityId: row.shopifyProductId,
+      name: row.title,
+      revenue: row.revenue,
+      refunds: row.refunds,
+      units: row.netUnits,
+      cogsUnits: row.cogsUnits,
+      cogs: row.cogs,
+      costCoveredUnits: row.costCoveredUnits,
+    });
+  }
+  return finishProductEvidence(products, input);
 }
