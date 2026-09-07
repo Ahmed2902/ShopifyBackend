@@ -1,3 +1,4 @@
+import type { IntelligenceCommerceEvidenceRow } from './intelligence-commerce.read.repository.js';
 import type { IntelligenceRepository } from './intelligence.repository.js';
 import type { SharedExposureEvidence, SharedExposureProductEvidence } from './intelligence.types.js';
 
@@ -54,6 +55,10 @@ function depletionByProduct(rows: CommerceRow[]) {
   return depletion;
 }
 
+function depletionByProductFromAggregates(rows: IntelligenceCommerceEvidenceRow[]) {
+  return new Map(rows.map((row) => [row.productId, row.cogsUnits]));
+}
+
 function metaByAd(rows: MetaRow[]) {
   const metrics = new Map<string, { spend: number; impressions: number }>();
   for (const row of rows) {
@@ -66,17 +71,18 @@ function metaByAd(rows: MetaRow[]) {
   return metrics;
 }
 
-export function buildSharedExposureEvidence(input: {
-  targets: TargetRow[];
-  metaRows: MetaRow[];
-  commerceRows: CommerceRow[];
-  inventoryRows: InventoryRow[];
-  inventoryTrusted: boolean;
-  windowDays: number;
-}): SharedExposureEvidence[] {
+function finishSharedExposureEvidence(
+  input: {
+    targets: TargetRow[];
+    metaRows: MetaRow[];
+    inventoryRows: InventoryRow[];
+    inventoryTrusted: boolean;
+    windowDays: number;
+  },
+  depletion: Map<string, number>,
+): SharedExposureEvidence[] {
   const meta = metaByAd(input.metaRows);
   const stock = inventoryByProduct(input.inventoryRows);
-  const depletion = depletionByProduct(input.commerceRows);
 
   return input.targets.flatMap((ad) => {
     if (ad.targetScope !== 'MULTI_PRODUCT' && ad.targetScope !== 'COLLECTION') return [];
@@ -172,4 +178,30 @@ export function buildSharedExposureEvidence(input: {
       } satisfies SharedExposureEvidence,
     ];
   });
+}
+
+/** Raw characterization path retained for unit tests and DB parity checks. */
+export function buildSharedExposureEvidence(input: {
+  targets: TargetRow[];
+  metaRows: MetaRow[];
+  commerceRows: CommerceRow[];
+  inventoryRows: InventoryRow[];
+  inventoryTrusted: boolean;
+  windowDays: number;
+}): SharedExposureEvidence[] {
+  return finishSharedExposureEvidence(input, depletionByProduct(input.commerceRows));
+}
+
+export function buildSharedExposureEvidenceFromAggregates(input: {
+  targets: TargetRow[];
+  metaRows: MetaRow[];
+  commerceRows: IntelligenceCommerceEvidenceRow[];
+  inventoryRows: InventoryRow[];
+  inventoryTrusted: boolean;
+  windowDays: number;
+}): SharedExposureEvidence[] {
+  return finishSharedExposureEvidence(
+    input,
+    depletionByProductFromAggregates(input.commerceRows),
+  );
 }
