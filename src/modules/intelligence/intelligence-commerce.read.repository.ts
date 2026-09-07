@@ -17,6 +17,12 @@ export interface IntelligenceCommerceEvidenceRow {
   costCoveredUnits: number;
 }
 
+export interface IntelligenceInventoryEvidenceRow {
+  productId: string;
+  sourceInventoryLevelCount: number;
+  available: number;
+}
+
 type RawIntelligenceCommerceEvidenceRow = {
   product_id: string;
   shopify_product_id: string;
@@ -33,6 +39,12 @@ type RawIntelligenceCommerceEvidenceRow = {
   cost_covered_units: bigint | number | null;
 };
 
+type RawIntelligenceInventoryEvidenceRow = {
+  product_id: string;
+  source_inventory_level_count: bigint;
+  available: bigint | number | null;
+};
+
 function numeric(value: Prisma.Decimal | string | number | bigint | null): number {
   if (value === null) return 0;
   const parsed = Number(value);
@@ -40,10 +52,11 @@ function numeric(value: Prisma.Decimal | string | number | bigint | null): numbe
 }
 
 /**
- * High-volume Shopify evidence read for the deterministic intelligence engine.
+ * High-volume Shopify evidence reads for the deterministic intelligence engine.
  *
- * The rule layer only needs product-level economics/depletion for its 28-day product window,
- * so PostgreSQL resolves refunds and historical unit costs before returning one row per product.
+ * The rule layer needs product-level economics/depletion plus current available stock. PostgreSQL
+ * resolves refunds, historical unit costs, and multi-location inventory before returning compact
+ * product rows instead of complete line/refund/cost/inventory histories.
  */
 export class IntelligenceCommerceReadRepository {
   async getProductEvidenceAggregates(input: {
@@ -157,6 +170,34 @@ export class IntelligenceCommerceReadRepository {
       refunds: numeric(row.refunds),
       cogs: numeric(row.cogs),
       costCoveredUnits: numeric(row.cost_covered_units),
+    }));
+  }
+
+  async getInventoryEvidenceAggregates(storeId: string): Promise<IntelligenceInventoryEvidenceRow[]> {
+    const rows = await prisma.$queryRaw<RawIntelligenceInventoryEvidenceRow[]>(Prisma.sql`
+      SELECT
+        variant."productId" AS product_id,
+        COUNT(*) AS source_inventory_level_count,
+        COALESCE(SUM(level."available"), 0) AS available
+      FROM "InventoryLevelCurrent" level
+      INNER JOIN "InventoryItem" item ON item."id" = level."inventoryItemId"
+      INNER JOIN "ProductVariant" variant ON variant."id" = item."variantId"
+      INNER JOIN "Product" product ON product."id" = variant."productId"
+      INNER JOIN "Location" location ON location."id" = level."locationId"
+      WHERE item."storeId" = ${storeId}::uuid
+        AND item."deletedAt" IS NULL
+        AND variant."deletedAt" IS NULL
+        AND product."deletedAt" IS NULL
+        AND location."deletedAt" IS NULL
+        AND location."isActive" = TRUE
+      GROUP BY variant."productId"
+      ORDER BY variant."productId"
+    `);
+
+    return rows.map((row) => ({
+      productId: row.product_id,
+      sourceInventoryLevelCount: numeric(row.source_inventory_level_count),
+      available: numeric(row.available),
     }));
   }
 }
