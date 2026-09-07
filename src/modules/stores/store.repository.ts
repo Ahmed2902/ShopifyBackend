@@ -16,8 +16,11 @@ export class StoreRepository {
           where: { userId },
           select: { role: true },
         },
-        shopifyConnection: { select: { status: true } },
-        metaConnection: { select: { status: true } },
+        // The application shell only needs provider readiness/freshness. Keep this
+        // compact so GET /stores can replace the former 8-query Shopify /status read.
+        shopifyConnection: { select: { status: true, lastSyncedAt: true } },
+        metaConnection: { select: { status: true, lastSyncedAt: true } },
+        tiktokConnection: { select: { status: true, lastSyncedAt: true } },
       },
     });
   }
@@ -38,6 +41,7 @@ export class StoreRepository {
         updatedAt: true,
         shopifyConnection: { select: { status: true, lastSyncedAt: true } },
         metaConnection: { select: { status: true, lastSyncedAt: true } },
+        tiktokConnection: { select: { status: true, lastSyncedAt: true } },
       },
     });
   }
