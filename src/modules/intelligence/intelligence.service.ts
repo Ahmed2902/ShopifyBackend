@@ -1,9 +1,10 @@
 import { AppError } from '../../errors/app-error.js';
+import { IntelligenceCommerceReadRepository } from './intelligence-commerce.read.repository.js';
 import { completedWindow } from './intelligence.dates.js';
 import {
   buildCampaignEvidence,
   buildCreativeEvidence,
-  buildProductEvidence,
+  buildProductEvidenceFromAggregates,
 } from './intelligence.metrics.js';
 import { IntelligenceRepository } from './intelligence.repository.js';
 import {
@@ -15,7 +16,7 @@ import {
   sharedExposureInventoryRule,
   underexposedProductRule,
 } from './intelligence.rules.js';
-import { buildSharedExposureEvidence } from './shared-exposure.metrics.js';
+import { buildSharedExposureEvidenceFromAggregates } from './shared-exposure.metrics.js';
 import type {
   DataQualityEvidence,
   RecommendationDraft,
@@ -54,7 +55,11 @@ function evidenceQuality(confidenceScore: number, limitations: RecommendationLim
 }
 
 export class IntelligenceService {
-  constructor(private readonly repository: IntelligenceRepository = new IntelligenceRepository()) {}
+  constructor(
+    private readonly repository: IntelligenceRepository = new IntelligenceRepository(),
+    private readonly commerceReadRepository: IntelligenceCommerceReadRepository =
+      new IntelligenceCommerceReadRepository(),
+  ) {}
 
   async snapshot(storeId: string, now = new Date()) {
     const store = await this.repository.getStoreContext(storeId);
@@ -87,7 +92,12 @@ export class IntelligenceService {
         comparisonFrom: comparison.metaFrom,
         comparisonTo: comparison.metaTo,
       }),
-      this.repository.getCommerceRows(storeId, productWindow.instantFrom, productWindow.instantTo),
+      this.commerceReadRepository.getProductEvidenceAggregates({
+        storeId,
+        currency: store.currencyCode,
+        from: productWindow.instantFrom,
+        to: productWindow.instantTo,
+      }),
       this.repository.getActiveProductMappings(storeId, selectedMetaAccounts),
       this.repository.getInventoryLevels(storeId),
       this.repository.getLatestOrderHistorySync(storeId),
@@ -96,6 +106,10 @@ export class IntelligenceService {
 
     const metaSourceRowCount = metaRows.reduce(
       (sum, row) => sum + (Number.isFinite(row.sourceRowCount) ? row.sourceRowCount : 1),
+      0,
+    );
+    const commerceSourceRowCount = commerceRows.reduce(
+      (sum, row) => sum + row.sourceOrderLineCount,
       0,
     );
     const observedAdIds = [
@@ -109,20 +123,6 @@ export class IntelligenceService {
       storeId,
       selectedMetaAccounts,
       observedAdIds,
-    );
-
-    const variantIds = [
-      ...new Set(
-        commerceRows
-          .map((row) => row.variantId)
-          .filter((variantId): variantId is string => variantId !== null),
-      ),
-    ];
-    const costs = await this.repository.getVariantCosts(
-      storeId,
-      variantIds,
-      productWindow.instantFrom,
-      productWindow.instantTo,
     );
 
     const campaigns = buildCampaignEvidence(
@@ -139,9 +139,8 @@ export class IntelligenceService {
       comparison.metaFrom,
       comparison.metaTo,
     );
-    const productResult = buildProductEvidence({
+    const productResult = buildProductEvidenceFromAggregates({
       commerceRows,
-      costRows: costs,
       mappings,
       inventoryRows,
       metaRows,
@@ -149,7 +148,7 @@ export class IntelligenceService {
       inventoryTrusted: store.inventoryIntelligenceMode === 'TRUSTED',
       windowDays: PRODUCT_WINDOW_DAYS,
     });
-    const sharedExposure = buildSharedExposureEvidence({
+    const sharedExposure = buildSharedExposureEvidenceFromAggregates({
       targets: sharedTargets,
       metaRows,
       commerceRows,
@@ -170,7 +169,7 @@ export class IntelligenceService {
 
     const shopifyCommerceUsable =
       store.shopifyConnection?.status === 'ACTIVE' &&
-      (commerceRows.length > 0 || successfulOrderHistorySync?.status === 'SUCCEEDED');
+      (commerceSourceRowCount > 0 || successfulOrderHistorySync?.status === 'SUCCEEDED');
     const productRuleWindow = { start: productWindow.metaFrom, end: productWindow.metaTo };
     for (const product of productResult.products) {
       const results = [
@@ -210,7 +209,7 @@ export class IntelligenceService {
         products: productResult.products.length,
         sharedExposures: sharedExposure.length,
         metaRows: metaSourceRowCount,
-        commerceRows: commerceRows.length,
+        commerceRows: commerceSourceRowCount,
         shopifyCommerceUsable,
         mappingCoverage: productResult.mappingCoverage,
         costCoverage: this.overallCostCoverage(productResult.products),
@@ -298,7 +297,7 @@ export class IntelligenceService {
     metaRowsCount: number;
     latestMetaSyncedAt: Date | null;
     inventoryRowsCount: number;
-    productResult: ReturnType<typeof buildProductEvidence>;
+    productResult: ReturnType<typeof buildProductEvidenceFromAggregates>;
     now: Date;
   }): DataQualityEvidence[] {
     const evidence: DataQualityEvidence[] = [];
