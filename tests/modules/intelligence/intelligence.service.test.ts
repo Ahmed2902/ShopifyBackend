@@ -87,7 +87,7 @@ describe('IntelligenceService', () => {
     );
   });
 
-  it('reuses selected Meta accounts from the snapshot store context', async () => {
+  it('reuses selected Meta accounts and sends explicit evidence windows', async () => {
     const latest = new Date('2026-09-03T11:30:00.000Z');
     const repository = buildRepository({
       getMetaEvidenceRows: vi.fn().mockResolvedValue([]),
@@ -96,12 +96,15 @@ describe('IntelligenceService', () => {
 
     await new IntelligenceService(repository).snapshot(storeId, now);
 
-    expect(repository.getMetaEvidenceRows).toHaveBeenCalledWith(
+    expect(repository.getMetaEvidenceRows).toHaveBeenCalledWith({
       storeId,
-      ['act_101'],
-      expect.any(Date),
-      expect.any(Date),
-    );
+      selectedAccountIds: ['act_101'],
+      productFrom: expect.any(Date),
+      currentFrom: expect.any(Date),
+      currentTo: expect.any(Date),
+      comparisonFrom: expect.any(Date),
+      comparisonTo: expect.any(Date),
+    });
     expect(repository.getActiveProductMappings).toHaveBeenCalledWith(storeId, ['act_101']);
     expect(repository.getLatestMetaInsightSyncedAt).toHaveBeenCalledWith(storeId, ['act_101']);
   });
@@ -111,12 +114,14 @@ describe('IntelligenceService', () => {
     const repository = buildRepository({
       getMetaEvidenceRows: vi.fn().mockResolvedValue([
         {
+          bucket: 'CURRENT',
+          sourceRowCount: 3,
           date: new Date('2026-09-01T00:00:00.000Z'),
           syncedAt: now,
           accountCurrency: 'USD',
           spend: 10,
-          impressions: BigInt(1_000),
-          clicks: BigInt(10),
+          impressions: 1_000,
+          clicks: 10,
           frequency: 1,
           campaign: null,
           ad: {
@@ -130,8 +135,9 @@ describe('IntelligenceService', () => {
       ] as never),
     });
 
-    await new IntelligenceService(repository).snapshot(storeId, now);
+    const result = await new IntelligenceService(repository).snapshot(storeId, now);
 
+    expect(result.evidence.metaRows).toBe(3);
     expect(repository.getSharedExposureTargets).toHaveBeenCalledWith(
       storeId,
       ['act_101'],
