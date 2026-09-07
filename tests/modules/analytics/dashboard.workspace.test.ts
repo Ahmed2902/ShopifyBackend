@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { IntelligenceService } from '../../../src/modules/intelligence/intelligence.service.js';
+import type { IntelligenceSnapshotReadService } from '../../../src/modules/intelligence/intelligence-snapshot.read.service.js';
 import type { AnalyticsWorkspace } from '../../../src/modules/analytics/analytics.workspace.js';
 import type { DashboardReadRepository } from '../../../src/modules/analytics/dashboard.read.repository.js';
 import { DashboardWorkspace } from '../../../src/modules/analytics/dashboard.workspace.js';
@@ -15,14 +15,15 @@ function buildAnalytics(overrides: Partial<AnalyticsWorkspace> = {}) {
   } as unknown as AnalyticsWorkspace;
 }
 
-function buildIntelligence(overrides: Partial<IntelligenceService> = {}) {
+function buildIntelligence(overrides: Partial<IntelligenceSnapshotReadService> = {}) {
   return {
-    snapshot: vi.fn().mockResolvedValue({
+    read: vi.fn().mockResolvedValue({
       evaluatedAt: now,
       recommendations: [],
     }),
+    invalidate: vi.fn(),
     ...overrides,
-  } as unknown as IntelligenceService;
+  } as unknown as IntelligenceSnapshotReadService;
 }
 
 function buildRead(overrides: Partial<DashboardReadRepository> = {}) {
@@ -38,7 +39,7 @@ describe('DashboardWorkspace', () => {
       inventory: vi.fn().mockRejectedValue(new Error('inventory unavailable')),
     });
     const intelligence = buildIntelligence({
-      snapshot: vi.fn().mockRejectedValue(new Error('intelligence unavailable')),
+      read: vi.fn().mockRejectedValue(new Error('intelligence unavailable')),
     });
     const read = buildRead({
       getRecentOrders: vi.fn().mockRejectedValue(new Error('orders unavailable')),
@@ -100,7 +101,7 @@ describe('DashboardWorkspace', () => {
       title: `Recommendation ${index}`,
     }));
     const intelligence = buildIntelligence({
-      snapshot: vi.fn().mockResolvedValue({
+      read: vi.fn().mockResolvedValue({
         evaluatedAt: now,
         recommendations,
       } as never),
@@ -110,8 +111,10 @@ describe('DashboardWorkspace', () => {
       storeId,
       { days: 30 },
       now,
+      { fresh: true },
     );
 
+    expect(intelligence.read).toHaveBeenCalledWith(storeId, { fresh: true });
     expect(result.sections.inventory).toEqual({
       available: true,
       data: {
