@@ -236,6 +236,8 @@ export class ShopifyOrderService {
     result: ShopifyOrderBackfillResult,
   ): Promise<void> {
     const persistedOrder = await this.repository.upsertOrderWithLineItems(input.storeId, order);
+    if (!persistedOrder) return;
+
     result.breakdown.orders += 1;
     result.breakdown.lineItems += order.lineItems.length;
     result.recordsRead += 1 + order.lineItems.length;

@@ -54,6 +54,20 @@ model Order {
   @@index([storeId, cancelledAt])
 }
 
+model ShopifyOrderRedaction {
+  id                      String   @id @default(uuid()) @db.Uuid
+  storeId                 String   @db.Uuid
+  shopifyOrderId          String
+  sourceWebhookDeliveryId String?  @db.Uuid
+  redactedAt              DateTime @default(now())
+  createdAt               DateTime @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, shopifyOrderId])
+  @@index([storeId, redactedAt])
+}
+
 model OrderLineItem {
   id                                   String   @id @default(uuid()) @db.Uuid
   orderId                              String   @db.Uuid
