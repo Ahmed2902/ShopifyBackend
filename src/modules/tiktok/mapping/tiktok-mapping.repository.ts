@@ -52,7 +52,14 @@ export class TikTokMappingRepository {
       const confirmed = await tx.tikTokCatalogItemVariantMapping.findMany({ where: { catalogItemId, validUntil: null, isMerchantConfirmed: true } });
       if (confirmed.length) return confirmed;
       await tx.tikTokCatalogItemVariantMapping.updateMany({ where: { catalogItemId, validUntil: null, isMerchantConfirmed: false }, data: { validUntil: new Date() } });
-      return Promise.all(mappings.map((mapping) => tx.tikTokCatalogItemVariantMapping.create({ data: { catalogItemId, ...mapping, isMerchantConfirmed: false } })));
+      const created = [];
+      // Interactive Prisma transactions use one database connection. Promise.all() here does not
+      // create real DB parallelism and pg warns when multiple queries are issued concurrently on
+      // that connection, so keep transaction-client operations explicitly sequential.
+      for (const mapping of mappings) {
+        created.push(await tx.tikTokCatalogItemVariantMapping.create({ data: { catalogItemId, ...mapping, isMerchantConfirmed: false } }));
+      }
+      return created;
     });
   }
 
@@ -67,20 +74,24 @@ export class TikTokMappingRepository {
       const confirmed = await tx.tikTokAdProductMapping.findMany({ where: { tiktokAdId, validUntil: null, isMerchantConfirmed: true } });
       if (confirmed.length) return confirmed;
       await tx.tikTokAdProductMapping.updateMany({ where: { tiktokAdId, validUntil: null, isMerchantConfirmed: false }, data: { validUntil: new Date() } });
-      return Promise.all(mappings.map((mapping) => tx.tikTokAdProductMapping.create({ data: {
-        tiktokAdId,
-        productId: mapping.productId,
-        variantId: mapping.variantId ?? null,
-        catalogItemId: mapping.catalogItemId ?? null,
-        granularity: mapping.granularity,
-        source: mapping.source,
-        confidence: mapping.confidence,
-        evidenceJson: optionalJson(mapping.evidenceJson),
-        landingUrl: mapping.landingUrl ?? null,
-        providerProductId: mapping.providerProductId ?? null,
-        providerProductGroupId: mapping.providerProductGroupId ?? null,
-        isMerchantConfirmed: false,
-      } })));
+      const created = [];
+      for (const mapping of mappings) {
+        created.push(await tx.tikTokAdProductMapping.create({ data: {
+          tiktokAdId,
+          productId: mapping.productId,
+          variantId: mapping.variantId ?? null,
+          catalogItemId: mapping.catalogItemId ?? null,
+          granularity: mapping.granularity,
+          source: mapping.source,
+          confidence: mapping.confidence,
+          evidenceJson: optionalJson(mapping.evidenceJson),
+          landingUrl: mapping.landingUrl ?? null,
+          providerProductId: mapping.providerProductId ?? null,
+          providerProductGroupId: mapping.providerProductGroupId ?? null,
+          isMerchantConfirmed: false,
+        } }));
+      }
+      return created;
     });
   }
 
