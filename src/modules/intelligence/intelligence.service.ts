@@ -99,7 +99,7 @@ export class IntelligenceService {
         to: productWindow.instantTo,
       }),
       this.repository.getActiveProductMappings(storeId, selectedMetaAccounts),
-      this.repository.getInventoryLevels(storeId),
+      this.commerceReadRepository.getInventoryEvidenceAggregates(storeId),
       this.repository.getLatestOrderHistorySync(storeId),
       this.repository.getLatestMetaInsightSyncedAt(storeId, selectedMetaAccounts),
     ]);
@@ -110,6 +110,10 @@ export class IntelligenceService {
     );
     const commerceSourceRowCount = commerceRows.reduce(
       (sum, row) => sum + row.sourceOrderLineCount,
+      0,
+    );
+    const inventorySourceRowCount = inventoryRows.reduce(
+      (sum, row) => sum + row.sourceInventoryLevelCount,
       0,
     );
     const observedAdIds = [
@@ -190,7 +194,7 @@ export class IntelligenceService {
       store,
       metaRowsCount: metaSourceRowCount,
       latestMetaSyncedAt,
-      inventoryRowsCount: inventoryRows.length,
+      inventoryRowsCount: inventorySourceRowCount,
       productResult,
       now,
     });
