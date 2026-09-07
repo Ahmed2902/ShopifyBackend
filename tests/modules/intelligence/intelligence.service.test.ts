@@ -56,6 +56,7 @@ function buildRepository(overrides: Partial<IntelligenceRepository> = {}) {
 function buildCommerceRead(overrides: Partial<IntelligenceCommerceReadRepository> = {}) {
   return {
     getProductEvidenceAggregates: vi.fn().mockResolvedValue([]),
+    getInventoryEvidenceAggregates: vi.fn().mockResolvedValue([]),
     ...overrides,
   } as unknown as IntelligenceCommerceReadRepository;
 }
@@ -158,7 +159,7 @@ describe('IntelligenceService', () => {
     );
   });
 
-  it('uses compact Shopify product economics instead of raw line/refund/cost materialization', async () => {
+  it('uses compact Shopify economics and stock instead of raw nested histories', async () => {
     const repository = buildRepository();
     const commerceReadRepository = buildCommerceRead({
       getProductEvidenceAggregates: vi.fn().mockResolvedValue([
@@ -178,6 +179,13 @@ describe('IntelligenceService', () => {
           costCoveredUnits: 7,
         },
       ]),
+      getInventoryEvidenceAggregates: vi.fn().mockResolvedValue([
+        {
+          productId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          sourceInventoryLevelCount: 6,
+          available: 14,
+        },
+      ]),
     });
 
     const result = await service(repository, commerceReadRepository).snapshot(storeId, now);
@@ -190,8 +198,33 @@ describe('IntelligenceService', () => {
       from: expect.any(Date),
       to: expect.any(Date),
     });
+    expect(commerceReadRepository.getInventoryEvidenceAggregates).toHaveBeenCalledWith(storeId);
     expect(repository.getCommerceRows).not.toHaveBeenCalled();
     expect(repository.getVariantCosts).not.toHaveBeenCalled();
+    expect(repository.getInventoryLevels).not.toHaveBeenCalled();
+  });
+
+  it('keeps trusted-inventory data-quality semantics based on underlying level count', async () => {
+    const trustedStore = storeContext();
+    trustedStore.inventoryIntelligenceMode = 'TRUSTED';
+    const repository = buildRepository({
+      getStoreContext: vi.fn().mockResolvedValue(trustedStore),
+    });
+    const commerceReadRepository = buildCommerceRead({
+      getInventoryEvidenceAggregates: vi.fn().mockResolvedValue([
+        {
+          productId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          sourceInventoryLevelCount: 3,
+          available: 0,
+        },
+      ]),
+    });
+
+    const result = await service(repository, commerceReadRepository).snapshot(storeId, now);
+
+    expect(result.dataQuality).not.toContainEqual(
+      expect.objectContaining({ code: 'INVENTORY_DATA_MISSING' }),
+    );
   });
 
   it('stores only the inventory trust setting', async () => {
