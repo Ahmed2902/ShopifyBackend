@@ -1,7 +1,5 @@
-import { CachedReadCoordinator, RedisJsonCache } from '../../lib/redis-json-cache.js';
+import { intelligenceSnapshotCachedReads } from '../../lib/store-decision-cache.js';
 import { intelligenceService, type IntelligenceService } from './intelligence.service.js';
-
-const SNAPSHOT_CACHE_TTL_SECONDS = 30;
 
 /**
  * Shared cache/coalescing boundary for the expensive deterministic snapshot.
@@ -11,23 +9,18 @@ const SNAPSHOT_CACHE_TTL_SECONDS = 30;
  * the evidence queries.
  */
 export class IntelligenceSnapshotReadService {
-  private readonly reads = new CachedReadCoordinator(
-    new RedisJsonCache('intelligence:snapshot:v1', SNAPSHOT_CACHE_TTL_SECONDS),
-    250,
-  );
-
   constructor(private readonly service: IntelligenceService = intelligenceService) {}
 
   read(storeId: string, options: { fresh?: boolean } = {}) {
-    return this.reads.run(
+    return intelligenceSnapshotCachedReads.run(
       storeId,
       () => this.service.snapshot(storeId),
-      { fresh: options.fresh ?? false },
+      { fresh: options.fresh ?? false, versionScope: storeId },
     );
   }
 
   invalidate(storeId: string) {
-    return this.reads.invalidate(storeId);
+    return intelligenceSnapshotCachedReads.invalidate(storeId);
   }
 }
 
