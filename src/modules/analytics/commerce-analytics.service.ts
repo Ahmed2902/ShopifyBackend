@@ -9,8 +9,15 @@ import {
   numeric,
   orderDate,
   totalProductMetrics,
+  type CommerceMetrics,
 } from './analytics.metrics.js';
 import type { AnalyticsRepository } from './analytics.repository.js';
+import {
+  CommerceAnalyticsReadRepository,
+  type CommerceCustomerSegment,
+  type CommerceOrderAggregateRow,
+  type CommerceOrderPeriod,
+} from './commerce-analytics.read.repository.js';
 import { pagination, splitCommerce, splitOrders, windowResponse } from './analytics.shared.js';
 import type { AnalyticsWindows } from './analytics.shared.js';
 
@@ -76,10 +83,71 @@ function customerSegment(row: OrderRow): 'NEW' | 'RETURNING' | 'UNKNOWN' {
   return row.customerOrderIndex > 1 ? 'RETURNING' : 'UNKNOWN';
 }
 
+function aggregateOrderFacts(
+  rows: CommerceOrderAggregateRow[],
+  period: CommerceOrderPeriod,
+  segment?: CommerceCustomerSegment,
+): CommerceMetrics {
+  const scoped = rows.filter(
+    (row) => row.period === period && (segment === undefined || row.segment === segment),
+  );
+  const orders = scoped.reduce((sum, row) => sum + row.orders, 0);
+  const units = scoped.reduce((sum, row) => sum + row.units, 0);
+  const orderValue = scoped.reduce((sum, row) => sum + row.orderValue, 0);
+  const refunds = scoped.reduce((sum, row) => sum + row.refunds, 0);
+  const discounts = scoped.reduce((sum, row) => sum + row.discounts, 0);
+  const segmentOrders = (kind: CommerceCustomerSegment) =>
+    scoped.filter((row) => row.segment === kind).reduce((sum, row) => sum + row.orders, 0);
+
+  return {
+    orders,
+    units,
+    orderValue,
+    refunds,
+    // Shopify currentTotalAmount is already the current order truth. Preserve the established
+    // semantics and expose linked refunds separately rather than subtracting them twice.
+    netOrderValue: orderValue,
+    discounts,
+    aov: orders > 0 ? orderValue / orders : null,
+    newOrders: segmentOrders('NEW'),
+    returningOrders: segmentOrders('RETURNING'),
+    unknownCustomerOrders: segmentOrders('UNKNOWN'),
+  };
+}
+
 export class CommerceAnalyticsService {
-  constructor(private readonly repository: AnalyticsRepository) {}
+  constructor(
+    private readonly repository: AnalyticsRepository,
+    private readonly readRepository?: CommerceAnalyticsReadRepository,
+  ) {}
+
+  private orderAggregateInput(store: StoreContext, windows: AnalyticsWindows) {
+    return {
+      storeId: store.id,
+      currency: store.currencyCode,
+      currentFrom: windows.current.instantFrom,
+      currentTo: windows.current.instantTo,
+      comparisonFrom: windows.comparison.instantFrom,
+      comparisonTo: windows.comparison.instantTo,
+    };
+  }
 
   async summary(store: StoreContext, windows: AnalyticsWindows) {
+    if (this.readRepository) {
+      const rows = await this.readRepository.getOrderAggregates(
+        this.orderAggregateInput(store, windows),
+      );
+      const current = aggregateOrderFacts(rows, 'CURRENT');
+      const comparison = aggregateOrderFacts(rows, 'COMPARISON');
+      return {
+        current,
+        comparison,
+        change: metricChanges(current, comparison),
+      };
+    }
+
+    // Characterization fallback used by isolated unit tests. Production injects the compact
+    // SQL read repository so it never materializes the full order/refund history for totals.
     const rows = await this.repository.getOrders(
       store.id,
       windows.comparison.instantFrom,
@@ -231,6 +299,45 @@ export class CommerceAnalyticsService {
   }
 
   async customers(store: StoreContext, windows: AnalyticsWindows) {
+    if (this.readRepository) {
+      const rows = await this.readRepository.getOrderAggregates(
+        this.orderAggregateInput(store, windows),
+      );
+      const current = aggregateOrderFacts(rows, 'CURRENT');
+      const comparison = aggregateOrderFacts(rows, 'COMPARISON');
+      const currentKnown = current.newOrders + current.returningOrders;
+      const comparisonKnown = comparison.newOrders + comparison.returningOrders;
+      const segmentPair = (kind: CommerceCustomerSegment) => {
+        const segmentCurrent = aggregateOrderFacts(rows, 'CURRENT', kind);
+        const segmentComparison = aggregateOrderFacts(rows, 'COMPARISON', kind);
+        return {
+          current: segmentCurrent,
+          comparison: segmentComparison,
+          change: metricChanges(segmentCurrent, segmentComparison),
+        };
+      };
+
+      return {
+        window: windowResponse(windows),
+        currency: store.currencyCode,
+        methodology: 'ORDER_CLASSIFICATION_WITHOUT_CUSTOMER_PII',
+        coverage: {
+          current: current.orders > 0 ? currentKnown / current.orders : 0,
+          comparison: comparison.orders > 0 ? comparisonKnown / comparison.orders : 0,
+        },
+        total: {
+          current,
+          comparison,
+          change: metricChanges(current, comparison),
+        },
+        segments: {
+          new: segmentPair('NEW'),
+          returning: segmentPair('RETURNING'),
+          unknown: segmentPair('UNKNOWN'),
+        },
+      };
+    }
+
     const rows = await this.repository.getOrders(
       store.id,
       windows.comparison.instantFrom,
