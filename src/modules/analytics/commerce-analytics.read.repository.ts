@@ -78,8 +78,13 @@ export class CommerceAnalyticsReadRepository {
         SELECT
           o."id",
           CASE
-            WHEN COALESCE(o."processedAt", o."shopifyCreatedAt") BETWEEN ${input.currentFrom} AND ${input.currentTo}
-              THEN 'CURRENT'
+            WHEN (
+              o."processedAt" BETWEEN ${input.currentFrom} AND ${input.currentTo}
+              OR (
+                o."processedAt" IS NULL
+                AND o."shopifyCreatedAt" BETWEEN ${input.currentFrom} AND ${input.currentTo}
+              )
+            ) THEN 'CURRENT'
             ELSE 'COMPARISON'
           END AS period,
           CASE
@@ -100,8 +105,16 @@ export class CommerceAnalyticsReadRepository {
           AND o."cancelledAt" IS NULL
           AND o."currencyCode" = ${input.currency}
           AND (
-            COALESCE(o."processedAt", o."shopifyCreatedAt") BETWEEN ${input.currentFrom} AND ${input.currentTo}
-            OR COALESCE(o."processedAt", o."shopifyCreatedAt") BETWEEN ${input.comparisonFrom} AND ${input.comparisonTo}
+            o."processedAt" BETWEEN ${input.currentFrom} AND ${input.currentTo}
+            OR (
+              o."processedAt" IS NULL
+              AND o."shopifyCreatedAt" BETWEEN ${input.currentFrom} AND ${input.currentTo}
+            )
+            OR o."processedAt" BETWEEN ${input.comparisonFrom} AND ${input.comparisonTo}
+            OR (
+              o."processedAt" IS NULL
+              AND o."shopifyCreatedAt" BETWEEN ${input.comparisonFrom} AND ${input.comparisonTo}
+            )
           )
       ),
       refund_totals AS (
@@ -156,8 +169,13 @@ export class CommerceAnalyticsReadRepository {
           COALESCE(li."discountedTotal", 0) AS product_revenue,
           COALESCE(o."processedAt", o."shopifyCreatedAt") AS order_at,
           CASE
-            WHEN COALESCE(o."processedAt", o."shopifyCreatedAt") BETWEEN ${input.currentFrom} AND ${input.currentTo}
-              THEN 'CURRENT'
+            WHEN (
+              o."processedAt" BETWEEN ${input.currentFrom} AND ${input.currentTo}
+              OR (
+                o."processedAt" IS NULL
+                AND o."shopifyCreatedAt" BETWEEN ${input.currentFrom} AND ${input.currentTo}
+              )
+            ) THEN 'CURRENT'
             ELSE 'COMPARISON'
           END AS period
         FROM "OrderLineItem" li
@@ -168,8 +186,16 @@ export class CommerceAnalyticsReadRepository {
           AND o."cancelledAt" IS NULL
           AND o."currencyCode" = ${input.currency}
           AND (
-            COALESCE(o."processedAt", o."shopifyCreatedAt") BETWEEN ${input.currentFrom} AND ${input.currentTo}
-            OR COALESCE(o."processedAt", o."shopifyCreatedAt") BETWEEN ${input.comparisonFrom} AND ${input.comparisonTo}
+            o."processedAt" BETWEEN ${input.currentFrom} AND ${input.currentTo}
+            OR (
+              o."processedAt" IS NULL
+              AND o."shopifyCreatedAt" BETWEEN ${input.currentFrom} AND ${input.currentTo}
+            )
+            OR o."processedAt" BETWEEN ${input.comparisonFrom} AND ${input.comparisonTo}
+            OR (
+              o."processedAt" IS NULL
+              AND o."shopifyCreatedAt" BETWEEN ${input.comparisonFrom} AND ${input.comparisonTo}
+            )
           )
       ),
       refund_line_totals AS (
