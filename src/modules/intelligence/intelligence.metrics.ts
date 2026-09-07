@@ -81,7 +81,7 @@ function selectedPurchaseValue(actions: MetaAction[], kind: 'ACTION' | 'ACTION_V
 function selectedPurchaseRoas(actions: MetaAction[]): number | null {
   for (const kind of ['WEBSITE_PURCHASE_ROAS', 'PURCHASE_ROAS'] as const) {
     const candidates = actions.filter(
-      (action) => action.kind === kind && purchaseRank(action.actionType) < 100,
+      (action) => String(action.kind) === kind && purchaseRank(action.actionType) < 100,
     );
     if (candidates.length === 0) continue;
 
