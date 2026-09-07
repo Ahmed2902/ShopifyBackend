@@ -81,14 +81,7 @@ export class IntelligenceService {
     const productWindow = completedWindow(now, store.ianaTimezone, PRODUCT_WINDOW_DAYS);
     const selectedMetaAccounts = store.metaConnection?.selectedAdAccountIds ?? [];
 
-    const [
-      metaRows,
-      commerceRows,
-      mappings,
-      inventoryRows,
-      sharedTargets,
-      latestMetaInsightSync,
-    ] = await Promise.all([
+    const [metaRows, commerceRows, mappings, inventoryRows, sharedTargets] = await Promise.all([
       this.repository.getMetaEvidenceRows({
         storeId,
         selectedAccountIds: selectedMetaAccounts,
@@ -112,7 +105,6 @@ export class IntelligenceService {
         from: productWindow.metaFrom,
         to: current.metaTo,
       }),
-      this.repository.getLatestMetaInsightSyncedAt(storeId, selectedMetaAccounts),
     ]);
 
     const metaSourceRowCount = metaRows.reduce(
@@ -188,11 +180,10 @@ export class IntelligenceService {
       if (result) recommendations.push(result);
     }
 
-    const latestMetaSyncedAt = latestMetaInsightSync?.syncedAt ?? null;
     const dataQuality = this.buildDataQuality({
       store,
       metaRowsCount: metaSourceRowCount,
-      latestMetaSyncedAt,
+      latestMetaSyncedAt: store.latestMetaInsightSyncedAt,
       inventoryRowsCount: inventorySourceRowCount,
       productResult,
       now,
