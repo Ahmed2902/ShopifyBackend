@@ -12,11 +12,11 @@ import {
   type CommerceMetrics,
 } from './analytics.metrics.js';
 import type { AnalyticsRepository } from './analytics.repository.js';
-import {
+import type {
   CommerceAnalyticsReadRepository,
-  type CommerceCustomerSegment,
-  type CommerceOrderAggregateRow,
-  type CommerceOrderPeriod,
+  CommerceCustomerSegment,
+  CommerceOrderAggregateRow,
+  CommerceOrderPeriod,
 } from './commerce-analytics.read.repository.js';
 import { pagination, splitCommerce, splitOrders, windowResponse } from './analytics.shared.js';
 import type { AnalyticsWindows } from './analytics.shared.js';
