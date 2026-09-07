@@ -1,30 +1,24 @@
 import type { Request, Response } from 'express';
-import { CachedReadCoordinator, RedisJsonCache } from '../../lib/redis-json-cache.js';
 import {
   intelligenceReadQuerySchema,
   inventoryModeUpdateSchema,
 } from './intelligence.schema.js';
+import {
+  intelligenceSnapshotReadService,
+  type IntelligenceSnapshotReadService,
+} from './intelligence-snapshot.read.service.js';
 import { intelligenceService, type IntelligenceService } from './intelligence.service.js';
 
-const SNAPSHOT_CACHE_TTL_SECONDS = 30;
-const snapshotReads = new CachedReadCoordinator(
-  new RedisJsonCache('intelligence:snapshot:v1', SNAPSHOT_CACHE_TTL_SECONDS),
-  250,
-);
-
 export class IntelligenceController {
-  constructor(private readonly service: IntelligenceService) {}
+  constructor(
+    private readonly service: IntelligenceService,
+    private readonly snapshotReads: IntelligenceSnapshotReadService,
+  ) {}
 
   snapshot = async (req: Request, res: Response) => {
     const storeId = req.context.storeId!;
     const { fresh } = intelligenceReadQuerySchema.parse(req.query);
-    res.status(200).json(
-      await snapshotReads.run(
-        storeId,
-        () => this.service.snapshot(storeId),
-        { fresh },
-      ),
-    );
+    res.status(200).json(await this.snapshotReads.read(storeId, { fresh }));
   };
 
   settings = async (req: Request, res: Response) => {
@@ -35,9 +29,12 @@ export class IntelligenceController {
     const storeId = req.context.storeId!;
     const { mode } = inventoryModeUpdateSchema.parse(req.body);
     const result = await this.service.updateInventoryMode(storeId, mode);
-    await snapshotReads.invalidate(storeId);
+    await this.snapshotReads.invalidate(storeId);
     res.status(200).json(result);
   };
 }
 
-export const intelligenceController = new IntelligenceController(intelligenceService);
+export const intelligenceController = new IntelligenceController(
+  intelligenceService,
+  intelligenceSnapshotReadService,
+);
