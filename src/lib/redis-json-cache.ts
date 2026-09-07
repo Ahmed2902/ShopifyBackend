@@ -20,8 +20,8 @@ async function redisCommand(parts: string[]): Promise<unknown | null> {
     if (!response.ok || !payload || payload.error) return null;
     return payload.result ?? null;
   } catch {
-    // Analytics caching is an optimization only. Redis failure must never make
-    // an otherwise valid database-backed analytical read unavailable.
+    // Analytical caching is an optimization only. Redis failure must never make
+    // an otherwise valid database-backed read unavailable.
     return null;
   }
 }
@@ -53,6 +53,10 @@ export class RedisJsonCache {
     } catch {
       // JSON serialization failures or Redis failures must not break the source read.
     }
+  }
+
+  async delete(key: string): Promise<void> {
+    await redisCommand(['DEL', this.key(key)]);
   }
 }
 
@@ -89,5 +93,9 @@ export class CachedReadCoordinator {
       await this.cache.set(key, value);
       return value;
     });
+  }
+
+  invalidate(key: string): Promise<void> {
+    return this.cache.delete(key);
   }
 }
