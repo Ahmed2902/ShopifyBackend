@@ -37,7 +37,8 @@ async function createOrder(input: {
       currentTotalAmount: input.amount,
       currentTotalDiscountsAmount: input.discounts ?? '0',
       customerJourneyReady: input.customerJourneyReady ?? true,
-      customerOrderIndex: input.customerOrderIndex ?? 1,
+      customerOrderIndex:
+        input.customerOrderIndex === undefined ? 1 : input.customerOrderIndex,
     },
   });
 }
