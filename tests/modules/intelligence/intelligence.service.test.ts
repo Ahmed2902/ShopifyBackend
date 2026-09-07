@@ -30,6 +30,7 @@ function storeContext(shopifyStatus = 'ACTIVE') {
       recordsWritten: 0,
       finishedAt: now,
     },
+    latestMetaInsightSyncedAt: now,
   };
 }
 
@@ -130,11 +131,9 @@ describe('IntelligenceService', () => {
     );
   });
 
-  it('reuses selected Meta accounts and sends explicit evidence windows', async () => {
-    const latest = new Date('2026-09-03T11:30:00.000Z');
+  it('reuses selected Meta accounts and context freshness without a standalone freshness query', async () => {
     const repository = buildRepository({
       getMetaEvidenceRows: vi.fn().mockResolvedValue([]),
-      getLatestMetaInsightSyncedAt: vi.fn().mockResolvedValue({ syncedAt: latest }),
     });
     const sharedExposureRead = buildSharedExposureRead();
 
@@ -150,7 +149,7 @@ describe('IntelligenceService', () => {
       comparisonTo: expect.any(Date),
     });
     expect(repository.getActiveProductMappings).toHaveBeenCalledWith(storeId, ['act_101']);
-    expect(repository.getLatestMetaInsightSyncedAt).toHaveBeenCalledWith(storeId, ['act_101']);
+    expect(repository.getLatestMetaInsightSyncedAt).not.toHaveBeenCalled();
     expect(sharedExposureRead.getTargets).toHaveBeenCalledWith({
       storeId,
       selectedAccountIds: ['act_101'],
