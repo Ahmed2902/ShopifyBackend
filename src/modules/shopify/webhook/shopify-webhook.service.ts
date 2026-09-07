@@ -1,4 +1,5 @@
 import { AppError } from '../../../errors/app-error.js';
+import { invalidateStoreDecisionCaches } from '../../../lib/store-decision-cache.js';
 import type { IntegrationService } from '../../integrations/integration.service.js';
 import { toErrorMessage } from '../../integrations/integration.utils.js';
 import type { ShopifyCatalogService } from '../catalog/shopify-catalog.service.js';
@@ -113,6 +114,7 @@ export class ShopifyWebhookService {
     if (delivery.topic === 'app/uninstalled') {
       await this.repository.markConnectionUninstalled(connection.id);
       await this.repository.markProcessed(delivery.id);
+      await invalidateStoreDecisionCaches(connection.store.id);
       return;
     }
 
@@ -139,6 +141,11 @@ export class ShopifyWebhookService {
     const handled = await this.dispatch(delivery.id, delivery.topic, delivery.payload, context);
     if (handled) {
       await this.repository.markProcessed(delivery.id);
+      // A successfully processed Shopify webhook can change commerce, inventory, catalog identity,
+      // cost evidence, or connection freshness. Advance the Store generation only after the source
+      // mutation and durable delivery completion have succeeded so readers can never cache the
+      // pre-webhook decision state as current.
+      await invalidateStoreDecisionCaches(context.storeId);
     } else {
       await this.repository.markIgnored(delivery.id, `Unsupported Shopify topic ${delivery.topic}`);
     }
@@ -303,7 +310,7 @@ export class ShopifyWebhookService {
         'SHOPIFY_BULK_FAILED',
       );
       await this.integrationService.failSyncRun(syncRun.id, error);
-      return;
+      throw error;
     }
 
     await this.integrationService.completeSyncRun(syncRun.id, {
@@ -318,9 +325,9 @@ export class ShopifyWebhookService {
       payload: {
         providerStatus: inspection.providerStatus,
         breakdown: inspection.breakdown,
+        sourceDeliveryId: deliveryId,
       },
       syncRunId: syncRun.id,
-      webhookDeliveryId: deliveryId,
     });
   }
 }
