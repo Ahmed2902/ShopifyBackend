@@ -3,11 +3,13 @@ import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireStoreMembership } from '../../middleware/store.middleware.js';
 import { adExposureController } from './ad-exposure.controller.js';
 import { analyticsController } from './analytics.controller.js';
+import { performanceAnalyticsController } from './performance-analytics.controller.js';
 
 export const analyticsRouter = Router({ mergeParams: true });
 analyticsRouter.use(requireAuth, requireStoreMembership);
 
 analyticsRouter.get('/overview', analyticsController.overview);
+analyticsRouter.get('/performance', performanceAnalyticsController.daily);
 analyticsRouter.get('/products', analyticsController.products);
 analyticsRouter.get('/products/:productId', analyticsController.product);
 analyticsRouter.get('/product-ads', analyticsController.productAds);
