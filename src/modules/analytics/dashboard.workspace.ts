@@ -10,6 +10,10 @@ import {
   type DashboardInventoryPreview,
   type DashboardRecentOrder,
 } from './dashboard.read.repository.js';
+import {
+  performanceAnalyticsWorkspace,
+  type PerformanceAnalyticsWorkspace,
+} from './performance-analytics.workspace.js';
 
 type Section<T> =
   | { available: true; data: T }
@@ -48,9 +52,10 @@ async function optionalSection<T>(
  * Browser-facing Overview composition.
  *
  * One request owns the complete dashboard interaction budget. The primary analytical overview is
- * required; secondary previews fail independently so an inventory/intelligence issue cannot hide
- * the merchant's core commerce KPIs. Secondary payloads are intentionally trimmed to fields the
- * Overview UI renders rather than forwarding full domain responses.
+ * required; secondary previews and the chart-ready performance series fail independently so a
+ * secondary analytical issue cannot hide the merchant's core commerce KPIs. The complete response
+ * participates in the Store-generation dashboard cache, avoiding a second browser request solely
+ * for the trend chart.
  */
 export class DashboardWorkspace {
   constructor(
@@ -58,6 +63,7 @@ export class DashboardWorkspace {
     private readonly intelligenceReads: IntelligenceSnapshotReadService =
       intelligenceSnapshotReadService,
     private readonly readRepository: DashboardReadRepository = new DashboardReadRepository(),
+    private readonly performance: PerformanceAnalyticsWorkspace = performanceAnalyticsWorkspace,
   ) {}
 
   async read(
@@ -66,7 +72,7 @@ export class DashboardWorkspace {
     now = new Date(),
     options: { fresh?: boolean } = {},
   ) {
-    const [overview, inventory, intelligence, recentOrders] = await Promise.all([
+    const [overview, inventory, intelligence, recentOrders, performance] = await Promise.all([
       this.analytics.overview(storeId, query, now),
       optionalSection<DashboardInventoryPreview>(storeId, 'inventory', () =>
         this.readRepository.getInventoryPreview({
@@ -86,6 +92,7 @@ export class DashboardWorkspace {
       optionalSection<DashboardRecentOrder[]>(storeId, 'recentOrders', () =>
         this.readRepository.getRecentOrders(storeId, 6),
       ),
+      optionalSection(storeId, 'performance', () => this.performance.daily(storeId, query, now)),
     ]);
 
     return {
@@ -94,6 +101,7 @@ export class DashboardWorkspace {
         inventory,
         intelligence,
         recentOrders,
+        performance,
       },
     };
   }
