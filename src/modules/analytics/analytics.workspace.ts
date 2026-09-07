@@ -6,6 +6,7 @@ import { metricChanges, percentChange } from './analytics.metrics.js';
 import { AnalyticsRepository } from './analytics.repository.js';
 import type { AnalyticsListQuery, AnalyticsRangeQuery } from './analytics.schema.js';
 import { windowResponse } from './analytics.shared.js';
+import { CommerceAnalyticsReadRepository } from './commerce-analytics.read.repository.js';
 import { CommerceAnalyticsService } from './commerce-analytics.service.js';
 
 type StoreContext = NonNullable<Awaited<ReturnType<AnalyticsRepository['getStoreContext']>>>;
@@ -25,8 +26,9 @@ export class AnalyticsWorkspace {
     private readonly repository: AnalyticsRepository = new AnalyticsRepository(),
     advertisingReadRepository: AdvertisingAnalyticsReadRepository =
       new AdvertisingAnalyticsReadRepository(),
+    commerceReadRepository?: CommerceAnalyticsReadRepository,
   ) {
-    this.commerce = new CommerceAnalyticsService(repository);
+    this.commerce = new CommerceAnalyticsService(repository, commerceReadRepository);
     this.advertisingService = new AdvertisingAnalyticsService(repository, advertisingReadRepository);
   }
 
@@ -240,4 +242,8 @@ export class AnalyticsWorkspace {
   }
 }
 
-export const analyticsWorkspace = new AnalyticsWorkspace();
+export const analyticsWorkspace = new AnalyticsWorkspace(
+  new AnalyticsRepository(),
+  new AdvertisingAnalyticsReadRepository(),
+  new CommerceAnalyticsReadRepository(),
+);
