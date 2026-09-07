@@ -10,7 +10,6 @@ const now = new Date('2026-09-07T12:00:00.000Z');
 function buildAnalytics(overrides: Partial<AnalyticsWorkspace> = {}) {
   return {
     overview: vi.fn().mockResolvedValue({ marker: 'overview' }),
-    inventory: vi.fn().mockResolvedValue({ inventoryMode: 'DISABLED', items: [] }),
     ...overrides,
   } as unknown as AnalyticsWorkspace;
 }
@@ -28,6 +27,7 @@ function buildIntelligence(overrides: Partial<IntelligenceSnapshotReadService> =
 
 function buildRead(overrides: Partial<DashboardReadRepository> = {}) {
   return {
+    getInventoryPreview: vi.fn().mockResolvedValue({ inventoryMode: 'DISABLED', items: [] }),
     getRecentOrders: vi.fn().mockResolvedValue([]),
     ...overrides,
   } as unknown as DashboardReadRepository;
@@ -35,17 +35,15 @@ function buildRead(overrides: Partial<DashboardReadRepository> = {}) {
 
 describe('DashboardWorkspace', () => {
   it('keeps the primary overview available when every secondary section fails', async () => {
-    const analytics = buildAnalytics({
-      inventory: vi.fn().mockRejectedValue(new Error('inventory unavailable')),
-    });
     const intelligence = buildIntelligence({
       read: vi.fn().mockRejectedValue(new Error('intelligence unavailable')),
     });
     const read = buildRead({
+      getInventoryPreview: vi.fn().mockRejectedValue(new Error('inventory unavailable')),
       getRecentOrders: vi.fn().mockRejectedValue(new Error('orders unavailable')),
     });
 
-    const result = await new DashboardWorkspace(analytics, intelligence, read).read(
+    const result = await new DashboardWorkspace(buildAnalytics(), intelligence, read).read(
       storeId,
       { days: 30 },
       now,
@@ -59,42 +57,7 @@ describe('DashboardWorkspace', () => {
     });
   });
 
-  it('returns only the inventory and intelligence fields rendered by Overview', async () => {
-    const analytics = buildAnalytics({
-      inventory: vi.fn().mockResolvedValue({
-        inventoryMode: 'TRUSTED',
-        pagination: { page: 1, limit: 8, total: 1, totalPages: 1 },
-        window: {},
-        items: [
-          {
-            inventoryItemId: 'inventory-1',
-            product: {
-              id: 'product-1',
-              shopifyProductId: 'gid://shopify/Product/1',
-              title: 'Core Tee',
-              status: 'ACTIVE',
-              vendor: 'Vendor that Overview does not need',
-            },
-            variant: {
-              id: 'variant-1',
-              shopifyVariantId: 'gid://shopify/ProductVariant/1',
-              title: 'Medium',
-              displayName: 'Core Tee - Medium',
-              sku: 'TEE-M',
-            },
-            tracked: true,
-            available: 12,
-            incoming: 3,
-            committed: 2,
-            onHand: 14,
-            unitsSoldInWindow: 30,
-            unitsPerDay: 1,
-            daysCover: 12,
-            locations: [{ available: 12, incoming: 3 }],
-          },
-        ],
-      } as never),
-    });
+  it('uses compact dashboard reads and propagates explicit freshness to intelligence', async () => {
     const recommendations = Array.from({ length: 5 }, (_, index) => ({
       ruleId: `rule-${index}`,
       severity: index < 2 ? 'HIGH' : 'LOW',
@@ -106,18 +69,8 @@ describe('DashboardWorkspace', () => {
         recommendations,
       } as never),
     });
-
-    const result = await new DashboardWorkspace(analytics, intelligence, buildRead()).read(
-      storeId,
-      { days: 30 },
-      now,
-      { fresh: true },
-    );
-
-    expect(intelligence.read).toHaveBeenCalledWith(storeId, { fresh: true });
-    expect(result.sections.inventory).toEqual({
-      available: true,
-      data: {
+    const read = buildRead({
+      getInventoryPreview: vi.fn().mockResolvedValue({
         inventoryMode: 'TRUSTED',
         items: [
           {
@@ -131,7 +84,28 @@ describe('DashboardWorkspace', () => {
             daysCover: 12,
           },
         ],
-      },
+      }),
+    });
+
+    const result = await new DashboardWorkspace(buildAnalytics(), intelligence, read).read(
+      storeId,
+      { days: 30 },
+      now,
+      { fresh: true },
+    );
+
+    expect(read.getInventoryPreview).toHaveBeenCalledWith({
+      storeId,
+      days: 30,
+      from: undefined,
+      to: undefined,
+      now,
+      limit: 8,
+    });
+    expect(intelligence.read).toHaveBeenCalledWith(storeId, { fresh: true });
+    expect(result.sections.inventory).toMatchObject({
+      available: true,
+      data: { inventoryMode: 'TRUSTED' },
     });
     expect(result.sections.intelligence).toMatchObject({
       available: true,
