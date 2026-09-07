@@ -2,10 +2,13 @@ import { env } from '../config/env.js';
 import { InFlightCoalescer } from './in-flight-coalescer.js';
 
 type RedisPayload = { result?: unknown; error?: string };
+type RedisCommandResult =
+  | { ok: true; result: unknown | null }
+  | { ok: false; result: null };
 
 const DEFAULT_TIMEOUT_MS = 300;
 
-async function redisCommand(parts: string[], timeoutMs: number): Promise<unknown | null> {
+async function redisCommand(parts: string[], timeoutMs: number): Promise<RedisCommandResult> {
   try {
     const response = await fetch(env.REDIS_REST_URL, {
       method: 'POST',
@@ -17,12 +20,12 @@ async function redisCommand(parts: string[], timeoutMs: number): Promise<unknown
       signal: AbortSignal.timeout(timeoutMs),
     });
     const payload = (await response.json().catch(() => null)) as RedisPayload | null;
-    if (!response.ok || !payload || payload.error) return null;
-    return payload.result ?? null;
+    if (!response.ok || !payload || payload.error) return { ok: false, result: null };
+    return { ok: true, result: payload.result ?? null };
   } catch {
     // Analytical caching is an optimization only. Redis failure must never make
     // an otherwise valid database-backed read unavailable.
-    return null;
+    return { ok: false, result: null };
   }
 }
 
@@ -38,10 +41,10 @@ export class RedisJsonCache {
   }
 
   async get<T>(key: string): Promise<T | null> {
-    const value = await redisCommand(['GET', this.key(key)], this.timeoutMs);
-    if (typeof value !== 'string') return null;
+    const command = await redisCommand(['GET', this.key(key)], this.timeoutMs);
+    if (!command.ok || typeof command.result !== 'string') return null;
     try {
-      return JSON.parse(value) as T;
+      return JSON.parse(command.result) as T;
     } catch {
       return null;
     }
@@ -62,42 +65,93 @@ export class RedisJsonCache {
   async delete(key: string): Promise<void> {
     await redisCommand(['DEL', this.key(key)], this.timeoutMs);
   }
+
+  /**
+   * Return the current logical generation for a cache scope.
+   *
+   * Missing version keys are generation zero. Redis transport failure is different: callers
+   * receive null and must bypass caching rather than guessing a generation that could expose an
+   * older cached value after an invalidation.
+   */
+  async getVersion(scope: string): Promise<string | null> {
+    const command = await redisCommand(['GET', this.key(`version:${scope}`)], this.timeoutMs);
+    if (!command.ok) return null;
+    if (command.result === null) return '0';
+    if (typeof command.result === 'string' || typeof command.result === 'number') {
+      return String(command.result);
+    }
+    return null;
+  }
+
+  /**
+   * Advance the logical cache generation. Old values are deliberately left to expire by TTL;
+   * they can no longer be read once the version changes, which makes invalidation safe even when
+   * an older in-flight loader finishes after the mutation/refresh boundary.
+   */
+  async incrementVersion(scope: string): Promise<string | null> {
+    const command = await redisCommand(['INCR', this.key(`version:${scope}`)], this.timeoutMs);
+    if (!command.ok) return null;
+    if (typeof command.result === 'string' || typeof command.result === 'number') {
+      return String(command.result);
+    }
+    return null;
+  }
 }
 
 export class CachedReadCoordinator {
-  private readonly inFlight: InFlightCoalescer;
+  /** Coalesce the complete read path so simultaneous readers do not duplicate Redis round trips. */
+  private readonly reads: InFlightCoalescer;
+  /** Coalesce source work across a fresh reader and ordinary readers that resolve to the same version. */
+  private readonly sourceReads: InFlightCoalescer;
 
   constructor(
     private readonly cache: RedisJsonCache,
     maxInFlight = 250,
   ) {
-    this.inFlight = new InFlightCoalescer(maxInFlight);
+    this.reads = new InFlightCoalescer(maxInFlight);
+    this.sourceReads = new InFlightCoalescer(maxInFlight);
   }
 
-  async run<T>(
+  run<T>(
     key: string,
     loader: () => Promise<T>,
-    options: { fresh?: boolean } = {},
+    options: { fresh?: boolean; versionScope?: string } = {},
   ): Promise<T> {
     const fresh = options.fresh === true;
-    if (!fresh) {
-      const cached = await this.cache.get<T>(key);
-      if (cached !== null) return cached;
-    }
+    const versionScope = options.versionScope ?? key;
+    const operationKey = `${fresh ? 'fresh' : 'read'}:${versionScope}:${key}`;
 
-    // Fresh and ordinary reads intentionally share the same in-flight key. A
-    // cache miss already performed the one useful Redis lookup before this
-    // point; repeating GET inside the coalesced loader only adds a remote round
-    // trip. If another request is already computing the same key, the coalescer
-    // reuses that source result directly.
-    return this.inFlight.run(key, async () => {
-      const value = await loader();
-      await this.cache.set(key, value);
-      return value;
+    // Fresh reads never join an ordinary read that may have started before the refresh boundary.
+    // Multiple simultaneous clicks on Refresh do coalesce with each other, so one interaction
+    // still produces one generation bump and one source computation.
+    return this.reads.run(operationKey, async () => {
+      const version = fresh
+        ? await this.cache.incrementVersion(versionScope)
+        : await this.cache.getVersion(versionScope);
+
+      // Redis/version lookup is fail-open. Do not read or write a guessed generation because a
+      // transient version-key failure followed by a successful data GET could resurrect stale data.
+      if (version === null) return loader();
+
+      const versionedKey = `v${version}:${key}`;
+      if (!fresh) {
+        const cached = await this.cache.get<T>(versionedKey);
+        if (cached !== null) return cached;
+      }
+
+      return this.sourceReads.run(versionedKey, async () => {
+        const value = await loader();
+        await this.cache.set(versionedKey, value);
+        return value;
+      });
     });
   }
 
-  invalidate(key: string): Promise<void> {
-    return this.cache.delete(key);
+  /**
+   * Versioned invalidation mirrors Systemly's proven analytics-cache model. It is race-safe:
+   * an older computation may finish later, but it can only populate the old generation key.
+   */
+  async invalidate(versionScope: string): Promise<void> {
+    await this.cache.incrementVersion(versionScope);
   }
 }
