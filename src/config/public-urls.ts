@@ -41,3 +41,7 @@ export function metaCallbackUrl(): string {
 export function tiktokCallbackUrl(): string {
   return backendCallback('/v1/integrations/tiktok/callback', env.TIKTOK_REDIRECT_URI);
 }
+
+export function tiktokWebhookUrl(): string {
+  return backendCallback('/v1/integrations/tiktok/webhooks', env.TIKTOK_WEBHOOK_URL);
+}
