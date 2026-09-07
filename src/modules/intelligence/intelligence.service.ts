@@ -1,11 +1,14 @@
 import { AppError } from '../../errors/app-error.js';
+import { IntelligenceCommerceReadRepository } from './intelligence-commerce.read.repository.js';
+import { IntelligenceContextReadRepository } from './intelligence-context.read.repository.js';
 import { completedWindow } from './intelligence.dates.js';
 import {
   buildCampaignEvidence,
   buildCreativeEvidence,
-  buildProductEvidence,
+  buildProductEvidenceFromAggregates,
 } from './intelligence.metrics.js';
 import { IntelligenceRepository } from './intelligence.repository.js';
+import { IntelligenceSharedExposureReadRepository } from './intelligence-shared-exposure.read.repository.js';
 import {
   campaignEfficiencyRule,
   creativeFatigueRule,
@@ -15,7 +18,7 @@ import {
   sharedExposureInventoryRule,
   underexposedProductRule,
 } from './intelligence.rules.js';
-import { buildSharedExposureEvidence } from './shared-exposure.metrics.js';
+import { buildSharedExposureEvidenceFromAggregates } from './shared-exposure.metrics.js';
 import type {
   DataQualityEvidence,
   RecommendationDraft,
@@ -54,10 +57,18 @@ function evidenceQuality(confidenceScore: number, limitations: RecommendationLim
 }
 
 export class IntelligenceService {
-  constructor(private readonly repository: IntelligenceRepository = new IntelligenceRepository()) {}
+  constructor(
+    private readonly repository: IntelligenceRepository = new IntelligenceRepository(),
+    private readonly commerceReadRepository: IntelligenceCommerceReadRepository =
+      new IntelligenceCommerceReadRepository(),
+    private readonly sharedExposureReadRepository: IntelligenceSharedExposureReadRepository =
+      new IntelligenceSharedExposureReadRepository(),
+    private readonly contextReadRepository: IntelligenceContextReadRepository =
+      new IntelligenceContextReadRepository(),
+  ) {}
 
   async snapshot(storeId: string, now = new Date()) {
-    const store = await this.repository.getStoreContext(storeId);
+    const store = await this.contextReadRepository.getContext(storeId);
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
 
     const current = completedWindow(now, store.ianaTimezone, DECISION_WINDOW_DAYS);
@@ -70,43 +81,43 @@ export class IntelligenceService {
     const productWindow = completedWindow(now, store.ianaTimezone, PRODUCT_WINDOW_DAYS);
     const selectedMetaAccounts = store.metaConnection?.selectedAdAccountIds ?? [];
 
-    const [
-      metaRows,
-      commerceRows,
-      mappings,
-      inventoryRows,
-      successfulOrderHistorySync,
-      latestMetaInsightSync,
-    ] = await Promise.all([
-      this.repository.getMetaEvidenceRows(storeId, productWindow.metaFrom, current.metaTo),
-      this.repository.getCommerceRows(storeId, productWindow.instantFrom, productWindow.instantTo),
-      this.repository.getActiveProductMappings(storeId),
-      this.repository.getInventoryLevels(storeId),
-      this.repository.getLatestOrderHistorySync(storeId),
-      this.repository.getLatestMetaInsightSyncedAt(storeId, selectedMetaAccounts),
+    const [metaRows, commerceRows, mappings, inventoryRows, sharedTargets] = await Promise.all([
+      this.repository.getMetaEvidenceRows({
+        storeId,
+        selectedAccountIds: selectedMetaAccounts,
+        productFrom: productWindow.metaFrom,
+        currentFrom: current.metaFrom,
+        currentTo: current.metaTo,
+        comparisonFrom: comparison.metaFrom,
+        comparisonTo: comparison.metaTo,
+      }),
+      this.commerceReadRepository.getProductEvidenceAggregates({
+        storeId,
+        currency: store.currencyCode,
+        from: productWindow.instantFrom,
+        to: productWindow.instantTo,
+      }),
+      this.repository.getActiveProductMappings(storeId, selectedMetaAccounts),
+      this.commerceReadRepository.getInventoryEvidenceAggregates(storeId),
+      this.sharedExposureReadRepository.getTargets({
+        storeId,
+        selectedAccountIds: selectedMetaAccounts,
+        from: productWindow.metaFrom,
+        to: current.metaTo,
+      }),
     ]);
 
-    const observedAdIds = [
-      ...new Set(
-        metaRows
-          .map((row) => row.ad?.id ?? null)
-          .filter((adId): adId is string => adId !== null),
-      ),
-    ];
-    const sharedTargets = await this.repository.getSharedExposureTargets(storeId, observedAdIds);
-
-    const variantIds = [
-      ...new Set(
-        commerceRows
-          .map((row) => row.variantId)
-          .filter((variantId): variantId is string => variantId !== null),
-      ),
-    ];
-    const costs = await this.repository.getVariantCosts(
-      storeId,
-      variantIds,
-      productWindow.instantFrom,
-      productWindow.instantTo,
+    const metaSourceRowCount = metaRows.reduce(
+      (sum, row) => sum + (Number.isFinite(row.sourceRowCount) ? row.sourceRowCount : 1),
+      0,
+    );
+    const commerceSourceRowCount = commerceRows.reduce(
+      (sum, row) => sum + row.sourceOrderLineCount,
+      0,
+    );
+    const inventorySourceRowCount = inventoryRows.reduce(
+      (sum, row) => sum + row.sourceInventoryLevelCount,
+      0,
     );
 
     const campaigns = buildCampaignEvidence(
@@ -123,9 +134,8 @@ export class IntelligenceService {
       comparison.metaFrom,
       comparison.metaTo,
     );
-    const productResult = buildProductEvidence({
+    const productResult = buildProductEvidenceFromAggregates({
       commerceRows,
-      costRows: costs,
       mappings,
       inventoryRows,
       metaRows,
@@ -133,7 +143,7 @@ export class IntelligenceService {
       inventoryTrusted: store.inventoryIntelligenceMode === 'TRUSTED',
       windowDays: PRODUCT_WINDOW_DAYS,
     });
-    const sharedExposure = buildSharedExposureEvidence({
+    const sharedExposure = buildSharedExposureEvidenceFromAggregates({
       targets: sharedTargets,
       metaRows,
       commerceRows,
@@ -154,7 +164,7 @@ export class IntelligenceService {
 
     const shopifyCommerceUsable =
       store.shopifyConnection?.status === 'ACTIVE' &&
-      (commerceRows.length > 0 || successfulOrderHistorySync?.status === 'SUCCEEDED');
+      (commerceSourceRowCount > 0 || store.successfulOrderHistorySync?.status === 'SUCCEEDED');
     const productRuleWindow = { start: productWindow.metaFrom, end: productWindow.metaTo };
     for (const product of productResult.products) {
       const results = [
@@ -170,12 +180,11 @@ export class IntelligenceService {
       if (result) recommendations.push(result);
     }
 
-    const latestMetaSyncedAt = latestMetaInsightSync?.syncedAt ?? null;
     const dataQuality = this.buildDataQuality({
       store,
-      metaRowsCount: metaRows.length,
-      latestMetaSyncedAt,
-      inventoryRowsCount: inventoryRows.length,
+      metaRowsCount: metaSourceRowCount,
+      latestMetaSyncedAt: store.latestMetaInsightSyncedAt,
+      inventoryRowsCount: inventorySourceRowCount,
       productResult,
       now,
     });
@@ -193,8 +202,8 @@ export class IntelligenceService {
         creatives: creatives.length,
         products: productResult.products.length,
         sharedExposures: sharedExposure.length,
-        metaRows: metaRows.length,
-        commerceRows: commerceRows.length,
+        metaRows: metaSourceRowCount,
+        commerceRows: commerceSourceRowCount,
         shopifyCommerceUsable,
         mappingCoverage: productResult.mappingCoverage,
         costCoverage: this.overallCostCoverage(productResult.products),
@@ -278,11 +287,11 @@ export class IntelligenceService {
   }
 
   private buildDataQuality(input: {
-    store: NonNullable<Awaited<ReturnType<IntelligenceRepository['getStoreContext']>>>;
+    store: NonNullable<Awaited<ReturnType<IntelligenceContextReadRepository['getContext']>>>;
     metaRowsCount: number;
     latestMetaSyncedAt: Date | null;
     inventoryRowsCount: number;
-    productResult: ReturnType<typeof buildProductEvidence>;
+    productResult: ReturnType<typeof buildProductEvidenceFromAggregates>;
     now: Date;
   }): DataQualityEvidence[] {
     const evidence: DataQualityEvidence[] = [];
@@ -379,7 +388,10 @@ export class IntelligenceService {
     }
 
     const costCoverage = this.overallCostCoverage(input.productResult.products);
-    if (input.productResult.products.some((product) => product.units > 0) && costCoverage < MIN_COST_COVERAGE) {
+    if (
+      input.productResult.products.some((product) => product.units > 0) &&
+      costCoverage < MIN_COST_COVERAGE
+    ) {
       evidence.push({
         code: 'PRODUCT_COST_COVERAGE_LOW',
         status: 'WARNING',

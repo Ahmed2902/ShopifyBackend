@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { AdvertisingAnalyticsReadRepository } from '../../../src/modules/analytics/advertising-analytics.read.repository.js';
 import type { AnalyticsRepository } from '../../../src/modules/analytics/analytics.repository.js';
 import { AnalyticsWorkspace } from '../../../src/modules/analytics/analytics.workspace.js';
 
@@ -64,6 +65,26 @@ function buildRepository(overrides: Partial<AnalyticsRepository> = {}) {
   } as unknown as AnalyticsRepository;
 }
 
+function buildAdvertisingRead(overrides: Partial<AdvertisingAnalyticsReadRepository> = {}) {
+  return {
+    getOverviewMetricRows: vi.fn().mockResolvedValue([]),
+    getOverviewAggregateRows: vi.fn().mockResolvedValue([]),
+    getOverviewMeta: vi.fn().mockResolvedValue({
+      campaigns: 0,
+      ads: 0,
+      lastInsightsSyncedAt: now,
+    }),
+    ...overrides,
+  } as unknown as AdvertisingAnalyticsReadRepository;
+}
+
+function workspace(
+  repository: AnalyticsRepository,
+  advertisingRead = buildAdvertisingRead(),
+) {
+  return new AnalyticsWorkspace(repository, advertisingRead);
+}
+
 describe('AnalyticsWorkspace', () => {
   it('composes Overview without mixing Meta attribution into Shopify commerce truth', async () => {
     const repository = buildRepository({
@@ -94,9 +115,7 @@ describe('AnalyticsWorkspace', () => {
         },
       ]),
     });
-    const workspace = new AnalyticsWorkspace(repository);
-
-    const result = await workspace.overview(storeId, { days: 7 }, now);
+    const result = await workspace(repository).overview(storeId, { days: 7 }, now);
 
     expect(result.commerce.current).toMatchObject({ orders: 1, units: 2, orderValue: 120 });
     expect(result.commerce.comparison).toMatchObject({ orders: 1, units: 1, orderValue: 80 });
@@ -114,8 +133,8 @@ describe('AnalyticsWorkspace', () => {
       getStoreContext: vi.fn().mockResolvedValue(storeContext('DISABLED', 'RUNNING')),
       getLatestSuccessfulOrderHistorySync: vi.fn().mockResolvedValue(null),
     });
-    const running = await new AnalyticsWorkspace(runningRepository).overview(storeId, { days: 7 }, now);
-    const ready = await new AnalyticsWorkspace(
+    const running = await workspace(runningRepository).overview(storeId, { days: 7 }, now);
+    const ready = await workspace(
       buildRepository({ getStoreContext: vi.fn().mockResolvedValue(storeContext('DISABLED', 'SUCCEEDED')) }),
     ).overview(storeId, { days: 7 }, now);
 
@@ -145,7 +164,7 @@ describe('AnalyticsWorkspace', () => {
       }),
     });
 
-    const result = await new AnalyticsWorkspace(repository).overview(storeId, { days: 7 }, now);
+    const result = await workspace(repository).overview(storeId, { days: 7 }, now);
 
     expect(result.availability.shopify.fullOrderHistory).toBe(true);
     expect(result.availability.shopify.orderHistory).toMatchObject({
@@ -161,15 +180,65 @@ describe('AnalyticsWorkspace', () => {
 
   it('reports actual latest Meta Insights freshness independently of the requested date window', async () => {
     const latest = new Date('2026-09-03T11:45:00.000Z');
-    const repository = buildRepository({
-      getMetaRows: vi.fn().mockResolvedValue([]),
-      getLatestMetaInsightSyncedAt: vi.fn().mockResolvedValue({ syncedAt: latest }),
+    const advertisingRead = buildAdvertisingRead({
+      getOverviewMeta: vi.fn().mockResolvedValue({
+        campaigns: 3,
+        ads: 14,
+        lastInsightsSyncedAt: latest,
+      }),
     });
 
-    const result = await new AnalyticsWorkspace(repository).overview(storeId, { days: 7 }, now);
+    const result = await workspace(buildRepository(), advertisingRead).overview(
+      storeId,
+      { days: 7 },
+      now,
+    );
 
     expect(result.availability.meta.lastInsightsSyncedAt).toEqual(latest);
-    expect(repository.getLatestMetaInsightSyncedAt).toHaveBeenCalledWith(storeId, ['act_101']);
+    expect(advertisingRead.getOverviewMeta).toHaveBeenCalledWith(storeId, ['act_101']);
+  });
+
+  it('uses compact advertising overview aggregates while preserving metrics and entity counts', async () => {
+    const advertisingRead = buildAdvertisingRead({
+      getOverviewAggregateRows: vi.fn().mockResolvedValue([
+        {
+          period: 'CURRENT',
+          accountCurrency: 'USD',
+          spend: 100,
+          impressions: 1_000,
+          clicks: 100,
+          purchases: 2,
+          purchaseValue: 240,
+          weightedFrequency: 1_500,
+          attributionSettings: ['7d_click_1d_view'],
+        },
+      ]),
+      getOverviewMeta: vi.fn().mockResolvedValue({
+        campaigns: 4,
+        ads: 18,
+        lastInsightsSyncedAt: now,
+      }),
+    });
+
+    const result = await workspace(buildRepository(), advertisingRead).advertising(
+      storeId,
+      { days: 7 },
+      now,
+    );
+
+    expect(result.connection).toEqual({ connected: true, status: 'ACTIVE', configured: true });
+    expect(result.entityCounts).toEqual({ campaigns: 4, ads: 18 });
+    expect(result.currencies[0]).toMatchObject({
+      currency: 'USD',
+      current: {
+        spend: 100,
+        purchases: 2,
+        purchaseValue: 240,
+        providerRoas: 2.4,
+        averageDailyFrequency: 1.5,
+      },
+    });
+    expect(result.attributionSettings).toEqual(['7d_click_1d_view']);
   });
 
   it('bounds campaign insight reads to the entities on the requested page', async () => {
@@ -195,9 +264,11 @@ describe('AnalyticsWorkspace', () => {
         ],
       }),
     });
-    const workspace = new AnalyticsWorkspace(repository);
-
-    const result = await workspace.campaigns(storeId, { days: 30, page: 1, limit: 50 }, now);
+    const result = await workspace(repository).campaigns(
+      storeId,
+      { days: 30, page: 1, limit: 50 },
+      now,
+    );
 
     expect(result.items).toHaveLength(1);
     expect(repository.getMetaRows).toHaveBeenCalledWith(
@@ -226,7 +297,7 @@ describe('AnalyticsWorkspace', () => {
       }),
     });
 
-    const result = await new AnalyticsWorkspace(repository).collections(
+    const result = await workspace(repository).collections(
       storeId,
       { days: 30, page: 1, limit: 50 },
       now,
@@ -266,7 +337,7 @@ describe('AnalyticsWorkspace', () => {
       ]),
     });
 
-    const result = await new AnalyticsWorkspace(repository).customers(storeId, { days: 7 }, now);
+    const result = await workspace(repository).customers(storeId, { days: 7 }, now);
 
     expect(result.segments.new.change.orderValue).toBe(1);
     expect(result.segments.returning.change.orders).toBe(0);
@@ -322,12 +393,12 @@ describe('AnalyticsWorkspace', () => {
       getVariantSalesRows: vi.fn().mockResolvedValue(salesRows),
     });
 
-    const disabled = await new AnalyticsWorkspace(disabledRepository).inventory(
+    const disabled = await workspace(disabledRepository).inventory(
       storeId,
       { days: 7, page: 1, limit: 50 },
       now,
     );
-    const trusted = await new AnalyticsWorkspace(trustedRepository).inventory(
+    const trusted = await workspace(trustedRepository).inventory(
       storeId,
       { days: 7, page: 1, limit: 50 },
       now,

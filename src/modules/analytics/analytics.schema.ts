@@ -10,6 +10,13 @@ function validDate(value: string): boolean {
 
 const dateSchema = z.string().refine(validDate, 'Expected a valid YYYY-MM-DD date');
 
+export const analyticsReadControlSchema = z.object({
+  fresh: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => value === 'true'),
+});
+
 export const analyticsRangeQuerySchema = z
   .object({
     from: dateSchema.optional(),

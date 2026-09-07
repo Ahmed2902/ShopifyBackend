@@ -1,15 +1,34 @@
 import type { Request, Response } from 'express';
+import { CachedReadCoordinator, RedisJsonCache } from '../../lib/redis-json-cache.js';
 import { toJsonSafe } from '../meta/meta.utils.js';
 import {
   analyticsEntityParamsSchema,
   analyticsListQuerySchema,
   analyticsRangeQuerySchema,
+  analyticsReadControlSchema,
+  type AnalyticsRangeQuery,
 } from './analytics.schema.js';
 import { analyticsWorkspace, type AnalyticsWorkspace } from './analytics.workspace.js';
 import { productAdsWorkspace, type ProductAdsWorkspace } from './product-ads.workspace.js';
 
+const ANALYTICS_CACHE_TTL_SECONDS = 30;
+const analyticsReads = new CachedReadCoordinator(
+  new RedisJsonCache('analytics:workspace:v1', ANALYTICS_CACHE_TTL_SECONDS),
+  250,
+);
+
 function entityId(req: Request, key: string): string {
   return analyticsEntityParamsSchema.parse({ entityId: req.params[key] }).entityId;
+}
+
+function rangeCacheKey(storeId: string, domain: string, query: AnalyticsRangeQuery): string {
+  return [
+    storeId,
+    domain,
+    query.from ?? '',
+    query.to ?? '',
+    String(query.days),
+  ].join(':');
 }
 
 export class AnalyticsController {
@@ -19,14 +38,15 @@ export class AnalyticsController {
   ) {}
 
   overview = async (req: Request, res: Response) => {
-    res.status(200).json(
-      toJsonSafe(
-        await this.workspace.overview(
-          req.context.storeId!,
-          analyticsRangeQuerySchema.parse(req.query),
-        ),
-      ),
+    const storeId = req.context.storeId!;
+    const query = analyticsRangeQuerySchema.parse(req.query);
+    const { fresh } = analyticsReadControlSchema.parse(req.query);
+    const payload = await analyticsReads.run(
+      rangeCacheKey(storeId, 'overview', query),
+      async () => toJsonSafe(await this.workspace.overview(storeId, query)),
+      { fresh },
     );
+    res.status(200).json(payload);
   };
 
   products = async (req: Request, res: Response) => {
@@ -109,14 +129,15 @@ export class AnalyticsController {
   };
 
   advertising = async (req: Request, res: Response) => {
-    res.status(200).json(
-      toJsonSafe(
-        await this.workspace.advertising(
-          req.context.storeId!,
-          analyticsRangeQuerySchema.parse(req.query),
-        ),
-      ),
+    const storeId = req.context.storeId!;
+    const query = analyticsRangeQuerySchema.parse(req.query);
+    const { fresh } = analyticsReadControlSchema.parse(req.query);
+    const payload = await analyticsReads.run(
+      rangeCacheKey(storeId, 'advertising', query),
+      async () => toJsonSafe(await this.workspace.advertising(storeId, query)),
+      { fresh },
     );
+    res.status(200).json(payload);
   };
 
   campaigns = async (req: Request, res: Response) => {

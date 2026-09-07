@@ -1,10 +1,15 @@
+import type {
+  IntelligenceCommerceEvidenceRow,
+  IntelligenceInventoryEvidenceRow,
+} from './intelligence-commerce.read.repository.js';
 import type { IntelligenceRepository } from './intelligence.repository.js';
+import type { IntelligenceSharedExposureReadRepository } from './intelligence-shared-exposure.read.repository.js';
 import type { SharedExposureEvidence, SharedExposureProductEvidence } from './intelligence.types.js';
 
 type MetaRow = Awaited<ReturnType<IntelligenceRepository['getMetaEvidenceRows']>>[number];
 type CommerceRow = Awaited<ReturnType<IntelligenceRepository['getCommerceRows']>>[number];
 type InventoryRow = Awaited<ReturnType<IntelligenceRepository['getInventoryLevels']>>[number];
-type TargetRow = Awaited<ReturnType<IntelligenceRepository['getSharedExposureTargets']>>[number];
+type TargetRow = Awaited<ReturnType<IntelligenceSharedExposureReadRepository['getTargets']>>[number];
 
 const MIN_AUTOMATIC_CONFIDENCE = 0.7;
 
@@ -40,6 +45,10 @@ function inventoryByProduct(rows: InventoryRow[]) {
   return stock;
 }
 
+function inventoryByProductFromAggregates(rows: IntelligenceInventoryEvidenceRow[]) {
+  return new Map(rows.map((row) => [row.productId, row.available]));
+}
+
 function depletionByProduct(rows: CommerceRow[]) {
   const depletion = new Map<string, number>();
   for (const row of rows) {
@@ -54,6 +63,10 @@ function depletionByProduct(rows: CommerceRow[]) {
   return depletion;
 }
 
+function depletionByProductFromAggregates(rows: IntelligenceCommerceEvidenceRow[]) {
+  return new Map(rows.map((row) => [row.productId, row.cogsUnits]));
+}
+
 function metaByAd(rows: MetaRow[]) {
   const metrics = new Map<string, { spend: number; impressions: number }>();
   for (const row of rows) {
@@ -66,17 +79,17 @@ function metaByAd(rows: MetaRow[]) {
   return metrics;
 }
 
-export function buildSharedExposureEvidence(input: {
-  targets: TargetRow[];
-  metaRows: MetaRow[];
-  commerceRows: CommerceRow[];
-  inventoryRows: InventoryRow[];
-  inventoryTrusted: boolean;
-  windowDays: number;
-}): SharedExposureEvidence[] {
+function finishSharedExposureEvidence(
+  input: {
+    targets: TargetRow[];
+    metaRows: MetaRow[];
+    inventoryTrusted: boolean;
+    windowDays: number;
+  },
+  stock: Map<string, number>,
+  depletion: Map<string, number>,
+): SharedExposureEvidence[] {
   const meta = metaByAd(input.metaRows);
-  const stock = inventoryByProduct(input.inventoryRows);
-  const depletion = depletionByProduct(input.commerceRows);
 
   return input.targets.flatMap((ad) => {
     if (ad.targetScope !== 'MULTI_PRODUCT' && ad.targetScope !== 'COLLECTION') return [];
@@ -172,4 +185,35 @@ export function buildSharedExposureEvidence(input: {
       } satisfies SharedExposureEvidence,
     ];
   });
+}
+
+/** Raw characterization path retained for unit tests and DB parity checks. */
+export function buildSharedExposureEvidence(input: {
+  targets: TargetRow[];
+  metaRows: MetaRow[];
+  commerceRows: CommerceRow[];
+  inventoryRows: InventoryRow[];
+  inventoryTrusted: boolean;
+  windowDays: number;
+}): SharedExposureEvidence[] {
+  return finishSharedExposureEvidence(
+    input,
+    inventoryByProduct(input.inventoryRows),
+    depletionByProduct(input.commerceRows),
+  );
+}
+
+export function buildSharedExposureEvidenceFromAggregates(input: {
+  targets: TargetRow[];
+  metaRows: MetaRow[];
+  commerceRows: IntelligenceCommerceEvidenceRow[];
+  inventoryRows: IntelligenceInventoryEvidenceRow[];
+  inventoryTrusted: boolean;
+  windowDays: number;
+}): SharedExposureEvidence[] {
+  return finishSharedExposureEvidence(
+    input,
+    inventoryByProductFromAggregates(input.inventoryRows),
+    depletionByProductFromAggregates(input.commerceRows),
+  );
 }

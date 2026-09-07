@@ -1,3 +1,7 @@
+import type {
+  IntelligenceCommerceEvidenceRow,
+  IntelligenceInventoryEvidenceRow,
+} from './intelligence-commerce.read.repository.js';
 import type { IntelligenceRepository } from './intelligence.repository.js';
 import type {
   CampaignEvidence,
@@ -80,7 +84,7 @@ function selectedPurchaseValue(actions: MetaAction[], kind: 'ACTION' | 'ACTION_V
 function selectedPurchaseRoas(actions: MetaAction[]): number | null {
   for (const kind of ['WEBSITE_PURCHASE_ROAS', 'PURCHASE_ROAS'] as const) {
     const candidates = actions.filter(
-      (action) => action.kind === kind && purchaseRank(action.actionType) < 100,
+      (action) => String(action.kind) === kind && purchaseRank(action.actionType) < 100,
     );
     if (candidates.length === 0) continue;
 
@@ -265,6 +269,27 @@ interface ExactProductMapping {
   product: MappingRow['product'];
 }
 
+interface ProductEvidenceContext {
+  mappings: MappingRow[];
+  metaRows: MetaRow[];
+  storeCurrency: string;
+  inventoryTrusted: boolean;
+  windowDays: number;
+}
+
+type ProductStockRow = { productId: string; available: number };
+
+function rawProductStock(rows: InventoryRow[]): ProductStockRow[] {
+  return rows.map((row) => ({
+    productId: row.inventoryItem.variant.productId,
+    available: row.available,
+  }));
+}
+
+function compactProductStock(rows: IntelligenceInventoryEvidenceRow[]): ProductStockRow[] {
+  return rows.map((row) => ({ productId: row.productId, available: row.available }));
+}
+
 function costAt(costs: CostRow[], variantId: string, at: Date, currency: string): number | null {
   const matching = costs
     .filter(
@@ -309,59 +334,11 @@ function exactProductMappings(mappings: MappingRow[]): Map<string, ExactProductM
   return exact;
 }
 
-export function buildProductEvidence(input: {
-  commerceRows: CommerceRow[];
-  costRows: CostRow[];
-  mappings: MappingRow[];
-  inventoryRows: InventoryRow[];
-  metaRows: MetaRow[];
-  storeCurrency: string;
-  inventoryTrusted: boolean;
-  windowDays: number;
-}) {
-  const products = new Map<string, ProductAggregate>();
-  for (const row of input.commerceRows) {
-    if (!row.product || !row.productId || row.order.currencyCode !== input.storeCurrency) continue;
-    const refunds = row.refundLines.reduce((sum, refund) => sum + number(refund.subtotal), 0);
-    const refundedUnits = row.refundLines.reduce((sum, refund) => sum + refund.quantity, 0);
-    const restockedUnits = row.refundLines.reduce(
-      (sum, refund) => sum + (refund.restocked ? refund.quantity : 0),
-      0,
-    );
-    const netUnits = Math.max(0, row.quantity - refundedUnits);
-    const cogsUnits = Math.max(0, row.quantity - restockedUnits);
-    const revenue = number(row.discountedTotal);
-    const aggregate = products.get(row.productId) ?? {
-      entityId: row.product.id,
-      externalEntityId: row.product.shopifyProductId,
-      name: row.product.title,
-      revenue: 0,
-      refunds: 0,
-      units: 0,
-      cogsUnits: 0,
-      cogs: 0,
-      costCoveredUnits: 0,
-    };
-    aggregate.revenue += revenue;
-    aggregate.refunds += refunds;
-    aggregate.units += netUnits;
-    aggregate.cogsUnits += cogsUnits;
-
-    if (row.variantId && cogsUnits > 0) {
-      const unitCost = costAt(
-        input.costRows,
-        row.variantId,
-        row.order.processedAt ?? row.order.shopifyCreatedAt,
-        input.storeCurrency,
-      );
-      if (unitCost !== null) {
-        aggregate.cogs += unitCost * cogsUnits;
-        aggregate.costCoveredUnits += cogsUnits;
-      }
-    }
-    products.set(row.productId, aggregate);
-  }
-
+function finishProductEvidence(
+  products: Map<string, ProductAggregate>,
+  input: ProductEvidenceContext,
+  stockRows: ProductStockRow[],
+) {
   const exactMappings = exactProductMappings(input.mappings);
   for (const mapping of exactMappings.values()) {
     if (products.has(mapping.productId)) continue;
@@ -428,9 +405,11 @@ export function buildProductEvidence(input: {
   }
 
   const stockByProduct = new Map<string, number>();
-  for (const row of input.inventoryRows) {
-    const productId = row.inventoryItem.variant.productId;
-    stockByProduct.set(productId, (stockByProduct.get(productId) ?? 0) + row.available);
+  for (const row of stockRows) {
+    stockByProduct.set(
+      row.productId,
+      (stockByProduct.get(row.productId) ?? 0) + row.available,
+    );
   }
 
   const mappingCoverage = totalMetaSpend > 0 ? exactMappedSpend / totalMetaSpend : 0;
@@ -494,4 +473,77 @@ export function buildProductEvidence(input: {
     mappingCoverage,
     suppressedMetaSpend,
   };
+}
+
+/** Raw characterization path retained for unit tests and DB parity checks. */
+export function buildProductEvidence(input: ProductEvidenceContext & {
+  commerceRows: CommerceRow[];
+  costRows: CostRow[];
+  inventoryRows: InventoryRow[];
+}) {
+  const products = new Map<string, ProductAggregate>();
+  for (const row of input.commerceRows) {
+    if (!row.product || !row.productId || row.order.currencyCode !== input.storeCurrency) continue;
+    const refunds = row.refundLines.reduce((sum, refund) => sum + number(refund.subtotal), 0);
+    const refundedUnits = row.refundLines.reduce((sum, refund) => sum + refund.quantity, 0);
+    const restockedUnits = row.refundLines.reduce(
+      (sum, refund) => sum + (refund.restocked ? refund.quantity : 0),
+      0,
+    );
+    const netUnits = Math.max(0, row.quantity - refundedUnits);
+    const cogsUnits = Math.max(0, row.quantity - restockedUnits);
+    const revenue = number(row.discountedTotal);
+    const aggregate = products.get(row.productId) ?? {
+      entityId: row.product.id,
+      externalEntityId: row.product.shopifyProductId,
+      name: row.product.title,
+      revenue: 0,
+      refunds: 0,
+      units: 0,
+      cogsUnits: 0,
+      cogs: 0,
+      costCoveredUnits: 0,
+    };
+    aggregate.revenue += revenue;
+    aggregate.refunds += refunds;
+    aggregate.units += netUnits;
+    aggregate.cogsUnits += cogsUnits;
+
+    if (row.variantId && cogsUnits > 0) {
+      const unitCost = costAt(
+        input.costRows,
+        row.variantId,
+        row.order.processedAt ?? row.order.shopifyCreatedAt,
+        input.storeCurrency,
+      );
+      if (unitCost !== null) {
+        aggregate.cogs += unitCost * cogsUnits;
+        aggregate.costCoveredUnits += cogsUnits;
+      }
+    }
+    products.set(row.productId, aggregate);
+  }
+
+  return finishProductEvidence(products, input, rawProductStock(input.inventoryRows));
+}
+
+export function buildProductEvidenceFromAggregates(input: ProductEvidenceContext & {
+  commerceRows: IntelligenceCommerceEvidenceRow[];
+  inventoryRows: IntelligenceInventoryEvidenceRow[];
+}) {
+  const products = new Map<string, ProductAggregate>();
+  for (const row of input.commerceRows) {
+    products.set(row.productId, {
+      entityId: row.productId,
+      externalEntityId: row.shopifyProductId,
+      name: row.title,
+      revenue: row.revenue,
+      refunds: row.refunds,
+      units: row.netUnits,
+      cogsUnits: row.cogsUnits,
+      cogs: row.cogs,
+      costCoveredUnits: row.costCoveredUnits,
+    });
+  }
+  return finishProductEvidence(products, input, compactProductStock(input.inventoryRows));
 }

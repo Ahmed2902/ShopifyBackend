@@ -1,4 +1,5 @@
 import { AppError } from '../../../errors/app-error.js';
+import { invalidateStoreDecisionCaches } from '../../../lib/store-decision-cache.js';
 import type { IntegrationService } from '../../integrations/integration.service.js';
 import { toErrorMessage } from '../../integrations/integration.utils.js';
 import type { ShopifyCatalogService } from '../catalog/shopify-catalog.service.js';
@@ -110,6 +111,7 @@ export class ShopifyWebhookService {
     const connection = delivery.shopifyConnectionId
       ? await this.repository.findConnectionById(delivery.shopifyConnectionId)
       : null;
+    const storeId = connection?.store.id ?? null;
 
     if (isShopifyComplianceTopic(delivery.topic)) {
       await this.privacyService.process(
@@ -119,6 +121,9 @@ export class ShopifyWebhookService {
         connection?.store ?? null,
       );
       await this.repository.markProcessed(delivery.id);
+      if (storeId && delivery.topic !== 'customers/data_request') {
+        await invalidateStoreDecisionCaches(storeId);
+      }
       return;
     }
 
@@ -135,6 +140,7 @@ export class ShopifyWebhookService {
     if (delivery.topic === 'app/uninstalled') {
       await this.repository.markConnectionUninstalled(connection.id);
       await this.repository.markProcessed(delivery.id);
+      await invalidateStoreDecisionCaches(connection.store.id);
       return;
     }
 
@@ -161,6 +167,12 @@ export class ShopifyWebhookService {
     const handled = await this.dispatch(delivery.id, delivery.topic, delivery.payload, context);
     if (handled) {
       await this.repository.markProcessed(delivery.id);
+      // A normal webhook mutates commerce/inventory/catalog facts directly. Bulk completion is the
+      // exception: completeSyncRun already advances the Store generation after the backfill commit,
+      // so avoid paying for a second pair of Redis generation bumps here.
+      if (delivery.topic !== 'bulk_operations/finish') {
+        await invalidateStoreDecisionCaches(context.storeId);
+      }
     } else {
       await this.repository.markIgnored(delivery.id, `Unsupported Shopify topic ${delivery.topic}`);
     }

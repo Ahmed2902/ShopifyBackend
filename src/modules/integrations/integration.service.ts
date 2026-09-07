@@ -1,5 +1,6 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { AppError } from '../../errors/app-error.js';
+import { invalidateStoreDecisionCaches } from '../../lib/store-decision-cache.js';
 import { IntegrationRepository } from './integration.repository.js';
 import type { IntegrationProviderName } from './integration.schema.js';
 import { toErrorMessage } from './integration.utils.js';
@@ -31,15 +32,26 @@ export class IntegrationService {
     return this.repository.attachProviderOperation(syncRunId, providerOperationId);
   }
 
-  completeSyncRun(
+  async completeSyncRun(
     syncRunId: string,
     stats: { recordsRead?: number; recordsWritten?: number; partial?: boolean } = {},
   ) {
-    return this.repository.completeSyncRun(syncRunId, {
+    const completed = await this.repository.completeSyncRun(syncRunId, {
       recordsRead: stats.recordsRead ?? 0,
       recordsWritten: stats.recordsWritten ?? 0,
       partial: stats.partial ?? false,
     });
+    const storeId =
+      completed.shopifyConnection?.storeId ??
+      completed.metaConnection?.storeId ??
+      completed.tiktokConnection?.storeId ??
+      null;
+
+    // The provider write is already committed. Cache invalidation is fail-open and version-based,
+    // so Redis cannot make a successful synchronization fail and an older in-flight analytical
+    // reader cannot repopulate the authoritative generation afterward.
+    if (storeId) await invalidateStoreDecisionCaches(storeId);
+    return completed;
   }
 
   failSyncRun(syncRunId: string, error: unknown) {

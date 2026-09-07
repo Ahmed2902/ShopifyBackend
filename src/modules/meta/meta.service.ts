@@ -1,4 +1,5 @@
 import { AppError } from '../../errors/app-error.js';
+import { invalidateStoreDecisionCaches } from '../../lib/store-decision-cache.js';
 import { integrationService, type IntegrationService } from '../integrations/integration.service.js';
 import { MetaAdsRepository } from './ads/meta-ads.repository.js';
 import { MetaAdsService } from './ads/meta-ads.service.js';
@@ -133,6 +134,9 @@ export class MetaService {
       metaBusinessId: businessId,
       adAccounts: selected,
     });
+    // Selected account identity changes which provider facts are eligible for every advertising,
+    // blended-economics, and intelligence read. Invalidate only after the new selection commits.
+    await invalidateStoreDecisionCaches(storeId);
 
     return {
       storeId,
@@ -152,6 +156,7 @@ export class MetaService {
     const context = await this.authService.getApiContext(storeId);
     if (catalogIds.length === 0) {
       const selected = await this.catalogService.configureCatalogs(context, [], []);
+      await invalidateStoreDecisionCaches(storeId);
       return { storeId, selectedCatalogIds: [], catalogs: selected };
     }
     if (!context.scopes.includes('business_management')) {
@@ -175,6 +180,7 @@ export class MetaService {
       context.metaBusinessId ? [context.metaBusinessId] : businesses.map((business) => business.id),
     );
     const selected = await this.catalogService.configureCatalogs(context, catalogs, catalogIds);
+    await invalidateStoreDecisionCaches(storeId);
     return {
       storeId,
       selectedCatalogIds: selected.map((catalog) => catalog.id),

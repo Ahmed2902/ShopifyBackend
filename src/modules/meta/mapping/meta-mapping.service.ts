@@ -1,4 +1,5 @@
 import { AppError } from '../../../errors/app-error.js';
+import { invalidateStoreDecisionCaches } from '../../../lib/store-decision-cache.js';
 import { integrationService, type IntegrationService } from '../../integrations/integration.service.js';
 import { MetaCollectionMappingRepository } from './meta-collection-mapping.repository.js';
 import { deriveScopeFromMappings, resolveAd, resolveCatalogItem } from './meta-mapping.resolver.js';
@@ -203,6 +204,7 @@ export class MetaMappingService {
 
       const recordsRead = dataset.catalogItems.length + dataset.ads.length;
       const recordsWritten = catalog.changed + ads.changed;
+      // completeSyncRun owns Store-generation invalidation for derived provider mutations.
       await this.integrationService.completeSyncRun(syncRun.id, { recordsRead, recordsWritten });
       await this.integrationService.recordExternalPayload({
         provider: 'META',
@@ -331,7 +333,9 @@ export class MetaMappingService {
   ) {
     await this.requireSelectedAd(storeId, metaAdId);
     await this.repository.validateManualAdMappings(storeId, mappings);
-    return this.collectionRepository.replaceManualProductMappings(storeId, metaAdId, mappings);
+    const result = await this.collectionRepository.replaceManualProductMappings(storeId, metaAdId, mappings);
+    await invalidateStoreDecisionCaches(storeId);
+    return result;
   }
 
   async replaceManualCollectionMappings(
@@ -340,18 +344,27 @@ export class MetaMappingService {
     collectionIds: string[],
   ) {
     await this.requireSelectedAd(storeId, metaAdId);
-    return this.collectionRepository.replaceManualMappings(storeId, metaAdId, collectionIds);
+    const result = await this.collectionRepository.replaceManualMappings(storeId, metaAdId, collectionIds);
+    await invalidateStoreDecisionCaches(storeId);
+    return result;
   }
 
   async confirmCurrentAdMappings(storeId: string, metaAdId: string) {
     await this.requireSelectedAd(storeId, metaAdId);
     const collection = await this.collectionRepository.confirmCurrentMappings(storeId, metaAdId);
-    if (collection) return collection;
-    return this.repository.confirmCurrentAdMappings(storeId, metaAdId);
+    if (collection) {
+      await invalidateStoreDecisionCaches(storeId);
+      return collection;
+    }
+    const result = await this.repository.confirmCurrentAdMappings(storeId, metaAdId);
+    await invalidateStoreDecisionCaches(storeId);
+    return result;
   }
 
-  replaceManualCatalogMappings(storeId: string, metaProductItemId: string, variantIds: string[]) {
-    return this.repository.replaceManualCatalogMappings(storeId, metaProductItemId, variantIds);
+  async replaceManualCatalogMappings(storeId: string, metaProductItemId: string, variantIds: string[]) {
+    const result = await this.repository.replaceManualCatalogMappings(storeId, metaProductItemId, variantIds);
+    await invalidateStoreDecisionCaches(storeId);
+    return result;
   }
 
   private async requireSelectedAd(storeId: string, metaAdId: string): Promise<void> {

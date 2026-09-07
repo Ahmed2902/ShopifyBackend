@@ -1,6 +1,7 @@
 import { env } from '../../../config/env.js';
 import { metaCallbackUrl } from '../../../config/public-urls.js';
 import { AppError } from '../../../errors/app-error.js';
+import { invalidateStoreDecisionCaches } from '../../../lib/store-decision-cache.js';
 import type { MetaRepository } from '../meta.repository.js';
 import {
   metaAdAccountSchema,
@@ -177,6 +178,9 @@ export class MetaApiService {
       const code = graph.success ? graph.data.error.code : undefined;
       if (code === 190) {
         await this.repository.markConnectionReauthRequired(context.connectionId).catch(() => undefined);
+        // Provider-side expiry can happen after a dashboard generation was cached as ACTIVE.
+        // Advance that Store generation as soon as we persist REAUTH_REQUIRED.
+        await invalidateStoreDecisionCaches(context.storeId);
         throw new AppError(
           'Meta access token requires reauthorization',
           401,

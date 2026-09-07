@@ -3,11 +3,16 @@ import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireStoreMembership } from '../../middleware/store.middleware.js';
 import { adExposureController } from './ad-exposure.controller.js';
 import { analyticsController } from './analytics.controller.js';
+import { dashboardController } from './dashboard.controller.js';
 import { performanceAnalyticsController } from './performance-analytics.controller.js';
+import { reportController } from './report.controller.js';
+import { tiktokMonitorController } from './tiktok-monitor.controller.js';
 
 export const analyticsRouter = Router({ mergeParams: true });
 analyticsRouter.use(requireAuth, requireStoreMembership);
 
+analyticsRouter.get('/dashboard', dashboardController.read);
+analyticsRouter.get('/report', reportController.read);
 analyticsRouter.get('/overview', analyticsController.overview);
 analyticsRouter.get('/performance', performanceAnalyticsController.daily);
 analyticsRouter.get('/products', analyticsController.products);
@@ -21,6 +26,7 @@ analyticsRouter.get('/customers', analyticsController.customers);
 analyticsRouter.get('/inventory', analyticsController.inventory);
 
 analyticsRouter.get('/advertising', analyticsController.advertising);
+analyticsRouter.get('/tiktok-monitor', tiktokMonitorController.read);
 analyticsRouter.get('/campaigns', analyticsController.campaigns);
 analyticsRouter.get('/campaigns/:campaignId', analyticsController.campaign);
 analyticsRouter.get('/adsets', analyticsController.adSets);

@@ -16,8 +16,15 @@ export class StoreRepository {
           where: { userId },
           select: { role: true },
         },
-        shopifyConnection: { select: { status: true } },
-        metaConnection: { select: { status: true } },
+        // The application shell only needs compact provider/Pixel readiness and freshness. Keep
+        // this on the already-required Store summary so feature pages do not perform standalone
+        // status reads before they can load their actual data.
+        shopifyConnection: { select: { status: true, lastSyncedAt: true } },
+        metaConnection: { select: { status: true, lastSyncedAt: true } },
+        tiktokConnection: { select: { status: true, lastSyncedAt: true } },
+        pixelInstallation: {
+          select: { status: true, lastEventAt: true, lastError: true },
+        },
       },
     });
   }
@@ -38,6 +45,10 @@ export class StoreRepository {
         updatedAt: true,
         shopifyConnection: { select: { status: true, lastSyncedAt: true } },
         metaConnection: { select: { status: true, lastSyncedAt: true } },
+        tiktokConnection: { select: { status: true, lastSyncedAt: true } },
+        pixelInstallation: {
+          select: { status: true, lastEventAt: true, lastError: true },
+        },
       },
     });
   }

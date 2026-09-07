@@ -1,12 +1,25 @@
 import type { Request, Response } from 'express';
-import { inventoryModeUpdateSchema } from './intelligence.schema.js';
+import { invalidateStoreDecisionCaches } from '../../lib/store-decision-cache.js';
+import {
+  intelligenceReadQuerySchema,
+  inventoryModeUpdateSchema,
+} from './intelligence.schema.js';
+import {
+  intelligenceSnapshotReadService,
+  type IntelligenceSnapshotReadService,
+} from './intelligence-snapshot.read.service.js';
 import { intelligenceService, type IntelligenceService } from './intelligence.service.js';
 
 export class IntelligenceController {
-  constructor(private readonly service: IntelligenceService) {}
+  constructor(
+    private readonly service: IntelligenceService,
+    private readonly snapshotReads: IntelligenceSnapshotReadService,
+  ) {}
 
   snapshot = async (req: Request, res: Response) => {
-    res.status(200).json(await this.service.snapshot(req.context.storeId!));
+    const storeId = req.context.storeId!;
+    const { fresh } = intelligenceReadQuerySchema.parse(req.query);
+    res.status(200).json(await this.snapshotReads.read(storeId, { fresh }));
   };
 
   settings = async (req: Request, res: Response) => {
@@ -14,9 +27,16 @@ export class IntelligenceController {
   };
 
   updateInventoryMode = async (req: Request, res: Response) => {
+    const storeId = req.context.storeId!;
     const { mode } = inventoryModeUpdateSchema.parse(req.body);
-    res.status(200).json(await this.service.updateInventoryMode(req.context.storeId!, mode));
+    const result = await this.service.updateInventoryMode(storeId, mode);
+    // Invalidate both decision surfaces only after the Store setting is committed.
+    await invalidateStoreDecisionCaches(storeId);
+    res.status(200).json(result);
   };
 }
 
-export const intelligenceController = new IntelligenceController(intelligenceService);
+export const intelligenceController = new IntelligenceController(
+  intelligenceService,
+  intelligenceSnapshotReadService,
+);

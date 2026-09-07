@@ -49,6 +49,7 @@ model Order {
   @@unique([storeId, shopifyOrderId])
   @@index([storeId, shopifyCreatedAt])
   @@index([storeId, isTest, shopifyCreatedAt])
+  @@index([storeId, isTest, processedAt])
   @@index([storeId, sourceName, shopifyCreatedAt])
   @@index([storeId, customerOrderIndex, shopifyCreatedAt])
   @@index([storeId, cancelledAt])

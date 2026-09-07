@@ -8,6 +8,11 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   CORS_ORIGIN: z.string().url().default('http://localhost:3000'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  LOG_REQUEST_PERFORMANCE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  SLOW_REQUEST_THRESHOLD_MS: z.coerce.number().int().positive().default(1_000),
   REDIS_REST_URL: z.string().url(),
   REDIS_REST_TOKEN: z.string().min(1),
   JWT_ACCESS_SECRET: z.string().min(32),

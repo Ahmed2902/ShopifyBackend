@@ -1,10 +1,14 @@
 import { AppError } from '../../errors/app-error.js';
+import { AdvertisingAnalyticsReadRepository } from './advertising-analytics.read.repository.js';
 import { AdvertisingAnalyticsService } from './advertising-analytics.service.js';
 import { resolveAnalyticsWindows } from './analytics.dates.js';
 import { metricChanges, percentChange } from './analytics.metrics.js';
 import { AnalyticsRepository } from './analytics.repository.js';
 import type { AnalyticsListQuery, AnalyticsRangeQuery } from './analytics.schema.js';
 import { windowResponse } from './analytics.shared.js';
+import { collectionAnalyticsReadService } from './collection-analytics.read.service.js';
+import type { CollectionAnalyticsReadService } from './collection-analytics.read.service.js';
+import { CommerceAnalyticsReadRepository } from './commerce-analytics.read.repository.js';
 import { CommerceAnalyticsService } from './commerce-analytics.service.js';
 
 type StoreContext = NonNullable<Awaited<ReturnType<AnalyticsRepository['getStoreContext']>>>;
@@ -20,9 +24,15 @@ export class AnalyticsWorkspace {
   private readonly commerce: CommerceAnalyticsService;
   private readonly advertisingService: AdvertisingAnalyticsService;
 
-  constructor(private readonly repository: AnalyticsRepository = new AnalyticsRepository()) {
-    this.commerce = new CommerceAnalyticsService(repository);
-    this.advertisingService = new AdvertisingAnalyticsService(repository);
+  constructor(
+    private readonly repository: AnalyticsRepository = new AnalyticsRepository(),
+    advertisingReadRepository: AdvertisingAnalyticsReadRepository =
+      new AdvertisingAnalyticsReadRepository(),
+    commerceReadRepository?: CommerceAnalyticsReadRepository,
+    private readonly collectionReadService?: CollectionAnalyticsReadService,
+  ) {
+    this.commerce = new CommerceAnalyticsService(repository, commerceReadRepository);
+    this.advertisingService = new AdvertisingAnalyticsService(repository, advertisingReadRepository);
   }
 
   async overview(storeId: string, query: AnalyticsRangeQuery, now = new Date()) {
@@ -119,6 +129,15 @@ export class AnalyticsWorkspace {
 
   async collections(storeId: string, query: AnalyticsListQuery, now = new Date()) {
     const { store, windows } = await this.context(storeId, query, now);
+    if (this.collectionReadService) {
+      return this.collectionReadService.list({
+        storeId: store.id,
+        currency: store.currencyCode,
+        windows,
+        page: query.page,
+        limit: query.limit,
+      });
+    }
     return this.commerce.collections(store, windows, query.page, query.limit);
   }
 
@@ -202,7 +221,6 @@ export class AnalyticsWorkspace {
     return {
       shopify: {
         connected: shopify?.status === 'ACTIVE',
-        // Preserve the established keys/meaning: this legacy flag reflects authorization, not proven coverage.
         lastSyncedAt: shopify?.lastSyncedAt ?? null,
         lastStoreSyncedAt: shopify?.lastSyncedAt ?? null,
         fullOrderHistoryAuthorized,
@@ -214,8 +232,6 @@ export class AnalyticsWorkspace {
           recordsRead: successfulOrderHistory?.recordsRead ?? 0,
           recordsWritten: successfulOrderHistory?.recordsWritten ?? 0,
           finishedAt: successfulOrderHistory?.finishedAt ?? null,
-          // SyncRun does not persist which order-history scope produced a successful run.
-          // Avoid claiming that ALL_ORDERS coverage has been independently verified.
           fullCoverageVerified: false,
         },
       },
@@ -235,4 +251,9 @@ export class AnalyticsWorkspace {
   }
 }
 
-export const analyticsWorkspace = new AnalyticsWorkspace();
+export const analyticsWorkspace = new AnalyticsWorkspace(
+  new AnalyticsRepository(),
+  new AdvertisingAnalyticsReadRepository(),
+  new CommerceAnalyticsReadRepository(),
+  collectionAnalyticsReadService,
+);
