@@ -39,26 +39,28 @@ export class ShopifyOrderRepository {
       const productIds = this.uniqueIds(order.lineItems, (line) => line.product?.id);
       const variantIds = this.uniqueIds(order.lineItems, (line) => line.variant?.id);
       const lineItemIds = order.lineItems.map((lineItem) => lineItem.id);
-      const [products, variants, existingLineItems] = await Promise.all([
-        productIds.length
-          ? tx.product.findMany({
-              where: { storeId, shopifyProductId: { in: productIds } },
-              select: { id: true, shopifyProductId: true },
-            })
-          : [],
-        variantIds.length
-          ? tx.productVariant.findMany({
-              where: { storeId, shopifyVariantId: { in: variantIds } },
-              select: { id: true, shopifyVariantId: true },
-            })
-          : [],
-        lineItemIds.length
-          ? tx.orderLineItem.findMany({
-              where: { orderId: savedOrder.id, shopifyLineItemId: { in: lineItemIds } },
-              select: { id: true, shopifyLineItemId: true },
-            })
-          : [],
-      ]);
+
+      // Interactive transactions run on one connection. Keep tx queries sequential rather than
+      // issuing Promise.all(), which pg already deprecates when a second query starts while the
+      // client is busy and which provides no actual connection-level parallelism.
+      const products = productIds.length
+        ? await tx.product.findMany({
+            where: { storeId, shopifyProductId: { in: productIds } },
+            select: { id: true, shopifyProductId: true },
+          })
+        : [];
+      const variants = variantIds.length
+        ? await tx.productVariant.findMany({
+            where: { storeId, shopifyVariantId: { in: variantIds } },
+            select: { id: true, shopifyVariantId: true },
+          })
+        : [];
+      const existingLineItems = lineItemIds.length
+        ? await tx.orderLineItem.findMany({
+            where: { orderId: savedOrder.id, shopifyLineItemId: { in: lineItemIds } },
+            select: { id: true, shopifyLineItemId: true },
+          })
+        : [];
 
       const productMap = new Map(products.map((product) => [product.shopifyProductId, product.id]));
       const variantMap = new Map(variants.map((variant) => [variant.shopifyVariantId, variant.id]));
