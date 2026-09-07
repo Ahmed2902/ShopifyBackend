@@ -6,7 +6,17 @@ type RedisCommandResult =
   | { ok: true; result: unknown | null }
   | { ok: false; result: null };
 
+type VersionedRead<T> = {
+  version: string;
+  value: T | null;
+};
+
 const DEFAULT_TIMEOUT_MS = 300;
+const VERSIONED_GET_SCRIPT = [
+  "local version = redis.call('GET', KEYS[1]) or '0'",
+  "local value = redis.call('GET', ARGV[1] .. version .. ':' .. ARGV[2])",
+  'return { tostring(version), value }',
+].join('\n');
 
 async function redisCommand(parts: string[], timeoutMs: number): Promise<RedisCommandResult> {
   try {
@@ -47,6 +57,41 @@ export class RedisJsonCache {
       return JSON.parse(command.result) as T;
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Resolve the Store generation and its versioned value in one Redis round trip.
+   *
+   * Stride uses Redis over HTTP, unlike Systemly's persistent Redis client. Doing separate GETs for
+   * the version and payload doubles network latency on every warm analytical read. The Lua command
+   * keeps the same versioned-cache semantics while making a warm dashboard one Redis request.
+   */
+  async getVersioned<T>(scope: string, key: string): Promise<VersionedRead<T> | null> {
+    const command = await redisCommand(
+      [
+        'EVAL',
+        VERSIONED_GET_SCRIPT,
+        '1',
+        this.key(`version:${scope}`),
+        `${this.namespace}:v`,
+        key,
+      ],
+      this.timeoutMs,
+    );
+    if (!command.ok || !Array.isArray(command.result) || command.result.length !== 2) return null;
+
+    const [rawVersion, rawValue] = command.result;
+    if (typeof rawVersion !== 'string' && typeof rawVersion !== 'number') return null;
+    if (rawValue !== null && typeof rawValue !== 'string') return null;
+
+    if (rawValue === null) return { version: String(rawVersion), value: null };
+    try {
+      return { version: String(rawVersion), value: JSON.parse(rawValue) as T };
+    } catch {
+      // Treat malformed cache contents as a miss under the resolved generation. Source truth is
+      // still authoritative and will overwrite the bad value after a successful load.
+      return { version: String(rawVersion), value: null };
     }
   }
 
@@ -125,20 +170,25 @@ export class CachedReadCoordinator {
     // Multiple simultaneous clicks on Refresh do coalesce with each other, so one interaction
     // still produces one generation bump and one source computation.
     return this.reads.run(operationKey, async () => {
-      const version = fresh
-        ? await this.cache.incrementVersion(versionScope)
-        : await this.cache.getVersion(versionScope);
+      if (!fresh) {
+        const resolved = await this.cache.getVersioned<T>(versionScope, key);
+        // Redis/version lookup is fail-open. Do not read or write a guessed generation because a
+        // transient version-key failure followed by a successful data GET could resurrect stale data.
+        if (resolved === null) return loader();
+        if (resolved.value !== null) return resolved.value;
 
-      // Redis/version lookup is fail-open. Do not read or write a guessed generation because a
-      // transient version-key failure followed by a successful data GET could resurrect stale data.
+        const versionedKey = `v${resolved.version}:${key}`;
+        return this.sourceReads.run(versionedKey, async () => {
+          const value = await loader();
+          await this.cache.set(versionedKey, value);
+          return value;
+        });
+      }
+
+      const version = await this.cache.incrementVersion(versionScope);
       if (version === null) return loader();
 
       const versionedKey = `v${version}:${key}`;
-      if (!fresh) {
-        const cached = await this.cache.get<T>(versionedKey);
-        if (cached !== null) return cached;
-      }
-
       return this.sourceReads.run(versionedKey, async () => {
         const value = await loader();
         await this.cache.set(versionedKey, value);
