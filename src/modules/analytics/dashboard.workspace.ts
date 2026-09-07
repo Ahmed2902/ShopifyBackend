@@ -1,5 +1,8 @@
 import { logger } from '../../lib/logger.js';
-import { intelligenceService, type IntelligenceService } from '../intelligence/intelligence.service.js';
+import {
+  intelligenceSnapshotReadService,
+  type IntelligenceSnapshotReadService,
+} from '../intelligence/intelligence-snapshot.read.service.js';
 import type { AnalyticsRangeQuery } from './analytics.schema.js';
 import { analyticsWorkspace, type AnalyticsWorkspace } from './analytics.workspace.js';
 import { DashboardReadRepository, type DashboardRecentOrder } from './dashboard.read.repository.js';
@@ -31,7 +34,7 @@ function compactInventory(
 }
 
 function compactIntelligence(
-  value: Awaited<ReturnType<IntelligenceService['snapshot']>>,
+  value: Awaited<ReturnType<IntelligenceSnapshotReadService['read']>>,
 ) {
   const recommendations = value.recommendations.slice(0, 4);
   return {
@@ -70,11 +73,17 @@ async function optionalSection<T>(
 export class DashboardWorkspace {
   constructor(
     private readonly analytics: AnalyticsWorkspace = analyticsWorkspace,
-    private readonly intelligence: IntelligenceService = intelligenceService,
+    private readonly intelligenceReads: IntelligenceSnapshotReadService =
+      intelligenceSnapshotReadService,
     private readonly readRepository: DashboardReadRepository = new DashboardReadRepository(),
   ) {}
 
-  async read(storeId: string, query: AnalyticsRangeQuery, now = new Date()) {
+  async read(
+    storeId: string,
+    query: AnalyticsRangeQuery,
+    now = new Date(),
+    options: { fresh?: boolean } = {},
+  ) {
     const inventoryQuery = {
       ...query,
       page: 1,
@@ -87,7 +96,9 @@ export class DashboardWorkspace {
         compactInventory(await this.analytics.inventory(storeId, inventoryQuery, now)),
       ),
       optionalSection(storeId, 'intelligence', async () =>
-        compactIntelligence(await this.intelligence.snapshot(storeId, now)),
+        compactIntelligence(
+          await this.intelligenceReads.read(storeId, { fresh: options.fresh ?? false }),
+        ),
       ),
       optionalSection<DashboardRecentOrder[]>(storeId, 'recentOrders', () =>
         this.readRepository.getRecentOrders(storeId, 6),
