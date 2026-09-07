@@ -12,6 +12,7 @@ import {
   pixelIngressRateLimit,
   webhookRateLimit,
 } from './middleware/rate-limit.middleware.js';
+import { requestPerformanceMiddleware } from './middleware/request-performance.middleware.js';
 import { router } from './routes.js';
 
 const RAW_BODY_WEBHOOK_PATHS = [
@@ -48,6 +49,10 @@ export function createApp() {
       },
     }),
   );
+  // Start the AsyncLocalStorage scope immediately after pino establishes the request id so all
+  // downstream Prisma work—including authorization, rate-limit-adjacent application reads and
+  // route handlers—contributes to the same request performance record.
+  app.use(requestPerformanceMiddleware);
   app.use(helmet());
   app.use((req, res, next) => {
     if (req.path === PIXEL_INGRESS_PATH) return pixelCors(req, res, next);
