@@ -10,6 +10,7 @@ import {
   orderDate,
   totalProductMetrics,
   type CommerceMetrics,
+  type ProductMetrics,
 } from './analytics.metrics.js';
 import type { AnalyticsRepository } from './analytics.repository.js';
 import type {
@@ -17,6 +18,7 @@ import type {
   CommerceCustomerSegment,
   CommerceOrderAggregateRow,
   CommerceOrderPeriod,
+  CommerceProductEconomicsAggregateRow,
 } from './commerce-analytics.read.repository.js';
 import { pagination, splitCommerce, splitOrders, windowResponse } from './analytics.shared.js';
 import type { AnalyticsWindows } from './analytics.shared.js';
@@ -24,6 +26,8 @@ import type { AnalyticsWindows } from './analytics.shared.js';
 type StoreContext = NonNullable<Awaited<ReturnType<AnalyticsRepository['getStoreContext']>>>;
 type OrderRow = Awaited<ReturnType<AnalyticsRepository['getOrders']>>[number];
 type CommerceRow = Awaited<ReturnType<AnalyticsRepository['getCommerceRows']>>[number];
+
+const MIN_COST_COVERAGE = 0.8;
 
 interface LineMetrics {
   orderCount: number;
@@ -112,6 +116,26 @@ function aggregateOrderFacts(
     newOrders: segmentOrders('NEW'),
     returningOrders: segmentOrders('RETURNING'),
     unknownCustomerOrders: segmentOrders('UNKNOWN'),
+  };
+}
+
+function productMetricsFromAggregate(row: CommerceProductEconomicsAggregateRow): ProductMetrics {
+  const netProductRevenue = Math.max(0, row.productRevenue - row.refunds);
+  const costCoverage =
+    row.costRelevantUnits > 0 ? row.costCoveredUnits / row.costRelevantUnits : 0;
+  const cogs = costCoverage >= MIN_COST_COVERAGE ? row.rawCogs : null;
+
+  return {
+    orderCount: row.orderCount,
+    soldUnits: row.soldUnits,
+    refundedUnits: row.refundedUnits,
+    netUnits: Math.max(0, row.soldUnits - row.refundedUnits),
+    productRevenue: row.productRevenue,
+    refunds: row.refunds,
+    netProductRevenue,
+    cogs,
+    costCoverage,
+    contributionBeforeAds: cogs === null ? null : netProductRevenue - cogs,
   };
 }
 
@@ -382,6 +406,18 @@ export class CommerceAnalyticsService {
   }
 
   async profitabilityBase(store: StoreContext, windows: AnalyticsWindows) {
+    if (this.readRepository) {
+      const rows = await this.readRepository.getProductEconomicsAggregates(
+        this.orderAggregateInput(store, windows),
+      );
+      const forPeriod = (period: CommerceOrderPeriod) =>
+        rows.filter((row) => row.period === period).map(productMetricsFromAggregate);
+      return {
+        current: totalProductMetrics(forPeriod('CURRENT')),
+        comparison: totalProductMetrics(forPeriod('COMPARISON')),
+      };
+    }
+
     const rows = await this.repository.getCommerceRows(
       store.id,
       windows.comparison.instantFrom,
