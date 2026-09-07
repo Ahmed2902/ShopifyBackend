@@ -87,7 +87,7 @@ describe('IntelligenceService', () => {
     );
   });
 
-  it('uses latest persisted Meta Insights freshness outside the analysis window', async () => {
+  it('reuses selected Meta accounts from the snapshot store context', async () => {
     const latest = new Date('2026-09-03T11:30:00.000Z');
     const repository = buildRepository({
       getMetaEvidenceRows: vi.fn().mockResolvedValue([]),
@@ -96,6 +96,13 @@ describe('IntelligenceService', () => {
 
     await new IntelligenceService(repository).snapshot(storeId, now);
 
+    expect(repository.getMetaEvidenceRows).toHaveBeenCalledWith(
+      storeId,
+      ['act_101'],
+      expect.any(Date),
+      expect.any(Date),
+    );
+    expect(repository.getActiveProductMappings).toHaveBeenCalledWith(storeId, ['act_101']);
     expect(repository.getLatestMetaInsightSyncedAt).toHaveBeenCalledWith(storeId, ['act_101']);
   });
 
@@ -125,7 +132,11 @@ describe('IntelligenceService', () => {
 
     await new IntelligenceService(repository).snapshot(storeId, now);
 
-    expect(repository.getSharedExposureTargets).toHaveBeenCalledWith(storeId, [observedAdId]);
+    expect(repository.getSharedExposureTargets).toHaveBeenCalledWith(
+      storeId,
+      ['act_101'],
+      [observedAdId],
+    );
   });
 
   it('stores only the inventory trust setting', async () => {
