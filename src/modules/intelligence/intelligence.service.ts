@@ -7,6 +7,7 @@ import {
   buildProductEvidenceFromAggregates,
 } from './intelligence.metrics.js';
 import { IntelligenceRepository } from './intelligence.repository.js';
+import { IntelligenceSharedExposureReadRepository } from './intelligence-shared-exposure.read.repository.js';
 import {
   campaignEfficiencyRule,
   creativeFatigueRule,
@@ -59,6 +60,8 @@ export class IntelligenceService {
     private readonly repository: IntelligenceRepository = new IntelligenceRepository(),
     private readonly commerceReadRepository: IntelligenceCommerceReadRepository =
       new IntelligenceCommerceReadRepository(),
+    private readonly sharedExposureReadRepository: IntelligenceSharedExposureReadRepository =
+      new IntelligenceSharedExposureReadRepository(),
   ) {}
 
   async snapshot(storeId: string, now = new Date()) {
@@ -80,6 +83,7 @@ export class IntelligenceService {
       commerceRows,
       mappings,
       inventoryRows,
+      sharedTargets,
       successfulOrderHistorySync,
       latestMetaInsightSync,
     ] = await Promise.all([
@@ -100,6 +104,12 @@ export class IntelligenceService {
       }),
       this.repository.getActiveProductMappings(storeId, selectedMetaAccounts),
       this.commerceReadRepository.getInventoryEvidenceAggregates(storeId),
+      this.sharedExposureReadRepository.getTargets({
+        storeId,
+        selectedAccountIds: selectedMetaAccounts,
+        from: productWindow.metaFrom,
+        to: current.metaTo,
+      }),
       this.repository.getLatestOrderHistorySync(storeId),
       this.repository.getLatestMetaInsightSyncedAt(storeId, selectedMetaAccounts),
     ]);
@@ -115,18 +125,6 @@ export class IntelligenceService {
     const inventorySourceRowCount = inventoryRows.reduce(
       (sum, row) => sum + row.sourceInventoryLevelCount,
       0,
-    );
-    const observedAdIds = [
-      ...new Set(
-        metaRows
-          .map((row) => row.ad?.id ?? null)
-          .filter((adId): adId is string => adId !== null),
-      ),
-    ];
-    const sharedTargets = await this.repository.getSharedExposureTargets(
-      storeId,
-      selectedMetaAccounts,
-      observedAdIds,
     );
 
     const campaigns = buildCampaignEvidence(
@@ -398,7 +396,10 @@ export class IntelligenceService {
     }
 
     const costCoverage = this.overallCostCoverage(input.productResult.products);
-    if (input.productResult.products.some((product) => product.units > 0) && costCoverage < MIN_COST_COVERAGE) {
+    if (
+      input.productResult.products.some((product) => product.units > 0) &&
+      costCoverage < MIN_COST_COVERAGE
+    ) {
       evidence.push({
         code: 'PRODUCT_COST_COVERAGE_LOW',
         status: 'WARNING',
