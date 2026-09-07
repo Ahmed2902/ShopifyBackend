@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { IntelligenceCommerceReadRepository } from '../../../src/modules/intelligence/intelligence-commerce.read.repository.js';
 import type { IntelligenceRepository } from '../../../src/modules/intelligence/intelligence.repository.js';
 import { IntelligenceService } from '../../../src/modules/intelligence/intelligence.service.js';
+import type { IntelligenceSharedExposureReadRepository } from '../../../src/modules/intelligence/intelligence-shared-exposure.read.repository.js';
 
 const storeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const now = new Date('2026-09-03T12:00:00.000Z');
@@ -38,7 +39,6 @@ function buildRepository(overrides: Partial<IntelligenceRepository> = {}) {
     getMetaEvidenceRows: vi.fn().mockResolvedValue([]),
     getCommerceRows: vi.fn().mockResolvedValue([]),
     getActiveProductMappings: vi.fn().mockResolvedValue([]),
-    getSharedExposureTargets: vi.fn().mockResolvedValue([]),
     getInventoryLevels: vi.fn().mockResolvedValue([]),
     getVariantCosts: vi.fn().mockResolvedValue([]),
     getSettings: vi.fn().mockResolvedValue({
@@ -61,11 +61,25 @@ function buildCommerceRead(overrides: Partial<IntelligenceCommerceReadRepository
   } as unknown as IntelligenceCommerceReadRepository;
 }
 
+function buildSharedExposureRead(
+  overrides: Partial<IntelligenceSharedExposureReadRepository> = {},
+) {
+  return {
+    getTargets: vi.fn().mockResolvedValue([]),
+    ...overrides,
+  } as unknown as IntelligenceSharedExposureReadRepository;
+}
+
 function service(
   repository: IntelligenceRepository,
   commerceReadRepository = buildCommerceRead(),
+  sharedExposureReadRepository = buildSharedExposureRead(),
 ) {
-  return new IntelligenceService(repository, commerceReadRepository);
+  return new IntelligenceService(
+    repository,
+    commerceReadRepository,
+    sharedExposureReadRepository,
+  );
 }
 
 describe('IntelligenceService', () => {
@@ -107,8 +121,9 @@ describe('IntelligenceService', () => {
       getMetaEvidenceRows: vi.fn().mockResolvedValue([]),
       getLatestMetaInsightSyncedAt: vi.fn().mockResolvedValue({ syncedAt: latest }),
     });
+    const sharedExposureRead = buildSharedExposureRead();
 
-    await service(repository).snapshot(storeId, now);
+    await service(repository, buildCommerceRead(), sharedExposureRead).snapshot(storeId, now);
 
     expect(repository.getMetaEvidenceRows).toHaveBeenCalledWith({
       storeId,
@@ -121,42 +136,44 @@ describe('IntelligenceService', () => {
     });
     expect(repository.getActiveProductMappings).toHaveBeenCalledWith(storeId, ['act_101']);
     expect(repository.getLatestMetaInsightSyncedAt).toHaveBeenCalledWith(storeId, ['act_101']);
+    expect(sharedExposureRead.getTargets).toHaveBeenCalledWith({
+      storeId,
+      selectedAccountIds: ['act_101'],
+      from: expect.any(Date),
+      to: expect.any(Date),
+    });
   });
 
-  it('bounds shared target evidence to ads observed in the same snapshot evidence window', async () => {
-    const observedAdId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  it('starts shared-exposure evidence without waiting for the Meta aggregate read to finish', async () => {
+    let resolveMeta!: (value: []) => void;
+    let sharedStarted!: () => void;
+    const metaPending = new Promise<[]>((resolve) => {
+      resolveMeta = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      sharedStarted = resolve;
+    });
     const repository = buildRepository({
-      getMetaEvidenceRows: vi.fn().mockResolvedValue([
-        {
-          bucket: 'CURRENT',
-          sourceRowCount: 3,
-          date: new Date('2026-09-01T00:00:00.000Z'),
-          syncedAt: now,
-          accountCurrency: 'USD',
-          spend: 10,
-          impressions: 1_000,
-          clicks: 10,
-          frequency: 1,
-          campaign: null,
-          ad: {
-            id: observedAdId,
-            metaAdId: 'meta-ad-1',
-            name: 'Observed ad',
-            creative: null,
-          },
-          actions: [],
-        },
-      ] as never),
+      getMetaEvidenceRows: vi.fn(() => metaPending),
+    });
+    const sharedExposureRead = buildSharedExposureRead({
+      getTargets: vi.fn(async () => {
+        sharedStarted();
+        return [];
+      }),
     });
 
-    const result = await service(repository).snapshot(storeId, now);
-
-    expect(result.evidence.metaRows).toBe(3);
-    expect(repository.getSharedExposureTargets).toHaveBeenCalledWith(
+    const snapshot = service(repository, buildCommerceRead(), sharedExposureRead).snapshot(
       storeId,
-      ['act_101'],
-      [observedAdId],
+      now,
     );
+
+    await expect(started).resolves.toBeUndefined();
+    expect(repository.getMetaEvidenceRows).toHaveBeenCalledTimes(1);
+    expect(sharedExposureRead.getTargets).toHaveBeenCalledTimes(1);
+
+    resolveMeta([]);
+    await snapshot;
   });
 
   it('uses compact Shopify economics and stock instead of raw nested histories', async () => {
