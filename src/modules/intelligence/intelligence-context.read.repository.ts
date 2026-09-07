@@ -28,8 +28,10 @@ type RawIntelligenceContext = {
  * Compact tenant/integration metadata required to plan one intelligence snapshot.
  *
  * One SQL round trip returns Store settings, provider connection state, latest successful Shopify
- * order-history readiness and latest selected-account Meta Insight freshness. This avoids ORM
- * relation fan-out and removes two standalone freshness queries from the snapshot critical path.
+ * order-history readiness and latest completed Meta Insights sync. SyncRun is the authoritative
+ * freshness boundary: it is marked SUCCEEDED only after all selected accounts in that run finish,
+ * while MAX(MetaInsightDaily.syncedAt) can scan a large fact table and can misrepresent a successful
+ * zero-write refresh as stale.
  */
 export class IntelligenceContextReadRepository {
   async getContext(storeId: string) {
@@ -68,13 +70,14 @@ export class IntelligenceContextReadRepository {
       ) history ON TRUE
       LEFT JOIN "MetaConnection" meta ON meta."storeId" = store."id"
       LEFT JOIN LATERAL (
-        SELECT MAX(insight."syncedAt") AS latest_synced_at
-        FROM "MetaInsightDaily" insight
-        INNER JOIN "MetaAdAccount" account ON account."id" = insight."adAccountId"
-        WHERE insight."level" = 'AD'
-          AND account."storeId" = store."id"
-          AND meta."selectedAdAccountIds" IS NOT NULL
-          AND account."metaAccountId" = ANY(meta."selectedAdAccountIds")
+        SELECT sync."finishedAt" AS latest_synced_at
+        FROM "SyncRun" sync
+        WHERE sync."metaConnectionId" = meta."id"
+          AND sync."provider" = 'META'
+          AND sync."resourceType" = 'AdInsightsDaily'
+          AND sync."status" = 'SUCCEEDED'
+        ORDER BY sync."createdAt" DESC
+        LIMIT 1
       ) meta_freshness ON TRUE
       WHERE store."id" = ${storeId}::uuid
       LIMIT 1
