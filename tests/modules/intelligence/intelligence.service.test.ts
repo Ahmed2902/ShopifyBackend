@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { IntelligenceCommerceReadRepository } from '../../../src/modules/intelligence/intelligence-commerce.read.repository.js';
 import type { IntelligenceRepository } from '../../../src/modules/intelligence/intelligence.repository.js';
 import { IntelligenceService } from '../../../src/modules/intelligence/intelligence.service.js';
 
@@ -52,11 +53,23 @@ function buildRepository(overrides: Partial<IntelligenceRepository> = {}) {
   } as unknown as IntelligenceRepository;
 }
 
+function buildCommerceRead(overrides: Partial<IntelligenceCommerceReadRepository> = {}) {
+  return {
+    getProductEvidenceAggregates: vi.fn().mockResolvedValue([]),
+    ...overrides,
+  } as unknown as IntelligenceCommerceReadRepository;
+}
+
+function service(
+  repository: IntelligenceRepository,
+  commerceReadRepository = buildCommerceRead(),
+) {
+  return new IntelligenceService(repository, commerceReadRepository);
+}
+
 describe('IntelligenceService', () => {
   it('computes a read-only snapshot without requiring persisted recommendations', async () => {
-    const service = new IntelligenceService(buildRepository());
-
-    const result = await service.snapshot(storeId, now);
+    const result = await service(buildRepository()).snapshot(storeId, now);
 
     expect(result.recommendations).toEqual([]);
     expect(result.dataQuality).toContainEqual(
@@ -79,7 +92,7 @@ describe('IntelligenceService', () => {
       getLatestOrderHistorySync: vi.fn().mockResolvedValue(null),
     });
 
-    const result = await new IntelligenceService(repository).snapshot(storeId, now);
+    const result = await service(repository).snapshot(storeId, now);
 
     expect(result.evidence.shopifyCommerceUsable).toBe(false);
     expect(result.dataQuality).toContainEqual(
@@ -94,7 +107,7 @@ describe('IntelligenceService', () => {
       getLatestMetaInsightSyncedAt: vi.fn().mockResolvedValue({ syncedAt: latest }),
     });
 
-    await new IntelligenceService(repository).snapshot(storeId, now);
+    await service(repository).snapshot(storeId, now);
 
     expect(repository.getMetaEvidenceRows).toHaveBeenCalledWith({
       storeId,
@@ -135,7 +148,7 @@ describe('IntelligenceService', () => {
       ] as never),
     });
 
-    const result = await new IntelligenceService(repository).snapshot(storeId, now);
+    const result = await service(repository).snapshot(storeId, now);
 
     expect(result.evidence.metaRows).toBe(3);
     expect(repository.getSharedExposureTargets).toHaveBeenCalledWith(
@@ -145,11 +158,47 @@ describe('IntelligenceService', () => {
     );
   });
 
+  it('uses compact Shopify product economics instead of raw line/refund/cost materialization', async () => {
+    const repository = buildRepository();
+    const commerceReadRepository = buildCommerceRead({
+      getProductEvidenceAggregates: vi.fn().mockResolvedValue([
+        {
+          productId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          shopifyProductId: 'gid://shopify/Product/1',
+          title: 'Core tee',
+          sourceOrderLineCount: 4,
+          soldUnits: 8,
+          refundedUnits: 2,
+          restockedUnits: 1,
+          netUnits: 6,
+          cogsUnits: 7,
+          revenue: 800,
+          refunds: 200,
+          cogs: 280,
+          costCoveredUnits: 7,
+        },
+      ]),
+    });
+
+    const result = await service(repository, commerceReadRepository).snapshot(storeId, now);
+
+    expect(result.evidence.commerceRows).toBe(4);
+    expect(result.evidence.products).toBe(1);
+    expect(commerceReadRepository.getProductEvidenceAggregates).toHaveBeenCalledWith({
+      storeId,
+      currency: 'USD',
+      from: expect.any(Date),
+      to: expect.any(Date),
+    });
+    expect(repository.getCommerceRows).not.toHaveBeenCalled();
+    expect(repository.getVariantCosts).not.toHaveBeenCalled();
+  });
+
   it('stores only the inventory trust setting', async () => {
     const repository = buildRepository();
-    const service = new IntelligenceService(repository);
+    const intelligence = service(repository);
 
-    await expect(service.updateInventoryMode(storeId, 'TRUSTED')).resolves.toMatchObject({
+    await expect(intelligence.updateInventoryMode(storeId, 'TRUSTED')).resolves.toMatchObject({
       inventoryIntelligenceMode: 'TRUSTED',
     });
     expect(repository.updateInventoryMode).toHaveBeenCalledWith(storeId, 'TRUSTED');
