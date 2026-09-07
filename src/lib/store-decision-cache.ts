@@ -1,7 +1,10 @@
 import { CachedReadCoordinator, RedisJsonCache } from './redis-json-cache.js';
 
-const DASHBOARD_CACHE_TTL_SECONDS = 30;
-const INTELLIGENCE_CACHE_TTL_SECONDS = 30;
+// Match the proven Systemly analytics cache window. Correctness does not depend on TTL expiry:
+// successful Store mutations advance the Store generation, and explicit `fresh` reads do the same.
+// The TTL is therefore only a bounded reuse window for unchanged analytical state.
+const DASHBOARD_CACHE_TTL_SECONDS = 120;
+const INTELLIGENCE_CACHE_TTL_SECONDS = 120;
 const MAX_IN_FLIGHT_READS = 250;
 
 /**
