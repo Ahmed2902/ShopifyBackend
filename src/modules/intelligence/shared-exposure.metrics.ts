@@ -1,4 +1,7 @@
-import type { IntelligenceCommerceEvidenceRow } from './intelligence-commerce.read.repository.js';
+import type {
+  IntelligenceCommerceEvidenceRow,
+  IntelligenceInventoryEvidenceRow,
+} from './intelligence-commerce.read.repository.js';
 import type { IntelligenceRepository } from './intelligence.repository.js';
 import type { SharedExposureEvidence, SharedExposureProductEvidence } from './intelligence.types.js';
 
@@ -41,6 +44,10 @@ function inventoryByProduct(rows: InventoryRow[]) {
   return stock;
 }
 
+function inventoryByProductFromAggregates(rows: IntelligenceInventoryEvidenceRow[]) {
+  return new Map(rows.map((row) => [row.productId, row.available]));
+}
+
 function depletionByProduct(rows: CommerceRow[]) {
   const depletion = new Map<string, number>();
   for (const row of rows) {
@@ -75,14 +82,13 @@ function finishSharedExposureEvidence(
   input: {
     targets: TargetRow[];
     metaRows: MetaRow[];
-    inventoryRows: InventoryRow[];
     inventoryTrusted: boolean;
     windowDays: number;
   },
+  stock: Map<string, number>,
   depletion: Map<string, number>,
 ): SharedExposureEvidence[] {
   const meta = metaByAd(input.metaRows);
-  const stock = inventoryByProduct(input.inventoryRows);
 
   return input.targets.flatMap((ad) => {
     if (ad.targetScope !== 'MULTI_PRODUCT' && ad.targetScope !== 'COLLECTION') return [];
@@ -189,19 +195,24 @@ export function buildSharedExposureEvidence(input: {
   inventoryTrusted: boolean;
   windowDays: number;
 }): SharedExposureEvidence[] {
-  return finishSharedExposureEvidence(input, depletionByProduct(input.commerceRows));
+  return finishSharedExposureEvidence(
+    input,
+    inventoryByProduct(input.inventoryRows),
+    depletionByProduct(input.commerceRows),
+  );
 }
 
 export function buildSharedExposureEvidenceFromAggregates(input: {
   targets: TargetRow[];
   metaRows: MetaRow[];
   commerceRows: IntelligenceCommerceEvidenceRow[];
-  inventoryRows: InventoryRow[];
+  inventoryRows: IntelligenceInventoryEvidenceRow[];
   inventoryTrusted: boolean;
   windowDays: number;
 }): SharedExposureEvidence[] {
   return finishSharedExposureEvidence(
     input,
+    inventoryByProductFromAggregates(input.inventoryRows),
     depletionByProductFromAggregates(input.commerceRows),
   );
 }
