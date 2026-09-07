@@ -1,5 +1,6 @@
 import { AppError } from '../../errors/app-error.js';
 import { IntelligenceCommerceReadRepository } from './intelligence-commerce.read.repository.js';
+import { IntelligenceContextReadRepository } from './intelligence-context.read.repository.js';
 import { completedWindow } from './intelligence.dates.js';
 import {
   buildCampaignEvidence,
@@ -62,10 +63,12 @@ export class IntelligenceService {
       new IntelligenceCommerceReadRepository(),
     private readonly sharedExposureReadRepository: IntelligenceSharedExposureReadRepository =
       new IntelligenceSharedExposureReadRepository(),
+    private readonly contextReadRepository: IntelligenceContextReadRepository =
+      new IntelligenceContextReadRepository(),
   ) {}
 
   async snapshot(storeId: string, now = new Date()) {
-    const store = await this.repository.getStoreContext(storeId);
+    const store = await this.contextReadRepository.getContext(storeId);
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
 
     const current = completedWindow(now, store.ianaTimezone, DECISION_WINDOW_DAYS);
@@ -84,7 +87,6 @@ export class IntelligenceService {
       mappings,
       inventoryRows,
       sharedTargets,
-      successfulOrderHistorySync,
       latestMetaInsightSync,
     ] = await Promise.all([
       this.repository.getMetaEvidenceRows({
@@ -110,7 +112,6 @@ export class IntelligenceService {
         from: productWindow.metaFrom,
         to: current.metaTo,
       }),
-      this.repository.getLatestOrderHistorySync(storeId),
       this.repository.getLatestMetaInsightSyncedAt(storeId, selectedMetaAccounts),
     ]);
 
@@ -171,7 +172,7 @@ export class IntelligenceService {
 
     const shopifyCommerceUsable =
       store.shopifyConnection?.status === 'ACTIVE' &&
-      (commerceSourceRowCount > 0 || successfulOrderHistorySync?.status === 'SUCCEEDED');
+      (commerceSourceRowCount > 0 || store.successfulOrderHistorySync?.status === 'SUCCEEDED');
     const productRuleWindow = { start: productWindow.metaFrom, end: productWindow.metaTo };
     for (const product of productResult.products) {
       const results = [
@@ -295,7 +296,7 @@ export class IntelligenceService {
   }
 
   private buildDataQuality(input: {
-    store: NonNullable<Awaited<ReturnType<IntelligenceRepository['getStoreContext']>>>;
+    store: NonNullable<Awaited<ReturnType<IntelligenceContextReadRepository['getContext']>>>;
     metaRowsCount: number;
     latestMetaSyncedAt: Date | null;
     inventoryRowsCount: number;
