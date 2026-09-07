@@ -10,31 +10,57 @@ function redisResponse(result: unknown, status = 200) {
   );
 }
 
+function installRedisMock(initial: Record<string, string> = {}) {
+  const values = new Map(Object.entries(initial));
+  const commands: string[][] = [];
+  const fetchMock = vi.fn().mockImplementation((_, init?: RequestInit) => {
+    const command = JSON.parse(String(init?.body)) as string[];
+    commands.push(command);
+    const [name, key] = command;
+
+    if (name === 'GET') return redisResponse(values.get(key!) ?? null);
+    if (name === 'SET') {
+      values.set(key!, command[2]!);
+      return redisResponse('OK');
+    }
+    if (name === 'DEL') {
+      const existed = values.delete(key!);
+      return redisResponse(existed ? 1 : 0);
+    }
+    if (name === 'INCR') {
+      const next = Number(values.get(key!) ?? '0') + 1;
+      values.set(key!, String(next));
+      return redisResponse(next);
+    }
+    return redisResponse(null);
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return { values, commands, fetchMock };
+}
+
 describe('RedisJsonCache / CachedReadCoordinator', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it('returns a cached value without executing the source loader', async () => {
-    const fetchMock = vi.fn().mockImplementation(() =>
-      redisResponse(JSON.stringify({ value: 42 })),
-    );
-    vi.stubGlobal('fetch', fetchMock);
+  it('returns a versioned cached value without executing the source loader', async () => {
+    const redis = installRedisMock({
+      'test-cache:v0:store:overview': JSON.stringify({ value: 42 }),
+    });
     const coordinator = new CachedReadCoordinator(new RedisJsonCache('test-cache', 30));
     const loader = vi.fn().mockResolvedValue({ value: 99 });
 
     await expect(coordinator.run('store:overview', loader)).resolves.toEqual({ value: 42 });
 
     expect(loader).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual([
-      'GET',
-      'test-cache:store:overview',
+    expect(redis.commands).toEqual([
+      ['GET', 'test-cache:version:store:overview'],
+      ['GET', 'test-cache:v0:store:overview'],
     ]);
   });
 
-  it('fails open when Redis is unavailable without retrying the same cache miss', async () => {
+  it('fails open when the cache generation cannot be resolved', async () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error('redis offline'));
     vi.stubGlobal('fetch', fetchMock);
     const coordinator = new CachedReadCoordinator(new RedisJsonCache('test-cache', 30));
@@ -43,40 +69,40 @@ describe('RedisJsonCache / CachedReadCoordinator', () => {
     await expect(coordinator.run('store:overview', loader)).resolves.toEqual({ value: 7 });
 
     expect(loader).toHaveBeenCalledTimes(1);
-    // One GET miss/failure + one best-effort SET. The source result still succeeds.
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Do not attempt a data GET/SET under a guessed version when the generation lookup failed.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('coalesces concurrent cache misses into one source computation', async () => {
+  it('coalesces concurrent cache misses before duplicating Redis or source work', async () => {
+    const redis = installRedisMock();
     let resolveLoader!: (value: { value: number }) => void;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
     const source = new Promise<{ value: number }>((resolve) => {
       resolveLoader = resolve;
     });
-    const fetchMock = vi.fn().mockImplementation((_, init?: RequestInit) => {
-      const command = JSON.parse(String(init?.body)) as string[];
-      if (command[0] === 'GET') return redisResponse(null);
-      return redisResponse('OK');
-    });
-    vi.stubGlobal('fetch', fetchMock);
     const coordinator = new CachedReadCoordinator(new RedisJsonCache('test-cache', 30));
-    const loader = vi.fn(() => source);
+    const loader = vi.fn(() => {
+      markStarted();
+      return source;
+    });
 
     const first = coordinator.run('store:overview', loader);
     const second = coordinator.run('store:overview', loader);
+    await started;
     resolveLoader({ value: 11 });
 
     await expect(Promise.all([first, second])).resolves.toEqual([{ value: 11 }, { value: 11 }]);
     expect(loader).toHaveBeenCalledTimes(1);
+    expect(redis.commands.map((command) => command[0])).toEqual(['GET', 'GET', 'SET']);
   });
 
-  it('fresh reads bypass Redis GET, recompute once, and refresh the cached value', async () => {
-    const commands: string[][] = [];
-    const fetchMock = vi.fn().mockImplementation((_, init?: RequestInit) => {
-      const command = JSON.parse(String(init?.body)) as string[];
-      commands.push(command);
-      return redisResponse(command[0] === 'SET' ? 'OK' : null);
+  it('fresh reads advance the generation, recompute once, and populate only the new generation', async () => {
+    const redis = installRedisMock({
+      'test-cache:v0:store:overview': JSON.stringify({ value: 1 }),
     });
-    vi.stubGlobal('fetch', fetchMock);
     const coordinator = new CachedReadCoordinator(new RedisJsonCache('test-cache', 30));
     const loader = vi.fn().mockResolvedValue({ value: 123 });
 
@@ -85,13 +111,92 @@ describe('RedisJsonCache / CachedReadCoordinator', () => {
     ).resolves.toEqual({ value: 123 });
 
     expect(loader).toHaveBeenCalledTimes(1);
-    expect(commands.map((command) => command[0])).toEqual(['SET']);
-    expect(commands[0]).toEqual([
-      'SET',
-      'test-cache:store:overview',
-      JSON.stringify({ value: 123 }),
-      'EX',
-      '30',
-    ]);
+    expect(redis.commands.map((command) => command[0])).toEqual(['INCR', 'SET']);
+    expect(redis.values.get('test-cache:version:store:overview')).toBe('1');
+    expect(redis.values.get('test-cache:v1:store:overview')).toBe(JSON.stringify({ value: 123 }));
+  });
+
+  it('does not let Refresh join an older in-flight computation', async () => {
+    const redis = installRedisMock();
+    let resolveOld!: (value: { value: number }) => void;
+    let markOldStarted!: () => void;
+    const oldStarted = new Promise<void>((resolve) => {
+      markOldStarted = resolve;
+    });
+    const oldSource = new Promise<{ value: number }>((resolve) => {
+      resolveOld = resolve;
+    });
+    const coordinator = new CachedReadCoordinator(new RedisJsonCache('test-cache', 30));
+    const oldLoader = vi.fn(() => {
+      markOldStarted();
+      return oldSource;
+    });
+    const freshLoader = vi.fn().mockResolvedValue({ value: 2 });
+
+    const oldRead = coordinator.run('store:overview', oldLoader);
+    await oldStarted;
+
+    await expect(
+      coordinator.run('store:overview', freshLoader, { fresh: true }),
+    ).resolves.toEqual({ value: 2 });
+    expect(freshLoader).toHaveBeenCalledTimes(1);
+
+    resolveOld({ value: 1 });
+    await expect(oldRead).resolves.toEqual({ value: 1 });
+
+    const fallback = vi.fn().mockResolvedValue({ value: 99 });
+    await expect(coordinator.run('store:overview', fallback)).resolves.toEqual({ value: 2 });
+    expect(fallback).not.toHaveBeenCalled();
+    // The old computation may finish, but only under v0. Readers now resolve v1.
+    expect(redis.values.get('test-cache:v0:store:overview')).toBe(JSON.stringify({ value: 1 }));
+    expect(redis.values.get('test-cache:v1:store:overview')).toBe(JSON.stringify({ value: 2 }));
+  });
+
+  it('versioned invalidation cannot be undone by an older loader finishing afterward', async () => {
+    const redis = installRedisMock();
+    let resolveOld!: (value: { value: number }) => void;
+    let markOldStarted!: () => void;
+    const oldStarted = new Promise<void>((resolve) => {
+      markOldStarted = resolve;
+    });
+    const oldSource = new Promise<{ value: number }>((resolve) => {
+      resolveOld = resolve;
+    });
+    const coordinator = new CachedReadCoordinator(new RedisJsonCache('test-cache', 30));
+
+    const oldRead = coordinator.run('store:overview', () => {
+      markOldStarted();
+      return oldSource;
+    });
+    await oldStarted;
+    await coordinator.invalidate('store:overview');
+    resolveOld({ value: 1 });
+    await oldRead;
+
+    const loader = vi.fn().mockResolvedValue({ value: 3 });
+    await expect(coordinator.run('store:overview', loader)).resolves.toEqual({ value: 3 });
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(redis.values.get('test-cache:v0:store:overview')).toBe(JSON.stringify({ value: 1 }));
+    expect(redis.values.get('test-cache:v1:store:overview')).toBe(JSON.stringify({ value: 3 }));
+  });
+
+  it('can invalidate all query variants through one store-scoped generation', async () => {
+    const redis = installRedisMock();
+    const coordinator = new CachedReadCoordinator(new RedisJsonCache('test-cache', 30));
+    const firstLoader = vi.fn().mockResolvedValue({ range: '30d' });
+    const secondLoader = vi.fn().mockResolvedValue({ range: '7d' });
+
+    await coordinator.run('store:30d', firstLoader, { versionScope: 'store-1' });
+    await coordinator.run('store:7d', secondLoader, { versionScope: 'store-1' });
+    expect(firstLoader).toHaveBeenCalledTimes(1);
+    expect(secondLoader).toHaveBeenCalledTimes(1);
+
+    await coordinator.invalidate('store-1');
+
+    await coordinator.run('store:30d', firstLoader, { versionScope: 'store-1' });
+    await coordinator.run('store:7d', secondLoader, { versionScope: 'store-1' });
+    expect(firstLoader).toHaveBeenCalledTimes(2);
+    expect(secondLoader).toHaveBeenCalledTimes(2);
+    expect(redis.values.get('test-cache:version:store-1')).toBe('1');
   });
 });
