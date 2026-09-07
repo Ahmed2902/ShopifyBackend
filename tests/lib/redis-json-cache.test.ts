@@ -19,6 +19,13 @@ function installRedisMock(initial: Record<string, string> = {}) {
     const [name, key] = command;
 
     if (name === 'GET') return redisResponse(values.get(key!) ?? null);
+    if (name === 'EVAL') {
+      const versionKey = command[3]!;
+      const valuePrefix = command[4]!;
+      const logicalKey = command[5]!;
+      const version = values.get(versionKey) ?? '0';
+      return redisResponse([version, values.get(`${valuePrefix}${version}:${logicalKey}`) ?? null]);
+    }
     if (name === 'SET') {
       values.set(key!, command[2]!);
       return redisResponse('OK');
@@ -44,7 +51,7 @@ describe('RedisJsonCache / CachedReadCoordinator', () => {
     vi.restoreAllMocks();
   });
 
-  it('returns a versioned cached value without executing the source loader', async () => {
+  it('returns a versioned cached value with one Redis REST round trip', async () => {
     const redis = installRedisMock({
       'test-cache:v0:store:overview': JSON.stringify({ value: 42 }),
     });
@@ -54,13 +61,17 @@ describe('RedisJsonCache / CachedReadCoordinator', () => {
     await expect(coordinator.run('store:overview', loader)).resolves.toEqual({ value: 42 });
 
     expect(loader).not.toHaveBeenCalled();
-    expect(redis.commands).toEqual([
-      ['GET', 'test-cache:version:store:overview'],
-      ['GET', 'test-cache:v0:store:overview'],
+    expect(redis.commands).toHaveLength(1);
+    expect(redis.commands[0]?.[0]).toBe('EVAL');
+    expect(redis.commands[0]?.slice(2)).toEqual([
+      '1',
+      'test-cache:version:store:overview',
+      'test-cache:v',
+      'store:overview',
     ]);
   });
 
-  it('fails open when the cache generation cannot be resolved', async () => {
+  it('fails open when the versioned cache read cannot be resolved', async () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error('redis offline'));
     vi.stubGlobal('fetch', fetchMock);
     const coordinator = new CachedReadCoordinator(new RedisJsonCache('test-cache', 30));
@@ -69,7 +80,7 @@ describe('RedisJsonCache / CachedReadCoordinator', () => {
     await expect(coordinator.run('store:overview', loader)).resolves.toEqual({ value: 7 });
 
     expect(loader).toHaveBeenCalledTimes(1);
-    // Do not attempt a data GET/SET under a guessed version when the generation lookup failed.
+    // No guessed version and no cache write after a failed version+value read.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -96,7 +107,7 @@ describe('RedisJsonCache / CachedReadCoordinator', () => {
 
     await expect(Promise.all([first, second])).resolves.toEqual([{ value: 11 }, { value: 11 }]);
     expect(loader).toHaveBeenCalledTimes(1);
-    expect(redis.commands.map((command) => command[0])).toEqual(['GET', 'GET', 'SET']);
+    expect(redis.commands.map((command) => command[0])).toEqual(['EVAL', 'SET']);
   });
 
   it('fresh reads advance the generation, recompute once, and populate only the new generation', async () => {
