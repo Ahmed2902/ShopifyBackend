@@ -68,6 +68,7 @@ function buildRepository(overrides: Partial<AnalyticsRepository> = {}) {
 function buildAdvertisingRead(overrides: Partial<AdvertisingAnalyticsReadRepository> = {}) {
   return {
     getOverviewMetricRows: vi.fn().mockResolvedValue([]),
+    getOverviewAggregateRows: vi.fn().mockResolvedValue([]),
     getOverviewMeta: vi.fn().mockResolvedValue({
       campaigns: 0,
       ads: 0,
@@ -197,39 +198,21 @@ describe('AnalyticsWorkspace', () => {
     expect(advertisingRead.getOverviewMeta).toHaveBeenCalledWith(storeId, ['act_101']);
   });
 
-  it('uses compact advertising overview rows while preserving purchase priority and entity counts', async () => {
+  it('uses compact advertising overview aggregates while preserving metrics and entity counts', async () => {
     const advertisingRead = buildAdvertisingRead({
-      getOverviewMetricRows: vi.fn().mockResolvedValue([
+      getOverviewAggregateRows: vi.fn().mockResolvedValue([
         {
-          date: new Date('2026-09-01T00:00:00.000Z'),
+          period: 'CURRENT',
           accountCurrency: 'USD',
           spend: 100,
-          impressions: 1_000n,
-          clicks: 100n,
-          frequency: 1.5,
-          attributionSetting: '7d_click_1d_view',
-          actions: [
-            {
-              kind: 'ACTION',
-              actionType: 'offsite_conversion.fb_pixel_purchase',
-              actionDestination: null,
-              value: 2,
-            },
-            {
-              kind: 'ACTION',
-              actionType: 'purchase',
-              actionDestination: null,
-              value: 7,
-            },
-            {
-              kind: 'ACTION_VALUE',
-              actionType: 'offsite_conversion.fb_pixel_purchase',
-              actionDestination: null,
-              value: 240,
-            },
-          ],
+          impressions: 1_000,
+          clicks: 100,
+          purchases: 2,
+          purchaseValue: 240,
+          weightedFrequency: 1_500,
+          attributionSettings: ['7d_click_1d_view'],
         },
-      ] as never),
+      ]),
       getOverviewMeta: vi.fn().mockResolvedValue({
         campaigns: 4,
         ads: 18,
@@ -247,7 +230,13 @@ describe('AnalyticsWorkspace', () => {
     expect(result.entityCounts).toEqual({ campaigns: 4, ads: 18 });
     expect(result.currencies[0]).toMatchObject({
       currency: 'USD',
-      current: { spend: 100, purchases: 2, purchaseValue: 240, providerRoas: 2.4 },
+      current: {
+        spend: 100,
+        purchases: 2,
+        purchaseValue: 240,
+        providerRoas: 2.4,
+        averageDailyFrequency: 1.5,
+      },
     });
     expect(result.attributionSettings).toEqual(['7d_click_1d_view']);
   });
