@@ -3,12 +3,12 @@ import type { NextFunction, Request, Response } from 'express';
 import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
 
-const passthrough = (_req: Request, _res: Response, next: NextFunction) => next();
-
 vi.mock('../../../src/modules/billing/billing.middleware.js', () => ({
-  requireActiveSubscription: passthrough,
-  requireBillingEntitlement: () => passthrough,
-  requireAdProviderEntitlement: () => passthrough,
+  requireActiveSubscription: (_req: Request, _res: Response, next: NextFunction) => next(),
+  requireBillingEntitlement:
+    () => (_req: Request, _res: Response, next: NextFunction) => next(),
+  requireAdProviderEntitlement:
+    () => (_req: Request, _res: Response, next: NextFunction) => next(),
 }));
 
 import { app } from '../../../src/app.js';
