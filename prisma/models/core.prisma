@@ -15,6 +15,24 @@ enum InventoryIntelligenceMode {
   UNRELIABLE
 }
 
+enum BillingPlan {
+  ESSENTIALS
+  PRO
+}
+
+enum BillingStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+enum BillingProvider {
+  INTERNAL
+  SHOPIFY
+}
+
 model User {
   id              String   @id @default(uuid()) @db.Uuid
   email           String   @unique
@@ -79,6 +97,26 @@ model StoreMembership {
   @@index([storeId, role])
 }
 
+model StoreSubscription {
+  id                       String          @id @default(uuid()) @db.Uuid
+  storeId                  String          @unique @db.Uuid
+  selectedPlan             BillingPlan     @default(ESSENTIALS)
+  status                   BillingStatus   @default(TRIALING)
+  provider                 BillingProvider @default(INTERNAL)
+  trialStartedAt           DateTime
+  trialEndsAt              DateTime
+  currentPeriodEndsAt      DateTime?
+  canceledAt               DateTime?
+  shopifyAppSubscriptionId String?         @unique
+  createdAt                DateTime        @default(now())
+  updatedAt                DateTime        @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([status, trialEndsAt])
+  @@index([provider, status])
+}
+
 model Store {
   id                           String                    @id @default(uuid()) @db.Uuid
   shopifyShopId                String                    @unique
@@ -95,6 +133,7 @@ model Store {
   createdAt                    DateTime                  @default(now())
   updatedAt                    DateTime                  @updatedAt
 
+  subscription                    StoreSubscription?
   memberships                     StoreMembership[]
   shopifyConnection               ShopifyConnection?
   metaConnection                  MetaConnection?
