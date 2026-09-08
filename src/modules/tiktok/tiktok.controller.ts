@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../../errors/app-error.js';
+import { billingService } from '../billing/billing.service.js';
 import {
   tiktokAdGroupListQuerySchema,
   tiktokAdListQuerySchema,
@@ -49,6 +50,9 @@ export class TikTokController {
         code: req.query.code,
         state: rawState,
       });
+      // Re-check after the external OAuth round trip so Essentials cannot end up
+      // with two active paid channels through concurrent authorization flows.
+      await billingService.requireAdProvider(context.storeId, 'TIKTOK');
       const result = await this.service.completeOAuthInstall(
         query.auth_code ?? query.code!,
         query.state,
