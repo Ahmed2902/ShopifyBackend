@@ -71,4 +71,16 @@ describe('Shopify frontend read routes', () => {
     expect(response.status).toBe(403);
     expect(response.body.error.code).toBe('FORBIDDEN');
   });
+
+  it('keeps disconnect owner-or-admin only', async () => {
+    const storeId = randomUUID();
+    const token = await issueAccessToken(randomUUID(), [{ storeId, role: 'MEMBER' }]);
+
+    const response = await request(app)
+      .post(`/v1/stores/${storeId}/integrations/shopify/disconnect`)
+      .set('authorization', `Bearer ${token}`);
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe('FORBIDDEN');
+  });
 });
