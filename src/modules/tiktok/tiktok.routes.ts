@@ -1,7 +1,10 @@
 import { Router } from 'express';
-import { requireAdProviderEntitlement } from '../billing/billing.middleware.js';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireRole, requireStoreMembership } from '../../middleware/store.middleware.js';
+import {
+  requireActiveSubscription,
+  requireAdProviderEntitlement,
+} from '../billing/billing.middleware.js';
 import { tiktokMappingController } from './mapping/tiktok-mapping.controller.js';
 import { tiktokController } from './tiktok.controller.js';
 import { tiktokWebhookController } from './webhook/tiktok-webhook.controller.js';
@@ -14,8 +17,9 @@ tiktokRouter.post('/webhooks', tiktokWebhookController.receive);
 
 export const tiktokStoreRouter = Router({ mergeParams: true });
 tiktokStoreRouter.use(requireAuth, requireStoreMembership);
-
 tiktokStoreRouter.get('/status', tiktokController.status);
+tiktokStoreRouter.use(requireActiveSubscription);
+
 tiktokStoreRouter.get('/assets', ownerOrAdmin, tiktokController.assets);
 tiktokStoreRouter.get('/campaigns', tiktokController.campaigns);
 tiktokStoreRouter.get('/adgroups', tiktokController.adGroups);
