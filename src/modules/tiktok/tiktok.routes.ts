@@ -1,6 +1,10 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireRole, requireStoreMembership } from '../../middleware/store.middleware.js';
+import {
+  requireActiveSubscription,
+  requireAdProviderEntitlement,
+} from '../billing/billing.middleware.js';
 import { tiktokMappingController } from './mapping/tiktok-mapping.controller.js';
 import { tiktokController } from './tiktok.controller.js';
 import { tiktokWebhookController } from './webhook/tiktok-webhook.controller.js';
@@ -14,7 +18,10 @@ tiktokRouter.post('/webhooks', tiktokWebhookController.receive);
 export const tiktokStoreRouter = Router({ mergeParams: true });
 tiktokStoreRouter.use(requireAuth, requireStoreMembership);
 
+// Status remains readable after access expires; paid provider data/actions do not.
 tiktokStoreRouter.get('/status', tiktokController.status);
+tiktokStoreRouter.use(requireActiveSubscription);
+
 tiktokStoreRouter.get('/assets', ownerOrAdmin, tiktokController.assets);
 tiktokStoreRouter.get('/campaigns', tiktokController.campaigns);
 tiktokStoreRouter.get('/adgroups', tiktokController.adGroups);
@@ -24,7 +31,12 @@ tiktokStoreRouter.get('/catalogs', tiktokController.catalogs);
 tiktokStoreRouter.get('/catalogs/:catalogId/items', tiktokController.catalogItems);
 tiktokStoreRouter.get('/insights', tiktokController.insights);
 
-tiktokStoreRouter.post('/install', ownerOrAdmin, tiktokController.startInstall);
+tiktokStoreRouter.post(
+  '/install',
+  ownerOrAdmin,
+  requireAdProviderEntitlement('TIKTOK'),
+  tiktokController.startInstall,
+);
 tiktokStoreRouter.post('/configure', ownerOrAdmin, tiktokController.configure);
 tiktokStoreRouter.post('/sync', ownerOrAdmin, tiktokController.sync);
 tiktokStoreRouter.post('/catalogs/configure', ownerOrAdmin, tiktokController.configureCatalogs);
