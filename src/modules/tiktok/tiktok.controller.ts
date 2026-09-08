@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../../errors/app-error.js';
+import { billingService, type BillingService } from '../billing/billing.service.js';
 import {
   tiktokAdGroupListQuerySchema,
   tiktokAdListQuerySchema,
@@ -27,8 +28,13 @@ import {
   verifyTikTokOAuthState,
 } from './tiktok.utils.js';
 
+type ProviderBillingGuard = Pick<BillingService, 'requireAdProvider' | 'confirmAdProvider'>;
+
 export class TikTokController {
-  constructor(private readonly service: TikTokService) {}
+  constructor(
+    private readonly service: TikTokService,
+    private readonly billing?: ProviderBillingGuard,
+  ) {}
 
   startInstall = async (req: Request, res: Response) => {
     res.status(200).json(await this.service.startOAuthInstall(req.context.userId!, req.context.storeId!));
@@ -49,10 +55,12 @@ export class TikTokController {
         code: req.query.code,
         state: rawState,
       });
+      if (this.billing) await this.billing.requireAdProvider(context.storeId, 'TIKTOK');
       const result = await this.service.completeOAuthInstall(
         query.auth_code ?? query.code!,
         query.state,
       );
+      if (this.billing) await this.billing.confirmAdProvider(result.storeId, 'TIKTOK');
       res.redirect(303, buildTikTokSuccessRedirect(result.storeId));
     } catch (error) {
       const code = error instanceof AppError ? error.code : 'TIKTOK_OAUTH_FAILED';
@@ -148,4 +156,4 @@ export class TikTokController {
   };
 }
 
-export const tiktokController = new TikTokController(tiktokService);
+export const tiktokController = new TikTokController(tiktokService, billingService);

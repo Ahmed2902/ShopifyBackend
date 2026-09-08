@@ -19,7 +19,15 @@ export class IntelligenceController {
   snapshot = async (req: Request, res: Response) => {
     const storeId = req.context.storeId!;
     const { fresh } = intelligenceReadQuerySchema.parse(req.query);
-    res.status(200).json(await this.snapshotReads.read(storeId, { fresh }));
+    const snapshot = await this.snapshotReads.read(storeId, { fresh });
+    const recommendationLimit = Math.max(
+      1,
+      Number(res.locals.billing?.entitlements?.recommendationLimit ?? 10),
+    );
+    res.status(200).json({
+      ...snapshot,
+      recommendations: snapshot.recommendations.slice(0, recommendationLimit),
+    });
   };
 
   settings = async (req: Request, res: Response) => {

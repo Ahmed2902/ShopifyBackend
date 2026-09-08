@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireRole, requireStoreMembership } from '../../middleware/store.middleware.js';
+import { requireAdProviderEntitlement } from '../billing/billing.middleware.js';
 import { metaMappingController } from './mapping/meta-mapping.controller.js';
 import { metaController } from './meta.controller.js';
 import { metaTrackingController } from './tracking/meta-tracking.controller.js';
@@ -13,7 +14,11 @@ metaRouter.get('/callback', metaController.completeInstall);
 export const metaStoreRouter = Router({ mergeParams: true });
 metaStoreRouter.use(requireAuth, requireStoreMembership);
 
+// Keep status readable after a trial expires or when Essentials selected TikTok.
 metaStoreRouter.get('/status', metaController.status);
+// Every other Meta read/write is paid-provider access and must respect the selected channel.
+metaStoreRouter.use(requireAdProviderEntitlement('META'));
+
 metaStoreRouter.get('/assets', ownerOrAdmin, metaController.assets);
 metaStoreRouter.get('/ad-accounts', metaController.adAccounts);
 metaStoreRouter.get('/campaigns', metaController.campaigns);
