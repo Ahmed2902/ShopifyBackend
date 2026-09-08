@@ -21,7 +21,7 @@ import {
   verifyMetaOAuthState,
 } from './meta.utils.js';
 
-type ProviderBillingGuard = Pick<BillingService, 'requireAdProvider'>;
+type ProviderBillingGuard = Pick<BillingService, 'requireAdProvider' | 'confirmAdProvider'>;
 
 export class MetaController {
   constructor(
@@ -46,11 +46,9 @@ export class MetaController {
 
     try {
       const query = metaCallbackSchema.parse({ code: req.query.code, state: rawState });
-      // Re-check after the external OAuth round trip so a one-channel plan cannot be
-      // bypassed by opening two provider flows concurrently. Controller unit tests can
-      // omit the guard; the exported production singleton always injects it.
       if (this.billing) await this.billing.requireAdProvider(context.storeId, 'META');
       const result = await this.service.completeOAuthInstall(query.code, query.state);
+      if (this.billing) await this.billing.confirmAdProvider(result.storeId, 'META');
       res.redirect(303, buildMetaSuccessRedirect(result.storeId));
     } catch (error) {
       const code = error instanceof AppError ? error.code : 'META_OAUTH_FAILED';
