@@ -59,20 +59,16 @@ describe('TikTok lazy runtime configuration', () => {
     expectNotConfigured(() => requireTikTokStateSecret());
   });
 
-  it('rejects production provider use when only localhost-derived callback URLs would be available', () => {
+  it('rejects production provider use when the canonical backend URL points to localhost', () => {
     env.NODE_ENV = 'production';
-    env.APP_URL = undefined;
-    env.TIKTOK_REDIRECT_URI = undefined;
-    env.TIKTOK_WEBHOOK_URL_EXPLICIT = false;
+    env.APP_URL = 'http://localhost:3001';
 
     expectNotConfigured(() => requireTikTokAppCredentials());
   });
 
-  it('allows explicit public TikTok URLs when production does not use APP_URL', () => {
+  it('allows production provider use with a public canonical backend URL', () => {
     env.NODE_ENV = 'production';
-    env.APP_URL = undefined;
-    env.TIKTOK_REDIRECT_URI = 'https://api.example.com/v1/integrations/tiktok/callback';
-    env.TIKTOK_WEBHOOK_URL_EXPLICIT = true;
+    env.APP_URL = 'https://api.example.com';
 
     expect(requireTikTokAppCredentials()).toEqual({
       appId: original.appId,
