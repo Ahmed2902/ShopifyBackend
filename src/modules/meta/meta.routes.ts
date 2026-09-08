@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requireAdProviderEntitlement } from '../billing/billing.middleware.js';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireRole, requireStoreMembership } from '../../middleware/store.middleware.js';
 import { metaMappingController } from './mapping/meta-mapping.controller.js';
@@ -29,7 +30,7 @@ metaStoreRouter.get('/mappings/ads/:adId/suggestions', metaMappingController.sug
 metaStoreRouter.get('/tracking', ownerOrAdmin, metaTrackingController.audit);
 metaStoreRouter.get('/tracking/manual', ownerOrAdmin, metaTrackingController.manualConfiguration);
 
-metaStoreRouter.post('/install', ownerOrAdmin, metaController.startInstall);
+metaStoreRouter.post('/install', ownerOrAdmin, requireAdProviderEntitlement('META'), metaController.startInstall);
 metaStoreRouter.post('/configure', ownerOrAdmin, metaController.configure);
 metaStoreRouter.post('/catalogs/configure', ownerOrAdmin, metaController.configureCatalogs);
 metaStoreRouter.post('/sync', ownerOrAdmin, metaController.sync);
