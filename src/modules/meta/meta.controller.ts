@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../../errors/app-error.js';
-import { billingService } from '../billing/billing.service.js';
+import { billingService, type BillingService } from '../billing/billing.service.js';
 import {
   metaAdListQuerySchema,
   metaAdParamsSchema,
@@ -21,8 +21,13 @@ import {
   verifyMetaOAuthState,
 } from './meta.utils.js';
 
+type ProviderBillingGuard = Pick<BillingService, 'requireAdProvider'>;
+
 export class MetaController {
-  constructor(private readonly service: MetaService) {}
+  constructor(
+    private readonly service: MetaService,
+    private readonly billing?: ProviderBillingGuard,
+  ) {}
 
   startInstall = async (req: Request, res: Response) => {
     res.status(200).json(
@@ -42,8 +47,9 @@ export class MetaController {
     try {
       const query = metaCallbackSchema.parse({ code: req.query.code, state: rawState });
       // Re-check after the external OAuth round trip so a one-channel plan cannot be
-      // bypassed by opening two provider flows concurrently.
-      await billingService.requireAdProvider(context.storeId, 'META');
+      // bypassed by opening two provider flows concurrently. Controller unit tests can
+      // omit the guard; the exported production singleton always injects it.
+      if (this.billing) await this.billing.requireAdProvider(context.storeId, 'META');
       const result = await this.service.completeOAuthInstall(query.code, query.state);
       res.redirect(303, buildMetaSuccessRedirect(result.storeId));
     } catch (error) {
@@ -138,4 +144,4 @@ export class MetaController {
   };
 }
 
-export const metaController = new MetaController(metaService);
+export const metaController = new MetaController(metaService, billingService);
