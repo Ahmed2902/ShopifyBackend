@@ -1,7 +1,10 @@
 import { AppError } from '../../errors/app-error.js';
 import { logger } from '../../lib/logger.js';
 import type { StoreAccessClaim } from '../../types/auth.js';
-import { authEmailSender, type AuthEmailSender } from './auth.email.js';
+import {
+  authEmailDeliveryService,
+  type AuthEmailDeliveryService,
+} from './auth.email-delivery.js';
 import { AuthRepository, type AuthTokenKind } from './auth.repository.js';
 import type {
   EmailRequestInput,
@@ -51,7 +54,7 @@ function invalidPasswordResetTokenError() {
 export class AuthService {
   constructor(
     private readonly repository: AuthRepository,
-    private readonly emailSender: AuthEmailSender = authEmailSender,
+    private readonly emailDelivery: AuthEmailDeliveryService = authEmailDeliveryService,
   ) {}
 
   private async createSession(
@@ -113,25 +116,21 @@ export class AuthService {
 
     const token = createAuthToken();
     const tokenHash = hashAuthToken(token);
-    await this.repository.replaceAuthToken({
-      userId: input.userId,
-      type: input.type,
-      tokenHash,
-      expiresAt: authTokenExpiry(input.ttlMs),
-    });
 
     try {
-      if (input.type === 'EMAIL_VERIFICATION') {
-        await this.emailSender.sendVerificationEmail(input.email, token);
-      } else {
-        await this.emailSender.sendPasswordResetEmail(input.email, token);
-      }
-      return true;
+      const deliveryId = await this.emailDelivery.issueAndQueue({
+        userId: input.userId,
+        email: input.email,
+        type: input.type,
+        token,
+        tokenHash,
+        expiresAt: authTokenExpiry(input.ttlMs),
+      });
+      return await this.emailDelivery.deliverNow(deliveryId);
     } catch (error) {
-      await this.repository.deleteAuthTokenByHash(tokenHash).catch(() => undefined);
       logger.warn(
         { err: error, userId: input.userId, type: input.type },
-        'Auth email delivery failed',
+        'Auth email could not be queued for delivery',
       );
       return false;
     }

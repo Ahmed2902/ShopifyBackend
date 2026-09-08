@@ -9,6 +9,14 @@ enum AuthTokenType {
   PASSWORD_RESET
 }
 
+enum AuthEmailDeliveryStatus {
+  PENDING
+  PROCESSING
+  SENT
+  SUPERSEDED
+  DEAD
+}
+
 enum InventoryIntelligenceMode {
   DISABLED
   TRUSTED
@@ -25,9 +33,10 @@ model User {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  memberships StoreMembership[]
-  sessions    RefreshSession[]
-  authTokens  AuthToken[]
+  memberships   StoreMembership[]
+  sessions      RefreshSession[]
+  authTokens    AuthToken[]
+  emailDeliveries AuthEmailDelivery[]
 
   @@index([createdAt])
 }
@@ -62,6 +71,29 @@ model AuthToken {
 
   @@unique([userId, type])
   @@index([expiresAt])
+}
+
+model AuthEmailDelivery {
+  id                  String                  @id @default(uuid()) @db.Uuid
+  userId              String                  @db.Uuid
+  type                AuthTokenType
+  recipient           String
+  tokenHash           String                  @unique
+  tokenCiphertext     String?
+  status              AuthEmailDeliveryStatus @default(PENDING)
+  attempts            Int                     @default(0)
+  nextAttemptAt       DateTime                @default(now())
+  processingStartedAt DateTime?
+  sentAt              DateTime?
+  lastError           String?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt, createdAt])
+  @@index([processingStartedAt])
+  @@index([userId, type, createdAt])
 }
 
 model StoreMembership {

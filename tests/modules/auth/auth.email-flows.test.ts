@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AuthEmailSender } from '../../../src/modules/auth/auth.email.js';
+import type { AuthEmailDeliveryService } from '../../../src/modules/auth/auth.email-delivery.js';
 import type { AuthRepository } from '../../../src/modules/auth/auth.repository.js';
 import { AuthService } from '../../../src/modules/auth/auth.service.js';
 import { hashAuthToken, hashPassword } from '../../../src/modules/auth/auth.utils.js';
@@ -9,8 +9,6 @@ function createService() {
     findUserByEmail: vi.fn(),
     createUser: vi.fn(),
     findLatestAuthToken: vi.fn().mockResolvedValue(null),
-    replaceAuthToken: vi.fn().mockResolvedValue({}),
-    deleteAuthTokenByHash: vi.fn().mockResolvedValue({ count: 1 }),
     hasValidAuthToken: vi.fn().mockResolvedValue(true),
     consumeEmailVerificationToken: vi.fn(),
     resetPasswordWithToken: vi.fn(),
@@ -21,24 +19,25 @@ function createService() {
     rotateSession: vi.fn(),
     revokeSessionByTokenHash: vi.fn(),
   };
-  const emailSender = {
-    sendVerificationEmail: vi.fn().mockResolvedValue(undefined),
-    sendPasswordResetEmail: vi.fn().mockResolvedValue(undefined),
+  const emailDelivery = {
+    issueAndQueue: vi.fn().mockResolvedValue('delivery-1'),
+    deliverNow: vi.fn().mockResolvedValue(true),
+    processDue: vi.fn(),
   };
 
   return {
     repository,
-    emailSender,
+    emailDelivery,
     service: new AuthService(
       repository as unknown as AuthRepository,
-      emailSender as unknown as AuthEmailSender,
+      emailDelivery as unknown as AuthEmailDeliveryService,
     ),
   };
 }
 
 describe('AuthService email verification', () => {
-  it('registers a password user without creating a session and sends verification', async () => {
-    const { repository, emailSender, service } = createService();
+  it('registers a password user without creating a session and queues verification before delivery', async () => {
+    const { repository, emailDelivery, service } = createService();
     repository.findUserByEmail.mockResolvedValue(null);
     repository.createUser.mockResolvedValue({
       id: '11111111-1111-4111-8111-111111111111',
@@ -58,28 +57,30 @@ describe('AuthService email verification', () => {
       user: { email: 'owner@example.com' },
     });
     expect(repository.createRefreshSession).not.toHaveBeenCalled();
-    expect(emailSender.sendVerificationEmail).toHaveBeenCalledOnce();
+    expect(emailDelivery.issueAndQueue).toHaveBeenCalledOnce();
+    expect(emailDelivery.deliverNow).toHaveBeenCalledWith('delivery-1');
 
-    const rawToken = emailSender.sendVerificationEmail.mock.calls[0]![1] as string;
-    expect(rawToken.length).toBeGreaterThan(20);
-    expect(repository.replaceAuthToken).toHaveBeenCalledWith(
+    const queued = emailDelivery.issueAndQueue.mock.calls[0]![0];
+    expect(queued.token.length).toBeGreaterThan(20);
+    expect(queued).toEqual(
       expect.objectContaining({
         userId: '11111111-1111-4111-8111-111111111111',
+        email: 'owner@example.com',
         type: 'EMAIL_VERIFICATION',
-        tokenHash: hashAuthToken(rawToken),
+        tokenHash: hashAuthToken(queued.token),
       }),
     );
   });
 
-  it('does not leave an unusable verification token when email delivery fails', async () => {
-    const { repository, emailSender, service } = createService();
+  it('reports immediate delivery failure while leaving the queued delivery available for retry', async () => {
+    const { repository, emailDelivery, service } = createService();
     repository.findUserByEmail.mockResolvedValue(null);
     repository.createUser.mockResolvedValue({
       id: '22222222-2222-4222-8222-222222222222',
       email: 'owner@example.com',
       name: null,
     });
-    emailSender.sendVerificationEmail.mockRejectedValue(new Error('provider unavailable'));
+    emailDelivery.deliverNow.mockResolvedValue(false);
 
     const result = await service.register({
       email: 'owner@example.com',
@@ -87,7 +88,8 @@ describe('AuthService email verification', () => {
     });
 
     expect(result.verificationEmailSent).toBe(false);
-    expect(repository.deleteAuthTokenByHash).toHaveBeenCalledOnce();
+    expect(emailDelivery.issueAndQueue).toHaveBeenCalledOnce();
+    expect(emailDelivery.deliverNow).toHaveBeenCalledOnce();
   });
 
   it('rejects correct password credentials until the email is verified', async () => {
@@ -125,19 +127,19 @@ describe('AuthService email verification', () => {
   });
 
   it('keeps resend verification responses generic for unknown addresses', async () => {
-    const { repository, emailSender, service } = createService();
+    const { repository, emailDelivery, service } = createService();
     repository.findUserByEmail.mockResolvedValue(null);
 
     await expect(service.resendVerification({ email: 'missing@example.com' })).resolves.toEqual({
       accepted: true,
     });
-    expect(emailSender.sendVerificationEmail).not.toHaveBeenCalled();
+    expect(emailDelivery.issueAndQueue).not.toHaveBeenCalled();
   });
 });
 
 describe('AuthService password reset', () => {
-  it('sends a reset email only for a verified password account', async () => {
-    const { repository, emailSender, service } = createService();
+  it('queues a reset email only for a verified password account', async () => {
+    const { repository, emailDelivery, service } = createService();
     repository.findUserByEmail.mockResolvedValue({
       id: '55555555-5555-4555-8555-555555555555',
       email: 'owner@example.com',
@@ -150,20 +152,19 @@ describe('AuthService password reset', () => {
     await expect(service.requestPasswordReset({ email: 'OWNER@example.com' })).resolves.toEqual({
       accepted: true,
     });
-    expect(emailSender.sendPasswordResetEmail).toHaveBeenCalledOnce();
-    expect(repository.replaceAuthToken).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'PASSWORD_RESET' }),
+    expect(emailDelivery.issueAndQueue).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'PASSWORD_RESET', email: 'owner@example.com' }),
     );
   });
 
   it('returns the same accepted response for an unknown reset address', async () => {
-    const { repository, emailSender, service } = createService();
+    const { repository, emailDelivery, service } = createService();
     repository.findUserByEmail.mockResolvedValue(null);
 
     await expect(service.requestPasswordReset({ email: 'missing@example.com' })).resolves.toEqual({
       accepted: true,
     });
-    expect(emailSender.sendPasswordResetEmail).not.toHaveBeenCalled();
+    expect(emailDelivery.issueAndQueue).not.toHaveBeenCalled();
   });
 
   it('hashes the new password and the reset token before persistence', async () => {
