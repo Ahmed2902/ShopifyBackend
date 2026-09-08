@@ -28,7 +28,7 @@ import {
   verifyTikTokOAuthState,
 } from './tiktok.utils.js';
 
-type ProviderBillingGuard = Pick<BillingService, 'requireAdProvider'>;
+type ProviderBillingGuard = Pick<BillingService, 'requireAdProvider' | 'confirmAdProvider'>;
 
 export class TikTokController {
   constructor(
@@ -55,14 +55,12 @@ export class TikTokController {
         code: req.query.code,
         state: rawState,
       });
-      // Re-check after the external OAuth round trip so Essentials cannot end up
-      // with two active paid channels through concurrent authorization flows. The
-      // production singleton injects the guard; focused controller tests can omit it.
       if (this.billing) await this.billing.requireAdProvider(context.storeId, 'TIKTOK');
       const result = await this.service.completeOAuthInstall(
         query.auth_code ?? query.code!,
         query.state,
       );
+      if (this.billing) await this.billing.confirmAdProvider(result.storeId, 'TIKTOK');
       res.redirect(303, buildTikTokSuccessRedirect(result.storeId));
     } catch (error) {
       const code = error instanceof AppError ? error.code : 'TIKTOK_OAUTH_FAILED';
