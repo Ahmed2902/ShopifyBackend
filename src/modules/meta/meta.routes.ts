@@ -1,7 +1,10 @@
 import { Router } from 'express';
-import { requireAdProviderEntitlement } from '../billing/billing.middleware.js';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireRole, requireStoreMembership } from '../../middleware/store.middleware.js';
+import {
+  requireActiveSubscription,
+  requireAdProviderEntitlement,
+} from '../billing/billing.middleware.js';
 import { metaMappingController } from './mapping/meta-mapping.controller.js';
 import { metaController } from './meta.controller.js';
 import { metaTrackingController } from './tracking/meta-tracking.controller.js';
@@ -13,8 +16,9 @@ metaRouter.get('/callback', metaController.completeInstall);
 
 export const metaStoreRouter = Router({ mergeParams: true });
 metaStoreRouter.use(requireAuth, requireStoreMembership);
-
 metaStoreRouter.get('/status', metaController.status);
+metaStoreRouter.use(requireActiveSubscription);
+
 metaStoreRouter.get('/assets', ownerOrAdmin, metaController.assets);
 metaStoreRouter.get('/ad-accounts', metaController.adAccounts);
 metaStoreRouter.get('/campaigns', metaController.campaigns);
