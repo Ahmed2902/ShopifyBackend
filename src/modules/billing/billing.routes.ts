@@ -11,3 +11,4 @@ billingRouter.get('/', billingController.read);
 billingRouter.get('/portal', ownerOrAdmin, billingController.portal);
 billingRouter.post('/refresh', ownerOrAdmin, billingController.refresh);
 billingRouter.patch('/plan', ownerOrAdmin, billingController.selectPlan);
+billingRouter.patch('/ad-provider', ownerOrAdmin, billingController.selectAdProvider);
