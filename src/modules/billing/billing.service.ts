@@ -144,6 +144,7 @@ export class BillingService {
       provider: subscription.provider,
       selectedPlan: subscription.selectedPlan,
       effectivePlan,
+      essentialsAdProvider: subscription.essentialsAdProvider,
       trial: {
         active: trialActive,
         startedAt: subscription.trialStartedAt,
@@ -193,9 +194,7 @@ export class BillingService {
   }
 
   async refreshFromShopify(storeId: string) {
-    if (!this.appPricing.isEnabled()) {
-      return this.read(storeId);
-    }
+    if (!this.appPricing.isEnabled()) return this.read(storeId);
     return this.read(storeId, new Date(), { fresh: true, failOnVerificationError: true });
   }
 
@@ -212,6 +211,51 @@ export class BillingService {
     }
 
     await prisma.storeSubscription.update({ where: { storeId }, data: { selectedPlan } });
+    return this.read(storeId);
+  }
+
+  async selectEssentialsAdProvider(storeId: string, provider: V1AdProvider) {
+    const billing = await this.requireActive(storeId);
+    if (billing.effectivePlan !== 'ESSENTIALS') {
+      throw new AppError(
+        'A single-channel selection is only required on Essentials.',
+        409,
+        'PLAN_CHANNEL_SELECTION_NOT_REQUIRED',
+      );
+    }
+
+    const connections = await this.connectedProviders(storeId);
+    if (!connections.includes(provider)) {
+      throw new AppError(
+        'Choose an advertising channel that is already connected to this store.',
+        400,
+        'PLAN_CHANNEL_NOT_CONNECTED',
+        { provider, connectedProviders: connections },
+      );
+    }
+
+    await prisma.storeSubscription.update({
+      where: { storeId },
+      data: { essentialsAdProvider: provider },
+    });
+    return this.read(storeId);
+  }
+
+  async confirmAdProvider(storeId: string, provider: V1AdProvider) {
+    const billing = await this.requireActive(storeId);
+    if (billing.entitlements.maxAdChannels === null) return billing;
+
+    const current = await prisma.storeSubscription.findUnique({ where: { storeId } });
+    if (!current) throw new AppError('Subscription not found', 404, 'SUBSCRIPTION_NOT_FOUND');
+    if (current.essentialsAdProvider && current.essentialsAdProvider !== provider) {
+      throw await this.adChannelLimitError(storeId, provider, [current.essentialsAdProvider, provider]);
+    }
+    if (!current.essentialsAdProvider) {
+      await prisma.storeSubscription.update({
+        where: { storeId },
+        data: { essentialsAdProvider: provider },
+      });
+    }
     return this.read(storeId);
   }
 
@@ -262,6 +306,39 @@ export class BillingService {
     const billing = await this.requireActive(storeId);
     if (billing.entitlements.maxAdChannels === null) return billing;
 
+    const connections = await this.connectedProviders(storeId);
+    let selected = billing.essentialsAdProvider as V1AdProvider | null;
+
+    if (!selected && connections.length === 1) {
+      selected = connections[0]!;
+      await prisma.storeSubscription.update({
+        where: { storeId },
+        data: { essentialsAdProvider: selected },
+      });
+    }
+
+    if (!selected && connections.length > 1) {
+      const portal = await this.portal(storeId);
+      throw new AppError(
+        'Essentials includes one advertising channel. Choose which connected channel should remain active in Stride.',
+        409,
+        'PLAN_CHANNEL_SELECTION_REQUIRED',
+        { connectedProviders: connections, planSelectionUrl: portal.url },
+      );
+    }
+
+    if (selected && selected !== provider) {
+      throw await this.adChannelLimitError(storeId, provider, connections);
+    }
+
+    if (!selected && connections.length === 1 && connections[0] !== provider) {
+      throw await this.adChannelLimitError(storeId, provider, connections);
+    }
+
+    return billing;
+  }
+
+  private async connectedProviders(storeId: string): Promise<V1AdProvider[]> {
     const store = await prisma.store.findUnique({
       where: { id: storeId },
       select: {
@@ -271,29 +348,30 @@ export class BillingService {
     });
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
 
-    const targetAlreadyConnected = provider === 'META'
-      ? isConnected(store.metaConnection?.status)
-      : isConnected(store.tiktokConnection?.status);
-    if (targetAlreadyConnected) return billing;
+    const connected: V1AdProvider[] = [];
+    if (isConnected(store.metaConnection?.status)) connected.push('META');
+    if (isConnected(store.tiktokConnection?.status)) connected.push('TIKTOK');
+    return connected;
+  }
 
-    const otherConnected = provider === 'META'
-      ? isConnected(store.tiktokConnection?.status)
-      : isConnected(store.metaConnection?.status);
-    if (otherConnected) {
-      const portal = await this.portal(storeId);
-      throw new AppError(
-        'Essentials includes one advertising channel. Disconnect the current channel or upgrade to Pro.',
-        403,
-        'PLAN_AD_CHANNEL_LIMIT',
-        {
-          currentPlan: billing.effectivePlan,
-          maxAdChannels: 1,
-          requestedProvider: provider,
-          planSelectionUrl: portal.url,
-        },
-      );
-    }
-    return billing;
+  private async adChannelLimitError(
+    storeId: string,
+    requestedProvider: V1AdProvider,
+    connectedProviders: V1AdProvider[],
+  ) {
+    const portal = await this.portal(storeId);
+    return new AppError(
+      'Essentials includes one advertising channel. Choose the existing channel or upgrade to Pro.',
+      403,
+      'PLAN_AD_CHANNEL_LIMIT',
+      {
+        currentPlan: 'ESSENTIALS',
+        maxAdChannels: 1,
+        requestedProvider,
+        connectedProviders,
+        planSelectionUrl: portal.url,
+      },
+    );
   }
 
   private async syncShopifySubscription(
