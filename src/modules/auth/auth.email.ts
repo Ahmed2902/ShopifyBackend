@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { env } from '../../config/env.js';
 import { AppError } from '../../errors/app-error.js';
 
@@ -6,10 +7,17 @@ export interface AuthEmailSender {
   sendPasswordResetEmail(email: string, token: string): Promise<void>;
 }
 
+type AuthEmailKind = 'verification' | 'password-reset';
+
 function linkWithToken(baseUrl: string, token: string): string {
   const url = new URL(baseUrl);
   url.searchParams.set('token', token);
   return url.toString();
+}
+
+function authEmailIdempotencyKey(kind: AuthEmailKind, token: string): string {
+  const tokenFingerprint = createHash('sha256').update(token).digest('hex');
+  return `stride-auth/${kind}/${tokenFingerprint}`;
 }
 
 function escapeHtml(value: string): string {
@@ -72,6 +80,7 @@ async function sendEmail(input: {
   subject: string;
   text: string;
   html: string;
+  idempotencyKey: string;
 }): Promise<void> {
   if (!env.RESEND_API_KEY || !env.RESEND_FROM) {
     throw new AppError('Authentication email is not configured', 503, 'AUTH_EMAIL_NOT_CONFIGURED');
@@ -84,6 +93,7 @@ async function sendEmail(input: {
       headers: {
         Authorization: `Bearer ${env.RESEND_API_KEY}`,
         'Content-Type': 'application/json',
+        'Idempotency-Key': input.idempotencyKey,
       },
       body: JSON.stringify({
         from: env.RESEND_FROM,
@@ -94,7 +104,9 @@ async function sendEmail(input: {
       }),
     });
   } catch {
-    throw new AppError('Email delivery failed', 502, 'EMAIL_DELIVERY_FAILED');
+    throw new AppError('Email delivery failed', 502, 'EMAIL_DELIVERY_FAILED', {
+      provider: 'resend',
+    });
   }
 
   if (!response.ok) {
@@ -121,6 +133,7 @@ export class ResendAuthEmailSender implements AuthEmailSender {
         expiry: 'This one-time link expires in 24 hours.',
         securityNote: 'If you did not create a Stride account, you can safely ignore this email.',
       }),
+      idempotencyKey: authEmailIdempotencyKey('verification', token),
     });
   }
 
@@ -139,6 +152,7 @@ export class ResendAuthEmailSender implements AuthEmailSender {
         expiry: 'This one-time link expires in 30 minutes.',
         securityNote: 'If you did not request this reset, ignore this email. Your password will not change.',
       }),
+      idempotencyKey: authEmailIdempotencyKey('password-reset', token),
     });
   }
 }
