@@ -41,6 +41,11 @@ enum BillingProvider {
   SHOPIFY
 }
 
+enum BillingAdProvider {
+  META
+  TIKTOK
+}
+
 model User {
   id              String   @id @default(uuid()) @db.Uuid
   email           String   @unique
@@ -130,21 +135,22 @@ model StoreMembership {
 }
 
 model StoreSubscription {
-  id                       String          @id @default(uuid()) @db.Uuid
-  storeId                  String          @unique @db.Uuid
-  selectedPlan             BillingPlan     @default(ESSENTIALS)
-  status                   BillingStatus   @default(TRIALING)
-  provider                 BillingProvider @default(INTERNAL)
+  id                       String             @id @default(uuid()) @db.Uuid
+  storeId                  String             @unique @db.Uuid
+  selectedPlan             BillingPlan        @default(ESSENTIALS)
+  status                   BillingStatus      @default(TRIALING)
+  provider                 BillingProvider    @default(INTERNAL)
+  essentialsAdProvider     BillingAdProvider?
   trialStartedAt           DateTime
   trialEndsAt              DateTime
   currentPeriodEndsAt      DateTime?
   canceledAt               DateTime?
-  cancelAtEndOfCycle       Boolean         @default(false)
-  shopifyAppSubscriptionId String?         @unique
+  cancelAtEndOfCycle       Boolean            @default(false)
+  shopifyAppSubscriptionId String?            @unique
   shopifyPlanHandle        String?
   lastVerifiedAt           DateTime?
-  createdAt                DateTime        @default(now())
-  updatedAt                DateTime        @updatedAt
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
