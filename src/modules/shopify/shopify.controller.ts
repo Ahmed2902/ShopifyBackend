@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { shopifyDisconnectService } from './shopify-disconnect.service.js';
 import { shopifyOrderBackfillParamsSchema } from './order/shopify-order.schema.js';
 import { shopifyCallbackSchema, shopifyInstallSchema } from './shopify.schema.js';
 import { shopifyService, type ShopifyService } from './shopify.service.js';
@@ -64,6 +65,11 @@ export class ShopifyController {
     );
 
     res.status(200).json({ received: true, ...result });
+  };
+
+  disconnect = async (req: Request, res: Response) => {
+    const result = await shopifyDisconnectService.disconnect(req.context.storeId!);
+    res.status(200).json(result);
   };
 
   sync = async (req: Request, res: Response) => {
