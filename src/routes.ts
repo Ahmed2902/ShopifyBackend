@@ -13,6 +13,18 @@ import { healthRouter } from './routes/health.routes.js';
 
 const router = Router();
 
+router.get('/', (_req, res) => {
+  res.status(200).json({
+    service: 'stride-api',
+    status: 'ok',
+    api: '/v1',
+    health: {
+      live: '/health/live',
+      ready: '/health/ready',
+    },
+  });
+});
+
 router.use('/health', healthRouter);
 router.use('/v1/auth', authRouter);
 router.use('/v1/pixel', pixelPublicRouter);
