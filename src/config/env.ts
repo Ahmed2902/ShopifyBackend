@@ -37,6 +37,23 @@ const envSchema = z.object({
     .regex(/^\d{4}-\d{2}$/)
     .default('2026-07'),
   SHOPIFY_STATE_SECRET: z.string().min(32),
+  // Keep App Pricing disabled until the public-app plans are configured in Partner Dashboard.
+  // While disabled, Stride uses the internal 14-day Pro-equivalent trial for pre-launch testing.
+  SHOPIFY_APP_PRICING_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  SHOPIFY_PARTNER_ORG_ID: z.string().min(1).optional(),
+  SHOPIFY_PARTNER_API_ACCESS_TOKEN: z.string().min(1).optional(),
+  SHOPIFY_PARTNER_APP_ID: z.string().regex(/^gid:\/\/shopify\/App\/\d+$/).optional(),
+  SHOPIFY_PARTNER_API_VERSION: z
+    .string()
+    .regex(/^\d{4}-\d{2}$/)
+    .default('2026-07'),
+  SHOPIFY_APP_HANDLE: z.string().min(1).optional(),
+  SHOPIFY_ESSENTIALS_PLAN_HANDLE: z.string().min(1).optional(),
+  SHOPIFY_PRO_PLAN_HANDLE: z.string().min(1).optional(),
+  SHOPIFY_BILLING_VERIFY_TTL_SECONDS: z.coerce.number().int().min(30).max(3600).default(300),
   PIXEL_COLLECTOR_URL: z.string().url().optional(),
   PIXEL_RAW_EVENT_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(90),
   META_APP_ID: z.string().min(1),
