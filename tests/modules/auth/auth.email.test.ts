@@ -6,7 +6,7 @@ afterEach(() => {
 });
 
 describe('ResendAuthEmailSender', () => {
-  it('sends a branded verification email through Resend with the configured sender and token link', async () => {
+  it('sends a branded verification email through Resend with the configured sender, token link, and idempotency key', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -23,8 +23,12 @@ describe('ResendAuthEmailSender', () => {
       headers: {
         Authorization: 'Bearer re_test_key',
         'Content-Type': 'application/json',
+        'Idempotency-Key': expect.stringMatching(/^stride-auth\/verification\/[a-f0-9]{64}$/),
       },
     });
+    expect((init.headers as Record<string, string>)['Idempotency-Key']).not.toContain(
+      'verification-token-value',
+    );
 
     const body = JSON.parse(init.body as string) as {
       from: string;
@@ -44,7 +48,7 @@ describe('ResendAuthEmailSender', () => {
     );
   });
 
-  it('sends a branded single-use password reset email', async () => {
+  it('sends a branded single-use password reset email with a separate idempotency namespace', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -54,6 +58,15 @@ describe('ResendAuthEmailSender', () => {
     );
 
     const [, init] = fetchMock.mock.calls[0]!;
+    expect(init).toMatchObject({
+      headers: {
+        'Idempotency-Key': expect.stringMatching(/^stride-auth\/password-reset\/[a-f0-9]{64}$/),
+      },
+    });
+    expect((init.headers as Record<string, string>)['Idempotency-Key']).not.toContain(
+      'password-reset-token-value',
+    );
+
     const body = JSON.parse(init.body as string) as {
       subject: string;
       text: string;
@@ -65,6 +78,19 @@ describe('ResendAuthEmailSender', () => {
     expect(body.html).toContain(
       'http://localhost:3000/auth/reset-password?token=password-reset-token-value',
     );
+  });
+
+  it('reuses the same Resend idempotency key when the same email attempt is retried', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const sender = new ResendAuthEmailSender();
+
+    await sender.sendVerificationEmail('owner@example.com', 'same-token-value');
+    await sender.sendVerificationEmail('owner@example.com', 'same-token-value');
+
+    const firstHeaders = fetchMock.mock.calls[0]![1].headers as Record<string, string>;
+    const secondHeaders = fetchMock.mock.calls[1]![1].headers as Record<string, string>;
+    expect(firstHeaders['Idempotency-Key']).toBe(secondHeaders['Idempotency-Key']);
   });
 
   it('maps Resend failures to a stable application error without exposing credentials', async () => {
@@ -79,6 +105,21 @@ describe('ResendAuthEmailSender', () => {
       code: 'EMAIL_DELIVERY_FAILED',
       statusCode: 502,
       details: { provider: 'resend', status: 422 },
+    });
+  });
+
+  it('maps network failures to a stable Resend delivery error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
+
+    await expect(
+      new ResendAuthEmailSender().sendVerificationEmail(
+        'owner@example.com',
+        'verification-token-value',
+      ),
+    ).rejects.toMatchObject({
+      code: 'EMAIL_DELIVERY_FAILED',
+      statusCode: 502,
+      details: { provider: 'resend' },
     });
   });
 });
