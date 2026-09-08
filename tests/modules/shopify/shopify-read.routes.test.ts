@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import type { NextFunction, Request, Response } from 'express';
 import request from 'supertest';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../../src/modules/billing/billing.middleware.js', () => ({
+  requireActiveSubscription: (_req: Request, _res: Response, next: NextFunction) => next(),
+}));
+
 import { app } from '../../../src/app.js';
 import { issueAccessToken } from '../../../src/modules/auth/auth.utils.js';
 
