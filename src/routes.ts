@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { analyticsRouter } from './modules/analytics/analytics.routes.js';
 import { authRouter } from './modules/auth/auth.routes.js';
+import { billingRouter } from './modules/billing/billing.routes.js';
 import { intelligenceRouter } from './modules/intelligence/intelligence.routes.js';
 import { integrationRouter } from './modules/integrations/integration.routes.js';
 import { metaRouter, metaStoreRouter } from './modules/meta/meta.routes.js';
@@ -18,6 +19,7 @@ router.use('/v1/pixel', pixelPublicRouter);
 router.use('/v1/integrations/shopify', shopifyRouter);
 router.use('/v1/integrations/meta', metaRouter);
 router.use('/v1/integrations/tiktok', tiktokRouter);
+router.use('/v1/stores/:storeId/billing', billingRouter);
 router.use('/v1/stores/:storeId/integrations/shopify', shopifyStoreRouter);
 router.use('/v1/stores/:storeId/integrations/meta', metaStoreRouter);
 router.use('/v1/stores/:storeId/integrations/tiktok', tiktokStoreRouter);
