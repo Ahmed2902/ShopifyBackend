@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireRole, requireStoreMembership } from '../../middleware/store.middleware.js';
-import { requireBillingEntitlement } from '../billing/billing.middleware.js';
+import {
+  requireActiveSubscription,
+  requireBillingEntitlement,
+} from '../billing/billing.middleware.js';
 import { pixelAttributionController } from './attribution/pixel-attribution.controller.js';
 import { pixelBehaviorController } from './behavior/pixel-behavior.controller.js';
 import { pixelJourneyController } from './journey/pixel-journey.controller.js';
@@ -18,17 +21,18 @@ pixelStoreRouter.get('/health', requireRole('OWNER', 'ADMIN'), pixelHealthContro
 pixelStoreRouter.get('/sessions', requireBillingEntitlement('DEEP_JOURNEYS'), pixelJourneyController.sessions);
 pixelStoreRouter.get('/sessions/:sessionId', requireBillingEntitlement('DEEP_JOURNEYS'), pixelJourneyController.session);
 pixelStoreRouter.get('/journeys/:anonymousVisitorId', requireBillingEntitlement('DEEP_JOURNEYS'), pixelJourneyController.visitorJourney);
-pixelStoreRouter.get('/analytics/overview', pixelBehaviorController.overview);
-pixelStoreRouter.get('/analytics/products', pixelBehaviorController.products);
-pixelStoreRouter.get('/analytics/collections', pixelBehaviorController.collections);
-pixelStoreRouter.get('/analytics/landing-pages', pixelBehaviorController.landingPages);
-pixelStoreRouter.get('/attribution/sources', pixelAttributionController.sources);
-pixelStoreRouter.get('/attribution/meta-ads', pixelAttributionController.metaAds);
+pixelStoreRouter.get('/analytics/overview', requireActiveSubscription, pixelBehaviorController.overview);
+pixelStoreRouter.get('/analytics/products', requireActiveSubscription, pixelBehaviorController.products);
+pixelStoreRouter.get('/analytics/collections', requireActiveSubscription, pixelBehaviorController.collections);
+pixelStoreRouter.get('/analytics/landing-pages', requireActiveSubscription, pixelBehaviorController.landingPages);
+pixelStoreRouter.get('/attribution/sources', requireActiveSubscription, pixelAttributionController.sources);
+pixelStoreRouter.get('/attribution/meta-ads', requireActiveSubscription, pixelAttributionController.metaAds);
 pixelStoreRouter.get('/attribution/paths', requireBillingEntitlement('ADVANCED_ATTRIBUTION'), pixelAttributionController.paths);
 pixelStoreRouter.get('/attribution/mapping-evidence', requireBillingEntitlement('ADVANCED_ATTRIBUTION'), pixelAttributionController.mappingEvidence);
-pixelStoreRouter.post('/install', requireRole('OWNER', 'ADMIN'), pixelController.install);
+pixelStoreRouter.post('/install', requireRole('OWNER', 'ADMIN'), requireActiveSubscription, pixelController.install);
 pixelStoreRouter.post(
   '/debug/validate',
   requireRole('OWNER', 'ADMIN'),
+  requireActiveSubscription,
   pixelController.debugValidate,
 );
