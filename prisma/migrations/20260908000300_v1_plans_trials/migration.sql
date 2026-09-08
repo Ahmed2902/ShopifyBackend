@@ -12,6 +12,7 @@ CREATE TABLE "StoreSubscription" (
   "trialEndsAt" TIMESTAMP(3) NOT NULL,
   "currentPeriodEndsAt" TIMESTAMP(3),
   "canceledAt" TIMESTAMP(3),
+  "cancelAtEndOfCycle" BOOLEAN NOT NULL DEFAULT false,
   "shopifyAppSubscriptionId" TEXT,
   "shopifyPlanHandle" TEXT,
   "lastVerifiedAt" TIMESTAMP(3),
