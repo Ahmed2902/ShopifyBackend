@@ -14,7 +14,6 @@ const planCatalog = {
     monthlyUsd: 49,
     maxAdChannels: 1,
     recommendationLimit: 10,
-    historyDays: 90,
     deepJourneys: false,
     advancedAttribution: false,
   },
@@ -24,7 +23,6 @@ const planCatalog = {
     monthlyUsd: 99,
     maxAdChannels: null,
     recommendationLimit: 50,
-    historyDays: 365,
     deepJourneys: true,
     advancedAttribution: true,
   },
@@ -86,7 +84,6 @@ export class BillingService {
       entitlements: {
         maxAdChannels: plan.maxAdChannels,
         recommendationLimit: plan.recommendationLimit,
-        historyDays: plan.historyDays,
         deepJourneys: plan.deepJourneys,
         advancedAttribution: plan.advancedAttribution,
       },
