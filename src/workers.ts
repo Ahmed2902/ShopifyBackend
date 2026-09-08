@@ -1,5 +1,6 @@
 import { logger } from './lib/logger.js';
 import { PollingWorker } from './lib/polling-worker.js';
+import { authEmailDeliveryService } from './modules/auth/auth.email-delivery.js';
 import { pixelAttributionService } from './modules/pixel/attribution/pixel-attribution.service.js';
 import { pixelBehaviorService } from './modules/pixel/behavior/pixel-behavior.service.js';
 import { pixelJourneyService } from './modules/pixel/journey/pixel-journey.service.js';
@@ -25,6 +26,15 @@ const tiktokWebhookWorker = new PollingWorker(
     if (result.claimed > 0) logger.debug(result, 'Processed TikTok webhook queue batch');
   },
   'TikTok webhook worker failed',
+);
+
+const authEmailWorker = new PollingWorker(
+  10_000,
+  async () => {
+    const result = await authEmailDeliveryService.processDue(20);
+    if (result.claimed > 0) logger.info(result, 'Processed auth email delivery batch');
+  },
+  'Auth email delivery worker failed',
 );
 
 const reconciliationWorker = new PollingWorker(
@@ -101,6 +111,7 @@ const pixelRetentionWorker = new PollingWorker(
 const workers = [
   shopifyWebhookWorker,
   tiktokWebhookWorker,
+  authEmailWorker,
   reconciliationWorker,
   pixelJourneyWorker,
   pixelBehaviorWorker,
