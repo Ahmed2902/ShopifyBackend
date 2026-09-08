@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../../errors/app-error.js';
+import { billingService } from '../billing/billing.service.js';
 import {
   metaAdListQuerySchema,
   metaAdParamsSchema,
@@ -40,6 +41,9 @@ export class MetaController {
 
     try {
       const query = metaCallbackSchema.parse({ code: req.query.code, state: rawState });
+      // Re-check after the external OAuth round trip so a one-channel plan cannot be
+      // bypassed by opening two provider flows concurrently.
+      await billingService.requireAdProvider(context.storeId, 'META');
       const result = await this.service.completeOAuthInstall(query.code, query.state);
       res.redirect(303, buildMetaSuccessRedirect(result.storeId));
     } catch (error) {
