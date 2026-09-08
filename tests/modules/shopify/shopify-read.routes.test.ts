@@ -1,6 +1,16 @@
 import { randomUUID } from 'node:crypto';
+import type { NextFunction, Request, Response } from 'express';
 import request from 'supertest';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../../src/modules/billing/billing.middleware.js', () => ({
+  requireActiveSubscription: (_req: Request, _res: Response, next: NextFunction) => next(),
+  requireBillingEntitlement:
+    () => (_req: Request, _res: Response, next: NextFunction) => next(),
+  requireAdProviderEntitlement:
+    () => (_req: Request, _res: Response, next: NextFunction) => next(),
+}));
+
 import { app } from '../../../src/app.js';
 import { issueAccessToken } from '../../../src/modules/auth/auth.utils.js';
 
@@ -56,6 +66,18 @@ describe('Shopify frontend read routes', () => {
 
     const response = await request(app)
       .post(`/v1/stores/${storeId}/integrations/shopify/sync`)
+      .set('authorization', `Bearer ${token}`);
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe('FORBIDDEN');
+  });
+
+  it('keeps disconnect owner-or-admin only', async () => {
+    const storeId = randomUUID();
+    const token = await issueAccessToken(randomUUID(), [{ storeId, role: 'MEMBER' }]);
+
+    const response = await request(app)
+      .post(`/v1/stores/${storeId}/integrations/shopify/disconnect`)
       .set('authorization', `Bearer ${token}`);
 
     expect(response.status).toBe(403);

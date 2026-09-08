@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../../errors/app-error.js';
+import { billingService, type BillingService } from '../billing/billing.service.js';
 import {
   metaAdListQuerySchema,
   metaAdParamsSchema,
@@ -20,8 +21,13 @@ import {
   verifyMetaOAuthState,
 } from './meta.utils.js';
 
+type ProviderBillingGuard = Pick<BillingService, 'requireAdProvider' | 'confirmAdProvider'>;
+
 export class MetaController {
-  constructor(private readonly service: MetaService) {}
+  constructor(
+    private readonly service: MetaService,
+    private readonly billing?: ProviderBillingGuard,
+  ) {}
 
   startInstall = async (req: Request, res: Response) => {
     res.status(200).json(
@@ -40,7 +46,9 @@ export class MetaController {
 
     try {
       const query = metaCallbackSchema.parse({ code: req.query.code, state: rawState });
+      if (this.billing) await this.billing.requireAdProvider(context.storeId, 'META');
       const result = await this.service.completeOAuthInstall(query.code, query.state);
+      if (this.billing) await this.billing.confirmAdProvider(result.storeId, 'META');
       res.redirect(303, buildMetaSuccessRedirect(result.storeId));
     } catch (error) {
       const code = error instanceof AppError ? error.code : 'META_OAUTH_FAILED';
@@ -134,4 +142,4 @@ export class MetaController {
   };
 }
 
-export const metaController = new MetaController(metaService);
+export const metaController = new MetaController(metaService, billingService);

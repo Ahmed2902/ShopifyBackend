@@ -13,6 +13,12 @@ vi.mock('../../../src/middleware/auth.middleware.js', () => ({
   requireAuth: (_req: Request, _res: Response, next: NextFunction) => next(),
 }));
 
+vi.mock('../../../src/modules/billing/billing.middleware.js', () => ({
+  requireActiveSubscription: (_req: Request, _res: Response, next: NextFunction) => next(),
+  requireBillingEntitlement:
+    () => (_req: Request, _res: Response, next: NextFunction) => next(),
+}));
+
 vi.mock('../../../src/modules/pixel/pixel.controller.js', () => ({
   pixelController: {
     ingest: noop,

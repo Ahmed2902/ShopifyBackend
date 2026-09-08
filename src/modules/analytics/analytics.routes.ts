@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireStoreMembership } from '../../middleware/store.middleware.js';
+import { requireActiveSubscription } from '../billing/billing.middleware.js';
 import { adExposureController } from './ad-exposure.controller.js';
 import { analyticsController } from './analytics.controller.js';
 import { dashboardController } from './dashboard.controller.js';
@@ -9,7 +10,7 @@ import { reportController } from './report.controller.js';
 import { tiktokMonitorController } from './tiktok-monitor.controller.js';
 
 export const analyticsRouter = Router({ mergeParams: true });
-analyticsRouter.use(requireAuth, requireStoreMembership);
+analyticsRouter.use(requireAuth, requireStoreMembership, requireActiveSubscription);
 
 analyticsRouter.get('/dashboard', dashboardController.read);
 analyticsRouter.get('/report', reportController.read);

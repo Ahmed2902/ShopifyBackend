@@ -1,9 +1,12 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireRole, requireStoreMembership } from '../../middleware/store.middleware.js';
+import { requireActiveSubscription } from '../billing/billing.middleware.js';
 import { shopifyPrivacyController } from './privacy/shopify-privacy.controller.js';
 import { shopifyReadController } from './read/shopify-read.controller.js';
 import { shopifyController } from './shopify.controller.js';
+
+const ownerOrAdmin = requireRole('OWNER', 'ADMIN');
 
 export const shopifyRouter = Router();
 shopifyRouter.post('/webhooks', shopifyController.webhook);
@@ -13,7 +16,21 @@ shopifyRouter.get('/callback', shopifyController.callback);
 export const shopifyStoreRouter = Router({ mergeParams: true });
 shopifyStoreRouter.use(requireAuth, requireStoreMembership);
 
+// Status, disconnect and privacy exports stay reachable after expiry for recovery/compliance.
 shopifyStoreRouter.get('/status', shopifyReadController.status);
+shopifyStoreRouter.post('/disconnect', ownerOrAdmin, shopifyController.disconnect);
+shopifyStoreRouter.get(
+  '/privacy/data-requests',
+  ownerOrAdmin,
+  shopifyPrivacyController.listDataRequests,
+);
+shopifyStoreRouter.get(
+  '/privacy/data-requests/:requestId',
+  ownerOrAdmin,
+  shopifyPrivacyController.getDataRequest,
+);
+
+shopifyStoreRouter.use(requireActiveSubscription);
 shopifyStoreRouter.get('/summary', shopifyReadController.summary);
 shopifyStoreRouter.get('/products', shopifyReadController.products);
 shopifyStoreRouter.get('/products/:productId/sales', shopifyReadController.productSales);
@@ -22,25 +39,7 @@ shopifyStoreRouter.get('/inventory', shopifyReadController.inventory);
 shopifyStoreRouter.get('/locations', shopifyReadController.locations);
 shopifyStoreRouter.get('/orders', shopifyReadController.orders);
 shopifyStoreRouter.get('/orders/:orderId', shopifyReadController.order);
-shopifyStoreRouter.get(
-  '/privacy/data-requests',
-  requireRole('OWNER', 'ADMIN'),
-  shopifyPrivacyController.listDataRequests,
-);
-shopifyStoreRouter.get(
-  '/privacy/data-requests/:requestId',
-  requireRole('OWNER', 'ADMIN'),
-  shopifyPrivacyController.getDataRequest,
-);
 
-shopifyStoreRouter.post('/sync', requireRole('OWNER', 'ADMIN'), shopifyController.sync);
-shopifyStoreRouter.post(
-  '/orders/backfill',
-  requireRole('OWNER', 'ADMIN'),
-  shopifyController.startOrderBackfill,
-);
-shopifyStoreRouter.get(
-  '/orders/backfill/:syncRunId',
-  requireRole('OWNER', 'ADMIN'),
-  shopifyController.getOrderBackfill,
-);
+shopifyStoreRouter.post('/sync', ownerOrAdmin, shopifyController.sync);
+shopifyStoreRouter.post('/orders/backfill', ownerOrAdmin, shopifyController.startOrderBackfill);
+shopifyStoreRouter.get('/orders/backfill/:syncRunId', ownerOrAdmin, shopifyController.getOrderBackfill);
