@@ -139,6 +139,7 @@ model StoreSubscription {
   trialEndsAt              DateTime
   currentPeriodEndsAt      DateTime?
   canceledAt               DateTime?
+  cancelAtEndOfCycle       Boolean         @default(false)
   shopifyAppSubscriptionId String?         @unique
   shopifyPlanHandle        String?
   lastVerifiedAt           DateTime?
