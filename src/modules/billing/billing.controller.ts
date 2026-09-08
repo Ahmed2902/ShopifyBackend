@@ -1,5 +1,9 @@
 import type { Request, Response } from 'express';
-import { billingPlanSchema, billingReadQuerySchema } from './billing.schema.js';
+import {
+  billingAdProviderSchema,
+  billingPlanSchema,
+  billingReadQuerySchema,
+} from './billing.schema.js';
 import { billingService, type BillingService } from './billing.service.js';
 
 export class BillingController {
@@ -26,6 +30,13 @@ export class BillingController {
   selectPlan = async (req: Request, res: Response) => {
     const { plan } = billingPlanSchema.parse(req.body);
     res.status(200).json(await this.service.selectPlan(req.context.storeId!, plan));
+  };
+
+  selectAdProvider = async (req: Request, res: Response) => {
+    const { provider } = billingAdProviderSchema.parse(req.body);
+    res.status(200).json(
+      await this.service.selectEssentialsAdProvider(req.context.storeId!, provider),
+    );
   };
 }
 
