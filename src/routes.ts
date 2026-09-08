@@ -14,6 +14,10 @@ import { healthRouter } from './routes/health.routes.js';
 const router = Router();
 
 router.get('/', (_req, res) => {
+  res.setHeader('cache-control', 'no-store');
+  const revision = process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GIT_COMMIT_SHA;
+  if (revision) res.setHeader('x-stride-revision', revision);
+
   res.status(200).json({
     service: 'stride-api',
     status: 'ok',

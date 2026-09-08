@@ -1,10 +1,14 @@
 import { env } from '../../config/env.js';
 import { AppError } from '../../errors/app-error.js';
 
+function isLoopbackUrl(value: string): boolean {
+  const hostname = new URL(value).hostname.toLowerCase();
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
 function hasTikTokPublicBackendUrls(): boolean {
   if (env.NODE_ENV !== 'production') return true;
-  if (env.APP_URL) return true;
-  return Boolean(env.TIKTOK_REDIRECT_URI && env.TIKTOK_WEBHOOK_URL_EXPLICIT);
+  return !isLoopbackUrl(env.APP_URL);
 }
 
 export function requireTikTokAppCredentials(): { appId: string; appSecret: string } {

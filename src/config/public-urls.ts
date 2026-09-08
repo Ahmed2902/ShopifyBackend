@@ -1,14 +1,13 @@
 import { env } from './env.js';
 
 function backendOrigin(): string {
-  if (env.APP_URL) return new URL(env.APP_URL).origin;
-  return `http://localhost:${env.PORT}`;
+  return new URL(env.APP_URL).origin;
 }
 
 function backendCallback(path: string, legacyOverride?: string): string {
-  // Production should have one canonical backend URL, like Systemly. This prevents
-  // stale per-provider callback variables from silently sending OAuth elsewhere.
-  if (env.NODE_ENV === 'production' && env.APP_URL) {
+  // Production uses one canonical backend URL so stale provider-specific callback
+  // variables cannot silently send OAuth back to localhost or an old deployment.
+  if (env.NODE_ENV === 'production') {
     return new URL(path, `${backendOrigin()}/`).toString();
   }
   if (legacyOverride) return new URL(legacyOverride).toString();
@@ -16,7 +15,7 @@ function backendCallback(path: string, legacyOverride?: string): string {
 }
 
 export function frontendUrl(path: string): string {
-  return new URL(path, `${new URL(env.CORS_ORIGIN).origin}/`).toString();
+  return new URL(path, `${env.FRONTEND_URL}/`).toString();
 }
 
 export function googleCallbackUrl(): string {
@@ -32,6 +31,10 @@ export function googleFrontendCallbackUrl(errorCode?: string): string {
   const destination = new URL(frontendUrl('/auth/callback'));
   if (errorCode) destination.searchParams.set('error', errorCode);
   return destination.toString();
+}
+
+export function shopifyCallbackUrl(): string {
+  return backendCallback('/v1/integrations/shopify/callback', env.SHOPIFY_REDIRECT_URI);
 }
 
 export function metaCallbackUrl(): string {

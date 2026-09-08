@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { CookieOptions, Response } from 'express';
 import { env } from '../../config/env.js';
+import { frontendUrl, shopifyCallbackUrl } from '../../config/public-urls.js';
 import { AppError } from '../../errors/app-error.js';
 import type { ShopifyGraphqlCost } from './shopify.schema.js';
 
@@ -105,7 +106,7 @@ export function buildShopifyAuthorizationUrl(shop: string, state: string): strin
   const url = new URL(`https://${shop}/admin/oauth/authorize`);
   url.searchParams.set('client_id', env.SHOPIFY_CLIENT_ID);
   url.searchParams.set('scope', env.SHOPIFY_SCOPES);
-  url.searchParams.set('redirect_uri', env.SHOPIFY_REDIRECT_URI);
+  url.searchParams.set('redirect_uri', shopifyCallbackUrl());
   url.searchParams.set('state', state);
   return url.toString();
 }
@@ -218,7 +219,7 @@ export function clearShopifyOAuthCookie(res: Response): void {
 }
 
 export function buildShopifySuccessRedirect(storeId: string, shop: string): string {
-  const destination = new URL('/app/integrations', env.CORS_ORIGIN);
+  const destination = new URL(frontendUrl('/app/integrations'));
   destination.searchParams.set('shopify', 'connected');
   destination.searchParams.set('storeId', storeId);
   destination.searchParams.set('shop', shop);
