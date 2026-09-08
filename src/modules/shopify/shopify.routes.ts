@@ -16,8 +16,9 @@ shopifyRouter.get('/callback', shopifyController.callback);
 export const shopifyStoreRouter = Router({ mergeParams: true });
 shopifyStoreRouter.use(requireAuth, requireStoreMembership);
 
-// Status and privacy exports stay reachable after expiry for recovery/compliance.
+// Status, disconnect and privacy exports stay reachable after expiry for recovery/compliance.
 shopifyStoreRouter.get('/status', shopifyReadController.status);
+shopifyStoreRouter.post('/disconnect', ownerOrAdmin, shopifyController.disconnect);
 shopifyStoreRouter.get(
   '/privacy/data-requests',
   ownerOrAdmin,
