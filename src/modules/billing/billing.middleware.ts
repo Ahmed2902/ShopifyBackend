@@ -3,11 +3,11 @@ import { billingService, type V1AdProvider, type V1Entitlement } from './billing
 
 export async function requireActiveSubscription(
   req: Request,
-  _res: Response,
+  res: Response,
   next: NextFunction,
 ) {
   try {
-    await billingService.requireActive(req.context.storeId!);
+    res.locals.billing = await billingService.requireActive(req.context.storeId!);
     next();
   } catch (error) {
     next(error);
@@ -15,9 +15,9 @@ export async function requireActiveSubscription(
 }
 
 export function requireBillingEntitlement(entitlement: V1Entitlement) {
-  return async (req: Request, _res: Response, next: NextFunction) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      await billingService.requireEntitlement(req.context.storeId!, entitlement);
+      res.locals.billing = await billingService.requireEntitlement(req.context.storeId!, entitlement);
       next();
     } catch (error) {
       next(error);
@@ -26,9 +26,9 @@ export function requireBillingEntitlement(entitlement: V1Entitlement) {
 }
 
 export function requireAdProviderEntitlement(provider: V1AdProvider) {
-  return async (req: Request, _res: Response, next: NextFunction) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      await billingService.requireAdProvider(req.context.storeId!, provider);
+      res.locals.billing = await billingService.requireAdProvider(req.context.storeId!, provider);
       next();
     } catch (error) {
       next(error);
