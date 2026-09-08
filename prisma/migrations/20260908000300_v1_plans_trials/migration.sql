@@ -1,6 +1,7 @@
 CREATE TYPE "BillingPlan" AS ENUM ('ESSENTIALS', 'PRO');
 CREATE TYPE "BillingStatus" AS ENUM ('TRIALING', 'ACTIVE', 'PAST_DUE', 'CANCELED', 'EXPIRED');
 CREATE TYPE "BillingProvider" AS ENUM ('INTERNAL', 'SHOPIFY');
+CREATE TYPE "BillingAdProvider" AS ENUM ('META', 'TIKTOK');
 
 CREATE TABLE "StoreSubscription" (
   "id" UUID NOT NULL,
@@ -8,6 +9,7 @@ CREATE TABLE "StoreSubscription" (
   "selectedPlan" "BillingPlan" NOT NULL DEFAULT 'ESSENTIALS',
   "status" "BillingStatus" NOT NULL DEFAULT 'TRIALING',
   "provider" "BillingProvider" NOT NULL DEFAULT 'INTERNAL',
+  "essentialsAdProvider" "BillingAdProvider",
   "trialStartedAt" TIMESTAMP(3) NOT NULL,
   "trialEndsAt" TIMESTAMP(3) NOT NULL,
   "currentPeriodEndsAt" TIMESTAMP(3),
