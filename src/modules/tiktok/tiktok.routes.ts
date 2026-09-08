@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requireAdProviderEntitlement } from '../billing/billing.middleware.js';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireRole, requireStoreMembership } from '../../middleware/store.middleware.js';
 import { tiktokMappingController } from './mapping/tiktok-mapping.controller.js';
@@ -24,7 +25,7 @@ tiktokStoreRouter.get('/catalogs', tiktokController.catalogs);
 tiktokStoreRouter.get('/catalogs/:catalogId/items', tiktokController.catalogItems);
 tiktokStoreRouter.get('/insights', tiktokController.insights);
 
-tiktokStoreRouter.post('/install', ownerOrAdmin, tiktokController.startInstall);
+tiktokStoreRouter.post('/install', ownerOrAdmin, requireAdProviderEntitlement('TIKTOK'), tiktokController.startInstall);
 tiktokStoreRouter.post('/configure', ownerOrAdmin, tiktokController.configure);
 tiktokStoreRouter.post('/sync', ownerOrAdmin, tiktokController.sync);
 tiktokStoreRouter.post('/catalogs/configure', ownerOrAdmin, tiktokController.configureCatalogs);
