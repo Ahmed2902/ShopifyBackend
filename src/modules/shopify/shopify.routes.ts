@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireRole, requireStoreMembership } from '../../middleware/store.middleware.js';
+import { requireActiveSubscription } from '../billing/billing.middleware.js';
 import { shopifyPrivacyController } from './privacy/shopify-privacy.controller.js';
 import { shopifyReadController } from './read/shopify-read.controller.js';
 import { shopifyController } from './shopify.controller.js';
@@ -14,14 +15,14 @@ export const shopifyStoreRouter = Router({ mergeParams: true });
 shopifyStoreRouter.use(requireAuth, requireStoreMembership);
 
 shopifyStoreRouter.get('/status', shopifyReadController.status);
-shopifyStoreRouter.get('/summary', shopifyReadController.summary);
-shopifyStoreRouter.get('/products', shopifyReadController.products);
-shopifyStoreRouter.get('/products/:productId/sales', shopifyReadController.productSales);
-shopifyStoreRouter.get('/products/:productId', shopifyReadController.product);
-shopifyStoreRouter.get('/inventory', shopifyReadController.inventory);
-shopifyStoreRouter.get('/locations', shopifyReadController.locations);
-shopifyStoreRouter.get('/orders', shopifyReadController.orders);
-shopifyStoreRouter.get('/orders/:orderId', shopifyReadController.order);
+shopifyStoreRouter.get('/summary', requireActiveSubscription, shopifyReadController.summary);
+shopifyStoreRouter.get('/products', requireActiveSubscription, shopifyReadController.products);
+shopifyStoreRouter.get('/products/:productId/sales', requireActiveSubscription, shopifyReadController.productSales);
+shopifyStoreRouter.get('/products/:productId', requireActiveSubscription, shopifyReadController.product);
+shopifyStoreRouter.get('/inventory', requireActiveSubscription, shopifyReadController.inventory);
+shopifyStoreRouter.get('/locations', requireActiveSubscription, shopifyReadController.locations);
+shopifyStoreRouter.get('/orders', requireActiveSubscription, shopifyReadController.orders);
+shopifyStoreRouter.get('/orders/:orderId', requireActiveSubscription, shopifyReadController.order);
 shopifyStoreRouter.get(
   '/privacy/data-requests',
   requireRole('OWNER', 'ADMIN'),
@@ -33,14 +34,16 @@ shopifyStoreRouter.get(
   shopifyPrivacyController.getDataRequest,
 );
 
-shopifyStoreRouter.post('/sync', requireRole('OWNER', 'ADMIN'), shopifyController.sync);
+shopifyStoreRouter.post('/sync', requireRole('OWNER', 'ADMIN'), requireActiveSubscription, shopifyController.sync);
 shopifyStoreRouter.post(
   '/orders/backfill',
   requireRole('OWNER', 'ADMIN'),
+  requireActiveSubscription,
   shopifyController.startOrderBackfill,
 );
 shopifyStoreRouter.get(
   '/orders/backfill/:syncRunId',
   requireRole('OWNER', 'ADMIN'),
+  requireActiveSubscription,
   shopifyController.getOrderBackfill,
 );
