@@ -44,13 +44,19 @@ export class ShopifyCatalogService {
     collections: ShopifyResourceSyncStats;
   }> {
     // Variants and collection memberships both depend on product identities being present locally,
-    // but neither depends on the other. Running them concurrently removes one full provider pass
-    // from the critical path while preserving the catalog -> inventory dependency boundary.
+    // but neither depends on the other. Run them concurrently, but wait for both side-effecting
+    // branches to settle before surfacing a failure so an immediate retry cannot overlap orphaned writes.
     const products = await this.syncProducts(input);
-    const [variants, collections] = await Promise.all([
+    const [variantsResult, collectionsResult] = await Promise.allSettled([
       this.syncVariants(input),
       this.syncCollections(input),
     ]);
+
+    if (variantsResult.status === 'rejected') throw variantsResult.reason;
+    if (collectionsResult.status === 'rejected') throw collectionsResult.reason;
+
+    const variants = variantsResult.value;
+    const collections = collectionsResult.value;
 
     await this.syncRepository.markMissingCatalogDeleted(input.storeId, products.ids, variants.ids);
     await this.syncRepository.markMissingCollectionsDeleted(input.storeId, collections.ids);
