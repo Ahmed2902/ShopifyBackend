@@ -13,14 +13,29 @@ import {
 const SHOPIFY_REQUEST_TIMEOUT_MS = 10_000;
 const SHOPIFY_REQUEST_ATTEMPTS = 3;
 const MAX_PROVIDER_ERROR_MESSAGE = 500;
+const UNIT_COST_SELECTION = /\s+unitCost\s*\{\s*amount\s+currencyCode\s*\}/m;
 
-function providerErrors(errors: Array<{ message: string; extensions?: { code?: string } }>) {
+type ProviderGraphqlError = { message: string; extensions?: { code?: string } };
+
+function providerErrors(errors: ProviderGraphqlError[]) {
   return errors.slice(0, 5).map((error) => ({
     code: error.extensions?.code ?? null,
     // Shopify GraphQL errors are useful for permission/schema diagnosis, but keep the public
     // payload bounded and never echo the query, variables, token or response envelope.
     message: error.message.slice(0, MAX_PROVIDER_ERROR_MESSAGE),
   }));
+}
+
+function unitCostAccessDenied(errors: ProviderGraphqlError[], query: string) {
+  if (!UNIT_COST_SELECTION.test(query)) return false;
+  return errors.some((error) => {
+    const accessDenied = error.extensions?.code === 'ACCESS_DENIED' || /access denied/i.test(error.message);
+    return accessDenied && /unit\s*cost|unitCost|product costs?/i.test(error.message);
+  });
+}
+
+function removeUnitCostSelection(query: string) {
+  return query.replace(UNIT_COST_SELECTION, '');
 }
 
 export class ShopifyApiService {
@@ -55,6 +70,8 @@ export class ShopifyApiService {
     connectionId?: string;
   }): Promise<TData> {
     const url = `https://${input.shop}/admin/api/${input.apiVersion}/graphql.json`;
+    let query = input.query;
+    let costFallbackUsed = false;
 
     for (let attempt = 0; attempt < SHOPIFY_REQUEST_ATTEMPTS; attempt += 1) {
       let response: Response;
@@ -66,7 +83,7 @@ export class ShopifyApiService {
             'Content-Type': 'application/json',
             'X-Shopify-Access-Token': input.accessToken,
           },
-          body: JSON.stringify({ query: input.query, variables: input.variables ?? {} }),
+          body: JSON.stringify({ query, variables: input.variables ?? {} }),
           signal: AbortSignal.timeout(SHOPIFY_REQUEST_TIMEOUT_MS),
         });
       } catch {
@@ -114,15 +131,25 @@ export class ShopifyApiService {
       }
 
       if (envelope.data.errors?.length) {
-        const throttled = envelope.data.errors.some(
-          (error) => error.extensions?.code === 'THROTTLED',
-        );
+        const rawErrors = envelope.data.errors;
+        const throttled = rawErrors.some((error) => error.extensions?.code === 'THROTTLED');
         if (throttled && attempt < SHOPIFY_REQUEST_ATTEMPTS - 1) {
           await sleep(calculateShopifyThrottleDelayMs(envelope.data.extensions?.cost));
           continue;
         }
 
-        const errors = providerErrors(envelope.data.errors);
+        // unitCost is useful for contribution-profit coverage, but Shopify can deny that single
+        // field when the installing merchant lacks product-cost permission. It must not prevent
+        // products, variants and inventory from syncing. Retry the same query without that
+        // optional field; cost coverage then correctly remains incomplete instead of the whole
+        // integration failing.
+        if (!costFallbackUsed && unitCostAccessDenied(rawErrors, query) && attempt < SHOPIFY_REQUEST_ATTEMPTS - 1) {
+          query = removeUnitCostSelection(query);
+          costFallbackUsed = true;
+          continue;
+        }
+
+        const errors = providerErrors(rawErrors);
         const first = errors[0];
         throw new AppError(
           throttled
