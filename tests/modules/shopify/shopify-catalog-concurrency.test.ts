@@ -14,6 +14,24 @@ const syncContext = {
   syncRunId: '33333333-3333-4333-8333-333333333333',
 };
 
+function repository() {
+  return {
+    persistProducts: vi.fn().mockResolvedValue(undefined),
+    persistVariants: vi.fn().mockResolvedValue(true),
+    persistCollections: vi.fn().mockResolvedValue(undefined),
+    replaceCollectionProducts: vi.fn().mockResolvedValue(true),
+    markMissingCatalogDeleted: vi.fn().mockResolvedValue(undefined),
+    markMissingCollectionsDeleted: vi.fn().mockResolvedValue(undefined),
+    enqueuePixelResolutionRepairs: vi.fn().mockResolvedValue(undefined),
+  } as unknown as ShopifyCatalogRepository;
+}
+
+function integrationService() {
+  return {
+    recordExternalPayload: vi.fn().mockResolvedValue(undefined),
+  } as unknown as IntegrationService;
+}
+
 describe('ShopifyCatalogService sync scheduling', () => {
   it('starts variants and collections concurrently after product identities are persisted', async () => {
     let productsPersisted = false;
@@ -73,25 +91,14 @@ describe('ShopifyCatalogService sync scheduling', () => {
       }),
     } as unknown as ShopifyApiService;
 
-    const syncRepository = {
-      persistProducts: vi.fn().mockImplementation(async () => {
-        productsPersisted = true;
-      }),
-      persistVariants: vi.fn().mockResolvedValue(true),
-      persistCollections: vi.fn().mockResolvedValue(undefined),
-      replaceCollectionProducts: vi.fn().mockResolvedValue(true),
-      markMissingCatalogDeleted: vi.fn().mockResolvedValue(undefined),
-      markMissingCollectionsDeleted: vi.fn().mockResolvedValue(undefined),
-      enqueuePixelResolutionRepairs: vi.fn().mockResolvedValue(undefined),
-    } as unknown as ShopifyCatalogRepository;
-
-    const integrationService = {
-      recordExternalPayload: vi.fn().mockResolvedValue(undefined),
-    } as unknown as IntegrationService;
+    const syncRepository = repository();
+    syncRepository.persistProducts = vi.fn().mockImplementation(async () => {
+      productsPersisted = true;
+    });
 
     const service = new ShopifyCatalogService(
       {} as ShopifyRepository,
-      integrationService,
+      integrationService(),
       apiService,
       syncRepository,
     );
@@ -103,5 +110,46 @@ describe('ShopifyCatalogService sync scheduling', () => {
     expect(result.products.written).toBe(1);
     expect(result.variants.written).toBe(0);
     expect(result.collections.written).toBe(0);
+  });
+
+  it('waits for the sibling catalog branch to finish before surfacing a failure', async () => {
+    let collectionFinished = false;
+
+    const apiService = {
+      requestAdminGraphql: vi.fn().mockImplementation(async ({ query }: { query: string }) => {
+        if (query.includes('CatalogProducts')) {
+          return {
+            products: {
+              nodes: [],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          };
+        }
+        if (query.includes('CatalogVariants')) {
+          throw new Error('variant sync failed');
+        }
+        if (query.includes('CatalogCollections')) {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          collectionFinished = true;
+          return {
+            collections: {
+              nodes: [],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          };
+        }
+        throw new Error(`Unexpected query: ${query}`);
+      }),
+    } as unknown as ShopifyApiService;
+
+    const service = new ShopifyCatalogService(
+      {} as ShopifyRepository,
+      integrationService(),
+      apiService,
+      repository(),
+    );
+
+    await expect(service.sync(syncContext)).rejects.toThrow('variant sync failed');
+    expect(collectionFinished).toBe(true);
   });
 });
