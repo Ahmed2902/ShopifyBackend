@@ -142,10 +142,12 @@ export class ShopifyApiService {
         // field when the installing merchant lacks product-cost permission. It must not prevent
         // products, variants and inventory from syncing. Retry the same query without that
         // optional field; cost coverage then correctly remains incomplete instead of the whole
-        // integration failing.
-        if (!costFallbackUsed && unitCostAccessDenied(rawErrors, query) && attempt < SHOPIFY_REQUEST_ATTEMPTS - 1) {
+        // integration failing. Reset the transient-attempt budget because discovering the
+        // deterministic field denial can itself happen after earlier timeout/throttle retries.
+        if (!costFallbackUsed && unitCostAccessDenied(rawErrors, query)) {
           query = removeUnitCostSelection(query);
           costFallbackUsed = true;
+          attempt = -1;
           continue;
         }
 
