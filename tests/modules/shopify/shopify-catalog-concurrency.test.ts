@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { IntegrationService } from '../../../src/modules/integrations/integration.service.js';
-import { ShopifyCatalogRepository } from '../../../src/modules/shopify/catalog/shopify-catalog.repository.js';
+import type { ShopifyCatalogRepository } from '../../../src/modules/shopify/catalog/shopify-catalog.repository.js';
 import { ShopifyCatalogService } from '../../../src/modules/shopify/catalog/shopify-catalog.service.js';
 import type { ShopifyRepository } from '../../../src/modules/shopify/shopify.repository.js';
 import type { ShopifyApiService } from '../../../src/modules/shopify/shared/shopify-api.service.js';
