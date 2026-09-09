@@ -69,6 +69,43 @@ export const PRODUCT_VARIANTS_QUERY = `#graphql
   }
 `;
 
+// Some Shopify installations can read catalog/inventory but the installing merchant does not
+// have the separate product-cost permission required for InventoryItem.unitCost. Core catalog
+// sync must remain usable in that case; cost coverage is allowed to be unavailable and is already
+// represented explicitly by Stride's data-quality metrics.
+export const PRODUCT_VARIANTS_WITHOUT_COST_QUERY = `#graphql
+  query CatalogVariantsWithoutCost($first: Int!, $after: String) {
+    productVariants(first: $first, after: $after) {
+      nodes {
+        id
+        title
+        displayName
+        sku
+        barcode
+        price
+        compareAtPrice
+        position
+        availableForSale
+        inventoryQuantity
+        inventoryPolicy
+        createdAt
+        updatedAt
+        selectedOptions { name value }
+        product { id }
+        inventoryItem {
+          id
+          sku
+          tracked
+          requiresShipping
+          createdAt
+          updatedAt
+        }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
 export const COLLECTIONS_QUERY = `#graphql
   query CatalogCollections($first: Int!, $after: String) {
     collections(first: $first, after: $after) {
