@@ -11,6 +11,7 @@ function service() {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -77,6 +78,77 @@ describe('ShopifyApiService GraphQL transport', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(requests[0]).toContain('unitCost');
     expect(requests[1]).not.toContain('unitCost');
+  });
+
+  it('still uses the unitCost fallback when transient failures consumed the original retry budget', async () => {
+    vi.useFakeTimers();
+    const requests: string[] = [];
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(async (_url: string, init: RequestInit) => {
+        requests.push(String(init.body));
+        return new Response('temporary', { status: 500 });
+      })
+      .mockImplementationOnce(async (_url: string, init: RequestInit) => {
+        requests.push(String(init.body));
+        return new Response('temporary', { status: 500 });
+      })
+      .mockImplementationOnce(async (_url: string, init: RequestInit) => {
+        requests.push(String(init.body));
+        return new Response(
+          JSON.stringify({
+            errors: [
+              {
+                message: 'Access denied for unitCost field. Required access: view product costs.',
+                extensions: { code: 'ACCESS_DENIED' },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      })
+      .mockImplementationOnce(async (_url: string, init: RequestInit) => {
+        requests.push(String(init.body));
+        return new Response(
+          JSON.stringify({
+            data: {
+              productVariants: {
+                nodes: [],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const request = service().requestAdminGraphql<{ productVariants: unknown }>({
+      shop: 'example.myshopify.com',
+      accessToken: 'token',
+      apiVersion: '2026-07',
+      query: `#graphql
+        query CatalogVariants {
+          productVariants(first: 10) {
+            nodes {
+              id
+              inventoryItem {
+                id
+                unitCost { amount currencyCode }
+              }
+            }
+          }
+        }
+      `,
+    });
+
+    await vi.runAllTimersAsync();
+    const result = await request;
+
+    expect(result.productVariants).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(requests.slice(0, 3).every((body) => body.includes('unitCost'))).toBe(true);
+    expect(requests[3]).not.toContain('unitCost');
   });
 
   it('preserves bounded Shopify GraphQL error details for actionable sync failures', async () => {
