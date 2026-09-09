@@ -43,9 +43,14 @@ export class ShopifyCatalogService {
     variants: ShopifyResourceSyncStats;
     collections: ShopifyResourceSyncStats;
   }> {
+    // Variants and collection memberships both depend on product identities being present locally,
+    // but neither depends on the other. Running them concurrently removes one full provider pass
+    // from the critical path while preserving the catalog -> inventory dependency boundary.
     const products = await this.syncProducts(input);
-    const variants = await this.syncVariants(input);
-    const collections = await this.syncCollections(input);
+    const [variants, collections] = await Promise.all([
+      this.syncVariants(input),
+      this.syncCollections(input),
+    ]);
 
     await this.syncRepository.markMissingCatalogDeleted(input.storeId, products.ids, variants.ids);
     await this.syncRepository.markMissingCollectionsDeleted(input.storeId, collections.ids);
