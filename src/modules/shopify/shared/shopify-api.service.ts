@@ -12,6 +12,16 @@ import {
 
 const SHOPIFY_REQUEST_TIMEOUT_MS = 10_000;
 const SHOPIFY_REQUEST_ATTEMPTS = 3;
+const MAX_PROVIDER_ERROR_MESSAGE = 500;
+
+function providerErrors(errors: Array<{ message: string; extensions?: { code?: string } }>) {
+  return errors.slice(0, 5).map((error) => ({
+    code: error.extensions?.code ?? null,
+    // Shopify GraphQL errors are useful for permission/schema diagnosis, but keep the public
+    // payload bounded and never echo the query, variables, token or response envelope.
+    message: error.message.slice(0, MAX_PROVIDER_ERROR_MESSAGE),
+  }));
+}
 
 export class ShopifyApiService {
   constructor(private readonly repository: ShopifyRepository) {}
@@ -112,10 +122,17 @@ export class ShopifyApiService {
           continue;
         }
 
+        const errors = providerErrors(envelope.data.errors);
+        const first = errors[0];
         throw new AppError(
-          throttled ? 'Shopify rate limit was exceeded' : 'Shopify GraphQL request failed',
+          throttled
+            ? 'Shopify rate limit was exceeded'
+            : first?.message
+              ? `Shopify GraphQL request failed: ${first.message}`
+              : 'Shopify GraphQL request failed',
           throttled ? 503 : 502,
           throttled ? 'SHOPIFY_THROTTLED' : 'SHOPIFY_GRAPHQL_FAILED',
+          { providerErrors: errors },
         );
       }
 
