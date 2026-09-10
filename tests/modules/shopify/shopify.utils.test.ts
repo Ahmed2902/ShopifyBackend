@@ -39,7 +39,7 @@ describe('Shopify OAuth utilities', () => {
     expect(() => verifyShopifyOAuthContext(tampered)).toThrow(AppError);
   });
 
-  it('builds an offline authorization URL with state and requested scopes', () => {
+  it('builds an offline authorization URL with state, requested scopes, and the frontend callback bridge', () => {
     const url = new URL(buildShopifyAuthorizationUrl('example-store.myshopify.com', 'random-state'));
 
     expect(url.origin).toBe('https://example-store.myshopify.com');
@@ -47,6 +47,7 @@ describe('Shopify OAuth utilities', () => {
     expect(url.searchParams.get('state')).toBe('random-state');
     expect(url.searchParams.get('grant_options[]')).toBeNull();
     expect(url.searchParams.get('scope')).toContain('read_products');
+    expect(url.searchParams.get('redirect_uri')).toBe('http://localhost:3000/api/shopify/callback');
   });
 
   it('returns OAuth installs to the real integrations page', () => {
