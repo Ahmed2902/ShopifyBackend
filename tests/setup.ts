@@ -22,7 +22,6 @@ process.env.SHOPIFY_CLIENT_ID ??= 'test-shopify-client-id';
 process.env.SHOPIFY_CLIENT_SECRET ??= 'test-shopify-client-secret';
 process.env.SHOPIFY_SCOPES ??=
   'read_products,read_inventory,read_locations,read_orders,write_pixels,read_customer_events';
-process.env.SHOPIFY_REDIRECT_URI ??= 'http://localhost:3001/v1/integrations/shopify/callback';
 process.env.SHOPIFY_API_VERSION ??= '2026-07';
 process.env.SHOPIFY_STATE_SECRET ??= 'test-shopify-state-secret-that-is-over-thirty-two-characters';
 process.env.PIXEL_COLLECTOR_URL ??= 'http://localhost:3001/v1/pixel/events';
