@@ -34,7 +34,10 @@ export function googleFrontendCallbackUrl(errorCode?: string): string {
 }
 
 export function shopifyCallbackUrl(): string {
-  return backendCallback('/v1/integrations/shopify/callback', env.SHOPIFY_REDIRECT_URI);
+  // Shopify OAuth must use the exact callback registered for the active app version.
+  // Keep it explicit instead of deriving it from APP_URL or FRONTEND_URL so deployment
+  // configuration and Shopify's whitelist cannot silently drift apart.
+  return new URL(env.SHOPIFY_REDIRECT_URI).toString();
 }
 
 export function metaCallbackUrl(): string {

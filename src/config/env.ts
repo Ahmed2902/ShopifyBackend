@@ -32,7 +32,7 @@ const envSchema = z.object({
   SHOPIFY_CLIENT_ID: z.string().min(1),
   SHOPIFY_CLIENT_SECRET: z.string().min(1),
   SHOPIFY_SCOPES: z.string().min(1),
-  SHOPIFY_REDIRECT_URI: z.string().url().optional(),
+  SHOPIFY_REDIRECT_URI: z.string().url(),
   SHOPIFY_API_VERSION: z
     .string()
     .regex(/^\d{4}-\d{2}$/)
@@ -107,6 +107,9 @@ if (parsedEnv.NODE_ENV === 'production') {
   }
   if (isLoopbackUrl(corsOrigin)) {
     throw new Error('CORS_ORIGIN must not point to localhost in production');
+  }
+  if (isLoopbackUrl(parsedEnv.SHOPIFY_REDIRECT_URI)) {
+    throw new Error('SHOPIFY_REDIRECT_URI must be a public callback URL in production');
   }
 }
 
