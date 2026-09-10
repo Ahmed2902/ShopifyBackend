@@ -34,10 +34,10 @@ export function googleFrontendCallbackUrl(errorCode?: string): string {
 }
 
 export function shopifyCallbackUrl(): string {
-  // Shopify requires the OAuth redirect to be whitelisted on the app host. The frontend
-  // owns a thin callback bridge that preserves Shopify's query string and forwards it to
-  // the backend for HMAC/state verification and token exchange.
-  return frontendUrl('/api/shopify/callback');
+  // Shopify OAuth must use the exact callback registered for the active app version.
+  // Keep it explicit instead of deriving it from APP_URL or FRONTEND_URL so deployment
+  // configuration and Shopify's whitelist cannot silently drift apart.
+  return new URL(env.SHOPIFY_REDIRECT_URI).toString();
 }
 
 export function metaCallbackUrl(): string {
