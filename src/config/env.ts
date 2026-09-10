@@ -32,7 +32,6 @@ const envSchema = z.object({
   SHOPIFY_CLIENT_ID: z.string().min(1),
   SHOPIFY_CLIENT_SECRET: z.string().min(1),
   SHOPIFY_SCOPES: z.string().min(1),
-  SHOPIFY_REDIRECT_URI: z.string().url().optional(),
   SHOPIFY_API_VERSION: z
     .string()
     .regex(/^\d{4}-\d{2}$/)
