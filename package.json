@@ -7,8 +7,11 @@
     "node": "22.x"
   },
   "scripts": {
+    "predev": "prisma generate",
     "dev": "tsx watch src/server.ts",
+    "predev:api": "prisma generate",
     "dev:api": "tsx watch src/api.ts",
+    "predev:worker": "prisma generate",
     "dev:worker": "tsx watch src/worker.ts",
     "build": "prisma generate && tsc -p tsconfig.json",
     "postinstall": "prisma generate",
