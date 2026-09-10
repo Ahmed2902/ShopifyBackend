@@ -6,6 +6,11 @@ import { ShopifyAuthService } from '../shopify/shared/shopify-auth.service.js';
 
 const REQUIRED_PIXEL_SCOPES = ['write_pixels', 'read_pixels', 'read_customer_events'] as const;
 
+function hasPixelScope(scopes: string[], scope: (typeof REQUIRED_PIXEL_SCOPES)[number]): boolean {
+  if (scope === 'read_pixels' && scopes.includes('write_pixels')) return true;
+  return scopes.includes(scope);
+}
+
 const webPixelSchema = z.object({
   id: z.string().min(1),
   settings: z.unknown(),
@@ -188,7 +193,9 @@ export class ShopifyPixelProvisioner {
       );
     }
 
-    const missingScopes = REQUIRED_PIXEL_SCOPES.filter((scope) => !connection.scopes.includes(scope));
+    const missingScopes = REQUIRED_PIXEL_SCOPES.filter(
+      (scope) => !hasPixelScope(connection.scopes, scope),
+    );
     if (missingScopes.length > 0) {
       throw new AppError(
         'Shopify must be reauthorized with customer-event pixel access',
