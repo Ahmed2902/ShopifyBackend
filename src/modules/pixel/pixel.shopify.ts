@@ -11,6 +11,25 @@ function hasPixelScope(scopes: string[], scope: (typeof REQUIRED_PIXEL_SCOPES)[n
   return scopes.includes(scope);
 }
 
+function isMissingWebPixelError(error: unknown): boolean {
+  if (!(error instanceof AppError) || error.code !== 'SHOPIFY_GRAPHQL_FAILED') return false;
+  const details = error.details;
+  if (!details || typeof details !== 'object' || !('providerErrors' in details)) return false;
+  const providerErrors = (details as { providerErrors?: unknown }).providerErrors;
+  if (!Array.isArray(providerErrors)) return false;
+
+  return providerErrors.some((providerError) => {
+    if (!providerError || typeof providerError !== 'object') return false;
+    const code = 'code' in providerError ? providerError.code : undefined;
+    const message = 'message' in providerError ? providerError.message : undefined;
+    return (
+      code === 'RESOURCE_NOT_FOUND' &&
+      typeof message === 'string' &&
+      /no web pixel was found for this app/i.test(message)
+    );
+  });
+}
+
 const webPixelSchema = z.object({
   id: z.string().min(1),
   settings: z.unknown(),
@@ -97,19 +116,7 @@ export class ShopifyPixelProvisioner {
 
   async inspect(storeId: string): Promise<{ id: string; settings: Record<string, unknown> | null } | null> {
     const { context } = await this.resolveContext(storeId);
-    const response = await this.apiService.requestAdminGraphql<unknown>({
-      ...context,
-      query: WEB_PIXEL_QUERY,
-    });
-    const parsed = findResponseSchema.safeParse(response);
-    if (!parsed.success) {
-      throw new AppError(
-        'Shopify web pixel lookup returned an unexpected shape',
-        502,
-        'SHOPIFY_BAD_RESPONSE',
-      );
-    }
-    const webPixel = parsed.data.webPixel;
+    const webPixel = await this.findRemoteWebPixel(context);
     return webPixel ? { id: webPixel.id, settings: normalizePixelSettings(webPixel.settings) } : null;
   }
 
@@ -122,20 +129,11 @@ export class ShopifyPixelProvisioner {
 
     // Treat Shopify as the source of truth for the current WebPixel resource. The locally stored
     // provider ID can become stale if Shopify or the merchant deletes/recreates the pixel; always
-    // inspect the live resource before deciding whether to update or create.
-    const lookup = await this.apiService.requestAdminGraphql<unknown>({
-      ...context,
-      query: WEB_PIXEL_QUERY,
-    });
-    const parsedLookup = findResponseSchema.safeParse(lookup);
-    if (!parsedLookup.success) {
-      throw new AppError(
-        'Shopify web pixel lookup returned an unexpected shape',
-        502,
-        'SHOPIFY_BAD_RESPONSE',
-      );
-    }
-    const webPixelId = parsedLookup.data.webPixel?.id ?? null;
+    // inspect the live resource before deciding whether to update or create. Shopify reports an
+    // app with no WebPixel as RESOURCE_NOT_FOUND, which is the expected create path rather than a
+    // provider failure.
+    const remoteWebPixel = await this.findRemoteWebPixel(context);
+    const webPixelId = remoteWebPixel?.id ?? null;
 
     // Shopify's WebPixelInput expects its `settings` JSON scalar as a JSON-formatted string.
     const variables = {
@@ -175,6 +173,34 @@ export class ShopifyPixelProvisioner {
       );
     }
     return this.unwrapResult(parsed.data.webPixelCreate, 'create');
+  }
+
+  private async findRemoteWebPixel(context: {
+    shop: string;
+    accessToken: string;
+    apiVersion: string;
+    connectionId: string;
+  }) {
+    let response: unknown;
+    try {
+      response = await this.apiService.requestAdminGraphql<unknown>({
+        ...context,
+        query: WEB_PIXEL_QUERY,
+      });
+    } catch (error) {
+      if (isMissingWebPixelError(error)) return null;
+      throw error;
+    }
+
+    const parsed = findResponseSchema.safeParse(response);
+    if (!parsed.success) {
+      throw new AppError(
+        'Shopify web pixel lookup returned an unexpected shape',
+        502,
+        'SHOPIFY_BAD_RESPONSE',
+      );
+    }
+    return parsed.data.webPixel;
   }
 
   private async resolveContext(storeId: string) {
