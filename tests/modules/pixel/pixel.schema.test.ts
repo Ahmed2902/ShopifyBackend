@@ -67,13 +67,14 @@ describe('Stride Pixel event schema', () => {
     });
   });
 
-  it('requires a collection identity for collection views', () => {
-    expect(() =>
+  it('keeps synthetic collection views even when Shopify provides no durable collection identity', () => {
+    expect(
       storefrontEventSchema.parse({
         ...baseEvent,
         eventName: 'COLLECTION_VIEW',
+        pageUrl: 'https://store.example/collections/all',
       }),
-    ).toThrow();
+    ).toMatchObject({ eventName: 'COLLECTION_VIEW' });
 
     expect(
       storefrontEventSchema.parse({
