@@ -83,13 +83,9 @@ export const storefrontEventSchema = z
       });
     }
 
-    if (event.eventName === 'COLLECTION_VIEW' && !event.collectionExternalId) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'COLLECTION_VIEW requires collectionExternalId',
-        path: ['collectionExternalId'],
-      });
-    }
+    // Shopify's synthetic /collections/all surface can emit collection_viewed without a durable
+    // merchant collection identity. Keep the behavioral event and let the journey layer omit a
+    // collection entity row instead of rejecting the entire delivery batch.
 
     if (
       (event.eventName === 'ADD_TO_CART' || event.eventName === 'REMOVE_FROM_CART') &&
