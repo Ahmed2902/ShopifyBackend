@@ -13,13 +13,22 @@ const opaqueIdSchema = z
   .max(128)
   .regex(/^[A-Za-z0-9_-]+$/);
 
-const externalIdSchema = z.string().trim().min(1).max(128);
+function shopifyEntityIdSchema(type: 'Product' | 'ProductVariant' | 'Collection') {
+  return z
+    .string()
+    .trim()
+    .min(1)
+    .max(128)
+    .transform((value) => (/^\d+$/.test(value) ? `gid://shopify/${type}/${value}` : value));
+}
+
 const checkoutTokenSchema = z.string().trim().min(1).max(255);
 const shopifyOrderExternalIdSchema = z
   .string()
   .trim()
   .max(128)
-  .regex(/^gid:\/\/shopify\/Order\/\d+$/);
+  .transform((value) => (/^\d+$/.test(value) ? `gid://shopify/Order/${value}` : value))
+  .pipe(z.string().regex(/^gid:\/\/shopify\/Order\/\d+$/));
 const providerNumericIdSchema = z.string().trim().regex(/^\d+$/).max(128);
 const attributionValueSchema = z.string().trim().min(1).max(255);
 const clickIdSchema = z.string().trim().min(1).max(512);
@@ -59,9 +68,9 @@ export const storefrontEventSchema = z
     pageUrl: urlSchema.optional(),
     referrerUrl: urlSchema.optional(),
     landingPageUrl: urlSchema.optional(),
-    productExternalId: externalIdSchema.optional(),
-    variantExternalId: externalIdSchema.optional(),
-    collectionExternalId: externalIdSchema.optional(),
+    productExternalId: shopifyEntityIdSchema('Product').optional(),
+    variantExternalId: shopifyEntityIdSchema('ProductVariant').optional(),
+    collectionExternalId: shopifyEntityIdSchema('Collection').optional(),
     quantity: z.number().int().min(1).max(100_000).optional(),
     shopifyCheckoutToken: checkoutTokenSchema.optional(),
     shopifyOrderExternalId: shopifyOrderExternalIdSchema.optional(),
