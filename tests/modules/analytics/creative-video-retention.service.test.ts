@@ -1,6 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const metaInsightDaily = vi.hoisted(() => ({
+  findMany: vi.fn(),
+}));
+
+vi.mock('../../../src/lib/prisma.js', () => ({
+  prisma: { metaInsightDaily },
+}));
+
 import {
   buildCreativeVideoRetention,
+  CreativeVideoRetentionService,
   summarizeCreativeVideoRetentionRows,
 } from '../../../src/modules/analytics/creative-video-retention.service.js';
 
@@ -10,6 +20,7 @@ function action(value: number | string) {
 
 function row(input: {
   date?: string;
+  creativeId?: string;
   plays?: number;
   p25?: number;
   p50?: number;
@@ -22,17 +33,41 @@ function row(input: {
 }) {
   const videoMetrics: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(input)) {
-    if (key === 'date' || value === undefined) continue;
+    if (key === 'date' || key === 'creativeId' || value === undefined) continue;
     videoMetrics[key] = action(value);
   }
   return {
     date: new Date(`${input.date ?? '2026-09-01'}T00:00:00.000Z`),
     videoMetrics,
-    ad: { creativeId: 'creative-1' },
+    ad: { creativeId: input.creativeId ?? 'creative-1' },
   };
 }
 
+const windows = {
+  current: {
+    fromDate: '2026-09-01',
+    toDate: '2026-09-07',
+    metaFrom: new Date('2026-09-01T00:00:00.000Z'),
+    metaTo: new Date('2026-09-07T00:00:00.000Z'),
+    instantFrom: new Date('2026-09-01T00:00:00.000Z'),
+    instantTo: new Date('2026-09-07T23:59:59.999Z'),
+  },
+  comparison: {
+    fromDate: '2026-08-25',
+    toDate: '2026-08-31',
+    metaFrom: new Date('2026-08-25T00:00:00.000Z'),
+    metaTo: new Date('2026-08-31T00:00:00.000Z'),
+    instantFrom: new Date('2026-08-25T00:00:00.000Z'),
+    instantTo: new Date('2026-08-31T23:59:59.999Z'),
+  },
+  days: 7,
+};
+
 describe('creative video retention', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('aggregates counts before deriving rates and weights average watch time by plays', () => {
     const result = summarizeCreativeVideoRetentionRows([
       row({ plays: 100, p25: 80, p50: 60, p75: 30, p95: 25, p100: 20, thruplay: 40, sec30: 10, avgTime: 8 }),
@@ -80,6 +115,32 @@ describe('creative video retention', () => {
     expect(result.limitations[0]?.code).toBe('INCONSISTENT_PROVIDER_DATA');
   });
 
+  it('suppresses comparison-period diagnoses when the previous sample is too small', () => {
+    const result = buildCreativeVideoRetention({
+      isVideo: true,
+      currentRows: [row({ plays: 1_000, p25: 800, p50: 600, p75: 400, p100: 300 })],
+      comparisonRows: [row({ date: '2026-08-30', plays: 50, p25: 40, p50: 20, p75: 10, p100: 5 })],
+    });
+
+    expect(result.status).toBe('READY');
+    expect(result.comparison?.plays).toBe(50);
+    expect(result.comparison?.largestDropStage).toBeNull();
+    expect(result.comparison?.largestDropRate).toBeNull();
+    expect(result.limitations.map((item) => item.code)).toContain('COMPARISON_INSUFFICIENT_PLAYS');
+  });
+
+  it('suppresses comparison-period diagnoses when previous provider quartiles are inconsistent', () => {
+    const result = buildCreativeVideoRetention({
+      isVideo: true,
+      currentRows: [row({ plays: 1_000, p25: 800, p50: 600, p75: 400, p100: 300 })],
+      comparisonRows: [row({ date: '2026-08-30', plays: 1_000, p25: 700, p50: 800, p75: 400, p100: 200 })],
+    });
+
+    expect(result.status).toBe('READY');
+    expect(result.comparison?.largestDropStage).toBeNull();
+    expect(result.limitations.map((item) => item.code)).toContain('COMPARISON_INCONSISTENT_PROVIDER_DATA');
+  });
+
   it('keeps non-video creatives explicit instead of returning zero retention', () => {
     const result = buildCreativeVideoRetention({
       isVideo: false,
@@ -111,7 +172,7 @@ describe('creative video retention', () => {
     const result = buildCreativeVideoRetention({
       isVideo: true,
       currentRows: [row({ plays: 1_000, p25: 800, p50: 600, p75: 400, p100: 300, avgTime: 12 })],
-      comparisonRows: [row({ date: '2026-08-01', plays: 1_000, p25: 700, p50: 500, p75: 300, p100: 200, avgTime: 10 })],
+      comparisonRows: [row({ date: '2026-08-30', plays: 1_000, p25: 700, p50: 500, p75: 300, p100: 200, avgTime: 10 })],
     });
 
     expect(result.status).toBe('READY');
@@ -119,5 +180,26 @@ describe('creative video retention', () => {
     expect(result.change.to25RatePoints).toBeCloseTo(0.1);
     expect(result.change.completionRatePoints).toBeCloseTo(0.1);
     expect(result.change.averageTimeWatchedSeconds).toBeCloseTo(2);
+  });
+
+  it('infers dynamic-video applicability from stored Meta video evidence when no top-level videoId exists', async () => {
+    metaInsightDaily.findMany.mockResolvedValue([
+      row({ creativeId: 'dynamic-creative', plays: 1_000, p25: 800, p50: 600, p75: 400, p100: 300 }),
+    ]);
+
+    const result = await new CreativeVideoRetentionService().forCreatives({
+      storeId: 'store-1',
+      selectedAccountIds: ['act-1'],
+      windows,
+      creatives: [{ id: 'dynamic-creative', videoId: null }],
+    });
+
+    expect(result.get('dynamic-creative')?.status).toBe('READY');
+    expect(result.get('dynamic-creative')?.current?.plays).toBe(1_000);
+    expect(metaInsightDaily.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        ad: { creativeId: { in: ['dynamic-creative'] } },
+      }),
+    }));
   });
 });
