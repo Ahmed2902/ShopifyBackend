@@ -3,7 +3,7 @@ CREATE TYPE "RecommendationLifecycleState" AS ENUM ('OPEN', 'REVIEWED', 'DISMISS
 CREATE TABLE "RecommendationLifecycle" (
   "id" UUID NOT NULL,
   "storeId" UUID NOT NULL,
-  "occurrenceKey" TEXT NOT NULL,
+  "occurrenceKey" VARCHAR(512) NOT NULL,
   "state" "RecommendationLifecycleState" NOT NULL DEFAULT 'OPEN',
   "reviewedAt" TIMESTAMP(3),
   "dismissedAt" TIMESTAMP(3),
