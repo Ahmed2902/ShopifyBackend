@@ -99,7 +99,14 @@ describe('recommendationLifecycleUpdateSchema', () => {
     ).toEqual({ occurrenceKey, state: 'REVIEWED' });
   });
 
-  it('rejects oversized occurrence keys before they reach the unique database index', () => {
+  it('rejects empty and oversized occurrence keys before persistence', () => {
+    expect(() =>
+      recommendationLifecycleUpdateSchema.parse({
+        occurrenceKey: '   ',
+        state: 'OPEN',
+      }),
+    ).toThrow();
+
     expect(() =>
       recommendationLifecycleUpdateSchema.parse({
         occurrenceKey: 'x'.repeat(513),
