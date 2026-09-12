@@ -32,43 +32,96 @@ function recommendation(overrides: Partial<RecommendationDraft> = {}): Recommend
 }
 
 describe('recommendationDecision', () => {
-  it('maps a high-severity campaign deterioration to REDUCE', () => {
-    expect(recommendationDecision(recommendation())).toMatchObject({
-      decisionAction: 'REDUCE',
-      decisionConfidence: 'HIGH',
-      decisionBasis: 'DETERMINISTIC_RULE',
-    });
-  });
-
-  it('holds a medium-severity campaign deterioration instead of inventing a scale amount', () => {
-    expect(recommendationDecision(recommendation({ severity: 'MEDIUM' }))).toMatchObject({
-      decisionAction: 'HOLD',
-      decisionBasis: 'DETERMINISTIC_RULE',
-    });
-  });
+  it.each([
+    [
+      'campaign_efficiency_deterioration',
+      'HIGH',
+      'REDUCE',
+      'Reduce or cap further spend while you investigate the efficiency deterioration.',
+    ],
+    [
+      'campaign_efficiency_deterioration',
+      'MEDIUM',
+      'HOLD',
+      'Hold the current budget and investigate the efficiency deterioration before scaling further.',
+    ],
+    [
+      'creative_fatigue_symptoms',
+      'HIGH',
+      'TEST',
+      'Prepare and test a replacement creative before the current fatigue symptoms worsen.',
+    ],
+    [
+      'underexposed_commerce_winner',
+      'HIGH',
+      'TEST',
+      'Run a controlled paid-traffic test; do not treat this signal as an automatic budget increase.',
+    ],
+    [
+      'paid_commerce_exposure_mismatch',
+      'HIGH',
+      'INVESTIGATE',
+      'Investigate traffic fit, product offer and landing experience before increasing exposure.',
+    ],
+    [
+      'provider_roas_margin_trap',
+      'HIGH',
+      'REDUCE',
+      'Reduce further scaling pressure and review product economics before trusting provider ROAS as a growth signal.',
+    ],
+    [
+      'inventory_spend_conflict',
+      'HIGH',
+      'HOLD',
+      'Hold aggressive paid scaling until replenishment or inventory protection is confirmed.',
+    ],
+    [
+      'shared_exposure_inventory_conflict',
+      'HIGH',
+      'HOLD',
+      'Hold aggressive paid scaling until replenishment or inventory protection is confirmed.',
+    ],
+  ] as const)(
+    'maps %s (%s severity) to %s with the intended merchant-facing message',
+    (ruleId, severity, expectedAction, expectedMessage) => {
+      expect(recommendationDecision(recommendation({ ruleId, severity }))).toEqual({
+        decisionAction: expectedAction,
+        decisionConfidence: 'HIGH',
+        decisionBasis: 'DETERMINISTIC_RULE',
+        decisionMessage: expectedMessage,
+      });
+    },
+  );
 
   it.each([
-    ['creative_fatigue_symptoms', 'TEST'],
-    ['underexposed_commerce_winner', 'TEST'],
-    ['paid_commerce_exposure_mismatch', 'INVESTIGATE'],
-    ['provider_roas_margin_trap', 'REDUCE'],
-    ['inventory_spend_conflict', 'HOLD'],
-    ['shared_exposure_inventory_conflict', 'HOLD'],
-  ] as const)('maps %s to %s', (ruleId, expectedAction) => {
-    expect(recommendationDecision(recommendation({ ruleId }))).toMatchObject({
-      decisionAction: expectedAction,
-      decisionBasis: 'DETERMINISTIC_RULE',
-    });
-  });
+    ['HIGH', 0.92],
+    ['MEDIUM', 0.67],
+    ['LOW', 0.41],
+  ] as const)(
+    'uses the post-quality %s evidence grade as the user-facing confidence level',
+    (evidenceQuality, confidenceScore) => {
+      expect(
+        recommendationDecision(recommendation({ evidenceQuality, confidenceScore })),
+      ).toMatchObject({
+        decisionConfidence: evidenceQuality,
+        decisionBasis: 'DETERMINISTIC_RULE',
+      });
+    },
+  );
 
-  it('uses the post-quality evidence grade as the user-facing confidence level', () => {
+  it('keeps unknown future rules conservative and preserves their suggested action copy', () => {
     expect(
       recommendationDecision(
-        recommendation({ evidenceQuality: 'LOW', confidenceScore: 0.41 }),
+        recommendation({
+          ruleId: 'future_rule',
+          suggestedAction: 'Review this signal before making a change.',
+        }),
       ),
-    ).toMatchObject({
-      decisionConfidence: 'LOW',
+    ).toEqual({
+      decisionAction: 'INVESTIGATE',
+      decisionConfidence: 'HIGH',
       decisionBasis: 'DETERMINISTIC_RULE',
+      decisionMessage: 'Review this signal before making a change.',
     });
   });
 });
