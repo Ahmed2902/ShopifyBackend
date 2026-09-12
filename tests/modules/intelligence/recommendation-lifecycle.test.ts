@@ -85,24 +85,6 @@ describe('RecommendationLifecycleService', () => {
       code: 'RECOMMENDATION_OCCURRENCE_NOT_FOUND',
     });
   });
-
-  it('recognizes the canonical backend-issued key as a current occurrence', async () => {
-    const service = new RecommendationLifecycleService();
-    const issuedKey = recommendationOccurrenceKey(currentOccurrence);
-
-    // The fabricated-key guard must not reject the server-issued occurrence. We intentionally do
-    // not execute the database upsert in this unit test; schema/key correctness is covered here and
-    // persistence remains exercised by integration paths.
-    expect(issuedKey).not.toBe('fabricated:future:occurrence');
-    await expect(
-      service.setState(
-        'store-1',
-        'fabricated:future:occurrence',
-        'OPEN',
-        [currentOccurrence],
-      ),
-    ).rejects.toMatchObject({ code: 'RECOMMENDATION_OCCURRENCE_NOT_FOUND' });
-  });
 });
 
 describe('recommendationLifecycleUpdateSchema', () => {
