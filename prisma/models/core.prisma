@@ -202,4 +202,5 @@ model Store {
   storefrontAttributionPaths      StorefrontAttributionPathDaily[]
   storefrontMetaTargetEvidence    StorefrontMetaTargetEvidenceDaily[]
   storefrontAttributionRollup     StorefrontAttributionRollupState?
+  recommendationLifecycles        RecommendationLifecycle[]
 }
