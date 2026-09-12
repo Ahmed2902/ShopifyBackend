@@ -81,6 +81,17 @@ type MetricKey =
 const MIN_DIAGNOSTIC_PLAYS = 100;
 const MEDIUM_QUALITY_PLAYS = 500;
 const HIGH_QUALITY_PLAYS = 2_000;
+const VIDEO_METRIC_KEYS: MetricKey[] = [
+  'plays',
+  'p25',
+  'p50',
+  'p75',
+  'p95',
+  'p100',
+  'thruplay',
+  'sec30',
+  'avgTime',
+];
 
 function finiteNonNegative(value: unknown): number | null {
   if (typeof value !== 'string' && typeof value !== 'number') return null;
@@ -119,6 +130,10 @@ function metricFromRow(row: RetentionRow, key: MetricKey): number | null {
     return null;
   }
   return metricValue((row.videoMetrics as Record<string, unknown>)[key]);
+}
+
+function rowHasVideoEvidence(row: RetentionRow) {
+  return VIDEO_METRIC_KEYS.some((key) => metricFromRow(row, key) !== null);
 }
 
 function sumMetric(rows: RetentionRow[], key: Exclude<MetricKey, 'avgTime'>): number | null {
@@ -246,6 +261,10 @@ function isInconsistent(period: CreativeVideoRetentionPeriod | null) {
   return false;
 }
 
+function isInsufficient(period: CreativeVideoRetentionPeriod | null) {
+  return period !== null && (period.plays === null || period.plays < MIN_DIAGNOSTIC_PLAYS);
+}
+
 function evidenceQuality(plays: number | null): CreativeVideoEvidenceQuality {
   if (plays !== null && plays >= HIGH_QUALITY_PLAYS) return 'HIGH';
   if (plays !== null && plays >= MEDIUM_QUALITY_PLAYS) return 'MEDIUM';
@@ -291,9 +310,11 @@ export function buildCreativeVideoRetention(input: {
 
   const current = summarizeCreativeVideoRetentionRows(input.currentRows);
   const comparison = summarizeCreativeVideoRetentionRows(input.comparisonRows);
-  const inconsistent = isInconsistent(current);
+  const currentInconsistent = isInconsistent(current);
+  const currentInsufficient = isInsufficient(current);
+  const comparisonInconsistent = isInconsistent(comparison);
+  const comparisonInsufficient = isInsufficient(comparison);
   const currentPlays = current?.plays ?? null;
-  const insufficient = current !== null && (currentPlays === null || currentPlays < MIN_DIAGNOSTIC_PLAYS);
 
   let status: CreativeVideoRetentionStatus = 'READY';
   const limitations: Array<{ code: string; message: string }> = [];
@@ -303,13 +324,13 @@ export function buildCreativeVideoRetention(input: {
       code: 'NO_VIDEO_DATA',
       message: 'Meta returned no video retention metrics for this creative in the current window.',
     });
-  } else if (inconsistent) {
+  } else if (currentInconsistent) {
     status = 'INCONSISTENT_PROVIDER_DATA';
     limitations.push({
       code: 'INCONSISTENT_PROVIDER_DATA',
       message: 'Meta video quartile counts are not monotonic, so Stride does not diagnose a drop-off stage.',
     });
-  } else if (insufficient) {
+  } else if (currentInsufficient) {
     status = 'INSUFFICIENT_PLAYS';
     limitations.push({
       code: 'INSUFFICIENT_PLAYS',
@@ -322,9 +343,24 @@ export function buildCreativeVideoRetention(input: {
       code: 'NO_COMPARISON_VIDEO_DATA',
       message: 'No comparable Meta video retention evidence is available for the previous window.',
     });
+  } else if (comparisonInconsistent) {
+    limitations.push({
+      code: 'COMPARISON_INCONSISTENT_PROVIDER_DATA',
+      message: 'Previous-window Meta quartile counts are not monotonic, so comparison-stage diagnosis is suppressed.',
+    });
+  } else if (comparisonInsufficient) {
+    limitations.push({
+      code: 'COMPARISON_INSUFFICIENT_PLAYS',
+      message: `Previous-window stage diagnosis requires at least ${MIN_DIAGNOSTIC_PLAYS} Meta video plays.`,
+    });
   }
 
-  const safeCurrent = inconsistent || insufficient ? suppressStageDiagnosis(current) : current;
+  const safeCurrent = currentInconsistent || currentInsufficient
+    ? suppressStageDiagnosis(current)
+    : current;
+  const safeComparison = comparisonInconsistent || comparisonInsufficient
+    ? suppressStageDiagnosis(comparison)
+    : comparison;
 
   return {
     source: 'META_VIDEO_INSIGHTS',
@@ -332,18 +368,18 @@ export function buildCreativeVideoRetention(input: {
     evidenceQuality: evidenceQuality(currentPlays),
     minimumDiagnosticPlays: MIN_DIAGNOSTIC_PLAYS,
     current: safeCurrent,
-    comparison,
+    comparison: safeComparison,
     change: {
-      to25RatePoints: points(safeCurrent?.rates.to25 ?? null, comparison?.rates.to25 ?? null),
-      to50RatePoints: points(safeCurrent?.rates.to50 ?? null, comparison?.rates.to50 ?? null),
-      to75RatePoints: points(safeCurrent?.rates.to75 ?? null, comparison?.rates.to75 ?? null),
+      to25RatePoints: points(safeCurrent?.rates.to25 ?? null, safeComparison?.rates.to25 ?? null),
+      to50RatePoints: points(safeCurrent?.rates.to50 ?? null, safeComparison?.rates.to50 ?? null),
+      to75RatePoints: points(safeCurrent?.rates.to75 ?? null, safeComparison?.rates.to75 ?? null),
       completionRatePoints: points(
         safeCurrent?.rates.completion ?? null,
-        comparison?.rates.completion ?? null,
+        safeComparison?.rates.completion ?? null,
       ),
       averageTimeWatchedSeconds: numericChange(
         safeCurrent?.averageTimeWatchedSeconds ?? null,
-        comparison?.averageTimeWatchedSeconds ?? null,
+        safeComparison?.averageTimeWatchedSeconds ?? null,
       ),
     },
     limitations,
@@ -360,24 +396,18 @@ export class CreativeVideoRetentionService {
     creatives: Array<{ id: string; videoId?: string | null }>;
   }): Promise<Map<string, CreativeVideoRetention>> {
     const output = new Map<string, CreativeVideoRetention>();
-    const videoCreativeIds = input.creatives.filter((item) => item.videoId).map((item) => item.id);
-
-    for (const creative of input.creatives) {
-      if (!creative.videoId) {
-        output.set(
-          creative.id,
-          buildCreativeVideoRetention({ isVideo: false, currentRows: [], comparisonRows: [] }),
-        );
-      }
-    }
-
-    if (videoCreativeIds.length === 0) return output;
+    const creativeIds = input.creatives.map((item) => item.id);
+    if (creativeIds.length === 0) return output;
 
     if (input.selectedAccountIds.length === 0) {
-      for (const creativeId of videoCreativeIds) {
+      for (const creative of input.creatives) {
         output.set(
-          creativeId,
-          buildCreativeVideoRetention({ isVideo: true, currentRows: [], comparisonRows: [] }),
+          creative.id,
+          buildCreativeVideoRetention({
+            isVideo: Boolean(creative.videoId),
+            currentRows: [],
+            comparisonRows: [],
+          }),
         );
       }
       return output;
@@ -391,7 +421,7 @@ export class CreativeVideoRetentionService {
           storeId: input.storeId,
           metaAccountId: { in: input.selectedAccountIds },
         },
-        ad: { creativeId: { in: videoCreativeIds } },
+        ad: { creativeId: { in: creativeIds } },
       },
       select: {
         date: true,
@@ -410,12 +440,13 @@ export class CreativeVideoRetentionService {
       rowsByCreative.set(creativeId, group);
     }
 
-    for (const creativeId of videoCreativeIds) {
-      const creativeRows = rowsByCreative.get(creativeId) ?? [];
+    for (const creative of input.creatives) {
+      const creativeRows = rowsByCreative.get(creative.id) ?? [];
+      const inferredVideoFromEvidence = creativeRows.some(rowHasVideoEvidence);
       output.set(
-        creativeId,
+        creative.id,
         buildCreativeVideoRetention({
-          isVideo: true,
+          isVideo: Boolean(creative.videoId) || inferredVideoFromEvidence,
           currentRows: creativeRows.filter((row) =>
             inRange(row.date, input.windows.current.metaFrom, input.windows.current.metaTo),
           ),
