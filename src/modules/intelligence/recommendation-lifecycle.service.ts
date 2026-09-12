@@ -6,8 +6,26 @@ import type {
 } from './intelligence.types.js';
 
 type RankedRecommendation = RecommendationDraft & { priority: number };
+type RecommendationOccurrenceInput = Pick<
+  RecommendationDraft,
+  | 'ruleId'
+  | 'ruleVersion'
+  | 'entityType'
+  | 'entityId'
+  | 'externalEntityId'
+  | 'title'
+> & {
+  observationStart: Date | string;
+  observationEnd: Date | string;
+};
 
-export function recommendationOccurrenceKey(recommendation: RecommendationDraft): string {
+function occurrenceTimestamp(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+export function recommendationOccurrenceKey(
+  recommendation: RecommendationOccurrenceInput,
+): string {
   const entity =
     recommendation.entityId ?? recommendation.externalEntityId ?? recommendation.title;
   return [
@@ -15,8 +33,8 @@ export function recommendationOccurrenceKey(recommendation: RecommendationDraft)
     recommendation.ruleVersion,
     recommendation.entityType,
     entity,
-    recommendation.observationStart.toISOString(),
-    recommendation.observationEnd.toISOString(),
+    occurrenceTimestamp(recommendation.observationStart),
+    occurrenceTimestamp(recommendation.observationEnd),
   ].join(':');
 }
 
