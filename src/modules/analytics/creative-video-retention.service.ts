@@ -166,7 +166,9 @@ function largestDrop(transitions: CreativeVideoRetentionPeriod['transitions']) {
   return { stage: available[0]![0], dropRate: 1 - available[0]![1] };
 }
 
-export function summarizeCreativeVideoRetentionRows(rows: RetentionRow[]): CreativeVideoRetentionPeriod | null {
+export function summarizeCreativeVideoRetentionRows(
+  rows: RetentionRow[],
+): CreativeVideoRetentionPeriod | null {
   if (rows.length === 0) return null;
 
   const plays = sumMetric(rows, 'plays');
@@ -258,6 +260,10 @@ function numericChange(current: number | null, comparison: number | null) {
   return current === null || comparison === null ? null : current - comparison;
 }
 
+function suppressStageDiagnosis(period: CreativeVideoRetentionPeriod | null) {
+  return period ? { ...period, largestDropStage: null, largestDropRate: null } : null;
+}
+
 export function buildCreativeVideoRetention(input: {
   isVideo: boolean;
   currentRows: RetentionRow[];
@@ -287,6 +293,7 @@ export function buildCreativeVideoRetention(input: {
   const comparison = summarizeCreativeVideoRetentionRows(input.comparisonRows);
   const inconsistent = isInconsistent(current);
   const currentPlays = current?.plays ?? null;
+  const insufficient = current !== null && (currentPlays === null || currentPlays < MIN_DIAGNOSTIC_PLAYS);
 
   let status: CreativeVideoRetentionStatus = 'READY';
   const limitations: Array<{ code: string; message: string }> = [];
@@ -302,7 +309,7 @@ export function buildCreativeVideoRetention(input: {
       code: 'INCONSISTENT_PROVIDER_DATA',
       message: 'Meta video quartile counts are not monotonic, so Stride does not diagnose a drop-off stage.',
     });
-  } else if (currentPlays === null || currentPlays < MIN_DIAGNOSTIC_PLAYS) {
+  } else if (insufficient) {
     status = 'INSUFFICIENT_PLAYS';
     limitations.push({
       code: 'INSUFFICIENT_PLAYS',
@@ -317,9 +324,7 @@ export function buildCreativeVideoRetention(input: {
     });
   }
 
-  const safeCurrent = inconsistent && current
-    ? { ...current, largestDropStage: null, largestDropRate: null }
-    : current;
+  const safeCurrent = inconsistent || insufficient ? suppressStageDiagnosis(current) : current;
 
   return {
     source: 'META_VIDEO_INSIGHTS',
@@ -359,15 +364,24 @@ export class CreativeVideoRetentionService {
 
     for (const creative of input.creatives) {
       if (!creative.videoId) {
-        output.set(creative.id, buildCreativeVideoRetention({
-          isVideo: false,
-          currentRows: [],
-          comparisonRows: [],
-        }));
+        output.set(
+          creative.id,
+          buildCreativeVideoRetention({ isVideo: false, currentRows: [], comparisonRows: [] }),
+        );
       }
     }
 
-    if (videoCreativeIds.length === 0 || input.selectedAccountIds.length === 0) return output;
+    if (videoCreativeIds.length === 0) return output;
+
+    if (input.selectedAccountIds.length === 0) {
+      for (const creativeId of videoCreativeIds) {
+        output.set(
+          creativeId,
+          buildCreativeVideoRetention({ isVideo: true, currentRows: [], comparisonRows: [] }),
+        );
+      }
+      return output;
+    }
 
     const rows: RetentionRow[] = await prisma.metaInsightDaily.findMany({
       where: {
@@ -387,17 +401,29 @@ export class CreativeVideoRetentionService {
       orderBy: [{ date: 'asc' }, { adId: 'asc' }],
     });
 
+    const rowsByCreative = new Map<string, RetentionRow[]>();
+    for (const row of rows) {
+      const creativeId = row.ad?.creativeId;
+      if (!creativeId) continue;
+      const group = rowsByCreative.get(creativeId) ?? [];
+      group.push(row);
+      rowsByCreative.set(creativeId, group);
+    }
+
     for (const creativeId of videoCreativeIds) {
-      const creativeRows = rows.filter((row) => row.ad?.creativeId === creativeId);
-      output.set(creativeId, buildCreativeVideoRetention({
-        isVideo: true,
-        currentRows: creativeRows.filter((row) =>
-          inRange(row.date, input.windows.current.metaFrom, input.windows.current.metaTo),
-        ),
-        comparisonRows: creativeRows.filter((row) =>
-          inRange(row.date, input.windows.comparison.metaFrom, input.windows.comparison.metaTo),
-        ),
-      }));
+      const creativeRows = rowsByCreative.get(creativeId) ?? [];
+      output.set(
+        creativeId,
+        buildCreativeVideoRetention({
+          isVideo: true,
+          currentRows: creativeRows.filter((row) =>
+            inRange(row.date, input.windows.current.metaFrom, input.windows.current.metaTo),
+          ),
+          comparisonRows: creativeRows.filter((row) =>
+            inRange(row.date, input.windows.comparison.metaFrom, input.windows.comparison.metaTo),
+          ),
+        }),
+      );
     }
 
     return output;
