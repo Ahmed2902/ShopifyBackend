@@ -12,6 +12,9 @@ export const inventoryModeUpdateSchema = z.object({
 });
 
 export const recommendationLifecycleUpdateSchema = z.object({
-  occurrenceKey: z.string().min(1).max(1000),
+  // Generated occurrence keys are compact (<200 chars today). Keep the public mutation bounded
+  // below PostgreSQL btree index-entry limits even for multi-byte input rather than allowing an
+  // authenticated client to manufacture an oversized unique-index value.
+  occurrenceKey: z.string().trim().min(1).max(512),
   state: z.enum(['OPEN', 'REVIEWED', 'DISMISSED', 'RESOLVED']),
 });
