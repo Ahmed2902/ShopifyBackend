@@ -8,7 +8,7 @@ enum RecommendationLifecycleState {
 model RecommendationLifecycle {
   id            String                       @id @default(uuid()) @db.Uuid
   storeId       String                       @db.Uuid
-  occurrenceKey String
+  occurrenceKey String                       @db.VarChar(512)
   state         RecommendationLifecycleState @default(OPEN)
   reviewedAt    DateTime?
   dismissedAt   DateTime?
