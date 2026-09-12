@@ -14,6 +14,7 @@ import {
 import type { AnalyticsRepository } from './analytics.repository.js';
 import { pagination, splitMeta, windowResponse } from './analytics.shared.js';
 import type { AnalyticsWindows } from './analytics.shared.js';
+import { CreativeVideoRetentionService } from './creative-video-retention.service.js';
 
 type StoreContext = NonNullable<Awaited<ReturnType<AnalyticsRepository['getStoreContext']>>>;
 type MetaRow = Awaited<ReturnType<AnalyticsRepository['getMetaRows']>>[number];
@@ -71,6 +72,8 @@ export class AdvertisingAnalyticsService {
     private readonly repository: AnalyticsRepository,
     private readonly readRepository: AdvertisingAnalyticsReadRepository =
       new AdvertisingAnalyticsReadRepository(),
+    private readonly videoRetentionService: CreativeVideoRetentionService =
+      new CreativeVideoRetentionService(),
   ) {}
 
   async overview(store: StoreContext, windows: AnalyticsWindows) {
@@ -192,7 +195,23 @@ export class AdvertisingAnalyticsService {
   ) {
     const selected = store.metaConnection?.selectedAdAccountIds ?? [];
     const page = await this.repository.getCreativesPage(store.id, selected, pageNumber, limit);
-    return this.listResult(store, windows, page, 'CREATIVE', pageNumber, limit);
+    const [result, videoRetention] = await Promise.all([
+      this.listResult(store, windows, page, 'CREATIVE', pageNumber, limit),
+      this.videoRetentionService.forCreatives({
+        storeId: store.id,
+        selectedAccountIds: selected,
+        windows,
+        creatives: page.items,
+      }),
+    ]);
+
+    return {
+      ...result,
+      items: result.items.map((item) => ({
+        ...item,
+        videoRetention: videoRetention.get(item.entity.id) ?? null,
+      })),
+    };
   }
 
   private async listResult<T extends { id: string }>(
@@ -256,7 +275,24 @@ export class AdvertisingAnalyticsService {
   private async creativeDetail(store: StoreContext, windows: AnalyticsWindows, id: string) {
     const selected = store.metaConnection?.selectedAdAccountIds ?? [];
     const entity = await this.repository.getCreative(store.id, selected, id);
-    return this.detailResult(store, windows, entity, id, 'CREATIVE');
+    if (!entity) {
+      return this.detailResult(store, windows, entity, id, 'CREATIVE');
+    }
+
+    const [result, videoRetention] = await Promise.all([
+      this.detailResult(store, windows, entity, id, 'CREATIVE'),
+      this.videoRetentionService.forCreatives({
+        storeId: store.id,
+        selectedAccountIds: selected,
+        windows,
+        creatives: [entity],
+      }),
+    ]);
+
+    return {
+      ...result,
+      videoRetention: videoRetention.get(entity.id) ?? null,
+    };
   }
 
   private async detailResult<T>(
