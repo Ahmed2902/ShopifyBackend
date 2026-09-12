@@ -12,6 +12,13 @@ import {
 } from './intelligence-snapshot.read.service.js';
 import { intelligenceService, type IntelligenceService } from './intelligence.service.js';
 
+function recommendationLimit(res: Response) {
+  return Math.max(
+    1,
+    Number(res.locals.billing?.entitlements?.recommendationLimit ?? 10),
+  );
+}
+
 export class IntelligenceController {
   constructor(
     private readonly service: IntelligenceService,
@@ -22,13 +29,9 @@ export class IntelligenceController {
     const storeId = req.context.storeId!;
     const { fresh } = intelligenceReadQuerySchema.parse(req.query);
     const snapshot = await this.snapshotReads.read(storeId, { fresh });
-    const recommendationLimit = Math.max(
-      1,
-      Number(res.locals.billing?.entitlements?.recommendationLimit ?? 10),
-    );
     const recommendations = await recommendationLifecycleService.attach(
       storeId,
-      snapshot.recommendations.slice(0, recommendationLimit),
+      snapshot.recommendations.slice(0, recommendationLimit(res)),
     );
     res.status(200).json({
       ...snapshot,
@@ -52,7 +55,18 @@ export class IntelligenceController {
   updateRecommendationLifecycle = async (req: Request, res: Response) => {
     const storeId = req.context.storeId!;
     const { occurrenceKey, state } = recommendationLifecycleUpdateSchema.parse(req.body);
-    const result = await recommendationLifecycleService.setState(storeId, occurrenceKey, state);
+
+    // Lifecycle writes are accepted only for recommendation occurrences the server actually issued
+    // to this store under its current entitlement. This prevents fabricated keys from creating
+    // orphan rows or pre-seeding state for predictable future recommendation occurrences.
+    const snapshot = await this.snapshotReads.read(storeId, { fresh: false });
+    const currentRecommendations = snapshot.recommendations.slice(0, recommendationLimit(res));
+    const result = await recommendationLifecycleService.setState(
+      storeId,
+      occurrenceKey,
+      state,
+      currentRecommendations,
+    );
     res.status(200).json(result);
   };
 }
