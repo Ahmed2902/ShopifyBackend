@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { recommendationLifecycleUpdateSchema } from '../../../src/modules/intelligence/intelligence.schema.js';
 import { recommendationOccurrenceKey } from '../../../src/modules/intelligence/recommendation-lifecycle.service.js';
 
 const baseOccurrence = {
@@ -41,5 +42,31 @@ describe('recommendationOccurrenceKey', () => {
         observationEnd: '2026-09-08T00:00:00.000Z',
       }),
     ).toContain(':meta-creative-1:');
+  });
+});
+
+describe('recommendationLifecycleUpdateSchema', () => {
+  it('accepts a normal backend-issued occurrence key', () => {
+    const occurrenceKey = recommendationOccurrenceKey({
+      ...baseOccurrence,
+      observationStart: '2026-09-01T00:00:00.000Z',
+      observationEnd: '2026-09-08T00:00:00.000Z',
+    });
+
+    expect(
+      recommendationLifecycleUpdateSchema.parse({
+        occurrenceKey,
+        state: 'REVIEWED',
+      }),
+    ).toEqual({ occurrenceKey, state: 'REVIEWED' });
+  });
+
+  it('rejects oversized occurrence keys before they reach the unique database index', () => {
+    expect(() =>
+      recommendationLifecycleUpdateSchema.parse({
+        occurrenceKey: 'x'.repeat(513),
+        state: 'OPEN',
+      }),
+    ).toThrow();
   });
 });
