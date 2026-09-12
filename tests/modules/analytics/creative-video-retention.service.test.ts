@@ -61,6 +61,8 @@ describe('creative video retention', () => {
     expect(result.status).toBe('INSUFFICIENT_PLAYS');
     expect(result.evidenceQuality).toBe('LOW');
     expect(result.current?.plays).toBe(80);
+    expect(result.current?.largestDropStage).toBeNull();
+    expect(result.current?.largestDropRate).toBeNull();
     expect(result.limitations.map((item) => item.code)).toContain('INSUFFICIENT_PLAYS');
     expect(result.limitations.map((item) => item.code)).toContain('NO_COMPARISON_VIDEO_DATA');
   });
