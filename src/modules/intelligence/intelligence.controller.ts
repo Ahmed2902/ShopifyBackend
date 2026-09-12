@@ -1,8 +1,10 @@
 import type { Request, Response } from 'express';
 import { invalidateStoreDecisionCaches } from '../../lib/store-decision-cache.js';
+import { recommendationLifecycleService } from './recommendation-lifecycle.service.js';
 import {
   intelligenceReadQuerySchema,
   inventoryModeUpdateSchema,
+  recommendationLifecycleUpdateSchema,
 } from './intelligence.schema.js';
 import {
   intelligenceSnapshotReadService,
@@ -24,9 +26,13 @@ export class IntelligenceController {
       1,
       Number(res.locals.billing?.entitlements?.recommendationLimit ?? 10),
     );
+    const recommendations = await recommendationLifecycleService.attach(
+      storeId,
+      snapshot.recommendations.slice(0, recommendationLimit),
+    );
     res.status(200).json({
       ...snapshot,
-      recommendations: snapshot.recommendations.slice(0, recommendationLimit),
+      recommendations,
     });
   };
 
@@ -40,6 +46,13 @@ export class IntelligenceController {
     const result = await this.service.updateInventoryMode(storeId, mode);
     // Invalidate both decision surfaces only after the Store setting is committed.
     await invalidateStoreDecisionCaches(storeId);
+    res.status(200).json(result);
+  };
+
+  updateRecommendationLifecycle = async (req: Request, res: Response) => {
+    const storeId = req.context.storeId!;
+    const { occurrenceKey, state } = recommendationLifecycleUpdateSchema.parse(req.body);
+    const result = await recommendationLifecycleService.setState(storeId, occurrenceKey, state);
     res.status(200).json(result);
   };
 }
