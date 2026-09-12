@@ -121,6 +121,17 @@ export type RecommendationAttributionPrecision =
   | 'STORE'
   | 'UNKNOWN';
 
+export type DecisionAction =
+  | 'SCALE'
+  | 'HOLD'
+  | 'REDUCE'
+  | 'PAUSE'
+  | 'TEST'
+  | 'INVESTIGATE';
+
+export type DecisionConfidence = 'LOW' | 'MEDIUM' | 'HIGH';
+export type RecommendationLifecycleState = 'OPEN' | 'REVIEWED' | 'DISMISSED' | 'RESOLVED';
+
 export interface RecommendationLimitation {
   code: string;
   message: string;
@@ -149,6 +160,13 @@ export interface RecommendationDraft {
   comparisonEnd: Date | null;
   evidence: Record<string, unknown>;
   blockers?: Record<string, unknown>;
+}
+
+export interface RecommendationDecisionMetadata {
+  decisionAction: DecisionAction;
+  decisionConfidence: DecisionConfidence;
+  decisionBasis: 'DETERMINISTIC_RULE';
+  decisionMessage: string;
 }
 
 export interface DataQualityEvidence {
