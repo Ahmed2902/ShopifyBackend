@@ -33,6 +33,21 @@ describe('recommendationOccurrenceKey', () => {
     );
   });
 
+  it('normalizes equivalent serialized timestamps before building the occurrence key', () => {
+    const canonicalKey = recommendationOccurrenceKey({
+      ...baseOccurrence,
+      observationStart: '2026-09-01T00:00:00.000Z',
+      observationEnd: '2026-09-08T00:00:00.000Z',
+    });
+    const offsetKey = recommendationOccurrenceKey({
+      ...baseOccurrence,
+      observationStart: '2026-09-01T03:00:00.000+03:00',
+      observationEnd: '2026-09-08T03:00:00.000+03:00',
+    });
+
+    expect(offsetKey).toBe(canonicalKey);
+  });
+
   it('falls back to the external entity id when the internal id is absent', () => {
     expect(
       recommendationOccurrenceKey({
