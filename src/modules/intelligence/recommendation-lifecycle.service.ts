@@ -1,3 +1,4 @@
+import { AppError } from '../../errors/app-error.js';
 import { prisma } from '../../lib/prisma.js';
 import { recommendationDecision } from './recommendation-decision.js';
 import type {
@@ -6,7 +7,7 @@ import type {
 } from './intelligence.types.js';
 
 type RankedRecommendation = RecommendationDraft & { priority: number };
-type RecommendationOccurrenceInput = Pick<
+export type RecommendationOccurrenceInput = Pick<
   RecommendationDraft,
   | 'ruleId'
   | 'ruleVersion'
@@ -80,7 +81,19 @@ export class RecommendationLifecycleService {
     storeId: string,
     occurrenceKey: string,
     state: RecommendationLifecycleState,
+    currentRecommendations: RecommendationOccurrenceInput[],
   ) {
+    const issuedForCurrentRecommendation = currentRecommendations.some(
+      (recommendation) => recommendationOccurrenceKey(recommendation) === occurrenceKey,
+    );
+    if (!issuedForCurrentRecommendation) {
+      throw new AppError(
+        'Recommendation occurrence is not available in the current evidence window.',
+        404,
+        'RECOMMENDATION_OCCURRENCE_NOT_FOUND',
+      );
+    }
+
     const now = new Date();
     const timestamps = transitionTimestamps(state, now);
 
