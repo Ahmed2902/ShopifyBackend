@@ -91,6 +91,26 @@ describe('Stride Pixel event schema', () => {
     });
   });
 
+  it('enforces database length limits after Shopify IDs are canonicalized', () => {
+    const oversizedNumericId = '9'.repeat(128);
+
+    expect(() =>
+      storefrontEventSchema.parse({
+        ...baseEvent,
+        eventName: 'PRODUCT_VIEW',
+        productExternalId: oversizedNumericId,
+      }),
+    ).toThrow();
+
+    expect(() =>
+      storefrontEventSchema.parse({
+        ...baseEvent,
+        eventName: 'CHECKOUT_COMPLETED',
+        shopifyOrderExternalId: oversizedNumericId,
+      }),
+    ).toThrow();
+  });
+
   it('keeps synthetic collection views even when Shopify provides no durable collection identity', () => {
     expect(
       storefrontEventSchema.parse({
