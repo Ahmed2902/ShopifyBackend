@@ -18,17 +18,16 @@ function shopifyEntityIdSchema(type: 'Product' | 'ProductVariant' | 'Collection'
     .string()
     .trim()
     .min(1)
-    .max(128)
-    .transform((value) => (/^\d+$/.test(value) ? `gid://shopify/${type}/${value}` : value));
+    .transform((value) => (/^\d+$/.test(value) ? `gid://shopify/${type}/${value}` : value))
+    .pipe(z.string().max(128));
 }
 
 const checkoutTokenSchema = z.string().trim().min(1).max(255);
 const shopifyOrderExternalIdSchema = z
   .string()
   .trim()
-  .max(128)
   .transform((value) => (/^\d+$/.test(value) ? `gid://shopify/Order/${value}` : value))
-  .pipe(z.string().regex(/^gid:\/\/shopify\/Order\/\d+$/));
+  .pipe(z.string().max(128).regex(/^gid:\/\/shopify\/Order\/\d+$/));
 const providerNumericIdSchema = z.string().trim().regex(/^\d+$/).max(128);
 const attributionValueSchema = z.string().trim().min(1).max(255);
 const clickIdSchema = z.string().trim().min(1).max(512);
