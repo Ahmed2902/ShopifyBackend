@@ -3,9 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const metaInsightDaily = vi.hoisted(() => ({
   findMany: vi.fn(),
 }));
+const metaCreative = vi.hoisted(() => ({
+  findMany: vi.fn(),
+}));
 
 vi.mock('../../../src/lib/prisma.js', () => ({
-  prisma: { metaInsightDaily },
+  prisma: { metaInsightDaily, metaCreative },
 }));
 
 import {
@@ -20,7 +23,7 @@ function action(value: number | string) {
 
 function row(input: {
   date?: string;
-  creativeId?: string;
+  creativeId?: string | null;
   plays?: number;
   p25?: number;
   p50?: number;
@@ -39,7 +42,7 @@ function row(input: {
   return {
     date: new Date(`${input.date ?? '2026-09-01'}T00:00:00.000Z`),
     videoMetrics,
-    ad: { creativeId: input.creativeId ?? 'creative-1' },
+    creativeIdSnapshot: input.creativeId === undefined ? 'creative-1' : input.creativeId,
   };
 }
 
@@ -66,6 +69,8 @@ const windows = {
 describe('creative video retention', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    metaInsightDaily.findMany.mockResolvedValue([]);
+    metaCreative.findMany.mockResolvedValue([]);
   });
 
   it('aggregates counts before deriving rates and weights average watch time by plays', () => {
@@ -159,7 +164,7 @@ describe('creative video retention', () => {
       currentRows: [{
         date: new Date('2026-09-01T00:00:00.000Z'),
         videoMetrics: { plays: null, p25: null },
-        ad: { creativeId: 'creative-1' },
+        creativeIdSnapshot: 'creative-1',
       }],
       comparisonRows: [],
     });
@@ -182,6 +187,47 @@ describe('creative video retention', () => {
     expect(result.change.averageTimeWatchedSeconds).toBeCloseTo(2);
   });
 
+  it('binds retention rows to the immutable creative snapshot instead of the ad current creative', async () => {
+    metaInsightDaily.findMany.mockResolvedValue([
+      row({ creativeId: 'creative-old', plays: 1_000, p25: 800, p50: 600, p75: 400, p100: 300 }),
+    ]);
+
+    const result = await new CreativeVideoRetentionService().forCreatives({
+      storeId: 'store-1',
+      selectedAccountIds: ['act-1'],
+      windows,
+      creatives: [
+        { id: 'creative-old', videoId: 'video-old' },
+        { id: 'creative-new', videoId: 'video-new' },
+      ],
+    });
+
+    expect(result.get('creative-old')?.current?.plays).toBe(1_000);
+    expect(result.get('creative-new')?.current).toBeNull();
+    expect(metaInsightDaily.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        creativeIdSnapshot: { in: ['creative-old', 'creative-new'] },
+      }),
+      select: expect.objectContaining({ creativeIdSnapshot: true }),
+    }));
+  });
+
+  it('ignores ambiguous historical rows with no creative snapshot instead of guessing', async () => {
+    metaInsightDaily.findMany.mockResolvedValue([
+      row({ creativeId: null, plays: 5_000, p25: 4_000, p50: 3_000, p75: 2_000, p100: 1_000 }),
+    ]);
+
+    const result = await new CreativeVideoRetentionService().forCreatives({
+      storeId: 'store-1',
+      selectedAccountIds: ['act-1'],
+      windows,
+      creatives: [{ id: 'creative-1', videoId: 'video-1' }],
+    });
+
+    expect(result.get('creative-1')?.status).toBe('NO_VIDEO_DATA');
+    expect(result.get('creative-1')?.current).toBeNull();
+  });
+
   it('infers dynamic-video applicability from stored Meta video evidence when no top-level videoId exists', async () => {
     metaInsightDaily.findMany.mockResolvedValue([
       row({ creativeId: 'dynamic-creative', plays: 1_000, p25: 800, p50: 600, p75: 400, p100: 300 }),
@@ -196,10 +242,23 @@ describe('creative video retention', () => {
 
     expect(result.get('dynamic-creative')?.status).toBe('READY');
     expect(result.get('dynamic-creative')?.current?.plays).toBe(1_000);
-    expect(metaInsightDaily.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({
-        ad: { creativeId: { in: ['dynamic-creative'] } },
-      }),
-    }));
+  });
+
+  it('recognizes asset-feed video creatives even when the requested window has no delivery', async () => {
+    metaCreative.findMany.mockResolvedValue([
+      { id: 'dynamic-creative', assetFeedSpec: { videos: [{ video_id: 'video-1' }] } },
+    ]);
+
+    const result = await new CreativeVideoRetentionService().forCreatives({
+      storeId: 'store-1',
+      selectedAccountIds: ['act-1'],
+      windows,
+      creatives: [{ id: 'dynamic-creative', videoId: null }],
+    });
+
+    expect(result.get('dynamic-creative')?.status).toBe('NO_VIDEO_DATA');
+    expect(result.get('dynamic-creative')?.limitations.map((item) => item.code)).toContain(
+      'NO_VIDEO_DATA',
+    );
   });
 });
