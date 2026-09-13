@@ -216,20 +216,46 @@ describe('MetaService catalog and Insights sync', () => {
     });
   });
 
-  it('syncs attribution-aware daily Insights for every selected ad account', async () => {
-    const { insightsService, integrationService, service } = build({
+  it('refreshes hierarchy immediately before attribution-aware daily Insights for every account', async () => {
+    const { adsService, insightsService, integrationService, service } = build({
       selectedAdAccountIds: ['act_101', 'act_202'],
     });
     const result = await service.syncInsights(storeId);
 
+    expect(adsService.syncSelectedAccount).toHaveBeenCalledTimes(2);
     expect(insightsService.syncAccount).toHaveBeenCalledTimes(2);
+    expect(
+      vi.mocked(adsService.syncSelectedAccount).mock.invocationCallOrder[0]!,
+    ).toBeLessThan(vi.mocked(insightsService.syncAccount).mock.invocationCallOrder[0]!);
+    expect(
+      vi.mocked(adsService.syncSelectedAccount).mock.invocationCallOrder[1]!,
+    ).toBeLessThan(vi.mocked(insightsService.syncAccount).mock.invocationCallOrder[1]!);
     expect(result).toMatchObject({
-      status: 'SUCCEEDED', resourceType: 'AdInsightsDaily', recordsRead: 24,
-      recordsWritten: 26, staleRowsDeleted: 2,
+      status: 'SUCCEEDED',
+      resourceType: 'AdInsightsDaily',
+      recordsRead: 24,
+      recordsWritten: 26,
+      staleRowsDeleted: 2,
+      hierarchyRefreshedBeforeInsights: true,
+      hierarchyRecordsRead: 10,
+      hierarchyRecordsWritten: 12,
     });
     expect(integrationService.recordExternalPayload).toHaveBeenCalledWith(
-      expect.objectContaining({ provider: 'META', resourceType: 'AdInsightsSyncSummary' }),
+      expect.objectContaining({
+        provider: 'META',
+        resourceType: 'AdInsightsSyncSummary',
+        payload: expect.objectContaining({ hierarchyRefreshedBeforeInsights: true }),
+      }),
     );
+  });
+
+  it('fails Insights sync before reading insights when the required hierarchy refresh fails', async () => {
+    const { insightsService, integrationService, service } = build({ syncFails: true });
+
+    await expect(service.syncInsights(storeId)).rejects.toThrow('provider failed');
+
+    expect(insightsService.syncAccount).not.toHaveBeenCalled();
+    expect(integrationService.failSyncRun).toHaveBeenCalledWith(syncRunId, expect.anything());
   });
 
   it('does not start data sync without its required selected asset', async () => {
