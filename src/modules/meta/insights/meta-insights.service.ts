@@ -1,5 +1,6 @@
 import { env } from '../../../config/env.js';
 import { AppError } from '../../../errors/app-error.js';
+import { startOfStoreDate, storeDate } from '../../intelligence/intelligence.dates.js';
 import type { MetaApiContext } from '../meta.types.js';
 import { parseMetaRecord, toJsonSafe } from '../meta.utils.js';
 import type { MetaApiService } from '../shared/meta-api.service.js';
@@ -35,6 +36,32 @@ function addDays(date: Date, days: number): Date {
   return result;
 }
 
+function reportingDate(now: Date, timeZone: string | null): string {
+  if (!timeZone) return dateOnly(startOfUtcDay(now));
+  try {
+    return storeDate(now, timeZone);
+  } catch {
+    return dateOnly(startOfUtcDay(now));
+  }
+}
+
+function trustedCompletedDayCreative(input: {
+  rowDate: string;
+  currentReportingDate: string;
+  timeZone: string | null;
+  creative: { creativeId: string | null; metaUpdatedAt: Date | null } | undefined;
+}): string | null {
+  if (!input.timeZone || input.rowDate >= input.currentReportingDate) return null;
+  if (!input.creative?.creativeId || !input.creative.metaUpdatedAt) return null;
+
+  try {
+    const dayStart = startOfStoreDate(input.rowDate, input.timeZone);
+    return input.creative.metaUpdatedAt <= dayStart ? input.creative.creativeId : null;
+  } catch {
+    return null;
+  }
+}
+
 export class MetaInsightsService {
   constructor(
     private readonly repository: MetaInsightsRepository,
@@ -63,8 +90,9 @@ export class MetaInsightsService {
       throw new AppError('Meta Insights lookback must be between 1 and 365 days', 400, 'INVALID_LOOKBACK');
     }
 
-    const today = startOfUtcDay(new Date());
-    const todayDate = dateOnly(today);
+    const now = new Date();
+    const todayDate = reportingDate(now, account.timezoneName);
+    const today = new Date(`${todayDate}T00:00:00.000Z`);
     const firstDay = addDays(today, -(lookbackDays - 1));
     const hierarchy = await this.repository.getHierarchyMaps(account.id);
     let recordsRead = 0;
@@ -102,13 +130,25 @@ export class MetaInsightsService {
           );
         }
 
-        // Meta Insights is daily and does not expose historical creative identity. Snapshot the
-        // currently observed creative only for today's fresh row. Older backfill rows remain null
-        // rather than being guessed from the ad's current creative association.
-        const creativeIdSnapshot =
-          row.date_start === todayDate && row.ad_id
-            ? hierarchy.adCreatives.get(row.ad_id) ?? null
-            : null;
+        const creative = row.ad_id ? hierarchy.adCreatives.get(row.ad_id) : undefined;
+
+        // A current-day Meta insight is an in-progress ad-day aggregate, so assigning it to the
+        // currently attached creative would be unsafe if the ad changes creative mid-day. Enroll
+        // only rows observed on their account-local reporting day, then finalize a snapshot on a
+        // later refresh if the provider's ad update timestamp proves the same creative assignment
+        // predates the entire completed reporting day.
+        const trackCreativeSnapshot = Boolean(
+          account.timezoneName &&
+            row.date_start === todayDate &&
+            creative?.creativeId &&
+            creative.metaUpdatedAt,
+        );
+        const creativeIdSnapshot = trustedCompletedDayCreative({
+          rowDate: row.date_start,
+          currentReportingDate: todayDate,
+          timeZone: account.timezoneName,
+          creative,
+        });
 
         keys.push(
           await this.repository.upsertDailyInsight({
@@ -117,6 +157,7 @@ export class MetaInsightsService {
             adSetId: row.adset_id ? hierarchy.adSets.get(row.adset_id) ?? null : null,
             adId: row.ad_id ? hierarchy.ads.get(row.ad_id) ?? null : null,
             creativeIdSnapshot,
+            trackCreativeSnapshot,
             row,
             actionReportTime: ACTION_REPORT_TIME,
           }),
