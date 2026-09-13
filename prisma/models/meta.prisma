@@ -391,6 +391,7 @@ model MetaInsightDaily {
   campaignId              String?          @db.Uuid
   adSetId                 String?          @db.Uuid
   adId                    String?          @db.Uuid
+  creativeIdSnapshot      String?          @db.Uuid
   level                   MetaInsightLevel
   date                    DateTime         @db.Date
   accountCurrency         String
@@ -440,6 +441,7 @@ model MetaInsightDaily {
   @@index([campaignId, date])
   @@index([adSetId, date])
   @@index([adId, date])
+  @@index([creativeIdSnapshot, date])
   @@index([productIdBreakdown, date])
   @@index([productRetailerId, date])
 }
