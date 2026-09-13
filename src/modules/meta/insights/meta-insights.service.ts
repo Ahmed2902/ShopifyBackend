@@ -64,6 +64,7 @@ export class MetaInsightsService {
     }
 
     const today = startOfUtcDay(new Date());
+    const todayDate = dateOnly(today);
     const firstDay = addDays(today, -(lookbackDays - 1));
     const hierarchy = await this.repository.getHierarchyMaps(account.id);
     let recordsRead = 0;
@@ -100,12 +101,22 @@ export class MetaInsightsService {
             'META_IDENTITY_MISMATCH',
           );
         }
+
+        // Meta Insights is daily and does not expose historical creative identity. Snapshot the
+        // currently observed creative only for today's fresh row. Older backfill rows remain null
+        // rather than being guessed from the ad's current creative association.
+        const creativeIdSnapshot =
+          row.date_start === todayDate && row.ad_id
+            ? hierarchy.adCreatives.get(row.ad_id) ?? null
+            : null;
+
         keys.push(
           await this.repository.upsertDailyInsight({
             adAccountId: account.id,
             campaignId: row.campaign_id ? hierarchy.campaigns.get(row.campaign_id) ?? null : null,
             adSetId: row.adset_id ? hierarchy.adSets.get(row.adset_id) ?? null : null,
             adId: row.ad_id ? hierarchy.ads.get(row.ad_id) ?? null : null,
+            creativeIdSnapshot,
             row,
             actionReportTime: ACTION_REPORT_TIME,
           }),
