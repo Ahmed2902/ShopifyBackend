@@ -82,13 +82,14 @@ export class MetaInsightsRepository {
       }),
       prisma.metaAd.findMany({
         where: { adAccountId },
-        select: { id: true, metaAdId: true },
+        select: { id: true, metaAdId: true, creativeId: true },
       }),
     ]);
     return {
       campaigns: new Map(campaigns.map((item) => [item.metaCampaignId, item.id])),
       adSets: new Map(adSets.map((item) => [item.metaAdSetId, item.id])),
       ads: new Map(ads.map((item) => [item.metaAdId, item.id])),
+      adCreatives: new Map(ads.map((item) => [item.metaAdId, item.creativeId])),
     };
   }
 
@@ -103,6 +104,7 @@ export class MetaInsightsRepository {
     campaignId: string | null;
     adSetId: string | null;
     adId: string | null;
+    creativeIdSnapshot: string | null;
     row: MetaInsightRow;
     actionReportTime: string;
   }): Promise<string> {
@@ -127,7 +129,7 @@ export class MetaInsightsRepository {
       sec30: input.row.video_30_sec_watched_actions ?? null,
       plays: input.row.video_play_actions ?? null,
     } as Prisma.InputJsonValue;
-    const data = {
+    const mutableData = {
       campaignId: input.campaignId,
       adSetId: input.adSetId,
       adId: input.adId,
@@ -170,11 +172,14 @@ export class MetaInsightsRepository {
         create: {
           insightKey,
           adAccountId: input.adAccountId,
+          creativeIdSnapshot: input.creativeIdSnapshot,
           level: 'AD',
           date,
-          ...data,
+          ...mutableData,
         },
-        update: data,
+        // creativeIdSnapshot is intentionally omitted here: once a row exists, its creative
+        // identity is immutable even if Meta later reuses the ad with another creative.
+        update: mutableData,
         select: { id: true },
       });
 
