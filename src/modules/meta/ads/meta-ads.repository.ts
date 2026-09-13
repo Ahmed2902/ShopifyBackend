@@ -37,11 +37,16 @@ function creativeDestinationUrls(creative: MetaCreativePayload): string[] {
 }
 
 export class MetaAdsRepository {
+  private lockHierarchyAccount(tx: Prisma.TransactionClient, adAccountId: string) {
+    const lockKey = `meta-hierarchy:${adAccountId}`;
+    return tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+  }
+
   // Provider refreshes update many presentation/performance fields that do not participate in Pixel
   // hierarchy resolution. Keep the provider upsert atomic with repair enqueueing, but only enqueue
   // when resolver truth actually changes: a row appears/reappears or a parent relationship changes.
-  // This makes the hierarchy refresh performed before Insights sync safe without rematerializing
-  // unaffected storefront sessions on every ordinary Meta refresh.
+  // Serialize all resolver transitions for one Meta account before reading the comparison state so
+  // concurrent /sync and /insights/sync calls cannot decide against the same stale hierarchy row.
   private mutateHierarchy<TCurrent, TResult>(
     adAccountId: string,
     evidence: MetaHierarchyRepairEvidence,
@@ -50,6 +55,7 @@ export class MetaAdsRepository {
     mutate: (tx: Prisma.TransactionClient) => Promise<TResult>,
   ): Promise<TResult> {
     return prisma.$transaction(async (tx) => {
+      await this.lockHierarchyAccount(tx, adAccountId);
       const current = await readCurrent(tx);
       const result = await mutate(tx);
       if (!resolverTruthChanged(current)) return result;
@@ -293,6 +299,7 @@ export class MetaAdsRepository {
     snapshot: { campaignIds: string[]; adSetIds: string[]; creativeIds: string[]; adIds: string[] },
   ) {
     return prisma.$transaction(async (tx) => {
+      await this.lockHierarchyAccount(tx, adAccountId);
       const account = await tx.metaAdAccount.findUniqueOrThrow({
         where: { id: adAccountId },
         select: { storeId: true },
