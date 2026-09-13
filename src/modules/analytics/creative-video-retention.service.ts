@@ -64,7 +64,7 @@ export interface CreativeVideoRetention {
 type RetentionRow = {
   date: Date;
   videoMetrics: unknown;
-  ad: { creativeId: string | null } | null;
+  creativeIdSnapshot: string | null;
 };
 
 type MetricKey =
@@ -134,6 +134,20 @@ function metricFromRow(row: RetentionRow, key: MetricKey): number | null {
 
 function rowHasVideoEvidence(row: RetentionRow) {
   return VIDEO_METRIC_KEYS.some((key) => metricFromRow(row, key) !== null);
+}
+
+function assetFeedHasVideo(assetFeedSpec: unknown) {
+  if (!assetFeedSpec || typeof assetFeedSpec !== 'object' || Array.isArray(assetFeedSpec)) {
+    return false;
+  }
+  const videos = (assetFeedSpec as Record<string, unknown>).videos;
+  if (Array.isArray(videos)) return videos.length > 0;
+  return Boolean(
+    videos &&
+      typeof videos === 'object' &&
+      !Array.isArray(videos) &&
+      Object.keys(videos as Record<string, unknown>).length > 0,
+  );
 }
 
 function sumMetric(rows: RetentionRow[], key: Exclude<MetricKey, 'avgTime'>): number | null {
@@ -399,41 +413,48 @@ export class CreativeVideoRetentionService {
     const creativeIds = input.creatives.map((item) => item.id);
     if (creativeIds.length === 0) return output;
 
-    if (input.selectedAccountIds.length === 0) {
-      for (const creative of input.creatives) {
-        output.set(
-          creative.id,
-          buildCreativeVideoRetention({
-            isVideo: Boolean(creative.videoId),
-            currentRows: [],
-            comparisonRows: [],
-          }),
-        );
-      }
-      return output;
-    }
-
-    const rows: RetentionRow[] = await prisma.metaInsightDaily.findMany({
+    const metadataPromise = prisma.metaCreative.findMany({
       where: {
-        level: 'AD',
-        date: { gte: input.windows.comparison.metaFrom, lte: input.windows.current.metaTo },
+        id: { in: creativeIds },
+        deletedAt: null,
         adAccount: {
           storeId: input.storeId,
-          metaAccountId: { in: input.selectedAccountIds },
+          ...(input.selectedAccountIds.length > 0
+            ? { metaAccountId: { in: input.selectedAccountIds } }
+            : {}),
         },
-        ad: { creativeId: { in: creativeIds } },
       },
-      select: {
-        date: true,
-        videoMetrics: true,
-        ad: { select: { creativeId: true } },
-      },
-      orderBy: [{ date: 'asc' }, { adId: 'asc' }],
+      select: { id: true, assetFeedSpec: true },
     });
 
+    const rowsPromise: Promise<RetentionRow[]> = input.selectedAccountIds.length > 0
+      ? prisma.metaInsightDaily.findMany({
+          where: {
+            level: 'AD',
+            date: { gte: input.windows.comparison.metaFrom, lte: input.windows.current.metaTo },
+            adAccount: {
+              storeId: input.storeId,
+              metaAccountId: { in: input.selectedAccountIds },
+            },
+            creativeIdSnapshot: { in: creativeIds },
+          },
+          select: {
+            date: true,
+            videoMetrics: true,
+            creativeIdSnapshot: true,
+          },
+          orderBy: [{ date: 'asc' }, { creativeIdSnapshot: 'asc' }],
+        })
+      : Promise.resolve([]);
+
+    const [creativeMetadata, rows] = await Promise.all([metadataPromise, rowsPromise]);
+    const assetFeedByCreative = new Map(
+      creativeMetadata.map((creative) => [creative.id, creative.assetFeedSpec]),
+    );
     const rowsByCreative = new Map<string, RetentionRow[]>();
+
     for (const row of rows) {
-      const creativeId = row.ad?.creativeId;
+      const creativeId = row.creativeIdSnapshot;
       if (!creativeId) continue;
       const group = rowsByCreative.get(creativeId) ?? [];
       group.push(row);
@@ -443,10 +464,11 @@ export class CreativeVideoRetentionService {
     for (const creative of input.creatives) {
       const creativeRows = rowsByCreative.get(creative.id) ?? [];
       const inferredVideoFromEvidence = creativeRows.some(rowHasVideoEvidence);
+      const inferredVideoFromAssetFeed = assetFeedHasVideo(assetFeedByCreative.get(creative.id));
       output.set(
         creative.id,
         buildCreativeVideoRetention({
-          isVideo: Boolean(creative.videoId) || inferredVideoFromEvidence,
+          isVideo: Boolean(creative.videoId) || inferredVideoFromAssetFeed || inferredVideoFromEvidence,
           currentRows: creativeRows.filter((row) =>
             inRange(row.date, input.windows.current.metaFrom, input.windows.current.metaTo),
           ),
