@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const insightUpsert = vi.hoisted(() => vi.fn());
+const insightUpdateMany = vi.hoisted(() => vi.fn());
 const actionDeleteMany = vi.hoisted(() => vi.fn());
 const actionCreateMany = vi.hoisted(() => vi.fn());
 const transaction = vi.hoisted(() =>
   vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
     callback({
-      metaInsightDaily: { upsert: insightUpsert },
+      metaInsightDaily: { upsert: insightUpsert, updateMany: insightUpdateMany },
       metaInsightAction: { deleteMany: actionDeleteMany, createMany: actionCreateMany },
     }),
   ),
@@ -34,43 +35,95 @@ function row() {
   });
 }
 
-describe('MetaInsightsRepository creative snapshot immutability', () => {
+function input(overrides: Partial<Parameters<MetaInsightsRepository['upsertDailyInsight']>[0]> = {}) {
+  return {
+    adAccountId: 'account-1',
+    campaignId: 'campaign-1',
+    adSetId: 'adset-1',
+    adId: 'ad-1',
+    creativeIdSnapshot: null,
+    trackCreativeSnapshot: true,
+    row: row(),
+    actionReportTime: 'impression',
+    ...overrides,
+  };
+}
+
+describe('MetaInsightsRepository creative snapshot provenance', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     insightUpsert.mockResolvedValue({ id: 'insight-1' });
+    insightUpdateMany.mockResolvedValue({ count: 0 });
     actionDeleteMany.mockResolvedValue({ count: 0 });
     actionCreateMany.mockResolvedValue({ count: 0 });
   });
 
-  it('writes the creative snapshot only on create and never overwrites it on refresh', async () => {
+  it('enrolls a fresh reporting-day row without prematurely assigning a creative', async () => {
     const repository = new MetaInsightsRepository();
 
-    await repository.upsertDailyInsight({
-      adAccountId: 'account-1',
-      campaignId: 'campaign-1',
-      adSetId: 'adset-1',
-      adId: 'ad-1',
+    await repository.upsertDailyInsight(input());
+
+    const write = insightUpsert.mock.calls[0]![0];
+    expect(write.create.creativeSnapshotTracked).toBe(true);
+    expect(write.create.creativeIdSnapshot).toBeNull();
+    expect(write.update).not.toHaveProperty('creativeSnapshotTracked');
+    expect(write.update).not.toHaveProperty('creativeIdSnapshot');
+    expect(insightUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('finalizes only a previously tracked null snapshot after the reporting day completes', async () => {
+    const repository = new MetaInsightsRepository();
+
+    await repository.upsertDailyInsight(input({
       creativeIdSnapshot: 'creative-old',
-      row: row(),
-      actionReportTime: 'impression',
-    });
+      trackCreativeSnapshot: false,
+    }));
 
-    await repository.upsertDailyInsight({
-      adAccountId: 'account-1',
-      campaignId: 'campaign-1',
-      adSetId: 'adset-1',
-      adId: 'ad-1',
+    const write = insightUpsert.mock.calls[0]![0];
+    expect(write.create.creativeSnapshotTracked).toBe(false);
+    expect(write.create.creativeIdSnapshot).toBeNull();
+    expect(write.update).not.toHaveProperty('creativeSnapshotTracked');
+    expect(write.update).not.toHaveProperty('creativeIdSnapshot');
+    expect(insightUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'insight-1',
+        creativeSnapshotTracked: true,
+        creativeIdSnapshot: null,
+      },
+      data: { creativeIdSnapshot: 'creative-old' },
+    });
+  });
+
+  it('cannot overwrite a finalized snapshot because finalization requires the stored snapshot to be null', async () => {
+    const repository = new MetaInsightsRepository();
+
+    await repository.upsertDailyInsight(input({
       creativeIdSnapshot: 'creative-new',
-      row: row(),
-      actionReportTime: 'impression',
-    });
+      trackCreativeSnapshot: false,
+    }));
 
-    const firstWrite = insightUpsert.mock.calls[0]![0];
-    const refreshWrite = insightUpsert.mock.calls[1]![0];
+    expect(insightUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        creativeSnapshotTracked: true,
+        creativeIdSnapshot: null,
+      }),
+      data: { creativeIdSnapshot: 'creative-new' },
+    }));
+  });
 
-    expect(firstWrite.create.creativeIdSnapshot).toBe('creative-old');
-    expect(firstWrite.update).not.toHaveProperty('creativeIdSnapshot');
-    expect(refreshWrite.create.creativeIdSnapshot).toBe('creative-new');
-    expect(refreshWrite.update).not.toHaveProperty('creativeIdSnapshot');
+  it('keeps untracked historical/backfill rows unassigned even when a current creative candidate exists', async () => {
+    const repository = new MetaInsightsRepository();
+
+    await repository.upsertDailyInsight(input({
+      creativeIdSnapshot: 'creative-current',
+      trackCreativeSnapshot: false,
+    }));
+
+    const write = insightUpsert.mock.calls[0]![0];
+    expect(write.create.creativeSnapshotTracked).toBe(false);
+    expect(write.create.creativeIdSnapshot).toBeNull();
+    expect(insightUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ creativeSnapshotTracked: true }),
+    }));
   });
 });
