@@ -37,6 +37,7 @@ function build(hasInsights = false, rowsPerChunk: unknown[][] = [[insightRow()]]
       campaigns: new Map([['cmp_1', 'local-cmp']]),
       adSets: new Map([['set_1', 'local-set']]),
       ads: new Map([['ad_1', 'local-ad']]),
+      adCreatives: new Map([['ad_1', 'local-creative']]),
     }),
     upsertDailyInsight: vi.fn().mockImplementation(async ({ row }) => `key-${row.date_start}-${pageIndex}`),
     deleteMissingRange: vi.fn().mockResolvedValue({ count: 0 }),
@@ -110,11 +111,41 @@ describe('MetaInsightsService', () => {
 
     expect(repository.upsertDailyInsight).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ campaignId: 'local-cmp', adSetId: 'local-set', adId: 'local-ad' }),
+      expect.objectContaining({
+        campaignId: 'local-cmp',
+        adSetId: 'local-set',
+        adId: 'local-ad',
+        creativeIdSnapshot: 'local-creative',
+      }),
     );
     expect(repository.upsertDailyInsight).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ campaignId: null, adSetId: null, adId: null }),
+      expect.objectContaining({
+        campaignId: null,
+        adSetId: null,
+        adId: null,
+        creativeIdSnapshot: null,
+      }),
+    );
+  });
+
+  it('does not invent creative history for older backfill rows', async () => {
+    const { repository, service } = build(false, [
+      [
+        insightRow({ date_start: '2026-08-22', date_stop: '2026-08-22' }),
+        insightRow(),
+      ],
+    ]);
+
+    await service.syncAccount(context, 'act_101');
+
+    expect(repository.upsertDailyInsight).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ creativeIdSnapshot: null }),
+    );
+    expect(repository.upsertDailyInsight).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ creativeIdSnapshot: 'local-creative' }),
     );
   });
 
