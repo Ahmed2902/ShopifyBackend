@@ -45,6 +45,15 @@ const ATTRIBUTION_KEYS = [
   ['stride_meta_ad_id', 'metaAdExternalId'],
 ];
 
+function shopifyGid(type, value) {
+  if (value === null || value === undefined) return undefined;
+  const raw = String(value).trim();
+  if (!raw) return undefined;
+  if (raw.startsWith(`gid://shopify/${type}/`)) return raw;
+  if (/^\d+$/.test(raw)) return `gid://shopify/${type}/${raw}`;
+  return raw;
+}
+
 function safeUrl(value) {
   if (!value) return {url: undefined, attribution: {}};
   try {
@@ -101,22 +110,22 @@ function merchandiseContext(event) {
   if (event.name === 'product_viewed') {
     const variant = event.data?.productVariant;
     return {
-      productExternalId: variant?.product?.id ?? undefined,
-      variantExternalId: variant?.id ?? undefined,
+      productExternalId: shopifyGid('Product', variant?.product?.id),
+      variantExternalId: shopifyGid('ProductVariant', variant?.id),
     };
   }
 
   if (event.name === 'collection_viewed') {
     return {
-      collectionExternalId: event.data?.collection?.id ?? undefined,
+      collectionExternalId: shopifyGid('Collection', event.data?.collection?.id),
     };
   }
 
   if (event.name === 'product_added_to_cart' || event.name === 'product_removed_from_cart') {
     const line = event.data?.cartLine;
     return {
-      productExternalId: line?.merchandise?.product?.id ?? undefined,
-      variantExternalId: line?.merchandise?.id ?? undefined,
+      productExternalId: shopifyGid('Product', line?.merchandise?.product?.id),
+      variantExternalId: shopifyGid('ProductVariant', line?.merchandise?.id),
       quantity: line?.quantity ?? undefined,
     };
   }
@@ -136,13 +145,13 @@ function checkoutContext(event) {
   const checkout = event.data?.checkout;
   const token = typeof checkout?.token === 'string' ? checkout.token.trim().slice(0, 255) : '';
   const orderId =
-    event.name === 'checkout_completed' && typeof checkout?.order?.id === 'string'
-      ? checkout.order.id.trim().slice(0, 128)
-      : '';
+    event.name === 'checkout_completed'
+      ? shopifyGid('Order', checkout?.order?.id)
+      : undefined;
 
   return {
     shopifyCheckoutToken: token || undefined,
-    shopifyOrderExternalId: orderId || undefined,
+    shopifyOrderExternalId: orderId,
   };
 }
 
@@ -160,9 +169,9 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
   if (!collectorUrl || !installationId || !collectorToken) return;
 
   let privacy = init.customerPrivacy;
-  let sessionId = await browser.sessionStorage.get(SESSION_KEY);
+  let sessionId = await browser.sessionStorage.getItem(SESSION_KEY);
   let lastActivityAtMs = 0;
-  const storedLastActivity = await browser.sessionStorage.get(SESSION_LAST_ACTIVITY_KEY);
+  const storedLastActivity = await browser.sessionStorage.getItem(SESSION_LAST_ACTIVITY_KEY);
   if (storedLastActivity) {
     const parsedLastActivity = Number(storedLastActivity);
     if (Number.isFinite(parsedLastActivity) && parsedLastActivity > 0) {
@@ -171,7 +180,7 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
   }
 
   let landing = null;
-  const storedLanding = await browser.sessionStorage.get(LANDING_KEY);
+  const storedLanding = await browser.sessionStorage.getItem(LANDING_KEY);
   if (storedLanding) {
     try {
       landing = JSON.parse(storedLanding);
@@ -236,9 +245,6 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
     }
     if (flushTimer) return;
     flushTimer = setTimeout(() => {
-      // Clear the handle before entering flush(). If this timer fires while another delivery is
-      // active, flush() may return early, but future low-volume events must still be able to arm a
-      // new timer.
       flushTimer = null;
       void flush();
     }, FLUSH_DELAY_MS);
@@ -249,9 +255,9 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
     landing = null;
     lastActivityAtMs = 0;
     await Promise.all([
-      browser.sessionStorage.set(SESSION_KEY, sessionId),
-      browser.sessionStorage.set(LANDING_KEY, ''),
-      browser.sessionStorage.set(SESSION_LAST_ACTIVITY_KEY, ''),
+      browser.sessionStorage.setItem(SESSION_KEY, sessionId),
+      browser.sessionStorage.setItem(LANDING_KEY, ''),
+      browser.sessionStorage.setItem(SESSION_LAST_ACTIVITY_KEY, ''),
     ]);
   }
 
@@ -260,9 +266,9 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
     landing = null;
     lastActivityAtMs = 0;
     await Promise.all([
-      browser.sessionStorage.set(SESSION_KEY, ''),
-      browser.sessionStorage.set(LANDING_KEY, ''),
-      browser.sessionStorage.set(SESSION_LAST_ACTIVITY_KEY, ''),
+      browser.sessionStorage.removeItem(SESSION_KEY),
+      browser.sessionStorage.removeItem(LANDING_KEY),
+      browser.sessionStorage.removeItem(SESSION_LAST_ACTIVITY_KEY),
     ]);
   }
 
@@ -280,7 +286,7 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
     }
 
     lastActivityAtMs = Math.max(lastActivityAtMs, eventAtMs);
-    await browser.sessionStorage.set(SESSION_LAST_ACTIVITY_KEY, String(lastActivityAtMs));
+    await browser.sessionStorage.setItem(SESSION_LAST_ACTIVITY_KEY, String(lastActivityAtMs));
   }
 
   async function handle(event) {
@@ -294,7 +300,7 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
     const current = safeUrl(event.context?.document?.location?.href);
     if (!landing || hasAttribution(current.attribution)) {
       landing = current;
-      await browser.sessionStorage.set(LANDING_KEY, JSON.stringify(landing));
+      await browser.sessionStorage.setItem(LANDING_KEY, JSON.stringify(landing));
     }
     const referrer = safeUrl(event.context?.document?.referrer);
 
@@ -315,9 +321,6 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
     });
     scheduleFlush();
 
-    // A completed checkout closes this observed visit. The completion event stays attached to the
-    // old session; the next storefront event starts a fresh session and landing context so multiple
-    // purchases in one browser tab cannot overwrite each other in the session read model.
     if (eventName === 'CHECKOUT_COMPLETED') {
       await clearSessionBoundary();
     }
@@ -325,8 +328,6 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
 
   for (const eventName of EVENT_NAMES) {
     analytics.subscribe(eventName, (event) => {
-      // Shopify can emit adjacent customer events while storage writes are still pending. Serialize
-      // handling so checkout/session boundaries cannot race with the next event.
       handling = handling.then(() => handle(event)).catch(() => undefined);
     });
   }
