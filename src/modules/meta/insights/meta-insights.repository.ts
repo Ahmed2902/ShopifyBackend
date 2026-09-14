@@ -87,18 +87,28 @@ export class MetaInsightsRepository {
       }),
       prisma.metaAd.findMany({
         where: { adAccountId },
-        select: { id: true, metaAdId: true, creativeId: true, metaUpdatedAt: true },
+        select: {
+          id: true,
+          metaAdId: true,
+          creativeId: true,
+          metaUpdatedAt: true,
+          deletedAt: true,
+        },
       }),
     ]);
     return {
       campaigns: new Map(campaigns.map((item) => [item.metaCampaignId, item.id])),
       adSets: new Map(adSets.map((item) => [item.metaAdSetId, item.id])),
+      // Keep soft-deleted ads addressable for historical local-ID mapping, but never use their
+      // stale creative assignment as proof for immutable creative snapshot finalization.
       ads: new Map(ads.map((item) => [item.metaAdId, item.id])),
       adCreatives: new Map(
-        ads.map((item) => [
-          item.metaAdId,
-          { creativeId: item.creativeId, metaUpdatedAt: item.metaUpdatedAt },
-        ]),
+        ads
+          .filter((item) => item.deletedAt === null)
+          .map((item) => [
+            item.metaAdId,
+            { creativeId: item.creativeId, metaUpdatedAt: item.metaUpdatedAt },
+          ]),
       ),
     };
   }
