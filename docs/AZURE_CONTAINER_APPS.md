@@ -23,14 +23,16 @@ node dist/worker.js
 
 ## Database migrations
 
-Run migrations exactly once before promoting a revision:
+Run migrations exactly once before promoting a revision, from a checked-out repository/release job that has the Prisma schema available:
 
 ```bash
-npm ci
+npm ci --include=dev --no-audit --no-fund
 npm run prisma:migrate:deploy
 ```
 
-The runtime image intentionally omits development dependencies, including the Prisma CLI, so migrations are a deployment step rather than an API/worker startup side effect.
+`NODE_ENV=production` normally causes npm to omit dev dependencies. The explicit `--include=dev` is required because `prisma` is a development dependency and both the repository `postinstall` and `prisma:migrate:deploy` invoke the Prisma CLI.
+
+The API/worker runtime image intentionally omits development dependencies, including the Prisma CLI. Do **not** run migrations from the runtime container or on every process startup; migrations belong in a one-shot deployment/release job before the new API and worker revision is promoted.
 
 ## Shared environment
 
