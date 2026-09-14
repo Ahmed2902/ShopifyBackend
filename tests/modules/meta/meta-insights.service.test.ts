@@ -120,7 +120,7 @@ describe('MetaInsightsService', () => {
     );
   });
 
-  it('uses an exact provider-refreshed hierarchy snapshot without rereading mutable hierarchy rows', async () => {
+  it('uses provider creative truth while merging retained local hierarchy IDs', async () => {
     const { repository, service } = build(false, [[
       insightRow({ date_start: '2026-08-22', date_stop: '2026-08-22' }),
     ]]);
@@ -132,17 +132,96 @@ describe('MetaInsightsService', () => {
         'ad_1',
         { creativeId: 'fresh-creative', metaUpdatedAt: new Date('2026-08-20T00:00:00.000Z') },
       ]]),
+      observedAt: new Date('2026-08-23T12:00:00.000Z'),
     };
 
     await service.syncAccount(context, 'act_101', 1, refreshedHierarchy);
 
-    expect(repository.getHierarchyMaps).not.toHaveBeenCalled();
+    expect(repository.getHierarchyMaps).toHaveBeenCalledWith('local-account');
     expect(repository.upsertDailyInsight).toHaveBeenCalledWith(
       expect.objectContaining({
         campaignId: 'fresh-cmp',
         adSetId: 'fresh-set',
         adId: 'fresh-ad',
         creativeIdSnapshot: 'fresh-creative',
+      }),
+    );
+  });
+
+  it('keeps retained IDs for deleted hierarchy rows without trusting their stale creative ownership', async () => {
+    const { repository, service } = build(false, [[
+      insightRow({
+        date_start: '2026-08-22',
+        date_stop: '2026-08-22',
+        campaign_id: 'old_cmp',
+        adset_id: 'old_set',
+        ad_id: 'old_ad',
+      }),
+    ]]);
+    vi.mocked(repository.getHierarchyMaps).mockResolvedValue({
+      campaigns: new Map([
+        ['cmp_1', 'local-cmp'],
+        ['old_cmp', 'retained-cmp'],
+      ]),
+      adSets: new Map([
+        ['set_1', 'local-set'],
+        ['old_set', 'retained-set'],
+      ]),
+      ads: new Map([
+        ['ad_1', 'local-ad'],
+        ['old_ad', 'retained-ad'],
+      ]),
+      adCreatives: new Map([[
+        'old_ad',
+        { creativeId: 'stale-deleted-creative', metaUpdatedAt: new Date('2026-08-20T00:00:00.000Z') },
+      ]]),
+    });
+    const refreshedHierarchy = {
+      campaigns: new Map([['cmp_1', 'fresh-cmp']]),
+      adSets: new Map([['set_1', 'fresh-set']]),
+      ads: new Map([['ad_1', 'fresh-ad']]),
+      adCreatives: new Map([[
+        'ad_1',
+        { creativeId: 'fresh-creative', metaUpdatedAt: new Date('2026-08-20T00:00:00.000Z') },
+      ]]),
+      observedAt: new Date('2026-08-23T12:00:00.000Z'),
+    };
+
+    await service.syncAccount(context, 'act_101', 2, refreshedHierarchy);
+
+    expect(repository.upsertDailyInsight).toHaveBeenCalledWith(
+      expect.objectContaining({
+        campaignId: 'retained-cmp',
+        adSetId: 'retained-set',
+        adId: 'retained-ad',
+        creativeIdSnapshot: null,
+        trackCreativeSnapshot: false,
+      }),
+    );
+  });
+
+  it('does not finalize the reporting day that was current when hierarchy observation began', async () => {
+    vi.setSystemTime(new Date('2026-08-23T00:01:00.000Z'));
+    const { repository, service } = build(false, [[
+      insightRow({ date_start: '2026-08-22', date_stop: '2026-08-22' }),
+    ]]);
+    const refreshedHierarchy = {
+      campaigns: new Map([['cmp_1', 'fresh-cmp']]),
+      adSets: new Map([['set_1', 'fresh-set']]),
+      ads: new Map([['ad_1', 'fresh-ad']]),
+      adCreatives: new Map([[
+        'ad_1',
+        { creativeId: 'fresh-creative', metaUpdatedAt: new Date('2026-08-20T00:00:00.000Z') },
+      ]]),
+      observedAt: new Date('2026-08-22T23:59:00.000Z'),
+    };
+
+    await service.syncAccount(context, 'act_101', 2, refreshedHierarchy);
+
+    expect(repository.upsertDailyInsight).toHaveBeenCalledWith(
+      expect.objectContaining({
+        creativeIdSnapshot: null,
+        trackCreativeSnapshot: true,
       }),
     );
   });
