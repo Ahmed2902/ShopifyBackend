@@ -10,7 +10,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       NODE_ENV: test
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/shopify_intelligence_test
@@ -57,3 +57,6 @@ jobs:
 
       - name: Verify
         run: npm run ci
+
+      - name: Build production container
+        run: docker build --tag stride-backend:ci .
