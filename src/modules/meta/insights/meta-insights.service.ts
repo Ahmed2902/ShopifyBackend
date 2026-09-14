@@ -23,6 +23,7 @@ const INSIGHT_FIELDS = [
 ].join(',');
 
 type InsightHierarchy = Awaited<ReturnType<MetaInsightsRepository['getHierarchyMaps']>>;
+type RefreshedInsightHierarchy = InsightHierarchy & { observedAt?: Date };
 
 function dateOnly(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -49,11 +50,14 @@ function reportingDate(now: Date, timeZone: string | null): string {
 
 function trustedCompletedDayCreative(input: {
   rowDate: string;
-  currentReportingDate: string;
+  hierarchyObservationDate: string;
   timeZone: string | null;
   creative: { creativeId: string | null; metaUpdatedAt: Date | null } | undefined;
 }): string | null {
-  if (!input.timeZone || input.rowDate >= input.currentReportingDate) return null;
+  // A day is eligible only if it had already ended when the hierarchy observation began. This is
+  // stricter than comparing with the later Insights request time and prevents a refresh that spans
+  // local midnight from finalizing the just-ended, potentially mixed-creative reporting day.
+  if (!input.timeZone || input.rowDate >= input.hierarchyObservationDate) return null;
   if (!input.creative?.creativeId || !input.creative.metaUpdatedAt) return null;
 
   try {
@@ -74,7 +78,7 @@ export class MetaInsightsService {
     context: MetaApiContext,
     metaAccountId: string,
     requestedLookbackDays?: number,
-    refreshedHierarchy?: InsightHierarchy,
+    refreshedHierarchy?: RefreshedInsightHierarchy,
   ) {
     const account = await this.repository.findAccount(
       context.storeId,
@@ -99,12 +103,27 @@ export class MetaInsightsService {
 
     const now = new Date();
     const todayDate = reportingDate(now, account.timezoneName);
+    const hierarchyObservationDate = reportingDate(
+      refreshedHierarchy?.observedAt ?? now,
+      account.timezoneName,
+    );
     const today = new Date(`${todayDate}T00:00:00.000Z`);
     const firstDay = addDays(today, -(lookbackDays - 1));
-    // When MetaService refreshed the hierarchy immediately before this call, use that exact
-    // provider-derived snapshot rather than rereading mutable hierarchy rows. A concurrent manual
-    // hierarchy sync therefore cannot swap creative ownership in the gap before snapshot selection.
-    const hierarchy = refreshedHierarchy ?? await this.repository.getHierarchyMaps(account.id);
+
+    // The exact provider refresh is the sole source of creative-finalization evidence. Separately,
+    // merge retained local entity IDs so completed Insights rows for soft-deleted campaigns/adsets/
+    // ads keep their historical relations and remain filterable. Retained `adCreatives` are never
+    // merged, because a deleted/stale ad must not prove immutable creative ownership.
+    const retainedHierarchy = await this.repository.getHierarchyMaps(account.id);
+    const hierarchy: InsightHierarchy = refreshedHierarchy
+      ? {
+          campaigns: new Map([...retainedHierarchy.campaigns, ...refreshedHierarchy.campaigns]),
+          adSets: new Map([...retainedHierarchy.adSets, ...refreshedHierarchy.adSets]),
+          ads: new Map([...retainedHierarchy.ads, ...refreshedHierarchy.ads]),
+          adCreatives: refreshedHierarchy.adCreatives,
+        }
+      : retainedHierarchy;
+
     let recordsRead = 0;
     let recordsWritten = 0;
     let staleRowsDeleted = 0;
@@ -142,20 +161,18 @@ export class MetaInsightsService {
 
         const creative = row.ad_id ? hierarchy.adCreatives.get(row.ad_id) : undefined;
 
-        // A current-day Meta insight is an in-progress ad-day aggregate, so assigning it to the
-        // currently attached creative would be unsafe if the ad changes creative mid-day. Enroll
-        // only rows observed on their account-local reporting day, then finalize a snapshot on a
-        // later refresh if the provider's ad update timestamp proves the same creative assignment
-        // predates the entire completed reporting day.
+        // Enroll the reporting day that was current when the provider hierarchy observation began,
+        // not whichever day it happens to be after the refresh finishes. The row remains unassigned
+        // until a later observation proves one creative owned the entire completed day.
         const trackCreativeSnapshot = Boolean(
           account.timezoneName &&
-            row.date_start === todayDate &&
+            row.date_start === hierarchyObservationDate &&
             creative?.creativeId &&
             creative.metaUpdatedAt,
         );
         const creativeIdSnapshot = trustedCompletedDayCreative({
           rowDate: row.date_start,
-          currentReportingDate: todayDate,
+          hierarchyObservationDate,
           timeZone: account.timezoneName,
           creative,
         });
