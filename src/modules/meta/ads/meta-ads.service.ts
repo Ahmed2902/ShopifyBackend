@@ -65,6 +65,11 @@ export class MetaAdsService {
       );
     }
 
+    // Capture the beginning of the provider observation window, not the end of persistence. If a
+    // refresh straddles account-local midnight, the day that was still in progress when observation
+    // began must remain ineligible for immutable creative finalization during this sync.
+    const hierarchyObservedAt = new Date();
+
     // Fetch the full provider snapshot before mutating current state so a partial fetch can never
     // look like provider deletions.
     const [accountProfile, campaigns, adSets, creatives, ads] = await Promise.all([
@@ -185,15 +190,15 @@ export class MetaAdsService {
     return {
       recordsRead,
       recordsWritten: recordsRead + softDeleted,
-      // This exact provider-refreshed hierarchy is passed directly into the
-      // immediately following Insights sync. Snapshot finalization therefore
-      // cannot be influenced by another sync rewriting local hierarchy rows in
-      // the gap between provider refresh and insight processing.
+      // Active creative ownership comes only from this exact provider snapshot. The Insights layer
+      // may merge retained local entity IDs for historical row linkage, but it must never source
+      // creative-finalization evidence from those retained/deleted rows.
       insightHierarchy: {
         campaigns: campaignMap,
         adSets: adSetMap,
         ads: insightAdMap,
         adCreatives: insightAdCreatives,
+        observedAt: hierarchyObservedAt,
       },
       breakdown: {
         adAccounts: 1,
