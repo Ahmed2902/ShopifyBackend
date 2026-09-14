@@ -22,6 +22,8 @@ const INSIGHT_FIELDS = [
   'video_p100_watched_actions', 'video_30_sec_watched_actions', 'video_play_actions',
 ].join(',');
 
+type InsightHierarchy = Awaited<ReturnType<MetaInsightsRepository['getHierarchyMaps']>>;
+
 function dateOnly(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -68,7 +70,12 @@ export class MetaInsightsService {
     private readonly apiService: MetaApiService,
   ) {}
 
-  async syncAccount(context: MetaApiContext, metaAccountId: string, requestedLookbackDays?: number) {
+  async syncAccount(
+    context: MetaApiContext,
+    metaAccountId: string,
+    requestedLookbackDays?: number,
+    refreshedHierarchy?: InsightHierarchy,
+  ) {
     const account = await this.repository.findAccount(
       context.storeId,
       context.connectionId,
@@ -94,7 +101,10 @@ export class MetaInsightsService {
     const todayDate = reportingDate(now, account.timezoneName);
     const today = new Date(`${todayDate}T00:00:00.000Z`);
     const firstDay = addDays(today, -(lookbackDays - 1));
-    const hierarchy = await this.repository.getHierarchyMaps(account.id);
+    // When MetaService refreshed the hierarchy immediately before this call, use that exact
+    // provider-derived snapshot rather than rereading mutable hierarchy rows. A concurrent manual
+    // hierarchy sync therefore cannot swap creative ownership in the gap before snapshot selection.
+    const hierarchy = refreshedHierarchy ?? await this.repository.getHierarchyMaps(account.id);
     let recordsRead = 0;
     let recordsWritten = 0;
     let staleRowsDeleted = 0;
