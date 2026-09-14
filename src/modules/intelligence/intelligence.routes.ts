@@ -16,3 +16,7 @@ intelligenceRouter.patch(
   ownerOrAdmin,
   intelligenceController.updateInventoryMode,
 );
+intelligenceRouter.patch(
+  '/recommendations/lifecycle',
+  intelligenceController.updateRecommendationLifecycle,
+);
