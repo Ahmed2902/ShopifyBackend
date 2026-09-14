@@ -106,8 +106,8 @@ model MetaCampaign {
   metaUpdatedAt        DateTime?
   deletedAt            DateTime?
   rawJson              Json?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
   adAccount MetaAdAccount      @relation(fields: [adAccountId], references: [id], onDelete: Restrict)
   adSets    MetaAdSet[]
@@ -261,9 +261,9 @@ model MetaProductCatalog {
   productCount     Int?
   feedCount        Int?
   lastSyncedAt     DateTime?
-  rawJson          Json?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  rawJson           Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   store      Store             @relation(fields: [storeId], references: [id], onDelete: Restrict)
   connection MetaConnection    @relation(fields: [metaConnectionId], references: [id], onDelete: Restrict)
@@ -376,8 +376,8 @@ model AdCollectionMapping {
   createdAt           DateTime               @default(now())
   updatedAt           DateTime               @updatedAt
 
-  ad         MetaAd      @relation(fields: [metaAdId], references: [id], onDelete: Restrict)
-  collection Collection  @relation(fields: [collectionId], references: [id], onDelete: Restrict)
+  ad         MetaAd     @relation(fields: [metaAdId], references: [id], onDelete: Restrict)
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Restrict)
 
   @@index([metaAdId, validUntil])
   @@index([collectionId, validUntil])
@@ -385,50 +385,52 @@ model AdCollectionMapping {
 }
 
 model MetaInsightDaily {
-  id                      String           @id @default(uuid()) @db.Uuid
-  insightKey              String           @unique
-  adAccountId             String           @db.Uuid
-  campaignId              String?          @db.Uuid
-  adSetId                 String?          @db.Uuid
-  adId                    String?          @db.Uuid
-  level                   MetaInsightLevel
-  date                    DateTime         @db.Date
-  accountCurrency         String
-  spend                   Decimal          @default(0) @db.Decimal(20, 6)
-  socialSpend             Decimal?         @db.Decimal(20, 6)
-  impressions             BigInt           @default(0)
-  reach                   BigInt           @default(0)
-  clicks                  BigInt           @default(0)
-  uniqueClicks            BigInt           @default(0)
-  outboundClicks          BigInt           @default(0)
-  uniqueOutboundClicks    BigInt           @default(0)
-  inlineLinkClicks        BigInt           @default(0)
-  inlinePostEngagement    BigInt           @default(0)
-  estimatedAdRecallers    BigInt?
-  estimatedAdRecallRate   Decimal?         @db.Decimal(20, 8)
-  cpc                     Decimal?         @db.Decimal(20, 8)
-  cpm                     Decimal?         @db.Decimal(20, 8)
-  cpp                     Decimal?         @db.Decimal(20, 8)
-  ctr                     Decimal?         @db.Decimal(20, 8)
-  frequency               Decimal?         @db.Decimal(20, 8)
-  objective               String?
-  optimizationGoal        String?
-  attributionSetting      String?
-  actionReportTime        String?
-  productIdBreakdown      String?
-  productGroupIdBreakdown String?
-  productRetailerId       String?
-  productGroupRetailerId  String?
-  websiteCtr              Json?
-  conversions             Json?
-  conversionValues        Json?
-  videoMetrics            Json?
-  breakdownHash           String?
-  breakdownJson           Json?
-  rawJson                 Json?
-  syncedAt                DateTime         @default(now())
-  createdAt               DateTime         @default(now())
-  updatedAt               DateTime         @updatedAt
+  id                       String           @id @default(uuid()) @db.Uuid
+  insightKey               String           @unique
+  adAccountId              String           @db.Uuid
+  campaignId               String?          @db.Uuid
+  adSetId                  String?          @db.Uuid
+  adId                     String?          @db.Uuid
+  creativeIdSnapshot       String?          @db.Uuid
+  creativeSnapshotTracked  Boolean          @default(false)
+  level                    MetaInsightLevel
+  date                     DateTime         @db.Date
+  accountCurrency          String
+  spend                    Decimal          @default(0) @db.Decimal(20, 6)
+  socialSpend              Decimal?         @db.Decimal(20, 6)
+  impressions              BigInt           @default(0)
+  reach                    BigInt           @default(0)
+  clicks                   BigInt           @default(0)
+  uniqueClicks             BigInt           @default(0)
+  outboundClicks           BigInt           @default(0)
+  uniqueOutboundClicks     BigInt           @default(0)
+  inlineLinkClicks         BigInt           @default(0)
+  inlinePostEngagement     BigInt           @default(0)
+  estimatedAdRecallers     BigInt?
+  estimatedAdRecallRate    Decimal?         @db.Decimal(20, 8)
+  cpc                      Decimal?         @db.Decimal(20, 8)
+  cpm                      Decimal?         @db.Decimal(20, 8)
+  cpp                      Decimal?         @db.Decimal(20, 8)
+  ctr                      Decimal?         @db.Decimal(20, 8)
+  frequency                Decimal?         @db.Decimal(20, 8)
+  objective                String?
+  optimizationGoal         String?
+  attributionSetting       String?
+  actionReportTime         String?
+  productIdBreakdown       String?
+  productGroupIdBreakdown  String?
+  productRetailerId        String?
+  productGroupRetailerId   String?
+  websiteCtr               Json?
+  conversions              Json?
+  conversionValues         Json?
+  videoMetrics             Json?
+  breakdownHash            String?
+  breakdownJson            Json?
+  rawJson                  Json?
+  syncedAt                 DateTime         @default(now())
+  createdAt                DateTime         @default(now())
+  updatedAt                DateTime         @updatedAt
 
   adAccount MetaAdAccount @relation(fields: [adAccountId], references: [id], onDelete: Restrict)
   campaign  MetaCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
@@ -440,6 +442,7 @@ model MetaInsightDaily {
   @@index([campaignId, date])
   @@index([adSetId, date])
   @@index([adId, date])
+  @@index([creativeIdSnapshot, date])
   @@index([productIdBreakdown, date])
   @@index([productRetailerId, date])
 }

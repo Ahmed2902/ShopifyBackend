@@ -66,7 +66,12 @@ export class MetaInsightsRepository {
   findAccount(storeId: string, connectionId: string, metaAccountId: string) {
     return prisma.metaAdAccount.findFirst({
       where: { storeId, metaConnectionId: connectionId, metaAccountId },
-      select: { id: true, metaAccountId: true, currency: true },
+      select: {
+        id: true,
+        metaAccountId: true,
+        currency: true,
+        timezoneName: true,
+      },
     });
   }
 
@@ -82,13 +87,29 @@ export class MetaInsightsRepository {
       }),
       prisma.metaAd.findMany({
         where: { adAccountId },
-        select: { id: true, metaAdId: true },
+        select: {
+          id: true,
+          metaAdId: true,
+          creativeId: true,
+          metaUpdatedAt: true,
+          deletedAt: true,
+        },
       }),
     ]);
     return {
       campaigns: new Map(campaigns.map((item) => [item.metaCampaignId, item.id])),
       adSets: new Map(adSets.map((item) => [item.metaAdSetId, item.id])),
+      // Keep soft-deleted ads addressable for historical local-ID mapping, but never use their
+      // stale creative assignment as proof for immutable creative snapshot finalization.
       ads: new Map(ads.map((item) => [item.metaAdId, item.id])),
+      adCreatives: new Map(
+        ads
+          .filter((item) => item.deletedAt === null)
+          .map((item) => [
+            item.metaAdId,
+            { creativeId: item.creativeId, metaUpdatedAt: item.metaUpdatedAt },
+          ]),
+      ),
     };
   }
 
@@ -103,6 +124,8 @@ export class MetaInsightsRepository {
     campaignId: string | null;
     adSetId: string | null;
     adId: string | null;
+    creativeIdSnapshot: string | null;
+    trackCreativeSnapshot: boolean;
     row: MetaInsightRow;
     actionReportTime: string;
   }): Promise<string> {
@@ -127,7 +150,7 @@ export class MetaInsightsRepository {
       sec30: input.row.video_30_sec_watched_actions ?? null,
       plays: input.row.video_play_actions ?? null,
     } as Prisma.InputJsonValue;
-    const data = {
+    const mutableData = {
       campaignId: input.campaignId,
       adSetId: input.adSetId,
       adId: input.adId,
@@ -170,13 +193,28 @@ export class MetaInsightsRepository {
         create: {
           insightKey,
           adAccountId: input.adAccountId,
+          creativeIdSnapshot: input.trackCreativeSnapshot ? input.creativeIdSnapshot : null,
+          creativeSnapshotTracked: input.trackCreativeSnapshot,
           level: 'AD',
           date,
-          ...data,
+          ...mutableData,
         },
-        update: data,
+        // Existing snapshot/tracking provenance is never rewritten here. A null snapshot may only
+        // be finalized below when this row was explicitly enrolled in tracking on its reporting day.
+        update: mutableData,
         select: { id: true },
       });
+
+      if (input.creativeIdSnapshot) {
+        await tx.metaInsightDaily.updateMany({
+          where: {
+            id: insight.id,
+            creativeSnapshotTracked: true,
+            creativeIdSnapshot: null,
+          },
+          data: { creativeIdSnapshot: input.creativeIdSnapshot },
+        });
+      }
 
       await tx.metaInsightAction.deleteMany({ where: { insightId: insight.id } });
       const actions: Prisma.MetaInsightActionCreateManyInput[] = [];

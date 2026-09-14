@@ -28,15 +28,37 @@ function insightRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function build(hasInsights = false, rowsPerChunk: unknown[][] = [[insightRow()]]) {
+type BuildOptions = {
+  timezoneName?: string | null;
+  creativeId?: string | null;
+  metaUpdatedAt?: Date | null;
+};
+
+function build(
+  hasInsights = false,
+  rowsPerChunk: unknown[][] = [[insightRow()]],
+  options: BuildOptions = {},
+) {
   let pageIndex = 0;
+  const timezoneName = options.timezoneName === undefined ? 'UTC' : options.timezoneName;
+  const creativeId = options.creativeId === undefined ? 'local-creative' : options.creativeId;
+  const metaUpdatedAt = options.metaUpdatedAt === undefined
+    ? new Date('2026-08-20T00:00:00.000Z')
+    : options.metaUpdatedAt;
+
   const repository = {
-    findAccount: vi.fn().mockResolvedValue({ id: 'local-account', metaAccountId: 'act_101', currency: 'USD' }),
+    findAccount: vi.fn().mockResolvedValue({
+      id: 'local-account',
+      metaAccountId: 'act_101',
+      currency: 'USD',
+      timezoneName,
+    }),
     hasInsights: vi.fn().mockResolvedValue(hasInsights),
     getHierarchyMaps: vi.fn().mockResolvedValue({
       campaigns: new Map([['cmp_1', 'local-cmp']]),
       adSets: new Map([['set_1', 'local-set']]),
       ads: new Map([['ad_1', 'local-ad']]),
+      adCreatives: new Map([['ad_1', { creativeId, metaUpdatedAt }]]),
     }),
     upsertDailyInsight: vi.fn().mockImplementation(async ({ row }) => `key-${row.date_start}-${pageIndex}`),
     deleteMissingRange: vi.fn().mockResolvedValue({ count: 0 }),
@@ -98,23 +120,214 @@ describe('MetaInsightsService', () => {
     );
   });
 
-  it('maps known hierarchy IDs while preserving rows whose historical ad is no longer current', async () => {
-    const { repository, service } = build(false, [
-      [
-        insightRow(),
-        insightRow({ ad_id: 'old_ad', campaign_id: 'old_cmp', adset_id: 'old_set' }),
-      ],
-    ]);
+  it('uses provider creative truth while merging retained local hierarchy IDs', async () => {
+    const { repository, service } = build(false, [[
+      insightRow({ date_start: '2026-08-22', date_stop: '2026-08-22' }),
+    ]]);
+    const refreshedHierarchy = {
+      campaigns: new Map([['cmp_1', 'fresh-cmp']]),
+      adSets: new Map([['set_1', 'fresh-set']]),
+      ads: new Map([['ad_1', 'fresh-ad']]),
+      adCreatives: new Map([[
+        'ad_1',
+        { creativeId: 'fresh-creative', metaUpdatedAt: new Date('2026-08-20T00:00:00.000Z') },
+      ]]),
+      observedAt: new Date('2026-08-23T12:00:00.000Z'),
+    };
+
+    await service.syncAccount(context, 'act_101', 1, refreshedHierarchy);
+
+    expect(repository.getHierarchyMaps).toHaveBeenCalledWith('local-account');
+    expect(repository.upsertDailyInsight).toHaveBeenCalledWith(
+      expect.objectContaining({
+        campaignId: 'fresh-cmp',
+        adSetId: 'fresh-set',
+        adId: 'fresh-ad',
+        creativeIdSnapshot: 'fresh-creative',
+      }),
+    );
+  });
+
+  it('keeps retained IDs for deleted hierarchy rows without trusting their stale creative ownership', async () => {
+    const { repository, service } = build(false, [[
+      insightRow({
+        date_start: '2026-08-22',
+        date_stop: '2026-08-22',
+        campaign_id: 'old_cmp',
+        adset_id: 'old_set',
+        ad_id: 'old_ad',
+      }),
+    ]]);
+    vi.mocked(repository.getHierarchyMaps).mockResolvedValue({
+      campaigns: new Map([
+        ['cmp_1', 'local-cmp'],
+        ['old_cmp', 'retained-cmp'],
+      ]),
+      adSets: new Map([
+        ['set_1', 'local-set'],
+        ['old_set', 'retained-set'],
+      ]),
+      ads: new Map([
+        ['ad_1', 'local-ad'],
+        ['old_ad', 'retained-ad'],
+      ]),
+      adCreatives: new Map([[
+        'old_ad',
+        { creativeId: 'stale-deleted-creative', metaUpdatedAt: new Date('2026-08-20T00:00:00.000Z') },
+      ]]),
+    });
+    const refreshedHierarchy = {
+      campaigns: new Map([['cmp_1', 'fresh-cmp']]),
+      adSets: new Map([['set_1', 'fresh-set']]),
+      ads: new Map([['ad_1', 'fresh-ad']]),
+      adCreatives: new Map([[
+        'ad_1',
+        { creativeId: 'fresh-creative', metaUpdatedAt: new Date('2026-08-20T00:00:00.000Z') },
+      ]]),
+      observedAt: new Date('2026-08-23T12:00:00.000Z'),
+    };
+
+    await service.syncAccount(context, 'act_101', 2, refreshedHierarchy);
+
+    expect(repository.upsertDailyInsight).toHaveBeenCalledWith(
+      expect.objectContaining({
+        campaignId: 'retained-cmp',
+        adSetId: 'retained-set',
+        adId: 'retained-ad',
+        creativeIdSnapshot: null,
+        trackCreativeSnapshot: false,
+      }),
+    );
+  });
+
+  it('does not finalize the reporting day that was current when hierarchy observation began', async () => {
+    vi.setSystemTime(new Date('2026-08-23T00:01:00.000Z'));
+    const { repository, service } = build(false, [[
+      insightRow({ date_start: '2026-08-22', date_stop: '2026-08-22' }),
+    ]]);
+    const refreshedHierarchy = {
+      campaigns: new Map([['cmp_1', 'fresh-cmp']]),
+      adSets: new Map([['set_1', 'fresh-set']]),
+      ads: new Map([['ad_1', 'fresh-ad']]),
+      adCreatives: new Map([[
+        'ad_1',
+        { creativeId: 'fresh-creative', metaUpdatedAt: new Date('2026-08-20T00:00:00.000Z') },
+      ]]),
+      observedAt: new Date('2026-08-22T23:59:00.000Z'),
+    };
+
+    await service.syncAccount(context, 'act_101', 2, refreshedHierarchy);
+
+    expect(repository.upsertDailyInsight).toHaveBeenCalledWith(
+      expect.objectContaining({
+        creativeIdSnapshot: null,
+        trackCreativeSnapshot: true,
+      }),
+    );
+  });
+
+  it('enrolls a known current reporting-day row without attributing the in-progress daily aggregate', async () => {
+    const { repository, service } = build(false, [[insightRow()]]);
 
     await service.syncAccount(context, 'act_101');
 
-    expect(repository.upsertDailyInsight).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ campaignId: 'local-cmp', adSetId: 'local-set', adId: 'local-ad' }),
+    expect(repository.upsertDailyInsight).toHaveBeenCalledWith(
+      expect.objectContaining({
+        campaignId: 'local-cmp',
+        adSetId: 'local-set',
+        adId: 'local-ad',
+        creativeIdSnapshot: null,
+        trackCreativeSnapshot: true,
+      }),
     );
-    expect(repository.upsertDailyInsight).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ campaignId: null, adSetId: null, adId: null }),
+  });
+
+  it('does not enroll an unknown current ad for creative snapshot attribution', async () => {
+    const { repository, service } = build(false, [[
+      insightRow({ ad_id: 'old_ad', campaign_id: 'old_cmp', adset_id: 'old_set' }),
+    ]]);
+
+    await service.syncAccount(context, 'act_101');
+
+    expect(repository.upsertDailyInsight).toHaveBeenCalledWith(
+      expect.objectContaining({
+        campaignId: null,
+        adSetId: null,
+        adId: null,
+        creativeIdSnapshot: null,
+        trackCreativeSnapshot: false,
+      }),
+    );
+  });
+
+  it('offers a completed-day candidate only when the current creative predates the whole reporting day', async () => {
+    const { repository, service } = build(false, [[
+      insightRow({ date_start: '2026-08-22', date_stop: '2026-08-22' }),
+    ]]);
+
+    await service.syncAccount(context, 'act_101');
+
+    expect(repository.upsertDailyInsight).toHaveBeenCalledWith(
+      expect.objectContaining({
+        creativeIdSnapshot: 'local-creative',
+        trackCreativeSnapshot: false,
+      }),
+    );
+  });
+
+  it('rejects a completed-day creative candidate when the ad changed during that reporting day', async () => {
+    const { repository, service } = build(
+      false,
+      [[insightRow({ date_start: '2026-08-22', date_stop: '2026-08-22' })]],
+      { metaUpdatedAt: new Date('2026-08-22T12:00:00.000Z') },
+    );
+
+    await service.syncAccount(context, 'act_101');
+
+    expect(repository.upsertDailyInsight).toHaveBeenCalledWith(
+      expect.objectContaining({
+        creativeIdSnapshot: null,
+        trackCreativeSnapshot: false,
+      }),
+    );
+  });
+
+  it('uses the Meta ad-account timezone for the current reporting date near a UTC boundary', async () => {
+    vi.setSystemTime(new Date('2026-08-23T00:30:00.000Z'));
+    const { apiService, repository, service } = build(
+      true,
+      [[insightRow({ date_start: '2026-08-22', date_stop: '2026-08-22' })]],
+      { timezoneName: 'America/Los_Angeles' },
+    );
+
+    await service.syncAccount(context, 'act_101', 1);
+
+    expect(apiService.collectGraphPages).toHaveBeenCalledWith(
+      context,
+      '/act_101/insights',
+      expect.objectContaining({
+        time_range: JSON.stringify({ since: '2026-08-22', until: '2026-08-22' }),
+      }),
+      expect.any(Function),
+    );
+    expect(repository.upsertDailyInsight).toHaveBeenCalledWith(
+      expect.objectContaining({
+        creativeIdSnapshot: null,
+        trackCreativeSnapshot: true,
+      }),
+    );
+  });
+
+  it('does not track creative identity when the ad-account timezone is unavailable', async () => {
+    const { repository, service } = build(false, [[insightRow()]], { timezoneName: null });
+
+    await service.syncAccount(context, 'act_101');
+
+    expect(repository.upsertDailyInsight).toHaveBeenCalledWith(
+      expect.objectContaining({
+        creativeIdSnapshot: null,
+        trackCreativeSnapshot: false,
+      }),
     );
   });
 

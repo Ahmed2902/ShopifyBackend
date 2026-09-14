@@ -37,16 +37,32 @@ function creativeDestinationUrls(creative: MetaCreativePayload): string[] {
 }
 
 export class MetaAdsRepository {
-  // Couple each resolver-relevant provider mutation to only the materialized Pixel sessions that
-  // reference that provider identity. This preserves crash safety without rotating every Meta
-  // session once per campaign/ad-set/ad row in a large account.
-  private mutateHierarchy<T>(
+  private lockHierarchyAccount(tx: Prisma.TransactionClient, adAccountId: string) {
+    const lockKey = `meta-hierarchy:${adAccountId}`;
+    return tx.$queryRaw<Array<{ locked: number }>>`
+      SELECT 1::int AS "locked"
+      FROM (SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))) AS acquired
+    `;
+  }
+
+  // Provider refreshes update many presentation/performance fields that do not participate in Pixel
+  // hierarchy resolution. Keep the provider upsert atomic with repair enqueueing, but only enqueue
+  // when resolver truth actually changes: a row appears/reappears or a parent relationship changes.
+  // Serialize all resolver transitions for one Meta account before reading the comparison state so
+  // concurrent /sync and /insights/sync calls cannot decide against the same stale hierarchy row.
+  private mutateHierarchy<TCurrent, TResult>(
     adAccountId: string,
     evidence: MetaHierarchyRepairEvidence,
-    mutate: (tx: Prisma.TransactionClient) => Promise<T>,
-  ): Promise<T> {
+    readCurrent: (tx: Prisma.TransactionClient) => Promise<TCurrent | null>,
+    resolverTruthChanged: (current: TCurrent | null) => boolean,
+    mutate: (tx: Prisma.TransactionClient) => Promise<TResult>,
+  ): Promise<TResult> {
     return prisma.$transaction(async (tx) => {
+      await this.lockHierarchyAccount(tx, adAccountId);
+      const current = await readCurrent(tx);
       const result = await mutate(tx);
+      if (!resolverTruthChanged(current)) return result;
+
       const account = await tx.metaAdAccount.findUniqueOrThrow({
         where: { id: adAccountId },
         select: { storeId: true },
@@ -116,10 +132,15 @@ export class MetaAdsRepository {
       deletedAt: null,
       rawJson: campaign as unknown as Prisma.InputJsonValue,
     };
+    const key = { adAccountId_metaCampaignId: { adAccountId, metaCampaignId: campaign.id } };
 
-    return this.mutateHierarchy(adAccountId, { campaignIds: [campaign.id] }, (tx) =>
-      tx.metaCampaign.upsert({
-        where: { adAccountId_metaCampaignId: { adAccountId, metaCampaignId: campaign.id } },
+    return this.mutateHierarchy(
+      adAccountId,
+      { campaignIds: [campaign.id] },
+      (tx) => tx.metaCampaign.findUnique({ where: key, select: { deletedAt: true } }),
+      (current) => current === null || current.deletedAt !== null,
+      (tx) => tx.metaCampaign.upsert({
+        where: key,
         create: { adAccountId, metaCampaignId: campaign.id, ...data },
         update: data,
         select: { id: true, metaCampaignId: true },
@@ -157,10 +178,19 @@ export class MetaAdsRepository {
       deletedAt: null,
       rawJson: adSet as unknown as Prisma.InputJsonValue,
     };
+    const key = { adAccountId_metaAdSetId: { adAccountId, metaAdSetId: adSet.id } };
 
-    return this.mutateHierarchy(adAccountId, { adSetIds: [adSet.id] }, (tx) =>
-      tx.metaAdSet.upsert({
-        where: { adAccountId_metaAdSetId: { adAccountId, metaAdSetId: adSet.id } },
+    return this.mutateHierarchy(
+      adAccountId,
+      { adSetIds: [adSet.id] },
+      (tx) => tx.metaAdSet.findUnique({
+        where: key,
+        select: { campaignId: true, deletedAt: true },
+      }),
+      (current) =>
+        current === null || current.deletedAt !== null || current.campaignId !== campaignId,
+      (tx) => tx.metaAdSet.upsert({
+        where: key,
         create: { adAccountId, metaAdSetId: adSet.id, ...data },
         update: data,
         select: { id: true, metaAdSetId: true },
@@ -237,10 +267,22 @@ export class MetaAdsRepository {
       deletedAt: null,
       rawJson: ad as unknown as Prisma.InputJsonValue,
     };
+    const key = { adAccountId_metaAdId: { adAccountId, metaAdId: ad.id } };
 
-    return this.mutateHierarchy(adAccountId, { adIds: [ad.id] }, (tx) =>
-      tx.metaAd.upsert({
-        where: { adAccountId_metaAdId: { adAccountId, metaAdId: ad.id } },
+    return this.mutateHierarchy(
+      adAccountId,
+      { adIds: [ad.id] },
+      (tx) => tx.metaAd.findUnique({
+        where: key,
+        select: { campaignId: true, adSetId: true, deletedAt: true },
+      }),
+      (current) =>
+        current === null ||
+        current.deletedAt !== null ||
+        current.campaignId !== campaignId ||
+        current.adSetId !== adSetId,
+      (tx) => tx.metaAd.upsert({
+        where: key,
         create: {
           adAccountId,
           metaAdId: ad.id,
@@ -260,6 +302,7 @@ export class MetaAdsRepository {
     snapshot: { campaignIds: string[]; adSetIds: string[]; creativeIds: string[]; adIds: string[] },
   ) {
     return prisma.$transaction(async (tx) => {
+      await this.lockHierarchyAccount(tx, adAccountId);
       const account = await tx.metaAdAccount.findUniqueOrThrow({
         where: { id: adAccountId },
         select: { storeId: true },

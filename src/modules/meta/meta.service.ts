@@ -317,10 +317,29 @@ export class MetaService {
       let recordsRead = 0;
       let recordsWritten = 0;
       let staleRowsDeleted = 0;
-      const accounts: Array<{ accountId: string; lookbackDays: number; initialBackfill: boolean }> = [];
+      let hierarchyRecordsRead = 0;
+      let hierarchyRecordsWritten = 0;
+      const accounts: Array<{
+        accountId: string;
+        lookbackDays: number;
+        initialBackfill: boolean;
+      }> = [];
 
       for (const accountId of context.selectedAdAccountIds) {
-        const result = await this.insightsService.syncAccount(context, accountId, lookbackDays);
+        // Creative-level insight snapshots are permanent once finalized. Refresh the provider
+        // hierarchy in the same operation immediately before reading Insights and pass that exact
+        // provider-derived hierarchy into the insight import. A concurrent hierarchy sync can no
+        // longer replace creative ownership in the gap before snapshot finalization.
+        const hierarchy = await this.adsService.syncSelectedAccount(context, accountId);
+        hierarchyRecordsRead += hierarchy.recordsRead;
+        hierarchyRecordsWritten += hierarchy.recordsWritten;
+
+        const result = await this.insightsService.syncAccount(
+          context,
+          accountId,
+          lookbackDays,
+          hierarchy.insightHierarchy,
+        );
         recordsRead += result.recordsRead;
         recordsWritten += result.recordsWritten;
         staleRowsDeleted += result.staleRowsDeleted;
@@ -339,6 +358,9 @@ export class MetaService {
         payload: {
           accounts,
           staleRowsDeleted,
+          hierarchyRefreshedBeforeInsights: true,
+          hierarchyRecordsRead,
+          hierarchyRecordsWritten,
           actionReportTime: 'impression',
           attributionMode: 'UNIFIED_ADSET_SETTING',
         },
@@ -351,6 +373,9 @@ export class MetaService {
         recordsRead,
         recordsWritten,
         staleRowsDeleted,
+        hierarchyRefreshedBeforeInsights: true,
+        hierarchyRecordsRead,
+        hierarchyRecordsWritten,
         accounts,
       };
     } catch (error) {

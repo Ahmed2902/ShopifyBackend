@@ -36,6 +36,15 @@ const AD_FIELDS = [
   'recommendations', 'issues_info', 'adlabels', 'created_time', 'updated_time',
 ].join(',');
 
+function optionalProviderDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new AppError('Meta returned an invalid datetime', 502, 'META_BAD_RESPONSE');
+  }
+  return date;
+}
+
 export class MetaAdsService {
   constructor(
     private readonly repository: MetaAdsRepository,
@@ -55,6 +64,11 @@ export class MetaAdsService {
         'META_AD_ACCOUNT_NOT_CONFIGURED',
       );
     }
+
+    // Capture the beginning of the provider observation window, not the end of persistence. If a
+    // refresh straddles account-local midnight, the day that was still in progress when observation
+    // began must remain ineligible for immutable creative finalization during this sync.
+    const hierarchyObservedAt = new Date();
 
     // Fetch the full provider snapshot before mutating current state so a partial fetch can never
     // look like provider deletions.
@@ -139,6 +153,8 @@ export class MetaAdsService {
       creativeMap.set(saved.metaCreativeId, saved.id);
     }
 
+    const insightAdMap = new Map<string, string>();
+    const insightAdCreatives = new Map<string, { creativeId: string | null; metaUpdatedAt: Date | null }>();
     for (const ad of ads) {
       const campaignId = campaignMap.get(ad.campaign_id);
       const adSetId = adSetMap.get(ad.adset_id);
@@ -146,13 +162,19 @@ export class MetaAdsService {
         throw new AppError('Meta ad parent was not persisted', 500, 'META_HIERARCHY_INCONSISTENT');
       }
       const externalCreativeId = ad.creative?.id;
-      await this.repository.upsertAd(
+      const creativeId = externalCreativeId ? creativeMap.get(externalCreativeId) ?? null : null;
+      const saved = await this.repository.upsertAd(
         account.id,
         campaignId,
         adSetId,
-        externalCreativeId ? creativeMap.get(externalCreativeId) ?? null : null,
+        creativeId,
         ad,
       );
+      insightAdMap.set(saved.metaAdId, saved.id);
+      insightAdCreatives.set(saved.metaAdId, {
+        creativeId,
+        metaUpdatedAt: optionalProviderDate(ad.updated_time),
+      });
     }
 
     const deleted = await this.repository.softDeleteMissing(account.id, {
@@ -168,6 +190,16 @@ export class MetaAdsService {
     return {
       recordsRead,
       recordsWritten: recordsRead + softDeleted,
+      // Active creative ownership comes only from this exact provider snapshot. The Insights layer
+      // may merge retained local entity IDs for historical row linkage, but it must never source
+      // creative-finalization evidence from those retained/deleted rows.
+      insightHierarchy: {
+        campaigns: campaignMap,
+        adSets: adSetMap,
+        ads: insightAdMap,
+        adCreatives: insightAdCreatives,
+        observedAt: hierarchyObservedAt,
+      },
       breakdown: {
         adAccounts: 1,
         campaigns: campaigns.length,

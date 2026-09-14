@@ -61,12 +61,22 @@ function build(options?: {
     listBusinesses: vi.fn().mockResolvedValue([{ id: 'biz_1', name: 'Store Business' }]),
     listAdAccounts: vi.fn().mockResolvedValue(accounts),
   } as unknown as MetaApiService;
+  const insightHierarchy = {
+    campaigns: new Map([['cmp_1', 'local-cmp']]),
+    adSets: new Map([['set_1', 'local-set']]),
+    ads: new Map([['ad_1', 'local-ad']]),
+    adCreatives: new Map([[
+      'ad_1',
+      { creativeId: 'local-creative', metaUpdatedAt: new Date('2026-09-01T00:00:00.000Z') },
+    ]]),
+  };
   const adsService = {
     syncSelectedAccount: options?.syncFails
       ? vi.fn().mockRejectedValue(new Error('provider failed'))
       : vi.fn().mockResolvedValue({
           recordsRead: 5,
           recordsWritten: 6,
+          insightHierarchy,
           breakdown: {
             adAccounts: 1, campaigns: 1, adSets: 1, creatives: 1, ads: 1,
             softDeletedCampaigns: 1, softDeletedAdSets: 0,
@@ -109,6 +119,7 @@ function build(options?: {
     integrationService,
     catalogService,
     insightsService,
+    insightHierarchy,
     service: new MetaService(
       repository,
       authService,
@@ -216,20 +227,60 @@ describe('MetaService catalog and Insights sync', () => {
     });
   });
 
-  it('syncs attribution-aware daily Insights for every selected ad account', async () => {
-    const { insightsService, integrationService, service } = build({
+  it('passes the exact refreshed hierarchy into attribution-aware daily Insights for every account', async () => {
+    const { adsService, insightsService, integrationService, insightHierarchy, service } = build({
       selectedAdAccountIds: ['act_101', 'act_202'],
     });
     const result = await service.syncInsights(storeId);
 
+    expect(adsService.syncSelectedAccount).toHaveBeenCalledTimes(2);
     expect(insightsService.syncAccount).toHaveBeenCalledTimes(2);
+    expect(
+      vi.mocked(adsService.syncSelectedAccount).mock.invocationCallOrder[0]!,
+    ).toBeLessThan(vi.mocked(insightsService.syncAccount).mock.invocationCallOrder[0]!);
+    expect(
+      vi.mocked(adsService.syncSelectedAccount).mock.invocationCallOrder[1]!,
+    ).toBeLessThan(vi.mocked(insightsService.syncAccount).mock.invocationCallOrder[1]!);
+    expect(insightsService.syncAccount).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ storeId, connectionId }),
+      'act_101',
+      undefined,
+      insightHierarchy,
+    );
+    expect(insightsService.syncAccount).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ storeId, connectionId }),
+      'act_202',
+      undefined,
+      insightHierarchy,
+    );
     expect(result).toMatchObject({
-      status: 'SUCCEEDED', resourceType: 'AdInsightsDaily', recordsRead: 24,
-      recordsWritten: 26, staleRowsDeleted: 2,
+      status: 'SUCCEEDED',
+      resourceType: 'AdInsightsDaily',
+      recordsRead: 24,
+      recordsWritten: 26,
+      staleRowsDeleted: 2,
+      hierarchyRefreshedBeforeInsights: true,
+      hierarchyRecordsRead: 10,
+      hierarchyRecordsWritten: 12,
     });
     expect(integrationService.recordExternalPayload).toHaveBeenCalledWith(
-      expect.objectContaining({ provider: 'META', resourceType: 'AdInsightsSyncSummary' }),
+      expect.objectContaining({
+        provider: 'META',
+        resourceType: 'AdInsightsSyncSummary',
+        payload: expect.objectContaining({ hierarchyRefreshedBeforeInsights: true }),
+      }),
     );
+  });
+
+  it('fails Insights sync before reading insights when the required hierarchy refresh fails', async () => {
+    const { insightsService, integrationService, service } = build({ syncFails: true });
+
+    await expect(service.syncInsights(storeId)).rejects.toThrow('provider failed');
+
+    expect(insightsService.syncAccount).not.toHaveBeenCalled();
+    expect(integrationService.failSyncRun).toHaveBeenCalledWith(syncRunId, expect.anything());
   });
 
   it('does not start data sync without its required selected asset', async () => {

@@ -114,7 +114,7 @@ describe('MetaAdsService', () => {
       adIds: ['ad_1'],
     });
     expect(repository.markAccountSynced).toHaveBeenCalledWith('local-account');
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       recordsRead: 5,
       recordsWritten: 11,
       breakdown: {
@@ -129,6 +129,14 @@ describe('MetaAdsService', () => {
         softDeletedAds: 3,
       },
     });
+    expect(result.insightHierarchy.campaigns.get('cmp_1')).toBe('local-cmp');
+    expect(result.insightHierarchy.adSets.get('set_1')).toBe('local-set');
+    expect(result.insightHierarchy.ads.get('ad_1')).toBe('local-ad');
+    expect(result.insightHierarchy.adCreatives.get('ad_1')).toEqual({
+      creativeId: 'local-creative',
+      metaUpdatedAt: null,
+    });
+    expect(result.insightHierarchy.observedAt).toBeInstanceOf(Date);
   });
 
   it('rejects inconsistent parent references before mutating local hierarchy rows', async () => {

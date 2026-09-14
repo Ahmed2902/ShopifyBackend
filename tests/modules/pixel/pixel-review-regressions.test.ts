@@ -61,6 +61,9 @@ async function createMaterializedSession(
 afterEach(async () => {
   vi.restoreAllMocks();
   for (const storeId of stores.splice(0)) {
+    await prisma.metaAd.deleteMany({ where: { adAccount: { storeId } } });
+    await prisma.metaAdSet.deleteMany({ where: { adAccount: { storeId } } });
+    await prisma.metaCreative.deleteMany({ where: { adAccount: { storeId } } });
     await prisma.metaCampaign.deleteMany({ where: { adAccount: { storeId } } });
     await prisma.metaAdAccount.deleteMany({ where: { storeId } });
     await prisma.metaConnection.deleteMany({ where: { storeId } });
@@ -71,7 +74,7 @@ afterEach(async () => {
 });
 
 describeDatabase('Pixel review regression cases', () => {
-  it('keeps earlier Meta writes repairable after a later write fails, and rolls back on enqueue failure', async () => {
+  it('keeps earlier Meta writes repairable after a later write fails, and rolls back resolver changes on enqueue failure', async () => {
     const store = await createStore();
     const connection = await prisma.metaConnection.create({ data: {
       storeId: store.id, accessTokenCiphertext: 'test', apiVersion: 'v26.0',
@@ -102,12 +105,69 @@ describeDatabase('Pixel review regression cases', () => {
     expect(await prisma.metaCampaign.findUnique({ where: { id: campaign.id } }))
       .toMatchObject({ name: 'Committed' });
 
+    const deletedAt = new Date('2026-09-13T00:00:00.000Z');
+    await prisma.metaCampaign.update({ where: { id: campaign.id }, data: { deletedAt } });
     vi.spyOn(invalidation, 'enqueueMetaHierarchyPixelRepairs').mockRejectedValueOnce(new Error('repair unavailable'));
     await expect(repository.upsertCampaign(account.id, { id: '1001', name: 'Must roll back' }))
       .rejects.toThrow('repair unavailable');
     expect(await prisma.metaCampaign.findUnique({ where: { id: campaign.id } }))
-      .toMatchObject({ name: 'Committed' });
+      .toMatchObject({ name: 'Committed', deletedAt });
     expect((await prisma.storefrontSessionRepair.findUniqueOrThrow({ where: key })).id).toBe(marker.id);
+  });
+
+  it('does not rotate Pixel repair generations for metadata-only Meta hierarchy refreshes', async () => {
+    const store = await createStore();
+    const connection = await prisma.metaConnection.create({ data: {
+      storeId: store.id, accessTokenCiphertext: 'test', apiVersion: 'v26.0',
+    } });
+    const account = await prisma.metaAdAccount.create({ data: {
+      storeId: store.id, metaConnectionId: connection.id, metaAccountId: 'act_200',
+      name: 'Account', currency: 'USD',
+    } });
+    const browserSessionId = randomUUID();
+    const event = await createEvent(store.id, browserSessionId, { metaCampaignExternalId: '1001' });
+    const session = await createMaterializedSession(store.id, browserSessionId, event.receivedAt);
+    await prisma.storefrontSessionTouch.create({ data: {
+      sessionId: session.id,
+      ordinal: 0,
+      eventAt: event.eventAt,
+      source: 'META',
+      metaCampaignExternalId: '1001',
+      metaAdSetExternalId: '2001',
+      metaAdExternalId: '3001',
+      metaResolutionStatus: 'UNRESOLVED',
+    } });
+
+    const repository = new MetaAdsRepository();
+    const campaign = await repository.upsertCampaign(account.id, { id: '1001', name: 'Campaign' });
+    const adSet = await repository.upsertAdSet(account.id, campaign.id, {
+      id: '2001', campaign_id: '1001', name: 'Ad set',
+    });
+    const creativeA = await repository.upsertCreative(account.id, { id: '4001', name: 'Creative A' });
+    const creativeB = await repository.upsertCreative(account.id, { id: '4002', name: 'Creative B' });
+    const ad = await repository.upsertAd(account.id, campaign.id, adSet.id, creativeA.id, {
+      id: '3001', campaign_id: '1001', adset_id: '2001', name: 'Ad',
+    });
+
+    const key = { storeId_browserSessionId: { storeId: store.id, browserSessionId } };
+    const before = await prisma.storefrontSessionRepair.findUniqueOrThrow({ where: key });
+
+    await repository.upsertCampaign(account.id, {
+      id: '1001', name: 'Campaign renamed', status: 'PAUSED', daily_budget: '5000',
+    });
+    await repository.upsertAdSet(account.id, campaign.id, {
+      id: '2001', campaign_id: '1001', name: 'Ad set renamed', status: 'PAUSED', daily_budget: '2500',
+    });
+    await repository.upsertAd(account.id, campaign.id, adSet.id, creativeB.id, {
+      id: '3001', campaign_id: '1001', adset_id: '2001', name: 'Ad renamed', status: 'PAUSED',
+    });
+
+    const after = await prisma.storefrontSessionRepair.findUniqueOrThrow({ where: key });
+    expect(after.id).toBe(before.id);
+    expect(await prisma.metaAd.findUniqueOrThrow({ where: { id: ad.id } })).toMatchObject({
+      name: 'Ad renamed',
+      creativeId: creativeB.id,
+    });
   });
 
   it('rejects a delayed link after order deletion and repair completion, then links the replacement', async () => {

@@ -1,5 +1,6 @@
 import { env } from '../../../config/env.js';
 import { AppError } from '../../../errors/app-error.js';
+import { startOfStoreDate, storeDate } from '../../intelligence/intelligence.dates.js';
 import type { MetaApiContext } from '../meta.types.js';
 import { parseMetaRecord, toJsonSafe } from '../meta.utils.js';
 import type { MetaApiService } from '../shared/meta-api.service.js';
@@ -21,6 +22,9 @@ const INSIGHT_FIELDS = [
   'video_p100_watched_actions', 'video_30_sec_watched_actions', 'video_play_actions',
 ].join(',');
 
+type InsightHierarchy = Awaited<ReturnType<MetaInsightsRepository['getHierarchyMaps']>>;
+type RefreshedInsightHierarchy = InsightHierarchy & { observedAt?: Date };
+
 function dateOnly(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -35,13 +39,47 @@ function addDays(date: Date, days: number): Date {
   return result;
 }
 
+function reportingDate(now: Date, timeZone: string | null): string {
+  if (!timeZone) return dateOnly(startOfUtcDay(now));
+  try {
+    return storeDate(now, timeZone);
+  } catch {
+    return dateOnly(startOfUtcDay(now));
+  }
+}
+
+function trustedCompletedDayCreative(input: {
+  rowDate: string;
+  hierarchyObservationDate: string;
+  timeZone: string | null;
+  creative: { creativeId: string | null; metaUpdatedAt: Date | null } | undefined;
+}): string | null {
+  // A day is eligible only if it had already ended when the hierarchy observation began. This is
+  // stricter than comparing with the later Insights request time and prevents a refresh that spans
+  // local midnight from finalizing the just-ended, potentially mixed-creative reporting day.
+  if (!input.timeZone || input.rowDate >= input.hierarchyObservationDate) return null;
+  if (!input.creative?.creativeId || !input.creative.metaUpdatedAt) return null;
+
+  try {
+    const dayStart = startOfStoreDate(input.rowDate, input.timeZone);
+    return input.creative.metaUpdatedAt <= dayStart ? input.creative.creativeId : null;
+  } catch {
+    return null;
+  }
+}
+
 export class MetaInsightsService {
   constructor(
     private readonly repository: MetaInsightsRepository,
     private readonly apiService: MetaApiService,
   ) {}
 
-  async syncAccount(context: MetaApiContext, metaAccountId: string, requestedLookbackDays?: number) {
+  async syncAccount(
+    context: MetaApiContext,
+    metaAccountId: string,
+    requestedLookbackDays?: number,
+    refreshedHierarchy?: RefreshedInsightHierarchy,
+  ) {
     const account = await this.repository.findAccount(
       context.storeId,
       context.connectionId,
@@ -63,9 +101,29 @@ export class MetaInsightsService {
       throw new AppError('Meta Insights lookback must be between 1 and 365 days', 400, 'INVALID_LOOKBACK');
     }
 
-    const today = startOfUtcDay(new Date());
+    const now = new Date();
+    const todayDate = reportingDate(now, account.timezoneName);
+    const hierarchyObservationDate = reportingDate(
+      refreshedHierarchy?.observedAt ?? now,
+      account.timezoneName,
+    );
+    const today = new Date(`${todayDate}T00:00:00.000Z`);
     const firstDay = addDays(today, -(lookbackDays - 1));
-    const hierarchy = await this.repository.getHierarchyMaps(account.id);
+
+    // The exact provider refresh is the sole source of creative-finalization evidence. Separately,
+    // merge retained local entity IDs so completed Insights rows for soft-deleted campaigns/adsets/
+    // ads keep their historical relations and remain filterable. Retained `adCreatives` are never
+    // merged, because a deleted/stale ad must not prove immutable creative ownership.
+    const retainedHierarchy = await this.repository.getHierarchyMaps(account.id);
+    const hierarchy: InsightHierarchy = refreshedHierarchy
+      ? {
+          campaigns: new Map([...retainedHierarchy.campaigns, ...refreshedHierarchy.campaigns]),
+          adSets: new Map([...retainedHierarchy.adSets, ...refreshedHierarchy.adSets]),
+          ads: new Map([...retainedHierarchy.ads, ...refreshedHierarchy.ads]),
+          adCreatives: refreshedHierarchy.adCreatives,
+        }
+      : retainedHierarchy;
+
     let recordsRead = 0;
     let recordsWritten = 0;
     let staleRowsDeleted = 0;
@@ -100,12 +158,33 @@ export class MetaInsightsService {
             'META_IDENTITY_MISMATCH',
           );
         }
+
+        const creative = row.ad_id ? hierarchy.adCreatives.get(row.ad_id) : undefined;
+
+        // Enroll the reporting day that was current when the provider hierarchy observation began,
+        // not whichever day it happens to be after the refresh finishes. The row remains unassigned
+        // until a later observation proves one creative owned the entire completed day.
+        const trackCreativeSnapshot = Boolean(
+          account.timezoneName &&
+            row.date_start === hierarchyObservationDate &&
+            creative?.creativeId &&
+            creative.metaUpdatedAt,
+        );
+        const creativeIdSnapshot = trustedCompletedDayCreative({
+          rowDate: row.date_start,
+          hierarchyObservationDate,
+          timeZone: account.timezoneName,
+          creative,
+        });
+
         keys.push(
           await this.repository.upsertDailyInsight({
             adAccountId: account.id,
             campaignId: row.campaign_id ? hierarchy.campaigns.get(row.campaign_id) ?? null : null,
             adSetId: row.adset_id ? hierarchy.adSets.get(row.adset_id) ?? null : null,
             adId: row.ad_id ? hierarchy.ads.get(row.ad_id) ?? null : null,
+            creativeIdSnapshot,
+            trackCreativeSnapshot,
             row,
             actionReportTime: ACTION_REPORT_TIME,
           }),

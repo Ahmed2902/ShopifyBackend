@@ -4,6 +4,7 @@ import {
   aggregateMetaBy,
   emptyMetaMetrics,
   metricChanges,
+  type MetaMetricRow,
   type MetaMetrics,
 } from './analytics.metrics.js';
 import {
@@ -12,31 +13,32 @@ import {
   type AdvertisingOverviewPeriod,
 } from './advertising-analytics.read.repository.js';
 import type { AnalyticsRepository } from './analytics.repository.js';
-import { pagination, splitMeta, windowResponse } from './analytics.shared.js';
+import { inRange, pagination, splitMeta, windowResponse } from './analytics.shared.js';
 import type { AnalyticsWindows } from './analytics.shared.js';
+import { CreativeAdvertisingReadRepository } from './creative-advertising.read.repository.js';
+import { CreativeVideoRetentionService } from './creative-video-retention.service.js';
 
 type StoreContext = NonNullable<Awaited<ReturnType<AnalyticsRepository['getStoreContext']>>>;
 type MetaRow = Awaited<ReturnType<AnalyticsRepository['getMetaRows']>>[number];
+type CreativeMetaRow = Awaited<ReturnType<CreativeAdvertisingReadRepository['getRows']>>[number];
 
-type MetaKind = 'CAMPAIGN' | 'ADSET' | 'AD' | 'CREATIVE';
+type MetaKind = 'CAMPAIGN' | 'ADSET' | 'AD';
 type MetaFilter = Parameters<AnalyticsRepository['getMetaRows']>[4];
 
 function selector(kind: MetaKind): (row: MetaRow) => string | null {
   if (kind === 'CAMPAIGN') return (row) => row.campaign?.id ?? null;
   if (kind === 'ADSET') return (row) => row.adSet?.id ?? null;
-  if (kind === 'AD') return (row) => row.ad?.id ?? null;
-  return (row) => row.ad?.creative?.id ?? null;
+  return (row) => row.ad?.id ?? null;
 }
 
 function filter(kind: MetaKind, ids: string[]): MetaFilter {
   if (kind === 'CAMPAIGN') return { campaignIds: ids };
   if (kind === 'ADSET') return { adSetIds: ids };
-  if (kind === 'AD') return { adIds: ids };
-  return { creativeIds: ids };
+  return { adIds: ids };
 }
 
-function daily(rows: MetaRow[]) {
-  const groups = new Map<string, MetaRow[]>();
+function daily<T extends MetaMetricRow & { date: Date }>(rows: T[]) {
+  const groups = new Map<string, T[]>();
   for (const row of rows) {
     const key = row.date.toISOString().slice(0, 10);
     const group = groups.get(key) ?? [];
@@ -46,6 +48,17 @@ function daily(rows: MetaRow[]) {
   return [...groups.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([date, values]) => ({ date, ...aggregateMeta(values) }));
+}
+
+function splitCreative(rows: CreativeMetaRow[], windows: AnalyticsWindows) {
+  return {
+    current: rows.filter((row) =>
+      inRange(row.date, windows.current.metaFrom, windows.current.metaTo),
+    ),
+    comparison: rows.filter((row) =>
+      inRange(row.date, windows.comparison.metaFrom, windows.comparison.metaTo),
+    ),
+  };
 }
 
 function overviewMetrics(row: AdvertisingOverviewAggregateRow | undefined): MetaMetrics {
@@ -71,6 +84,10 @@ export class AdvertisingAnalyticsService {
     private readonly repository: AnalyticsRepository,
     private readonly readRepository: AdvertisingAnalyticsReadRepository =
       new AdvertisingAnalyticsReadRepository(),
+    private readonly videoRetentionService: CreativeVideoRetentionService =
+      new CreativeVideoRetentionService(),
+    private readonly creativeReadRepository: CreativeAdvertisingReadRepository =
+      new CreativeAdvertisingReadRepository(),
   ) {}
 
   async overview(store: StoreContext, windows: AnalyticsWindows) {
@@ -192,7 +209,44 @@ export class AdvertisingAnalyticsService {
   ) {
     const selected = store.metaConnection?.selectedAdAccountIds ?? [];
     const page = await this.repository.getCreativesPage(store.id, selected, pageNumber, limit);
-    return this.listResult(store, windows, page, 'CREATIVE', pageNumber, limit);
+    const creativeIds = page.items.map((item) => item.id);
+    const [rows, videoRetention] = await Promise.all([
+      this.creativeReadRepository.getRows({
+        storeId: store.id,
+        selectedAccountIds: selected,
+        creativeIds,
+        from: windows.comparison.metaFrom,
+        to: windows.current.metaTo,
+      }),
+      this.videoRetentionService.forCreatives({
+        storeId: store.id,
+        selectedAccountIds: selected,
+        windows,
+        creatives: page.items,
+      }),
+    ]);
+    const split = splitCreative(rows, windows);
+    const current = aggregateMetaBy(split.current, (row) => row.creativeIdSnapshot);
+    const comparison = aggregateMetaBy(split.comparison, (row) => row.creativeIdSnapshot);
+
+    return {
+      window: windowResponse(windows),
+      pagination: pagination(pageNumber, limit, page.total),
+      items: page.items.map((entity) => {
+        const currentMetrics = current.get(entity.id) ?? emptyMetaMetrics();
+        const comparisonMetrics = comparison.get(entity.id) ?? emptyMetaMetrics();
+        const currency =
+          rows.find((row) => row.creativeIdSnapshot === entity.id)?.accountCurrency ?? null;
+        return {
+          entity,
+          currency,
+          current: currentMetrics,
+          comparison: comparisonMetrics,
+          change: metricChanges(currentMetrics, comparisonMetrics),
+          videoRetention: videoRetention.get(entity.id) ?? null,
+        };
+      }),
+    };
   }
 
   private async listResult<T extends { id: string }>(
@@ -256,7 +310,42 @@ export class AdvertisingAnalyticsService {
   private async creativeDetail(store: StoreContext, windows: AnalyticsWindows, id: string) {
     const selected = store.metaConnection?.selectedAdAccountIds ?? [];
     const entity = await this.repository.getCreative(store.id, selected, id);
-    return this.detailResult(store, windows, entity, id, 'CREATIVE');
+    if (!entity) {
+      throw new AppError('creative not found', 404, 'META_ENTITY_NOT_FOUND');
+    }
+
+    const [rows, videoRetention] = await Promise.all([
+      this.creativeReadRepository.getRows({
+        storeId: store.id,
+        selectedAccountIds: selected,
+        creativeIds: [id],
+        from: windows.comparison.metaFrom,
+        to: windows.current.metaTo,
+      }),
+      this.videoRetentionService.forCreatives({
+        storeId: store.id,
+        selectedAccountIds: selected,
+        windows,
+        creatives: [entity],
+      }),
+    ]);
+    const split = splitCreative(rows, windows);
+    const current = aggregateMeta(split.current);
+    const comparison = aggregateMeta(split.comparison);
+
+    return {
+      window: windowResponse(windows),
+      entity,
+      currency: rows[0]?.accountCurrency ?? null,
+      current,
+      comparison,
+      change: metricChanges(current, comparison),
+      daily: daily(split.current),
+      attributionSettings: [
+        ...new Set(split.current.map((row) => row.attributionSetting).filter(Boolean)),
+      ],
+      videoRetention: videoRetention.get(entity.id) ?? null,
+    };
   }
 
   private async detailResult<T>(
