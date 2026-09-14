@@ -136,6 +136,7 @@ describe('MetaAdsService', () => {
       creativeId: 'local-creative',
       metaUpdatedAt: null,
     });
+    expect(result.insightHierarchy.observedAt).toBeInstanceOf(Date);
   });
 
   it('rejects inconsistent parent references before mutating local hierarchy rows', async () => {
