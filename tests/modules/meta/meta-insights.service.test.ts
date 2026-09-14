@@ -120,6 +120,33 @@ describe('MetaInsightsService', () => {
     );
   });
 
+  it('uses an exact provider-refreshed hierarchy snapshot without rereading mutable hierarchy rows', async () => {
+    const { repository, service } = build(false, [[
+      insightRow({ date_start: '2026-08-22', date_stop: '2026-08-22' }),
+    ]]);
+    const refreshedHierarchy = {
+      campaigns: new Map([['cmp_1', 'fresh-cmp']]),
+      adSets: new Map([['set_1', 'fresh-set']]),
+      ads: new Map([['ad_1', 'fresh-ad']]),
+      adCreatives: new Map([[
+        'ad_1',
+        { creativeId: 'fresh-creative', metaUpdatedAt: new Date('2026-08-20T00:00:00.000Z') },
+      ]]),
+    };
+
+    await service.syncAccount(context, 'act_101', 1, refreshedHierarchy);
+
+    expect(repository.getHierarchyMaps).not.toHaveBeenCalled();
+    expect(repository.upsertDailyInsight).toHaveBeenCalledWith(
+      expect.objectContaining({
+        campaignId: 'fresh-cmp',
+        adSetId: 'fresh-set',
+        adId: 'fresh-ad',
+        creativeIdSnapshot: 'fresh-creative',
+      }),
+    );
+  });
+
   it('enrolls a known current reporting-day row without attributing the in-progress daily aggregate', async () => {
     const { repository, service } = build(false, [[insightRow()]]);
 
