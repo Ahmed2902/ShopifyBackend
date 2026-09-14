@@ -327,13 +327,19 @@ export class MetaService {
 
       for (const accountId of context.selectedAdAccountIds) {
         // Creative-level insight snapshots are permanent once finalized. Refresh the provider
-        // hierarchy in the same operation immediately before reading Insights so a stale local
-        // MetaAd.creativeId/metaUpdatedAt can never be used as evidence for finalization.
+        // hierarchy in the same operation immediately before reading Insights and pass that exact
+        // provider-derived hierarchy into the insight import. A concurrent hierarchy sync can no
+        // longer replace creative ownership in the gap before snapshot finalization.
         const hierarchy = await this.adsService.syncSelectedAccount(context, accountId);
         hierarchyRecordsRead += hierarchy.recordsRead;
         hierarchyRecordsWritten += hierarchy.recordsWritten;
 
-        const result = await this.insightsService.syncAccount(context, accountId, lookbackDays);
+        const result = await this.insightsService.syncAccount(
+          context,
+          accountId,
+          lookbackDays,
+          hierarchy.insightHierarchy,
+        );
         recordsRead += result.recordsRead;
         recordsWritten += result.recordsWritten;
         staleRowsDeleted += result.staleRowsDeleted;
