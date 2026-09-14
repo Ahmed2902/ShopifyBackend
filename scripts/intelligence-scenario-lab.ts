@@ -139,6 +139,20 @@ type Scenario = {
   evaluate: () => RecommendationDraft | null;
 };
 
+type ScenarioResult = {
+  name: string;
+  ok: boolean;
+  error?: string;
+  ruleId?: string;
+  category?: string;
+  severity?: string;
+  action?: string;
+  confidence?: string;
+  message?: string;
+  priority?: number;
+  limitations?: string[];
+};
+
 const scenarios: Scenario[] = [
   {
     name: 'Campaign efficiency deterioration',
@@ -162,14 +176,26 @@ const scenarios: Scenario[] = [
   {
     name: 'Underexposed commerce winner',
     expectedRuleId: 'underexposed_commerce_winner',
-    evaluate: () => underexposedProductRule(product({ revenueShare: 0.35, mappedSpendShare: 0.08 }), productWindow),
+    evaluate: () =>
+      underexposedProductRule(
+        product({ revenueShare: 0.35, mappedSpendShare: 0.08 }),
+        productWindow,
+      ),
   },
   {
     name: 'Paid-commerce exposure mismatch',
     expectedRuleId: 'paid_commerce_exposure_mismatch',
     evaluate: () =>
       paidCommerceMismatchRule(
-        product({ revenue: 5_000, netRevenue: 5_000, units: 15, revenueShare: 0.05, mappedMetaSpend: 3_000, mappedSpendShare: 0.3, mappedImpressions: 25_000 }),
+        product({
+          revenue: 5_000,
+          netRevenue: 5_000,
+          units: 15,
+          revenueShare: 0.05,
+          mappedMetaSpend: 3_000,
+          mappedSpendShare: 0.3,
+          mappedImpressions: 25_000,
+        }),
         productWindow,
       ),
   },
@@ -178,7 +204,18 @@ const scenarios: Scenario[] = [
     expectedRuleId: 'provider_roas_margin_trap',
     evaluate: () =>
       marginTrapRule(
-        product({ revenue: 15_000, netRevenue: 15_000, revenueShare: 0.15, mappedMetaSpend: 6_000, mappedSpendShare: 0.12, mappedProviderValue: 19_200, providerRoas: 3.2, contributionBeforeAds: 3_000, contributionAfterAds: -3_000, costCoverage: 1 }),
+        product({
+          revenue: 15_000,
+          netRevenue: 15_000,
+          revenueShare: 0.15,
+          mappedMetaSpend: 6_000,
+          mappedSpendShare: 0.12,
+          mappedProviderValue: 19_200,
+          providerRoas: 3.2,
+          contributionBeforeAds: 3_000,
+          contributionAfterAds: -3_000,
+          costCoverage: 1,
+        }),
         productWindow,
       ),
   },
@@ -187,7 +224,13 @@ const scenarios: Scenario[] = [
     expectedRuleId: 'inventory_spend_conflict',
     evaluate: () =>
       inventorySpendConflictRule(
-        product({ inventoryTrusted: true, stockAvailable: 20, recentUnitsPerDay: 5, daysCover: 4, mappedMetaSpend: 1_500 }),
+        product({
+          inventoryTrusted: true,
+          stockAvailable: 20,
+          recentUnitsPerDay: 5,
+          daysCover: 4,
+          mappedMetaSpend: 1_500,
+        }),
         productWindow,
       ),
   },
@@ -203,30 +246,62 @@ const scenarios: Scenario[] = [
       campaignEfficiencyRule(
         campaign({
           spendShare: 0.55,
-          comparison: metrics({ spend: 3_899, impressions: 258_898, clicks: 6_187, purchases: 100, purchaseValue: 7_330, roas: 1.88, cpa: 38.99, ctr: 0.0239, cpc: 0.63, cpm: 15.06, frequency: 1.8 }),
-          current: metrics({ spend: 4_900, impressions: 280_000, clicks: 5_040, purchases: 90, purchaseValue: 6_300, roas: 1.2857, cpa: 54.44, ctr: 0.018, cpc: 0.9722, cpm: 17.5, frequency: 2.15 }),
+          comparison: metrics({
+            spend: 3_899,
+            impressions: 258_898,
+            clicks: 6_187,
+            purchases: 100,
+            purchaseValue: 7_330,
+            roas: 1.88,
+            cpa: 38.99,
+            ctr: 0.0239,
+            cpc: 0.63,
+            cpm: 15.06,
+            frequency: 1.8,
+          }),
+          current: metrics({
+            spend: 4_900,
+            impressions: 280_000,
+            clicks: 5_040,
+            purchases: 90,
+            purchaseValue: 6_300,
+            roas: 1.2857,
+            cpa: 54.44,
+            ctr: 0.018,
+            cpc: 0.9722,
+            cpm: 17.5,
+            frequency: 2.15,
+          }),
         }),
       ),
   },
 ];
 
 const asJson = process.argv.includes('--json');
-const results = scenarios.map((scenario) => {
+const results: ScenarioResult[] = scenarios.map((scenario) => {
   const recommendation = scenario.evaluate();
   if (!recommendation) {
     return { name: scenario.name, ok: false, error: 'No recommendation emitted' };
   }
   const decision = recommendationDecision(recommendation);
+  const ok = recommendation.ruleId === scenario.expectedRuleId;
   return {
     name: scenario.name,
-    ok: recommendation.ruleId === scenario.expectedRuleId,
+    ok,
+    error: ok ? undefined : `Expected ${scenario.expectedRuleId}, got ${recommendation.ruleId}`,
     ruleId: recommendation.ruleId,
     category: recommendation.category,
     severity: recommendation.severity,
     action: decision.decisionAction,
     confidence: decision.decisionConfidence,
     message: decision.decisionMessage,
-    priority: Number((recommendation.impactScore * recommendation.confidenceScore * recommendation.urgencyScore).toFixed(4)),
+    priority: Number(
+      (
+        recommendation.impactScore *
+        recommendation.confidenceScore *
+        recommendation.urgencyScore
+      ).toFixed(4),
+    ),
     limitations: recommendation.limitations.map((limitation) => limitation.code),
   };
 });
@@ -241,11 +316,15 @@ if (asJson) {
       continue;
     }
     console.log(`✓ ${result.name}`);
-    console.log(`  ${result.ruleId} → ${result.action} · ${result.severity} · confidence ${result.confidence}`);
+    console.log(
+      `  ${result.ruleId} → ${result.action} · ${result.severity} · confidence ${result.confidence}`,
+    );
     console.log(`  ${result.message}`);
     if (result.limitations?.length) console.log(`  limitations: ${result.limitations.join(', ')}`);
   }
-  console.log(`\n${results.filter((result) => result.ok).length}/${results.length} scenarios emitted the expected rule.\n`);
+  console.log(
+    `\n${results.filter((result) => result.ok).length}/${results.length} scenarios emitted the expected rule.\n`,
+  );
 }
 
 if (results.some((result) => !result.ok)) process.exitCode = 1;
