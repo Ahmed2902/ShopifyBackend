@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from '../../../generated/prisma/client.js';
+import type { Prisma, PrismaClient } from '../../../generated/prisma/client.js';
 import { AppError } from '../../../errors/app-error.js';
 import { prisma } from '../../../lib/prisma.js';
 import { MetaCollectionMappingRepository } from './meta-collection-mapping.repository.js';
