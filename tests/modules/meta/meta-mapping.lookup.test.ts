@@ -46,7 +46,7 @@ function build(found = true) {
 }
 
 describe('MetaAdMappingLookup', () => {
-  it('reads within the selected-account boundary and binds collections to the authorized internal ad row', async () => {
+  it('reads within the selected-account boundary and hides internal ad keys from the response', async () => {
     const { lookup, findFirst, getActiveForAds } = build();
     const result = await lookup.find(storeId, 'meta-ad-1');
 
@@ -59,6 +59,7 @@ describe('MetaAdMappingLookup', () => {
     }));
     expect(getActiveForAds).toHaveBeenCalledWith(['ad-local-1']);
     expect(result).not.toHaveProperty('id');
+    expect(result.collectionMappings[0]).not.toHaveProperty('metaAdId');
     expect(result).toMatchObject({
       metaAdId: 'meta-ad-1',
       targetScopeConfidence: 0.9,
