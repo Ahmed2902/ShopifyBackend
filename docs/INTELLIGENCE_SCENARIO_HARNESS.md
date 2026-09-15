@@ -116,6 +116,26 @@ Inventory recommendations only exist when the merchant has explicitly selected t
 
 Shared-ad recommendations keep Meta spend at the ad level. They intentionally add `SHARED_SPEND_NOT_ALLOCATED` rather than inventing product-level spend allocation.
 
+## Meta Sandbox seeding
+
+The Meta seeder is a provider-plumbing utility, not a recommendation-data generator. It creates only PAUSED campaigns, ad sets and ads, and it must never be pointed at a live merchant account.
+
+Always inspect the target first with the read-only dry run:
+
+```bash
+npm run dev:meta-sandbox-seed -- --dry-run
+```
+
+Write mode requires two independent confirmations: an explicit CLI acknowledgement and a second copy of the exact target account ID. The confirmation ID accepts either the numeric form or the same `act_` form as the target.
+
+```bash
+export META_SANDBOX_AD_ACCOUNT_ID=act_123456789
+export META_SANDBOX_CONFIRM_AD_ACCOUNT_ID=act_123456789
+npm run dev:meta-sandbox-seed -- --confirm-sandbox-write
+```
+
+The command refuses write mode when `NODE_ENV=production`, refuses writes without `--confirm-sandbox-write`, and refuses writes unless `META_SANDBOX_CONFIRM_AD_ACCOUNT_ID` exactly matches the normalized target account ID. Use `--dry-run` first every time and never use production merchant credentials.
+
 ## Safety / environment rules
 
 Scenario code must not:
