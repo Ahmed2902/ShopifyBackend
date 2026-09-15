@@ -6,6 +6,7 @@ import {
   metaMappingCatalogItemParamsSchema,
   metaMappingListQuerySchema,
 } from './meta-mapping.schema.js';
+import { findSelectedMetaAdMapping } from './meta-mapping.lookup.js';
 import { metaMappingService, type MetaMappingService } from './meta-mapping.service.js';
 
 export class MetaMappingController {
@@ -22,6 +23,13 @@ export class MetaMappingController {
   ads = async (req: Request, res: Response) => {
     const { page, limit } = metaMappingListQuerySchema.parse(req.query);
     res.status(200).json(await this.service.listAdMappings(req.context.storeId!, page, limit));
+  };
+
+  ad = async (req: Request, res: Response) => {
+    const { adId } = metaMappingAdParamsSchema.parse(req.params);
+    res.status(200).json(
+      await findSelectedMetaAdMapping(this.service, req.context.storeId!, adId),
+    );
   };
 
   suggestions = async (req: Request, res: Response) => {
