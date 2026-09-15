@@ -76,7 +76,7 @@ export class MetaAdMappingLookup {
         ...mapping,
         confidence: Number(mapping.confidence),
       })),
-      collectionMappings: collectionMappings.map((mapping) => ({
+      collectionMappings: collectionMappings.map(({ metaAdId: _internalAdId, ...mapping }) => ({
         ...mapping,
         confidence: Number(mapping.confidence),
       })),
