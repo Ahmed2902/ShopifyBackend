@@ -18,8 +18,13 @@ const configuredImageHash = process.env.META_SANDBOX_IMAGE_HASH?.trim() || null;
 const imageUrl = process.env.META_SANDBOX_IMAGE_URL?.trim() || null;
 const dryRun = process.argv.includes('--dry-run');
 const asJson = process.argv.includes('--json');
+const writeConfirmed = process.argv.includes('--confirm-sandbox-write');
 const accountId = rawAccountId.replace(/^act_/, '');
 const accountPath = `act_${accountId}`;
+const confirmedAccountId = (process.env.META_SANDBOX_CONFIRM_AD_ACCOUNT_ID?.trim() || '').replace(
+  /^act_/,
+  '',
+);
 const graphOrigin = `https://graph.facebook.com/${apiVersion}`;
 
 if (!/^\d+$/.test(accountId)) {
@@ -33,6 +38,23 @@ if (!/^v\d+\.\d+$/.test(apiVersion)) {
 }
 new URL(destinationUrl);
 if (imageUrl) new URL(imageUrl);
+
+// Writes require two independent, account-specific confirmations. Environment-variable names alone do
+// not prove that an account is a sandbox, and NODE_ENV is commonly unset in local shells. Requiring
+// both an explicit CLI acknowledgement and a second copy of the exact target account ID makes it much
+// harder to point this utility at a live merchant account accidentally. Dry runs remain read-only.
+if (!dryRun) {
+  if (!writeConfirmed) {
+    throw new Error(
+      'Write mode requires --confirm-sandbox-write. Run with --dry-run first and inspect the target account.',
+    );
+  }
+  if (!confirmedAccountId || confirmedAccountId !== accountId) {
+    throw new Error(
+      'Write mode requires META_SANDBOX_CONFIRM_AD_ACCOUNT_ID to exactly match META_SANDBOX_AD_ACCOUNT_ID.',
+    );
+  }
+}
 
 type GraphError = {
   message?: string;
@@ -112,7 +134,9 @@ async function graphRequest<T>(
 
   if (!response.ok || parsed.error) {
     const error = parsed.error;
-    const code = [error?.code, error?.error_subcode].filter((value) => value !== undefined).join('/');
+    const code = [error?.code, error?.error_subcode]
+      .filter((value) => value !== undefined)
+      .join('/');
     throw new Error(
       `Meta API ${method} ${path} failed (${response.status}${code ? `, code ${code}` : ''}): ${error?.message ?? 'unknown Meta error'}`,
     );
@@ -265,6 +289,11 @@ const trackingModes: TrackingMode[] = ['MISSING', 'PARTIAL', 'EXACT'];
 
 async function main() {
   const account = await accountMetadata();
+  const returnedAccountId = account.id.replace(/^act_/, '');
+  if (!dryRun && returnedAccountId !== accountId) {
+    throw new Error('Meta returned an account ID that does not match the confirmed write target.');
+  }
+
   const [campaigns, adSets, creatives, ads] = await Promise.all([
     list<Campaign>(`${accountPath}/campaigns`, 'id,name,status'),
     list<AdSet>(`${accountPath}/adsets`, 'id,name,campaign_id,status'),
@@ -320,7 +349,8 @@ async function main() {
   }
 
   const totalAds = manifest.campaigns.reduce(
-    (sum, campaign) => sum + campaign.adSets.reduce((nested, adSet) => nested + adSet.ads.length, 0),
+    (sum, campaign) =>
+      sum + campaign.adSets.reduce((nested, adSet) => nested + adSet.ads.length, 0),
     0,
   );
 
@@ -330,7 +360,9 @@ async function main() {
   }
 
   console.log(`Meta sandbox: ${account.name ?? account.id}`);
-  console.log(`Currency/time zone: ${account.currency ?? 'unknown'} / ${account.timezoneName ?? 'unknown'}`);
+  console.log(
+    `Currency/time zone: ${account.currency ?? 'unknown'} / ${account.timezoneName ?? 'unknown'}`,
+  );
   console.log(`Mode: ${dryRun ? 'DRY RUN' : 'WRITE'}`);
   console.log(`Campaigns: ${manifest.campaigns.length}`);
   console.log(`Ad sets: ${manifest.campaigns.reduce((sum, row) => sum + row.adSets.length, 0)}`);
