@@ -67,7 +67,6 @@ type GraphError = {
 type GraphEnvelope<T> = {
   data?: T[];
   id?: string;
-  images?: Record<string, { hash?: string; url?: string }>;
   paging?: {
     next?: string;
     cursors?: { after?: string };
@@ -82,6 +81,9 @@ type Creative = NamedEntity;
 type Ad = NamedEntity & { adset_id?: string; status?: string };
 
 type TrackingMode = 'MISSING' | 'PARTIAL' | 'EXACT';
+type CreativeMedia =
+  | { kind: 'IMAGE_HASH'; value: string }
+  | { kind: 'PICTURE_URL'; value: string };
 
 type CreatedManifest = {
   account: {
@@ -90,7 +92,7 @@ type CreatedManifest = {
     currency: string | null;
     timezoneName: string | null;
   };
-  imageHash: string | null;
+  creativeMedia: 'IMAGE_HASH' | 'PICTURE_URL' | 'DRY_RUN_PLACEHOLDER';
   campaigns: Array<{
     id: string;
     name: string;
@@ -214,17 +216,23 @@ async function accountMetadata() {
   };
 }
 
-async function ensureImageHash(): Promise<string | null> {
-  if (configuredImageHash) return configuredImageHash;
-  if (!imageUrl) return null;
-  if (dryRun) return 'dry-run-image-hash';
-
-  const result = await graphRequest<GraphEnvelope<never>>(`${accountPath}/adimages`, 'POST', {
-    url: imageUrl,
-  });
-  const first = Object.values(result.images ?? {})[0];
-  if (!first?.hash) throw new Error('Meta image upload succeeded but no image hash was returned');
-  return first.hash;
+function resolveCreativeMedia(): CreativeMedia {
+  if (configuredImageHash) {
+    return { kind: 'IMAGE_HASH', value: configuredImageHash };
+  }
+  if (imageUrl) {
+    // Meta's official Marketing API examples allow object_story_spec.link_data.picture to reference a
+    // public HTTPS image directly. This intentionally avoids POST /adimages because sandbox/test apps
+    // can return OAuthException code 3 ("Application does not have the capability to make this API
+    // call") even while campaign/ad-set/ad-creative endpoints are available.
+    return { kind: 'PICTURE_URL', value: imageUrl };
+  }
+  if (dryRun) {
+    return { kind: 'IMAGE_HASH', value: 'dry-run-image-hash' };
+  }
+  throw new Error(
+    'Set META_SANDBOX_IMAGE_URL to a public HTTPS image (recommended for sandbox) or META_SANDBOX_IMAGE_HASH to an existing Meta ad-image hash.',
+  );
 }
 
 async function ensureCampaign(existing: Campaign[], name: string): Promise<string> {
@@ -274,12 +282,17 @@ function trackingTags(mode: TrackingMode): string | null {
 
 async function ensureCreative(
   existing: Creative[],
-  imageHash: string,
+  media: CreativeMedia,
   name: string,
   mode: TrackingMode,
 ): Promise<string> {
   const found = exactName(existing, name);
   if (found) return found.id;
+
+  const mediaField =
+    media.kind === 'IMAGE_HASH'
+      ? { image_hash: media.value }
+      : { picture: media.value };
 
   const params: Record<string, string> = {
     name,
@@ -288,7 +301,7 @@ async function ensureCreative(
       link_data: {
         message: `Stride Meta sandbox scenario: ${name}`,
         link: destinationUrl,
-        image_hash: imageHash,
+        ...mediaField,
         call_to_action: { type: 'LEARN_MORE' },
       },
     }),
@@ -334,14 +347,12 @@ async function main() {
     list<Creative>(`${accountPath}/adcreatives`, 'id,name'),
     list<Ad>(`${accountPath}/ads`, 'id,name,adset_id,status'),
   ]);
-  const imageHash = await ensureImageHash();
-  const manifest: CreatedManifest = { account, imageHash, campaigns: [] };
-
-  if (!imageHash && !dryRun) {
-    throw new Error(
-      'Set META_SANDBOX_IMAGE_HASH or META_SANDBOX_IMAGE_URL so the seeder can create creatives and ads',
-    );
-  }
+  const media = resolveCreativeMedia();
+  const manifest: CreatedManifest = {
+    account,
+    creativeMedia: dryRun && !configuredImageHash && !imageUrl ? 'DRY_RUN_PLACEHOLDER' : media.kind,
+    campaigns: [],
+  };
 
   let trackingIndex = 0;
   for (const campaignSpec of campaignSpecs) {
@@ -367,12 +378,7 @@ async function main() {
         trackingIndex += 1;
         const suffix = `A${adSetNumber}-${adNumber}`;
         const creativeName = `${campaignName} | Creative ${suffix} | ${mode}`;
-        const creativeId = await ensureCreative(
-          creatives,
-          imageHash ?? 'dry-run-image-hash',
-          creativeName,
-          mode,
-        );
+        const creativeId = await ensureCreative(creatives, media, creativeName, mode);
         const adName = `${campaignName} | Ad ${suffix} | ${mode}`;
         const adId = await ensureAd(ads, adSetId, creativeId, adName);
         adSetManifest.ads.push({ id: adId, name: adName, creativeId, tracking: mode });
@@ -398,6 +404,7 @@ async function main() {
     `Currency/time zone: ${account.currency ?? 'unknown'} / ${account.timezoneName ?? 'unknown'}`,
   );
   console.log(`Mode: ${dryRun ? 'DRY RUN' : 'WRITE'}`);
+  console.log(`Creative media: ${manifest.creativeMedia}`);
   console.log(`Campaigns: ${manifest.campaigns.length}`);
   console.log(`Ad sets: ${manifest.campaigns.reduce((sum, row) => sum + row.adSets.length, 0)}`);
   console.log(`Ads: ${totalAds}`);
