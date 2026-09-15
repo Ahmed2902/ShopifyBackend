@@ -206,15 +206,45 @@ function mapping(adId: string, productId: string, shopifyProductId: string, titl
 }
 
 const exactMappings = [
-  mapping('underexposed', 'product-underexposed', 'gid://shopify/Product/UNDEREXPOSED', 'SCN Underexposed Winner'),
-  mapping('mismatch', 'product-mismatch', 'gid://shopify/Product/MISMATCH', 'SCN Paid Mismatch'),
+  mapping(
+    'underexposed',
+    'product-underexposed',
+    'gid://shopify/Product/UNDEREXPOSED',
+    'SCN Underexposed Winner',
+  ),
+  mapping(
+    'mismatch',
+    'product-mismatch',
+    'gid://shopify/Product/MISMATCH',
+    'SCN Paid Mismatch',
+  ),
   mapping('margin', 'product-margin', 'gid://shopify/Product/MARGIN', 'SCN Margin Trap'),
-  mapping('low-stock', 'product-low-stock', 'gid://shopify/Product/LOW_STOCK', 'SCN Low Stock'),
-  mapping('neutral', 'product-neutral', 'gid://shopify/Product/NEUTRAL', 'SCN Neutral Control'),
+  mapping(
+    'low-stock',
+    'product-low-stock',
+    'gid://shopify/Product/LOW_STOCK',
+    'SCN Low Stock',
+  ),
+  mapping(
+    'neutral',
+    'product-neutral',
+    'gid://shopify/Product/NEUTRAL',
+    'SCN Neutral Control',
+  ),
 ];
 const sharedMappings = [
-  mapping('shared', 'product-low-stock', 'gid://shopify/Product/LOW_STOCK', 'SCN Low Stock'),
-  mapping('shared', 'product-neutral', 'gid://shopify/Product/NEUTRAL', 'SCN Neutral Control'),
+  mapping(
+    'shared',
+    'product-low-stock',
+    'gid://shopify/Product/LOW_STOCK',
+    'SCN Low Stock',
+  ),
+  mapping(
+    'shared',
+    'product-neutral',
+    'gid://shopify/Product/NEUTRAL',
+    'SCN Neutral Control',
+  ),
 ];
 
 function storeContext(overrides: Record<string, unknown> = {}) {
@@ -244,13 +274,15 @@ function storeContext(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function buildService(input: {
-  context?: ReturnType<typeof storeContext>;
-  rows?: typeof metaRows;
-  mappings?: typeof exactMappings;
-  commerce?: typeof commerceRows;
-  inventory?: typeof inventoryRows;
-} = {}) {
+function buildService(
+  input: {
+    context?: ReturnType<typeof storeContext>;
+    rows?: typeof metaRows;
+    mappings?: typeof exactMappings;
+    commerce?: typeof commerceRows;
+    inventory?: typeof inventoryRows;
+  } = {},
+) {
   const repository = {
     getMetaEvidenceRows: vi.fn().mockResolvedValue(input.rows ?? metaRows),
     getActiveProductMappings: vi
@@ -364,7 +396,9 @@ describe('IntelligenceService scenario harness', () => {
   });
 
   it('downgrades product recommendation confidence when global mapping coverage becomes very low', async () => {
-    const onlyUnderexposed = exactMappings.filter((row) => row.productId === 'product-underexposed');
+    const onlyUnderexposed = exactMappings.filter(
+      (row) => row.productId === 'product-underexposed',
+    );
     const snapshot = await buildService({ mappings: onlyUnderexposed }).snapshot(storeId, now);
     const underexposed = snapshot.recommendations.find(
       (recommendation) => recommendation.ruleId === 'underexposed_commerce_winner',
@@ -407,6 +441,8 @@ describe('IntelligenceService scenario harness', () => {
         expect.objectContaining({ code: 'META_SYNC_STALE' }),
       ]),
     );
-    expect(recommendationDecision(mismatch!).decisionAction).toBe('INVESTIGATE');
+    const decision = recommendationDecision(mismatch!);
+    expect(decision.decisionAction).toBe('INVESTIGATE');
+    expect(decision.decisionConfidence).toBe('MEDIUM');
   });
 });
