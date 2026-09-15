@@ -18,12 +18,16 @@ const apiVersion = process.env.META_SANDBOX_API_VERSION?.trim() || 'v26.0';
 const destinationUrl = process.env.META_SANDBOX_DESTINATION_URL?.trim() || 'https://example.com';
 const configuredImageHash = process.env.META_SANDBOX_IMAGE_HASH?.trim() || null;
 const imageUrl = process.env.META_SANDBOX_IMAGE_URL?.trim() || null;
+const objectStoryId = process.env.META_SANDBOX_OBJECT_STORY_ID?.trim() || null;
+
 const dryRun =
   process.argv.includes('--dry-run') || process.env.npm_config_dry_run?.toLowerCase() === 'true';
 const asJson = process.argv.includes('--json');
+const listPagePosts = process.argv.includes('--list-page-posts');
 const writeConfirmed =
   process.argv.includes('--confirm-sandbox-write') ||
   process.env.npm_config_confirm_sandbox_write?.toLowerCase() === 'true';
+
 const accountId = rawAccountId.replace(/^act_/, '');
 const accountPath = `act_${accountId}`;
 const confirmedAccountId = (process.env.META_SANDBOX_CONFIRM_AD_ACCOUNT_ID?.trim() || '').replace(
@@ -44,14 +48,23 @@ if (!/^v\d+\.\d+$/.test(apiVersion)) {
 new URL(destinationUrl);
 if (imageUrl) new URL(imageUrl);
 
-// Writes require two independent, account-specific confirmations. Environment-variable names alone do
-// not prove that an account is a sandbox, and NODE_ENV is commonly unset in local shells. Requiring
-// both an explicit CLI acknowledgement and a second copy of the exact target account ID makes it much
-// harder to point this utility at a live merchant account accidentally. Dry runs remain read-only.
-if (!dryRun) {
+if (objectStoryId) {
+  if (!/^\d+_\d+$/.test(objectStoryId)) {
+    throw new Error(
+      'META_SANDBOX_OBJECT_STORY_ID must look like <PAGE_ID>_<POST_ID>, for example 1171948176011994_123456789.',
+    );
+  }
+  if (!objectStoryId.startsWith(`${pageId}_`)) {
+    throw new Error('META_SANDBOX_OBJECT_STORY_ID must belong to META_SANDBOX_PAGE_ID.');
+  }
+}
+
+// Listing Page posts is read-only. Every other non-dry-run path can write to Meta and therefore needs
+// two independent, account-specific confirmations so a typo cannot seed a live merchant account.
+if (!dryRun && !listPagePosts) {
   if (!writeConfirmed) {
     throw new Error(
-      'Write mode requires --confirm-sandbox-write. Run with --dry-run first and inspect the target account.',
+      'Write mode requires --confirm-sandbox-write. Prefer `npm run dev:meta-sandbox-seed:write`.',
     );
   }
   if (!confirmedAccountId || confirmedAccountId !== accountId) {
@@ -87,9 +100,18 @@ type Campaign = NamedEntity & { status?: string };
 type AdSet = NamedEntity & { campaign_id?: string; status?: string };
 type Creative = NamedEntity;
 type Ad = NamedEntity & { adset_id?: string; status?: string };
+type PagePost = {
+  id: string;
+  message?: string;
+  permalink_url?: string;
+  created_time?: string;
+};
 
 type TrackingMode = 'MISSING' | 'PARTIAL' | 'EXACT';
-type CreativeMedia = { kind: 'IMAGE_HASH'; value: string } | { kind: 'PICTURE_URL'; value: string };
+type CreativeSource =
+  | { kind: 'EXISTING_PAGE_POST'; value: string }
+  | { kind: 'IMAGE_HASH'; value: string }
+  | { kind: 'PICTURE_URL'; value: string };
 
 type CreatedManifest = {
   account: {
@@ -98,7 +120,7 @@ type CreatedManifest = {
     currency: string | null;
     timezoneName: string | null;
   };
-  creativeMedia: 'IMAGE_HASH' | 'PICTURE_URL' | 'DRY_RUN_PLACEHOLDER';
+  creativeSource: CreativeSource['kind'] | 'DRY_RUN_PLACEHOLDER';
   campaigns: Array<{
     id: string;
     name: string;
@@ -125,6 +147,7 @@ async function graphRequest<T>(
     method,
     headers: { Authorization: `Bearer ${token}` },
   };
+
   if (method === 'GET') {
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
   } else {
@@ -149,6 +172,22 @@ async function graphRequest<T>(
     const code = [error?.code, error?.error_subcode]
       .filter((value) => value !== undefined)
       .join('/');
+
+    if (method === 'POST' && path.endsWith('/adcreatives') && error?.error_subcode === 1885183) {
+      throw new Error(
+        [
+          'Meta blocked creation of a new unpublished Page post because the Meta app is in Development mode (subcode 1885183).',
+          'For sandbox testing, do not switch the app Live just to bypass this.',
+          `Create or reuse a published post on Facebook Page ${pageId}, then set META_SANDBOX_OBJECT_STORY_ID to the Graph post id (<PAGE_ID>_<POST_ID>).`,
+          'Run `npm run dev:meta-sandbox-posts` to list recent Page post IDs after the token has pages_read_engagement.',
+          'Then rerun `npm run dev:meta-sandbox-seed:write`.',
+          error?.fbtrace_id ? `fbtrace_id=${error.fbtrace_id}` : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
+      );
+    }
+
     const details = [
       error?.error_user_title,
       error?.error_user_msg,
@@ -159,10 +198,12 @@ async function graphRequest<T>(
           : undefined,
       error?.fbtrace_id ? `fbtrace_id=${error.fbtrace_id}` : undefined,
     ].filter((value): value is string => Boolean(value));
+
     throw new Error(
       `Meta API ${method} ${path} failed (${response.status}${code ? `, code ${code}` : ''}): ${error?.message ?? 'unknown Meta error'}${details.length ? ` — ${details.join(' | ')}` : ''}`,
     );
   }
+
   return parsed as T;
 }
 
@@ -178,7 +219,7 @@ function pagingAfter<T>(result: GraphEnvelope<T>): string | null {
   }
 }
 
-async function list<T extends NamedEntity>(path: string, fields: string): Promise<T[]> {
+async function list<T>(path: string, fields: string, limit = '500'): Promise<T[]> {
   const rows: T[] = [];
   const seenCursors = new Set<string>();
   let after: string | null = null;
@@ -186,7 +227,7 @@ async function list<T extends NamedEntity>(path: string, fields: string): Promis
   while (true) {
     const result = await graphRequest<GraphEnvelope<T>>(path, 'GET', {
       fields,
-      limit: '500',
+      limit,
       ...(after ? { after } : {}),
     });
     rows.push(...(result.data ?? []));
@@ -224,6 +265,7 @@ async function accountMetadata() {
   }>(accountPath, 'GET', {
     fields: 'id,name,currency,timezone_name',
   });
+
   return {
     id: result.id ?? accountPath,
     name: result.name ?? null,
@@ -232,23 +274,46 @@ async function accountMetadata() {
   };
 }
 
-function resolveCreativeMedia(): CreativeMedia {
-  if (configuredImageHash) {
-    return { kind: 'IMAGE_HASH', value: configuredImageHash };
-  }
-  if (imageUrl) {
-    // Meta's official Marketing API examples allow object_story_spec.link_data.picture to reference a
-    // public HTTPS image directly. This intentionally avoids POST /adimages because sandbox/test apps
-    // can return OAuthException code 3 ("Application does not have the capability to make this API
-    // call") even while campaign/ad-set/ad-creative endpoints are available.
-    return { kind: 'PICTURE_URL', value: imageUrl };
-  }
-  if (dryRun) {
-    return { kind: 'IMAGE_HASH', value: 'dry-run-image-hash' };
-  }
+function resolveCreativeSource(): CreativeSource {
+  // Development-mode apps cannot create the unpublished Page post generated by object_story_spec.
+  // Reusing a published Page post through object_story_id avoids that restriction while still letting
+  // each ad creative carry its own url_tags for MISSING / PARTIAL / EXACT tracking scenarios.
+  if (objectStoryId) return { kind: 'EXISTING_PAGE_POST', value: objectStoryId };
+  if (configuredImageHash) return { kind: 'IMAGE_HASH', value: configuredImageHash };
+  if (imageUrl) return { kind: 'PICTURE_URL', value: imageUrl };
+  if (dryRun) return { kind: 'IMAGE_HASH', value: 'dry-run-image-hash' };
+
   throw new Error(
-    'Set META_SANDBOX_IMAGE_URL to a public HTTPS image (recommended for sandbox) or META_SANDBOX_IMAGE_HASH to an existing Meta ad-image hash.',
+    'Set META_SANDBOX_OBJECT_STORY_ID to an existing published Page post (recommended while the Meta app is in Development mode), or provide META_SANDBOX_IMAGE_HASH / META_SANDBOX_IMAGE_URL when the app is allowed to create ad stories.',
   );
+}
+
+async function printRecentPagePosts() {
+  const posts = await list<PagePost>(
+    `${pageId}/posts`,
+    'id,message,permalink_url,created_time',
+    '25',
+  );
+
+  if (!posts.length) {
+    console.log(`No published posts were returned for Page ${pageId}.`);
+    console.log('Create a normal published Page post first, then rerun this command.');
+    return;
+  }
+
+  if (asJson) {
+    console.log(JSON.stringify(posts, null, 2));
+    return;
+  }
+
+  console.log(`Recent published posts for Page ${pageId}:`);
+  for (const post of posts) {
+    const preview = (post.message ?? '(no text)').replace(/\s+/g, ' ').slice(0, 90);
+    console.log(`\n${post.id}`);
+    console.log(`  ${post.created_time ?? 'unknown time'} · ${preview}`);
+    if (post.permalink_url) console.log(`  ${post.permalink_url}`);
+  }
+  console.log('\nCopy the id you want into META_SANDBOX_OBJECT_STORY_ID.');
 }
 
 async function ensureCampaign(existing: Campaign[], name: string): Promise<string> {
@@ -267,6 +332,7 @@ async function ensureCampaign(existing: Campaign[], name: string): Promise<strin
 async function ensureAdSet(existing: AdSet[], campaignId: string, name: string): Promise<string> {
   const found = existing.find((row) => row.name === name && row.campaign_id === campaignId);
   if (found) return found.id;
+
   return create(`${accountPath}/adsets`, {
     name,
     campaign_id: campaignId,
@@ -295,19 +361,22 @@ function trackingTags(mode: TrackingMode): string | null {
 
 async function ensureCreative(
   existing: Creative[],
-  media: CreativeMedia,
+  source: CreativeSource,
   name: string,
   mode: TrackingMode,
 ): Promise<string> {
   const found = exactName(existing, name);
   if (found) return found.id;
 
-  const mediaField =
-    media.kind === 'IMAGE_HASH' ? { image_hash: media.value } : { picture: media.value };
+  const params: Record<string, string> = { name };
 
-  const params: Record<string, string> = {
-    name,
-    object_story_spec: JSON.stringify({
+  if (source.kind === 'EXISTING_PAGE_POST') {
+    params.object_story_id = source.value;
+  } else {
+    const mediaField =
+      source.kind === 'IMAGE_HASH' ? { image_hash: source.value } : { picture: source.value };
+
+    params.object_story_spec = JSON.stringify({
       page_id: pageId,
       link_data: {
         message: `Stride Meta sandbox scenario: ${name}`,
@@ -315,8 +384,9 @@ async function ensureCreative(
         ...mediaField,
         call_to_action: { type: 'LEARN_MORE' },
       },
-    }),
-  };
+    });
+  }
+
   const tags = trackingTags(mode);
   if (tags) params.url_tags = tags;
   return create(`${accountPath}/adcreatives`, params);
@@ -330,6 +400,7 @@ async function ensureAd(
 ): Promise<string> {
   const found = existing.find((row) => row.name === name && row.adset_id === adSetId);
   if (found) return found.id;
+
   return create(`${accountPath}/ads`, {
     name,
     adset_id: adSetId,
@@ -346,6 +417,11 @@ const campaignSpecs = [
 const trackingModes: TrackingMode[] = ['MISSING', 'PARTIAL', 'EXACT'];
 
 async function main() {
+  if (listPagePosts) {
+    await printRecentPagePosts();
+    return;
+  }
+
   const account = await accountMetadata();
   const returnedAccountId = account.id.replace(/^act_/, '');
   if (!dryRun && returnedAccountId !== accountId) {
@@ -358,10 +434,14 @@ async function main() {
     list<Creative>(`${accountPath}/adcreatives`, 'id,name'),
     list<Ad>(`${accountPath}/ads`, 'id,name,adset_id,status'),
   ]);
-  const media = resolveCreativeMedia();
+
+  const source = resolveCreativeSource();
   const manifest: CreatedManifest = {
     account,
-    creativeMedia: dryRun && !configuredImageHash && !imageUrl ? 'DRY_RUN_PLACEHOLDER' : media.kind,
+    creativeSource:
+      dryRun && !objectStoryId && !configuredImageHash && !imageUrl
+        ? 'DRY_RUN_PLACEHOLDER'
+        : source.kind,
     campaigns: [],
   };
 
@@ -389,13 +469,15 @@ async function main() {
         trackingIndex += 1;
         const suffix = `A${adSetNumber}-${adNumber}`;
         const creativeName = `${campaignName} | Creative ${suffix} | ${mode}`;
-        const creativeId = await ensureCreative(creatives, media, creativeName, mode);
+        const creativeId = await ensureCreative(creatives, source, creativeName, mode);
         const adName = `${campaignName} | Ad ${suffix} | ${mode}`;
         const adId = await ensureAd(ads, adSetId, creativeId, adName);
         adSetManifest.ads.push({ id: adId, name: adName, creativeId, tracking: mode });
       }
+
       campaignManifest.adSets.push(adSetManifest);
     }
+
     manifest.campaigns.push(campaignManifest);
   }
 
@@ -415,7 +497,7 @@ async function main() {
     `Currency/time zone: ${account.currency ?? 'unknown'} / ${account.timezoneName ?? 'unknown'}`,
   );
   console.log(`Mode: ${dryRun ? 'DRY RUN' : 'WRITE'}`);
-  console.log(`Creative media: ${manifest.creativeMedia}`);
+  console.log(`Creative source: ${manifest.creativeSource}`);
   console.log(`Campaigns: ${manifest.campaigns.length}`);
   console.log(`Ad sets: ${manifest.campaigns.reduce((sum, row) => sum + row.adSets.length, 0)}`);
   console.log(`Ads: ${totalAds}`);

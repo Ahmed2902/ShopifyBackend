@@ -120,7 +120,29 @@ Shared-ad recommendations keep Meta spend at the ad level. They intentionally ad
 
 The Meta seeder is a provider-plumbing utility, not a recommendation-data generator. It creates only PAUSED campaigns, ad sets and ads, and it must never be pointed at a live merchant account. Existing campaigns, ad sets, creatives, and ads are discovered across all Graph API pages before the seeder decides whether anything is missing, so rerunning it does not create duplicates merely because an existing object sits beyond the first page.
 
-For sandbox creatives, prefer `META_SANDBOX_IMAGE_URL` set to a public HTTPS image. The seeder sends that URL directly as `object_story_spec.link_data.picture`; it does **not** call `/{ad-account}/adimages`. Some Meta sandbox/test apps return OAuthException code 3 for the ad-image upload endpoint even though campaign, ad-set, creative and ad creation are available. If you already have a valid Meta ad image hash, `META_SANDBOX_IMAGE_HASH` is still supported and takes precedence.
+### Development-mode Meta apps
+
+A Meta app in Development mode can create sandbox campaigns and ad sets but Meta may reject a new ad creative built with `object_story_spec` with error subcode `1885183`. That happens because `object_story_spec` asks Meta to create an unpublished Page post, and Meta requires the app to be public for that operation.
+
+For sandbox testing, the seeder supports the safer workaround: reuse an already-published Facebook Page post through `object_story_id`. The creative still gets its own `url_tags`, so Stride can create and audit the deliberate MISSING / PARTIAL / EXACT tracking states without making the Meta app Live early.
+
+1. Create a normal published post on the configured Facebook Page. Prefer a post containing a clickable destination link.
+2. Make sure the sandbox token has `pages_read_engagement` for that Page.
+3. List recent Page posts:
+
+```bash
+npm run dev:meta-sandbox-posts
+```
+
+4. Copy a returned Graph post ID such as `1171948176011994_123456789` into:
+
+```bash
+META_SANDBOX_OBJECT_STORY_ID=1171948176011994_123456789
+```
+
+The seeder validates that the story ID has `<PAGE_ID>_<POST_ID>` form and belongs to `META_SANDBOX_PAGE_ID`. While this variable is present it takes precedence over image-based story creation.
+
+If the app is later Live and allowed to create ad stories, `META_SANDBOX_IMAGE_HASH` and `META_SANDBOX_IMAGE_URL` remain supported. A public image URL is sent directly as `object_story_spec.link_data.picture`; the seeder never needs to call `/{ad-account}/adimages`, which some sandbox/test apps reject with OAuthException code 3.
 
 Always inspect the target first with the read-only dry run:
 
@@ -128,16 +150,21 @@ Always inspect the target first with the read-only dry run:
 npm run dev:meta-sandbox-seed:dry-run
 ```
 
-Write mode requires two independent confirmations: an explicit acknowledgement embedded in the dedicated npm script and a second copy of the exact target account ID. The confirmation ID accepts either the numeric form or the same `act_` form as the target.
+Write mode requires two independent confirmations: an acknowledgement embedded in the dedicated npm script and a second copy of the exact target account ID. The confirmation ID accepts either the numeric form or the same `act_` form as the target.
+
+Example for a Development-mode app:
 
 ```bash
-export META_SANDBOX_AD_ACCOUNT_ID=act_123456789
-export META_SANDBOX_CONFIRM_AD_ACCOUNT_ID=act_123456789
-export META_SANDBOX_IMAGE_URL=https://example.com/public-test-image.jpg
+META_SANDBOX_AD_ACCOUNT_ID=act_123456789
+META_SANDBOX_CONFIRM_AD_ACCOUNT_ID=act_123456789
+META_SANDBOX_PAGE_ID=1171948176011994
+META_SANDBOX_OBJECT_STORY_ID=1171948176011994_123456789
 npm run dev:meta-sandbox-seed:write
 ```
 
-The dedicated dry-run/write scripts avoid npm treating custom `--...` arguments as npm configuration. The command refuses write mode when `NODE_ENV=production`, refuses writes without the internal `--confirm-sandbox-write` acknowledgement, and refuses writes unless `META_SANDBOX_CONFIRM_AD_ACCOUNT_ID` exactly matches the normalized target account ID. Use the dry run first every time and never use production merchant credentials.
+Use the dedicated `:write` script instead of passing `--confirm-sandbox-write` through npm manually. This avoids npm treating the custom flag as npm configuration and printing the `Unknown cli config` warning.
+
+The command refuses write mode when `NODE_ENV=production`, refuses writes without the internal confirmation, and refuses writes unless `META_SANDBOX_CONFIRM_AD_ACCOUNT_ID` exactly matches the normalized target account ID. Use the dry run first every time and never use production merchant credentials.
 
 ## Safety / environment rules
 
