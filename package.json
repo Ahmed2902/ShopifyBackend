@@ -29,6 +29,7 @@
     "dev:intelligence-scenarios": "tsx scripts/intelligence-scenario-lab.ts",
     "dev:meta-sandbox-seed": "tsx scripts/meta-sandbox-seed.ts",
     "dev:meta-sandbox-posts": "tsx scripts/meta-sandbox-seed.ts --list-page-posts",
+    "dev:meta-sandbox-posts:json": "tsx scripts/meta-sandbox-seed.ts --list-page-posts --json",
     "dev:meta-sandbox-seed:dry-run": "tsx scripts/meta-sandbox-seed.ts --dry-run",
     "dev:meta-sandbox-seed:write": "tsx scripts/meta-sandbox-seed.ts --confirm-sandbox-write",
     "perf:analytics": "node scripts/benchmark-analytics.mjs",
