@@ -68,6 +68,10 @@ type GraphEnvelope<T> = {
   data?: T[];
   id?: string;
   images?: Record<string, { hash?: string; url?: string }>;
+  paging?: {
+    next?: string;
+    cursors?: { after?: string };
+  };
   error?: GraphError;
 };
 
@@ -144,12 +148,42 @@ async function graphRequest<T>(
   return parsed as T;
 }
 
+function pagingAfter<T>(result: GraphEnvelope<T>): string | null {
+  const direct = result.paging?.cursors?.after?.trim();
+  if (direct) return direct;
+  const next = result.paging?.next;
+  if (!next) return null;
+  try {
+    return new URL(next).searchParams.get('after');
+  } catch {
+    return null;
+  }
+}
+
 async function list<T extends NamedEntity>(path: string, fields: string): Promise<T[]> {
-  const result = await graphRequest<GraphEnvelope<T>>(path, 'GET', {
-    fields,
-    limit: '500',
-  });
-  return result.data ?? [];
+  const rows: T[] = [];
+  const seenCursors = new Set<string>();
+  let after: string | null = null;
+
+  while (true) {
+    const result = await graphRequest<GraphEnvelope<T>>(path, 'GET', {
+      fields,
+      limit: '500',
+      ...(after ? { after } : {}),
+    });
+    rows.push(...(result.data ?? []));
+
+    if (!result.paging?.next) return rows;
+    const nextAfter = pagingAfter(result);
+    if (!nextAfter) {
+      throw new Error(`Meta pagination for ${path} returned a next page without an after cursor`);
+    }
+    if (seenCursors.has(nextAfter)) {
+      throw new Error(`Meta pagination for ${path} returned a repeated after cursor`);
+    }
+    seenCursors.add(nextAfter);
+    after = nextAfter;
+  }
 }
 
 async function create(path: string, params: Record<string, string>): Promise<string> {
