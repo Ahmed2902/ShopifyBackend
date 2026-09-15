@@ -28,6 +28,8 @@
     "test:intelligence-scenarios": "vitest run tests/modules/intelligence/intelligence.scenario-matrix.test.ts tests/modules/intelligence/intelligence.service.scenarios.test.ts",
     "dev:intelligence-scenarios": "tsx scripts/intelligence-scenario-lab.ts",
     "dev:meta-sandbox-seed": "tsx scripts/meta-sandbox-seed.ts",
+    "dev:meta-sandbox-seed:dry-run": "tsx scripts/meta-sandbox-seed.ts --dry-run",
+    "dev:meta-sandbox-seed:write": "tsx scripts/meta-sandbox-seed.ts --confirm-sandbox-write",
     "perf:analytics": "node scripts/benchmark-analytics.mjs",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
