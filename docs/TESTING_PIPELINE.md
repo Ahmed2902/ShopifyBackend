@@ -74,14 +74,16 @@ Inspect:
 ## 5. Meta Marketing API sandbox/development testing
 
 1. In Meta for Developers, open the existing Stride app and ensure Marketing API is configured.
-2. Keep the app in Development mode for sandbox testing.
+2. Treat **app mode** and **Sandbox Ad Account** as separate safety controls. Use only the Sandbox Ad Account for this fixture. Meta currently rejects app-created ad creatives from a Development-mode app with code `100` / subcode `1885183`, so the app must be switched to **Live/Public** before Step 8 can create creatives/ads. The sandbox account still prevents these fixtures from becoming a real merchant delivery test.
 3. Verify the app has the permissions/features required by the current Stride path. Read-only analytics requires `ads_read`; the optional tracking mutation path requires `ads_management` when enabled.
 4. In Marketing API tools, create/select a Sandbox Ad Account if that option is available for the app.
 5. Ensure the Facebook account/test user used for OAuth has access to the sandbox/test ad account.
 6. Connect Meta through Stride OAuth and verify the returned account list is restricted to accessible accounts.
 7. Select the sandbox/test account in Stride and run sync.
-8. Create enough campaign/ad-set/ad/creative hierarchy in the sandbox to validate entity sync, mapping, status, creative identity, selected-account scoping, and optional tracking-parameter mutation.
+8. Run `npm run dev:meta-sandbox-seed:dry-run`, inspect the exact target, then run `npm run dev:meta-sandbox-seed:write`. Do not pass `--confirm-sandbox-write` through `npm run`; the dedicated write script avoids npm treating it as CLI configuration. Create enough campaign/ad-set/ad/creative hierarchy to validate entity sync, mapping, status, creative identity, selected-account scoping, and optional tracking-parameter mutation.
 9. Verify disconnect/reconnect, expired/revoked token behavior, account selection changes, and permission denial.
+
+Important: code `100` / subcode `1885183` is an app-mode gate. Changing the image URL/hash, Page ID, or creative payload does not fix that condition. Switch the Meta app to Live/Public, keep the confirmed target pointed at the Sandbox Ad Account, and rerun the idempotent seeder; already-created PAUSED hierarchy is reused.
 
 Important: a Meta sandbox may not provide realistic delivered-ad insights/spend. If sandbox insights are empty, use it to validate auth/entity/mutation safety and later use a controlled real ad account with minimal spend for true insights/ROAS ingestion.
 
