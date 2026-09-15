@@ -118,7 +118,7 @@ Shared-ad recommendations keep Meta spend at the ad level. They intentionally ad
 
 ## Meta Sandbox seeding
 
-The Meta seeder is a provider-plumbing utility, not a recommendation-data generator. It creates only PAUSED campaigns, ad sets and ads, and it must never be pointed at a live merchant account.
+The Meta seeder is a provider-plumbing utility, not a recommendation-data generator. It creates only PAUSED campaigns, ad sets and ads, and it must never be pointed at a live merchant account. Existing campaigns, ad sets, creatives, and ads are discovered across all Graph API pages before the seeder decides whether anything is missing, so rerunning it does not create duplicates merely because an existing object sits beyond the first page.
 
 Always inspect the target first with the read-only dry run:
 
