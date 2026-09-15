@@ -30,6 +30,7 @@ metaStoreRouter.get('/catalogs/:catalogId/items', metaController.catalogItems);
 metaStoreRouter.get('/insights', metaController.insights);
 metaStoreRouter.get('/mappings/summary', metaMappingController.summary);
 metaStoreRouter.get('/mappings/ads', metaMappingController.ads);
+metaStoreRouter.get('/mappings/ads/:adId', metaMappingController.ad);
 metaStoreRouter.get('/mappings/ads/:adId/suggestions', metaMappingController.suggestions);
 metaStoreRouter.get('/tracking', ownerOrAdmin, metaTrackingController.audit);
 metaStoreRouter.get('/tracking/manual', ownerOrAdmin, metaTrackingController.manualConfiguration);
