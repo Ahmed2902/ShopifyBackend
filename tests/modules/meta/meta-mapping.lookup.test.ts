@@ -1,51 +1,99 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { MetaMappingService } from '../../../src/modules/meta/mapping/meta-mapping.service.js';
-import { findSelectedMetaAdMapping } from '../../../src/modules/meta/mapping/meta-mapping.lookup.js';
+import type { PrismaClient } from '../../../src/generated/prisma/client.js';
+import type { MetaCollectionMappingRepository } from '../../../src/modules/meta/mapping/meta-collection-mapping.repository.js';
+import { MetaAdMappingLookup } from '../../../src/modules/meta/mapping/meta-mapping.lookup.js';
 
 const storeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
-function row(metaAdId: string) {
-  return {
-    metaAdId,
-    name: `Ad ${metaAdId}`,
-    targetScope: 'UNKNOWN' as const,
-    targetScopeConfidence: 0,
-    targetScopeEvidence: null,
+function build(options?: { found?: boolean }) {
+  const found = options?.found ?? true;
+  const findUnique = vi.fn().mockResolvedValue({ selectedAdAccountIds: ['act-selected'] });
+  const findFirst = vi.fn().mockResolvedValue(found ? {
+    metaAdId: 'meta-ad-1',
+    name: 'Hoodie ad',
+    targetScope: 'PRODUCT',
+    targetScopeConfidence: '0.9',
+    targetScopeEvidence: { source: 'landing_url' },
     effectiveStatus: 'ACTIVE',
-    creative: null,
-    productMappings: [],
-    collectionMappings: [],
+    creative: { thumbnailUrl: null, title: 'Hoodie', productSetId: null },
+    productMappings: [{
+      id: 'product-map-1',
+      granularity: 'PRODUCT',
+      optionSelector: null,
+      source: 'URL_EXACT',
+      confidence: '0.9',
+      evidenceJson: null,
+      landingUrl: 'https://store.test/products/hoodie',
+      isMerchantConfirmed: false,
+      product: { id: 'product-1', shopifyProductId: 'gid://shopify/Product/1', title: 'Hoodie', handle: 'hoodie' },
+      variant: null,
+      catalogItem: null,
+    }],
+  } : null);
+  const db = {
+    metaConnection: { findUnique },
+    metaAd: { findFirst },
+  } as unknown as Pick<PrismaClient, 'metaConnection' | 'metaAd'>;
+
+  const getActiveForExternalAds = vi.fn().mockResolvedValue(found ? [{
+    id: 'collection-map-1',
+    metaAdId: 'ad-local-1',
+    collectionId: 'collection-1',
+    source: 'MANUAL',
+    confidence: '1',
+    evidenceJson: null,
+    landingUrl: null,
+    isMerchantConfirmed: true,
+    collection: {
+      id: 'collection-1',
+      shopifyCollectionId: 'gid://shopify/Collection/1',
+      title: 'Summer',
+      handle: 'summer',
+      deletedAt: null,
+    },
+    ad: { metaAdId: 'meta-ad-1' },
+  }] : []);
+  const collections = {
+    getActiveForExternalAds,
+  } as unknown as Pick<MetaCollectionMappingRepository, 'getActiveForExternalAds'>;
+
+  return {
+    findUnique,
+    findFirst,
+    getActiveForExternalAds,
+    lookup: new MetaAdMappingLookup(db, collections),
   };
 }
 
-describe('findSelectedMetaAdMapping', () => {
-  it('finds an ad beyond the first queue page without changing queue projection rules', async () => {
-    const listAdMappings = vi
-      .fn()
-      .mockResolvedValueOnce({ items: [row('meta-ad-1')], total: 101, page: 1, limit: 100 })
-      .mockResolvedValueOnce({ items: [row('meta-ad-101')], total: 101, page: 2, limit: 100 });
-    const service = { listAdMappings } as unknown as Pick<MetaMappingService, 'listAdMappings'>;
+describe('MetaAdMappingLookup', () => {
+  it('point-reads one ad inside the store selected-account boundary and normalizes mapping confidence', async () => {
+    const { lookup, findFirst, getActiveForExternalAds } = build();
 
-    await expect(findSelectedMetaAdMapping(service, storeId, 'meta-ad-101')).resolves.toMatchObject({
-      metaAdId: 'meta-ad-101',
+    const result = await lookup.find(storeId, 'meta-ad-1');
+
+    expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        metaAdId: 'meta-ad-1',
+        deletedAt: null,
+        adAccount: { storeId, metaAccountId: { in: ['act-selected'] } },
+      },
+    }));
+    expect(getActiveForExternalAds).toHaveBeenCalledWith(storeId, ['meta-ad-1']);
+    expect(result).toMatchObject({
+      metaAdId: 'meta-ad-1',
+      targetScopeConfidence: 0.9,
+      productMappings: [{ confidence: 0.9 }],
+      collectionMappings: [{ confidence: 1, collection: { title: 'Summer' } }],
     });
-    expect(listAdMappings).toHaveBeenNthCalledWith(1, storeId, 1, 100);
-    expect(listAdMappings).toHaveBeenNthCalledWith(2, storeId, 2, 100);
   });
 
-  it('returns META_AD_NOT_FOUND after the selected mapping queue is exhausted', async () => {
-    const listAdMappings = vi.fn().mockResolvedValue({
-      items: [row('meta-ad-1')],
-      total: 1,
-      page: 1,
-      limit: 100,
-    });
-    const service = { listAdMappings } as unknown as Pick<MetaMappingService, 'listAdMappings'>;
+  it('returns META_AD_NOT_FOUND without loading collection mappings when the ad is not selected for the store', async () => {
+    const { lookup, getActiveForExternalAds } = build({ found: false });
 
-    await expect(findSelectedMetaAdMapping(service, storeId, 'missing-ad')).rejects.toMatchObject({
+    await expect(lookup.find(storeId, 'missing-ad')).rejects.toMatchObject({
       statusCode: 404,
       code: 'META_AD_NOT_FOUND',
     });
-    expect(listAdMappings).toHaveBeenCalledTimes(1);
+    expect(getActiveForExternalAds).not.toHaveBeenCalled();
   });
 });
