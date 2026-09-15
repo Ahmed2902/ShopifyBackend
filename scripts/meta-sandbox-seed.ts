@@ -115,6 +115,19 @@ type CreatedManifest = {
   }>;
 };
 
+function developmentModeCreativeError(error: GraphError | undefined): string | null {
+  if (error?.code !== 100 || error.error_subcode !== 1885183) return null;
+
+  const trace = error.fbtrace_id ? ` Meta trace: ${error.fbtrace_id}.` : '';
+  return [
+    'Meta blocked ad creative creation because this Meta app is still in Development mode (code 100/subcode 1885183).',
+    'This is a provider-side app-mode gate, not an image URL, image hash, Page ID, or sandbox-account payload error.',
+    'Switch the app to Live/Public in Meta for Developers, then rerun `npm run dev:meta-sandbox-seed:write`.',
+    'Do not use `npm run dev:meta-sandbox-seed -- --confirm-sandbox-write`; the dedicated write script avoids npm treating the custom flag as npm config.',
+    `The seeder is idempotent, so already-created PAUSED campaigns/ad sets will be reused.${trace}`,
+  ].join('\n');
+}
+
 async function graphRequest<T>(
   path: string,
   method: 'GET' | 'POST',
@@ -146,6 +159,9 @@ async function graphRequest<T>(
 
   if (!response.ok || parsed.error) {
     const error = parsed.error;
+    const appModeError = developmentModeCreativeError(error);
+    if (appModeError) throw new Error(appModeError);
+
     const code = [error?.code, error?.error_subcode]
       .filter((value) => value !== undefined)
       .join('/');
