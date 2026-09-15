@@ -1,3 +1,6 @@
+/// <reference types="node" />
+import 'dotenv/config';
+
 const required = (name: string): string => {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`${name} is required`);
@@ -8,17 +11,19 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('Meta sandbox seeding is disabled when NODE_ENV=production');
 }
 
-const token = required('META_SANDBOX_TOKEN');
+const token = required('META_SANDBOX_ACCESS_TOKEN');
 const rawAccountId = required('META_SANDBOX_AD_ACCOUNT_ID');
 const pageId = required('META_SANDBOX_PAGE_ID');
 const apiVersion = process.env.META_SANDBOX_API_VERSION?.trim() || 'v26.0';
-const destinationUrl =
-  process.env.META_SANDBOX_DESTINATION_URL?.trim() || 'https://example.com';
+const destinationUrl = process.env.META_SANDBOX_DESTINATION_URL?.trim() || 'https://example.com';
 const configuredImageHash = process.env.META_SANDBOX_IMAGE_HASH?.trim() || null;
 const imageUrl = process.env.META_SANDBOX_IMAGE_URL?.trim() || null;
-const dryRun = process.argv.includes('--dry-run');
+const dryRun =
+  process.argv.includes('--dry-run') || process.env.npm_config_dry_run?.toLowerCase() === 'true';
 const asJson = process.argv.includes('--json');
-const writeConfirmed = process.argv.includes('--confirm-sandbox-write');
+const writeConfirmed =
+  process.argv.includes('--confirm-sandbox-write') ||
+  process.env.npm_config_confirm_sandbox_write?.toLowerCase() === 'true';
 const accountId = rawAccountId.replace(/^act_/, '');
 const accountPath = `act_${accountId}`;
 const confirmedAccountId = (process.env.META_SANDBOX_CONFIRM_AD_ACCOUNT_ID?.trim() || '').replace(
@@ -61,6 +66,9 @@ type GraphError = {
   type?: string;
   code?: number;
   error_subcode?: number;
+  error_data?: unknown;
+  error_user_title?: string;
+  error_user_msg?: string;
   fbtrace_id?: string;
 };
 
@@ -81,9 +89,7 @@ type Creative = NamedEntity;
 type Ad = NamedEntity & { adset_id?: string; status?: string };
 
 type TrackingMode = 'MISSING' | 'PARTIAL' | 'EXACT';
-type CreativeMedia =
-  | { kind: 'IMAGE_HASH'; value: string }
-  | { kind: 'PICTURE_URL'; value: string };
+type CreativeMedia = { kind: 'IMAGE_HASH'; value: string } | { kind: 'PICTURE_URL'; value: string };
 
 type CreatedManifest = {
   account: {
@@ -143,8 +149,18 @@ async function graphRequest<T>(
     const code = [error?.code, error?.error_subcode]
       .filter((value) => value !== undefined)
       .join('/');
+    const details = [
+      error?.error_user_title,
+      error?.error_user_msg,
+      typeof error?.error_data === 'string'
+        ? error.error_data
+        : error?.error_data
+          ? JSON.stringify(error.error_data)
+          : undefined,
+      error?.fbtrace_id ? `fbtrace_id=${error.fbtrace_id}` : undefined,
+    ].filter((value): value is string => Boolean(value));
     throw new Error(
-      `Meta API ${method} ${path} failed (${response.status}${code ? `, code ${code}` : ''}): ${error?.message ?? 'unknown Meta error'}`,
+      `Meta API ${method} ${path} failed (${response.status}${code ? `, code ${code}` : ''}): ${error?.message ?? 'unknown Meta error'}${details.length ? ` — ${details.join(' | ')}` : ''}`,
     );
   }
   return parsed as T;
@@ -243,15 +259,12 @@ async function ensureCampaign(existing: Campaign[], name: string): Promise<strin
     objective: 'OUTCOME_TRAFFIC',
     special_ad_categories: '[]',
     buying_type: 'AUCTION',
+    is_adset_budget_sharing_enabled: 'false',
     status: 'PAUSED',
   });
 }
 
-async function ensureAdSet(
-  existing: AdSet[],
-  campaignId: string,
-  name: string,
-): Promise<string> {
+async function ensureAdSet(existing: AdSet[], campaignId: string, name: string): Promise<string> {
   const found = existing.find((row) => row.name === name && row.campaign_id === campaignId);
   if (found) return found.id;
   return create(`${accountPath}/adsets`, {
@@ -260,7 +273,7 @@ async function ensureAdSet(
     optimization_goal: 'LINK_CLICKS',
     billing_event: 'IMPRESSIONS',
     bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
-    daily_budget: '2000',
+    daily_budget: '6000',
     targeting: JSON.stringify({
       age_min: 21,
       age_max: 65,
