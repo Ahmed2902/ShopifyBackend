@@ -120,21 +120,24 @@ Shared-ad recommendations keep Meta spend at the ad level. They intentionally ad
 
 The Meta seeder is a provider-plumbing utility, not a recommendation-data generator. It creates only PAUSED campaigns, ad sets and ads, and it must never be pointed at a live merchant account. Existing campaigns, ad sets, creatives, and ads are discovered across all Graph API pages before the seeder decides whether anything is missing, so rerunning it does not create duplicates merely because an existing object sits beyond the first page.
 
+For sandbox creatives, prefer `META_SANDBOX_IMAGE_URL` set to a public HTTPS image. The seeder sends that URL directly as `object_story_spec.link_data.picture`; it does **not** call `/{ad-account}/adimages`. Some Meta sandbox/test apps return OAuthException code 3 for the ad-image upload endpoint even though campaign, ad-set, creative and ad creation are available. If you already have a valid Meta ad image hash, `META_SANDBOX_IMAGE_HASH` is still supported and takes precedence.
+
 Always inspect the target first with the read-only dry run:
 
 ```bash
-npm run dev:meta-sandbox-seed -- --dry-run
+npm run dev:meta-sandbox-seed:dry-run
 ```
 
-Write mode requires two independent confirmations: an explicit CLI acknowledgement and a second copy of the exact target account ID. The confirmation ID accepts either the numeric form or the same `act_` form as the target.
+Write mode requires two independent confirmations: an explicit acknowledgement embedded in the dedicated npm script and a second copy of the exact target account ID. The confirmation ID accepts either the numeric form or the same `act_` form as the target.
 
 ```bash
 export META_SANDBOX_AD_ACCOUNT_ID=act_123456789
 export META_SANDBOX_CONFIRM_AD_ACCOUNT_ID=act_123456789
-npm run dev:meta-sandbox-seed -- --confirm-sandbox-write
+export META_SANDBOX_IMAGE_URL=https://example.com/public-test-image.jpg
+npm run dev:meta-sandbox-seed:write
 ```
 
-The command refuses write mode when `NODE_ENV=production`, refuses writes without `--confirm-sandbox-write`, and refuses writes unless `META_SANDBOX_CONFIRM_AD_ACCOUNT_ID` exactly matches the normalized target account ID. Use `--dry-run` first every time and never use production merchant credentials.
+The dedicated dry-run/write scripts avoid npm treating custom `--...` arguments as npm configuration. The command refuses write mode when `NODE_ENV=production`, refuses writes without the internal `--confirm-sandbox-write` acknowledgement, and refuses writes unless `META_SANDBOX_CONFIRM_AD_ACCOUNT_ID` exactly matches the normalized target account ID. Use the dry run first every time and never use production merchant credentials.
 
 ## Safety / environment rules
 
