@@ -4,6 +4,7 @@ import { prisma } from '../../../lib/prisma.js';
 import { MetaCollectionMappingRepository } from './meta-collection-mapping.repository.js';
 
 const adMappingSelect = {
+  id: true,
   metaAdId: true,
   name: true,
   targetScope: true,
@@ -30,7 +31,7 @@ const adMappingSelect = {
 } satisfies Prisma.MetaAdSelect;
 
 type LookupDb = Pick<PrismaClient, 'metaConnection' | 'metaAd'>;
-type CollectionLookup = Pick<MetaCollectionMappingRepository, 'getActiveForExternalAds'>;
+type CollectionLookup = Pick<MetaCollectionMappingRepository, 'getActiveForAds'>;
 
 /**
  * Exact point-read for a selected Meta ad mapping.
@@ -62,17 +63,20 @@ export class MetaAdMappingLookup {
     });
     if (!ad) throw new AppError('Meta ad was not found', 404, 'META_AD_NOT_FOUND');
 
-    const collectionMappings = await this.collections.getActiveForExternalAds(storeId, [metaAdId]);
+    // Attach collection mappings by the exact internal ad row that passed the
+    // selected-account guard above. This avoids a second lookup by external ID.
+    const collectionMappings = await this.collections.getActiveForAds([ad.id]);
+    const { id: _internalAdId, ...publicAd } = ad;
 
     return {
-      ...ad,
+      ...publicAd,
       targetScopeConfidence:
         ad.targetScopeConfidence == null ? null : Number(ad.targetScopeConfidence),
       productMappings: ad.productMappings.map((mapping) => ({
         ...mapping,
         confidence: Number(mapping.confidence),
       })),
-      collectionMappings: collectionMappings.map(({ ad: _ad, ...mapping }) => ({
+      collectionMappings: collectionMappings.map((mapping) => ({
         ...mapping,
         confidence: Number(mapping.confidence),
       })),
