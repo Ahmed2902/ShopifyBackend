@@ -28,26 +28,29 @@ function printJson(label: string, value: unknown) {
 }
 
 async function main() {
-  console.log('\nStride Meta sandbox → intelligence test');
+  console.log('\nStride Meta sandbox → intelligence end-to-end test');
   console.log(`Store: ${storeId}`);
-  console.log(`Meta lookback: ${lookbackDays} days`);
-  console.log(`Sandbox account: ${env.META_SANDBOX_AD_ACCOUNT_ID}`);
+  console.log(`Meta lookback: ${lookbackDays}`);
 
-  // The purpose of this script is to exercise the real intelligence layer against
-  // the sandbox account. We deliberately use the normal application sync path so
-  // the same Meta → DB normalization used by production is tested.
-  //
-  // In development getApiContext() forces the configured sandbox token/account,
-  // so no merchant account selection is required.
-  console.log('\n[1/3] Syncing sandbox campaigns, ads and hierarchy...');
-  const hierarchy = await metaService.syncAdsHierarchy(storeId);
-  printJson('Sandbox hierarchy sync', hierarchy);
+  console.log('\n[1/3] Fetching sandbox account and configuring it locally...');
+  const assets = await metaService.discoverAssets(storeId);
+  printJson('Sandbox account', assets.adAccounts);
 
-  console.log('\n[2/3] Syncing sandbox insights...');
+  if (assets.adAccounts.length === 0) {
+    throw new Error('Sandbox account was not returned by Meta. Check META_SANDBOX_AD_ACCOUNT_ID.');
+  }
+
+  console.log('\n[2/3] Fetching sandbox ads hierarchy + insights from Meta...');
   const sync = await metaService.syncInsights(storeId, lookbackDays);
-  printJson('Sandbox insights sync', sync);
+  printJson('Meta sync result', sync);
 
-  console.log('\n[3/3] Running the existing intelligence equations against synced sandbox data...');
+  if (sync.recordsWritten === 0) {
+    console.warn(
+      '\nWARNING: Meta returned no persisted insight rows. The intelligence layer may have no evidence to evaluate.',
+    );
+  }
+
+  console.log('\n[3/3] Running the intelligence layer against the synced sandbox data...');
   const snapshot = await intelligenceService.snapshot(storeId);
 
   printJson('Intelligence evidence', snapshot.evidence);
