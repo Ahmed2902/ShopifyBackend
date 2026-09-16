@@ -1,4 +1,5 @@
 import { AppError } from '../../errors/app-error.js';
+import { env } from '../../config/env.js';
 import { invalidateStoreDecisionCaches } from '../../lib/store-decision-cache.js';
 import { integrationService, type IntegrationService } from '../integrations/integration.service.js';
 import { MetaAdsRepository } from './ads/meta-ads.repository.js';
@@ -10,7 +11,6 @@ import { MetaInsightsService } from './insights/meta-insights.service.js';
 import { MetaRepository } from './meta.repository.js';
 import { MetaApiService } from './shared/meta-api.service.js';
 import { MetaAuthService } from './shared/meta-auth.service.js';
-import { env } from '../../config/env.js';
 import { normalizeMetaAdAccountId } from './meta.utils.js';
 
 const ADS_HIERARCHY_RESOURCE = 'AdsHierarchy';
@@ -36,16 +36,12 @@ export class MetaService {
     const connection = await this.authService.completeInstall(code, state);
     if (env.NODE_ENV !== 'development') return connection;
 
-    // Development is intentionally deterministic: the sandbox account is configured and synced
-    // immediately after OAuth so local testing never depends on merchant asset discovery or an
-    // account-selection UI that requires additional Meta permissions.
+    // Development is intentionally deterministic: use the configured sandbox account immediately
+    // after OAuth so testing never depends on merchant asset discovery or an account picker.
     await this.discoverAssets(connection.storeId);
     await this.syncAdsHierarchy(connection.storeId);
     await this.syncInsights(connection.storeId);
-    return {
-      ...connection,
-      sandboxBootstrapped: true,
-    };
+    return { ...connection, sandboxBootstrapped: true };
   }
 
   async discoverAssets(storeId: string) {
@@ -57,8 +53,8 @@ export class MetaService {
         throw new AppError('Meta sandbox ad account is not configured', 500, 'META_SANDBOX_NOT_CONFIGURED');
       }
 
-      // Do not call /me/adaccounts in development. Sandbox access is deterministic and the
-      // discovery endpoint is not required for a known test account.
+      // Do not call /me/adaccounts in development. The sandbox account is already known and the
+      // discovery endpoint may require permissions that are irrelevant to sandbox testing.
       const sandboxAccount = await this.apiService.getAdAccount(context, sandboxAccountId);
       await this.repository.configureAssets({
         connectionId: context.connectionId,
@@ -71,17 +67,7 @@ export class MetaService {
       return {
         businesses: [],
         adAccounts: [sandboxAccount].map(
-          ({
-            id,
-            accountId,
-            name,
-            accountStatus,
-            currency,
-            timezoneName,
-            timezoneId,
-            timezoneOffsetHoursUtc,
-            business,
-          }) => ({
+          ({ id, accountId, name, accountStatus, currency, timezoneName, timezoneId, timezoneOffsetHoursUtc, business }) => ({
             id,
             accountId,
             name,
@@ -119,17 +105,7 @@ export class MetaService {
     return {
       businesses,
       adAccounts: adAccounts.map(
-        ({
-          id,
-          accountId,
-          name,
-          accountStatus,
-          currency,
-          timezoneName,
-          timezoneId,
-          timezoneOffsetHoursUtc,
-          business,
-        }) => ({
+        ({ id, accountId, name, accountStatus, currency, timezoneName, timezoneId, timezoneOffsetHoursUtc, business }) => ({
           id,
           accountId,
           name,
@@ -152,11 +128,7 @@ export class MetaService {
           feedCount,
         }),
       ),
-      permissions: {
-        granted: context.scopes,
-        businessDiscoveryAvailable,
-        catalogDiscoveryAvailable,
-      },
+      permissions: { granted: context.scopes, businessDiscoveryAvailable, catalogDiscoveryAvailable },
     };
   }
 
@@ -174,11 +146,7 @@ export class MetaService {
 
     const businessId = input.metaBusinessId ?? null;
     if (businessId && !businesses.some((business) => business.id === businessId)) {
-      throw new AppError(
-        'Selected Meta business is not accessible to this connection',
-        400,
-        'META_BUSINESS_NOT_ACCESSIBLE',
-      );
+      throw new AppError('Selected Meta business is not accessible to this connection', 400, 'META_BUSINESS_NOT_ACCESSIBLE');
     }
 
     const requested = new Set(input.adAccountIds.map(normalizeMetaAdAccountId));
@@ -186,32 +154,17 @@ export class MetaService {
     const selectedIds = new Set(selected.map((account) => account.id));
     const missing = [...requested].filter((id) => !selectedIds.has(id));
     if (missing.length > 0) {
-      throw new AppError(
-        `Selected Meta ad accounts are not accessible: ${missing.join(', ')}`,
-        400,
-        'META_AD_ACCOUNT_NOT_ACCESSIBLE',
-      );
+      throw new AppError(`Selected Meta ad accounts are not accessible: ${missing.join(', ')}`, 400, 'META_AD_ACCOUNT_NOT_ACCESSIBLE');
     }
 
-    await this.repository.configureAssets({
-      connectionId: context.connectionId,
-      storeId,
-      metaBusinessId: businessId,
-      adAccounts: selected,
-    });
+    await this.repository.configureAssets({ connectionId: context.connectionId, storeId, metaBusinessId: businessId, adAccounts: selected });
     await invalidateStoreDecisionCaches(storeId);
 
     return {
       storeId,
       metaBusinessId: businessId,
       selectedAdAccountIds: selected.map((account) => account.id),
-      selectedAdAccounts: selected.map(({ id, accountId, name, currency, timezoneName }) => ({
-        id,
-        accountId,
-        name,
-        currency,
-        timezoneName,
-      })),
+      selectedAdAccounts: selected.map(({ id, accountId, name, currency, timezoneName }) => ({ id, accountId, name, currency, timezoneName })),
     };
   }
 
@@ -223,90 +176,36 @@ export class MetaService {
       return { storeId, selectedCatalogIds: [], catalogs: selected };
     }
     if (!context.scopes.includes('business_management')) {
-      throw new AppError(
-        'Meta business_management permission is required to discover commerce catalogs',
-        403,
-        'META_BUSINESS_PERMISSION_REQUIRED',
-      );
+      throw new AppError('Meta business_management permission is required to discover commerce catalogs', 403, 'META_BUSINESS_PERMISSION_REQUIRED');
     }
     if (!context.scopes.includes('catalog_management')) {
-      throw new AppError(
-        'Meta catalog_management permission is required to discover commerce catalogs',
-        403,
-        'META_CATALOG_PERMISSION_REQUIRED',
-      );
+      throw new AppError('Meta catalog_management permission is required to discover commerce catalogs', 403, 'META_CATALOG_PERMISSION_REQUIRED');
     }
-
     const businesses = await this.apiService.listBusinesses(context);
-    const catalogs = await this.catalogService.discoverOwnedCatalogs(
-      context,
-      context.metaBusinessId ? [context.metaBusinessId] : businesses.map((business) => business.id),
-    );
+    const catalogs = await this.catalogService.discoverOwnedCatalogs(context, context.metaBusinessId ? [context.metaBusinessId] : businesses.map((business) => business.id));
     const selected = await this.catalogService.configureCatalogs(context, catalogs, catalogIds);
     await invalidateStoreDecisionCaches(storeId);
-    return {
-      storeId,
-      selectedCatalogIds: selected.map((catalog) => catalog.id),
-      catalogs: selected,
-    };
+    return { storeId, selectedCatalogIds: selected.map((catalog) => catalog.id), catalogs: selected };
   }
 
   async syncAdsHierarchy(storeId: string) {
     const context = await this.authService.getApiContext(storeId);
-    if (context.selectedAdAccountIds.length === 0) {
-      throw new AppError('Select at least one Meta ad account before syncing ads', 409, 'META_ASSETS_NOT_CONFIGURED');
-    }
-
-    const syncRun = await this.integrationService.startSyncRun({
-      provider: 'META',
-      connectionId: context.connectionId,
-      resourceType: ADS_HIERARCHY_RESOURCE,
-      mode: 'MANUAL',
-      apiVersion: context.apiVersion,
-    });
-
+    if (context.selectedAdAccountIds.length === 0) throw new AppError('Select at least one Meta ad account before syncing ads', 409, 'META_ASSETS_NOT_CONFIGURED');
+    const syncRun = await this.integrationService.startSyncRun({ provider: 'META', connectionId: context.connectionId, resourceType: ADS_HIERARCHY_RESOURCE, mode: 'MANUAL', apiVersion: context.apiVersion });
     try {
-      const breakdown = {
-        adAccounts: 0,
-        campaigns: 0,
-        adSets: 0,
-        creatives: 0,
-        ads: 0,
-        softDeletedCampaigns: 0,
-        softDeletedAdSets: 0,
-        softDeletedCreatives: 0,
-        softDeletedAds: 0,
-      };
+      const breakdown = { adAccounts: 0, campaigns: 0, adSets: 0, creatives: 0, ads: 0, softDeletedCampaigns: 0, softDeletedAdSets: 0, softDeletedCreatives: 0, softDeletedAds: 0 };
       let recordsRead = 0;
       let recordsWritten = 0;
-
       for (const accountId of context.selectedAdAccountIds) {
         const result = await this.adsService.syncSelectedAccount(context, accountId);
         recordsRead += result.recordsRead;
         recordsWritten += result.recordsWritten;
-        for (const key of Object.keys(breakdown) as Array<keyof typeof breakdown>) {
-          breakdown[key] += result.breakdown[key];
-        }
+        for (const key of Object.keys(breakdown) as Array<keyof typeof breakdown>) breakdown[key] += result.breakdown[key];
       }
-
       await this.repository.markConnectionSynced(context.connectionId);
       await this.integrationService.completeSyncRun(syncRun.id, { recordsRead, recordsWritten });
-      await this.integrationService.recordExternalPayload({
-        provider: 'META',
-        resourceType: 'AdsHierarchySyncSummary',
-        apiVersion: context.apiVersion,
-        payload: { selectedAdAccountIds: context.selectedAdAccountIds, breakdown },
-        syncRunId: syncRun.id,
-      });
-
-      return {
-        syncRunId: syncRun.id,
-        status: 'SUCCEEDED' as const,
-        resourceType: ADS_HIERARCHY_RESOURCE,
-        recordsRead,
-        recordsWritten,
-        breakdown,
-      };
+      await this.integrationService.recordExternalPayload({ provider: 'META', resourceType: 'AdsHierarchySyncSummary', apiVersion: context.apiVersion, payload: { selectedAdAccountIds: context.selectedAdAccountIds, breakdown }, syncRunId: syncRun.id });
+      return { syncRunId: syncRun.id, status: 'SUCCEEDED' as const, resourceType: ADS_HIERARCHY_RESOURCE, recordsRead, recordsWritten, breakdown };
     } catch (error) {
       await this.integrationService.failSyncRun(syncRun.id, error).catch(() => undefined);
       throw error;
@@ -315,13 +214,12 @@ export class MetaService {
 
   async syncCatalogs(storeId: string) {
     const context = await this.authService.getApiContext(storeId);
-    if (context.selectedCatalogIds.length === 0) {
-      throw new AppError('Select at least one Meta commerce catalog before syncing catalog items', 409, 'META_CATALOGS_NOT_CONFIGURED');
-    }
+    if (context.selectedCatalogIds.length === 0) throw new AppError('Select at least one Meta commerce catalog before syncing catalog items', 409, 'META_CATALOGS_NOT_CONFIGURED');
     const syncRun = await this.integrationService.startSyncRun({ provider: 'META', connectionId: context.connectionId, resourceType: CATALOG_RESOURCE, mode: 'MANUAL', apiVersion: context.apiVersion });
     try {
       const result = await this.catalogService.syncSelectedCatalogs(context, context.selectedCatalogIds);
       await this.integrationService.completeSyncRun(syncRun.id, result);
+      await this.integrationService.recordExternalPayload({ provider: 'META', resourceType: 'ProductCatalogSyncSummary', apiVersion: context.apiVersion, payload: result.breakdown, syncRunId: syncRun.id });
       return { syncRunId: syncRun.id, status: 'SUCCEEDED' as const, resourceType: CATALOG_RESOURCE, ...result };
     } catch (error) {
       await this.integrationService.failSyncRun(syncRun.id, error).catch(() => undefined);
@@ -334,7 +232,11 @@ export class MetaService {
     if (context.selectedAdAccountIds.length === 0) throw new AppError('Select at least one Meta ad account before syncing insights', 409, 'META_ASSETS_NOT_CONFIGURED');
     const syncRun = await this.integrationService.startSyncRun({ provider: 'META', connectionId: context.connectionId, resourceType: INSIGHTS_RESOURCE, mode: lookbackDays ? 'MANUAL' : 'INCREMENTAL', apiVersion: context.apiVersion });
     try {
-      let recordsRead = 0, recordsWritten = 0, staleRowsDeleted = 0, hierarchyRecordsRead = 0, hierarchyRecordsWritten = 0;
+      let recordsRead = 0;
+      let recordsWritten = 0;
+      let staleRowsDeleted = 0;
+      let hierarchyRecordsRead = 0;
+      let hierarchyRecordsWritten = 0;
       const accounts: Array<{ accountId: string; lookbackDays: number; initialBackfill: boolean }> = [];
       for (const accountId of context.selectedAdAccountIds) {
         const hierarchy = await this.adsService.syncSelectedAccount(context, accountId);
@@ -347,6 +249,7 @@ export class MetaService {
         accounts.push({ accountId, lookbackDays: result.lookbackDays, initialBackfill: result.initialBackfill });
       }
       await this.integrationService.completeSyncRun(syncRun.id, { recordsRead, recordsWritten });
+      await this.integrationService.recordExternalPayload({ provider: 'META', resourceType: 'AdInsightsSyncSummary', apiVersion: context.apiVersion, payload: { accounts, staleRowsDeleted, hierarchyRefreshedBeforeInsights: true, hierarchyRecordsRead, hierarchyRecordsWritten, actionReportTime: 'impression', attributionMode: 'UNIFIED_ADSET_SETTING' }, syncRunId: syncRun.id });
       return { syncRunId: syncRun.id, status: 'SUCCEEDED' as const, resourceType: INSIGHTS_RESOURCE, recordsRead, recordsWritten, staleRowsDeleted, hierarchyRefreshedBeforeInsights: true, hierarchyRecordsRead, hierarchyRecordsWritten, accounts };
     } catch (error) {
       await this.integrationService.failSyncRun(syncRun.id, error).catch(() => undefined);
@@ -383,5 +286,13 @@ const metaApiService = new MetaApiService(metaRepository);
 const metaAdsService = new MetaAdsService(new MetaAdsRepository(), metaApiService);
 const metaCatalogService = new MetaCatalogService(new MetaCatalogRepository(), metaApiService);
 const metaInsightsService = new MetaInsightsService(new MetaInsightsRepository(), metaApiService);
-const metaAuthService = new MetaAuthService(metaRepository, metaApiService);
-export const metaService = new MetaService(metaRepository, metaAuthService, metaApiService, metaAdsService, integrationService, metaCatalogService, metaInsightsService);
+
+export const metaService = new MetaService(
+  metaRepository,
+  new MetaAuthService(metaRepository, metaApiService),
+  metaApiService,
+  metaAdsService,
+  integrationService,
+  metaCatalogService,
+  metaInsightsService,
+);
