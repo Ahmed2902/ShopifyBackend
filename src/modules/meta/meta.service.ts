@@ -1,4 +1,5 @@
 import { AppError } from '../../errors/app-error.js';
+import { env } from '../../config/env.js';
 import { invalidateStoreDecisionCaches } from '../../lib/store-decision-cache.js';
 import { integrationService, type IntegrationService } from '../integrations/integration.service.js';
 import { MetaAdsRepository } from './ads/meta-ads.repository.js';
@@ -31,12 +32,75 @@ export class MetaService {
     return this.authService.startInstall(userId, storeId);
   }
 
-  completeOAuthInstall(code: string, state: string) {
-    return this.authService.completeInstall(code, state);
+  async completeOAuthInstall(code: string, state: string) {
+    const connection = await this.authService.completeInstall(code, state);
+    if (env.NODE_ENV !== 'development') return connection;
+
+    // Development is intentionally deterministic: use the configured sandbox account immediately
+    // after OAuth so testing never depends on merchant asset discovery or an account picker.
+    await this.discoverAssets(connection.storeId);
+    await this.syncInsights(connection.storeId);
+    return { ...connection, sandboxBootstrapped: true };
   }
 
   async discoverAssets(storeId: string) {
     const context = await this.authService.getApiContext(storeId);
+
+    if (env.NODE_ENV === 'development') {
+      const sandboxAccountId = context.selectedAdAccountIds[0];
+      if (!sandboxAccountId) {
+        throw new AppError(
+          'Meta sandbox ad account is not configured',
+          500,
+          'META_SANDBOX_NOT_CONFIGURED',
+        );
+      }
+
+      // Do not call /me/adaccounts in development. The sandbox account is already known and the
+      // discovery endpoint may require permissions that are irrelevant to sandbox testing.
+      const sandboxAccount = await this.apiService.getAdAccount(context, sandboxAccountId);
+      await this.repository.configureAssets({
+        connectionId: context.connectionId,
+        storeId,
+        metaBusinessId: null,
+        adAccounts: [sandboxAccount],
+      });
+      await invalidateStoreDecisionCaches(storeId);
+
+      return {
+        businesses: [],
+        adAccounts: [sandboxAccount].map(
+          ({
+            id,
+            accountId,
+            name,
+            accountStatus,
+            currency,
+            timezoneName,
+            timezoneId,
+            timezoneOffsetHoursUtc,
+            business,
+          }) => ({
+            id,
+            accountId,
+            name,
+            accountStatus,
+            currency,
+            timezoneName,
+            timezoneId,
+            timezoneOffsetHoursUtc,
+            business,
+          }),
+        ),
+        catalogs: [],
+        permissions: {
+          granted: context.scopes,
+          businessDiscoveryAvailable: false,
+          catalogDiscoveryAvailable: false,
+        },
+      };
+    }
+
     const businessDiscoveryAvailable = context.scopes.includes('business_management');
     const catalogDiscoveryAvailable =
       businessDiscoveryAvailable && context.scopes.includes('catalog_management');
