@@ -38,8 +38,6 @@ const envSchema = z.object({
     .regex(/^\d{4}-\d{2}$/)
     .default('2026-07'),
   SHOPIFY_STATE_SECRET: z.string().min(32),
-  // Keep App Pricing disabled until the public-app plans are configured in Partner Dashboard.
-  // While disabled, Stride uses the internal 14-day Pro-equivalent trial for pre-launch testing.
   SHOPIFY_APP_PRICING_ENABLED: z
     .enum(['true', 'false'])
     .default('false')
@@ -68,8 +66,14 @@ const envSchema = z.object({
   META_STATE_SECRET: z.string().min(32),
   META_INITIAL_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(365).default(365),
   META_REFRESH_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(365).default(35),
-  // TikTok is optional until a merchant actually connects it. Provider entry points
-  // validate the complete credential/public-URL set when used instead of blocking core boot.
+  // Development must use a dedicated Meta sandbox user/account. Production never consumes these
+  // values; they are intentionally separate from the merchant OAuth credentials above.
+  META_SANDBOX_ACCESS_TOKEN: z.string().min(1).optional(),
+  META_SANDBOX_AD_ACCOUNT_ID: z.string().min(1).optional(),
+  META_SANDBOX_API_VERSION: z
+    .string()
+    .regex(/^v\d+\.\d+$/)
+    .optional(),
   TIKTOK_APP_ID: z.string().default(''),
   TIKTOK_APP_SECRET: z.string().default(''),
   TIKTOK_SCOPES: z.string().default(''),
@@ -113,6 +117,15 @@ if (parsedEnv.NODE_ENV === 'production') {
   }
 }
 
+if (parsedEnv.NODE_ENV === 'development') {
+  if (!parsedEnv.META_SANDBOX_ACCESS_TOKEN) {
+    throw new Error('META_SANDBOX_ACCESS_TOKEN is required in development');
+  }
+  if (!parsedEnv.META_SANDBOX_AD_ACCOUNT_ID) {
+    throw new Error('META_SANDBOX_AD_ACCOUNT_ID is required in development');
+  }
+}
+
 export const env = {
   ...parsedEnv,
   APP_URL: appUrl,
@@ -124,9 +137,6 @@ export const env = {
   PASSWORD_RESET_URL:
     parsedEnv.PASSWORD_RESET_URL ??
     new URL('/auth/reset-password', `${frontendOrigin}/`).toString(),
-  // Keep a concrete development fallback for existing TikTok API code, while remembering whether
-  // production supplied a real public webhook URL. Provider guards reject localhost-only
-  // production configuration before any outbound TikTok request is attempted.
   TIKTOK_WEBHOOK_URL:
     parsedEnv.TIKTOK_WEBHOOK_URL ??
     new URL('/v1/integrations/tiktok/webhooks', `${backendOrigin}/`).toString(),
