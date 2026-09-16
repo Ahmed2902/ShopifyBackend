@@ -3,6 +3,7 @@ import 'dotenv/config';
 
 import { env } from '../src/config/env.js';
 import { intelligenceService } from '../src/modules/intelligence/intelligence.service.js';
+import { recommendationDecision } from '../src/modules/intelligence/recommendation-decision.js';
 import { metaService } from '../src/modules/meta/meta.service.js';
 
 const required = (name: string): string => {
@@ -63,14 +64,16 @@ async function main() {
     console.log('No recommendations were emitted for the current sandbox data/window.');
   } else {
     for (const [index, recommendation] of snapshot.recommendations.entries()) {
+      const decision = recommendationDecision(recommendation);
+
       console.log(`\n#${index + 1} ${recommendation.title}`);
       console.log(`Rule: ${recommendation.ruleId}`);
-      console.log(`Action: ${recommendation.action}`);
+      console.log(`Action: ${decision.decisionAction}`);
       console.log(`Severity: ${recommendation.severity}`);
       console.log(`Priority: ${recommendation.priority.toFixed(4)}`);
       console.log(`Confidence: ${recommendation.confidenceScore.toFixed(2)}`);
       console.log(`Evidence quality: ${recommendation.evidenceQuality}`);
-      console.log(`Message: ${recommendation.message}`);
+      console.log(`Message: ${decision.decisionMessage}`);
       if (recommendation.limitations.length > 0) {
         console.log(
           `Limitations: ${recommendation.limitations.map((limitation) => limitation.code).join(', ')}`,
