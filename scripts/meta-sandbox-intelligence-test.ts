@@ -25,12 +25,13 @@ const required = (name: string): string => {
 };
 
 const accessToken = required('META_SANDBOX_ACCESS_TOKEN');
-const rawAccountId = required('META_SANDBOX_AD_ACCOUNT_ID').replace(/^act_/, '');
+const configuredAccountId = process.env.META_SANDBOX_TEST_AD_ACCOUNT_ID?.trim() || '940046010384529';
+const rawAccountId = configuredAccountId.replace(/^act_/, '');
 const accountId = `act_${rawAccountId}`;
 const apiVersion = process.env.META_SANDBOX_API_VERSION?.trim() || env.META_API_VERSION;
-const lookbackDays = Number(process.env.META_SANDBOX_TEST_LOOKBACK_DAYS ?? '28');
+const requestedLookbackDays = Number(process.env.META_SANDBOX_TEST_LOOKBACK_DAYS ?? '28');
 
-if (!Number.isInteger(lookbackDays) || lookbackDays < 2 || lookbackDays > 90) {
+if (!Number.isInteger(requestedLookbackDays) || requestedLookbackDays < 2 || requestedLookbackDays > 90) {
   throw new Error('META_SANDBOX_TEST_LOOKBACK_DAYS must be an integer between 2 and 90');
 }
 
@@ -51,6 +52,8 @@ interface InsightRow extends MetaRecord {
   cpc?: string;
   cpm?: string;
   frequency?: string;
+  date_start?: string;
+  date_stop?: string;
   actions?: Array<{ action_type?: string; value?: string }>;
   action_values?: Array<{ action_type?: string; value?: string }>;
 }
@@ -84,15 +87,31 @@ function dateOnly(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function period(days: number, offset: number): Period {
-  const end = new Date();
+function periodFromEnd(days: number, endDate: Date): Period {
+  const end = new Date(endDate);
   end.setUTCHours(0, 0, 0, 0);
-  end.setUTCDate(end.getUTCDate() - offset);
-
   const start = new Date(end);
   start.setUTCDate(start.getUTCDate() - days + 1);
-
   return { since: dateOnly(start), until: dateOnly(end), start, end };
+}
+
+function previousPeriod(current: Period): Period {
+  const end = new Date(current.start);
+  end.setUTCDate(end.getUTCDate() - 1);
+  return periodFromEnd(
+    Math.round((current.end.getTime() - current.start.getTime()) / 86_400_000) + 1,
+    end,
+  );
+}
+
+function latestInsightDate(rows: InsightRow[]): Date | null {
+  const dates = rows
+    .map((row) => row.date_start)
+    .filter((value): value is string => Boolean(value))
+    .map((value) => new Date(`${value}T00:00:00.000Z`))
+    .filter((value) => !Number.isNaN(value.getTime()));
+  if (dates.length === 0) return null;
+  return new Date(Math.max(...dates.map((date) => date.getTime())));
 }
 
 function actionValue(rows: InsightRow[], actionType: string): number {
@@ -216,7 +235,7 @@ function recommendationOutput(recommendations: RecommendationDraft[]): void {
   console.log('\n=== Recommendations ===');
 
   if (recommendations.length === 0) {
-    console.log('No Meta-only recommendations were emitted for the current sandbox data/window.');
+    console.log('No Meta-only recommendations were emitted for the fetched sandbox data/window.');
     return;
   }
 
@@ -239,14 +258,10 @@ function recommendationOutput(recommendations: RecommendationDraft[]): void {
 }
 
 async function main(): Promise<void> {
-  const current = period(Math.floor(lookbackDays / 2), 0);
-  const comparison = period(Math.ceil(lookbackDays / 2), Math.floor(lookbackDays / 2));
-
   console.log('\nStride Meta sandbox → direct intelligence-rule test');
   console.log(`Account: ${accountId}`);
   console.log(`API: ${apiVersion}`);
-  console.log(`Current: ${current.since} → ${current.until}`);
-  console.log(`Comparison: ${comparison.since} → ${comparison.until}`);
+  console.log(`Requested lookback: ${requestedLookbackDays} days`);
 
   console.log('\n[1/4] Fetching sandbox campaigns...');
   const campaigns = await collect<CampaignRow>(`/${accountId}/campaigns`, {
@@ -255,8 +270,8 @@ async function main(): Promise<void> {
   });
   printJson('Campaigns', campaigns);
 
-  console.log('\n[2/4] Fetching campaign-level insights...');
-  const campaignFields = [
+  console.log('\n[2/4] Fetching available campaign insight history...');
+  const insightFields = [
     'campaign_id',
     'campaign_name',
     'spend',
@@ -269,27 +284,49 @@ async function main(): Promise<void> {
     'frequency',
     'actions',
     'action_values',
+    'date_start',
+    'date_stop',
   ].join(',');
 
-  const [currentCampaignRows, comparisonCampaignRows] = await Promise.all([
-    collect<InsightRow>(`/${accountId}/insights`, {
-      level: 'campaign',
-      fields: campaignFields,
-      time_range: JSON.stringify({ since: current.since, until: current.until }),
-      limit: '500',
-    }),
-    collect<InsightRow>(`/${accountId}/insights`, {
-      level: 'campaign',
-      fields: campaignFields,
-      time_range: JSON.stringify({ since: comparison.since, until: comparison.until }),
-      limit: '500',
-    }),
-  ]);
+  // Do not assume the sandbox has data in today's calendar window. Sandbox accounts can contain
+  // historical fixture data on an older date range. Pull the available daily history first, then
+  // anchor the comparison windows to the newest date Meta actually returned.
+  const campaignHistory = await collect<InsightRow>(`/${accountId}/insights`, {
+    level: 'campaign',
+    fields: insightFields,
+    date_preset: 'maximum',
+    time_increment: '1',
+    limit: '500',
+  });
 
+  if (campaignHistory.length === 0) {
+    throw new Error(
+      `Meta returned campaigns but zero campaign insight rows for ${accountId}. This means there is no insight history available to evaluate. Verify the sandbox account, token permissions, and that the sandbox contains delivered/test spend.`,
+    );
+  }
+
+  const latestDate = latestInsightDate(campaignHistory);
+  if (!latestDate) {
+    throw new Error('Meta returned campaign insights without date_start values.');
+  }
+
+  const current = periodFromEnd(requestedLookbackDays, latestDate);
+  const comparison = previousPeriod(current);
+  const currentCampaignRows = campaignHistory.filter(
+    (row) => row.date_start && row.date_start >= current.since && row.date_start <= current.until,
+  );
+  const comparisonCampaignRows = campaignHistory.filter(
+    (row) => row.date_start && row.date_start >= comparison.since && row.date_start <= comparison.until,
+  );
+
+  console.log(`Latest Meta insight date: ${dateOnly(latestDate)}`);
+  console.log(`Current: ${current.since} → ${current.until}`);
+  console.log(`Comparison: ${comparison.since} → ${comparison.until}`);
+  console.log(`Campaign history rows: ${campaignHistory.length}`);
   console.log(`Current campaign insight rows: ${currentCampaignRows.length}`);
   console.log(`Comparison campaign insight rows: ${comparisonCampaignRows.length}`);
 
-  console.log('\n[3/4] Fetching ad-level insights for creative-fatigue signals...');
+  console.log('\n[3/4] Fetching available ad-level insight history for creative-fatigue signals...');
   const adFields = [
     'ad_id',
     'ad_name',
@@ -305,22 +342,23 @@ async function main(): Promise<void> {
     'frequency',
     'actions',
     'action_values',
+    'date_start',
+    'date_stop',
   ].join(',');
 
-  const [currentAdRows, comparisonAdRows] = await Promise.all([
-    collect<InsightRow>(`/${accountId}/insights`, {
-      level: 'ad',
-      fields: adFields,
-      time_range: JSON.stringify({ since: current.since, until: current.until }),
-      limit: '500',
-    }),
-    collect<InsightRow>(`/${accountId}/insights`, {
-      level: 'ad',
-      fields: adFields,
-      time_range: JSON.stringify({ since: comparison.since, until: comparison.until }),
-      limit: '500',
-    }),
-  ]);
+  const adHistory = await collect<InsightRow>(`/${accountId}/insights`, {
+    level: 'ad',
+    fields: adFields,
+    date_preset: 'maximum',
+    time_increment: '1',
+    limit: '500',
+  });
+  const currentAdRows = adHistory.filter(
+    (row) => row.date_start && row.date_start >= current.since && row.date_start <= current.until,
+  );
+  const comparisonAdRows = adHistory.filter(
+    (row) => row.date_start && row.date_start >= comparison.since && row.date_start <= comparison.until,
+  );
 
   const currency = process.env.META_SANDBOX_CURRENCY?.trim() || 'UNKNOWN';
   const totalCurrentCampaignSpend = currentCampaignRows.reduce(
@@ -328,6 +366,10 @@ async function main(): Promise<void> {
     0,
   );
   const totalCurrentAdSpend = currentAdRows.reduce((sum, row) => sum + number(row.spend), 0);
+
+  console.log(`Ad history rows: ${adHistory.length}`);
+  console.log(`Current ad insight rows: ${currentAdRows.length}`);
+  console.log(`Comparison ad insight rows: ${comparisonAdRows.length}`);
 
   console.log('\n[4/4] Feeding normalized Meta evidence directly into the existing deterministic rules...');
 
@@ -379,7 +421,10 @@ async function main(): Promise<void> {
   }
 
   printJson('Fetched data summary', {
+    accountId,
     campaigns: campaigns.length,
+    campaignHistoryRows: campaignHistory.length,
+    adHistoryRows: adHistory.length,
     campaignInsightRows: {
       current: currentCampaignRows.length,
       comparison: comparisonCampaignRows.length,
