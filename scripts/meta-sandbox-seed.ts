@@ -11,7 +11,7 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('Meta sandbox seeding is disabled when NODE_ENV=production');
 }
 
-const token = required('META_SANDBOX_ACCESS_TOKEN');
+const userToken = required('META_SANDBOX_ACCESS_TOKEN');
 const rawAccountId = required('META_SANDBOX_AD_ACCOUNT_ID');
 const pageId = required('META_SANDBOX_PAGE_ID');
 const apiVersion = process.env.META_SANDBOX_API_VERSION?.trim() || 'v26.0';
@@ -19,6 +19,7 @@ const destinationUrl = process.env.META_SANDBOX_DESTINATION_URL?.trim() || 'http
 const configuredImageHash = process.env.META_SANDBOX_IMAGE_HASH?.trim() || null;
 const imageUrl = process.env.META_SANDBOX_IMAGE_URL?.trim() || null;
 const objectStoryId = process.env.META_SANDBOX_OBJECT_STORY_ID?.trim() || null;
+const configuredPageAccessToken = process.env.META_SANDBOX_PAGE_ACCESS_TOKEN?.trim() || null;
 
 const dryRun =
   process.argv.includes('--dry-run') || process.env.npm_config_dry_run?.toLowerCase() === 'true';
@@ -35,6 +36,7 @@ const confirmedAccountId = (process.env.META_SANDBOX_CONFIRM_AD_ACCOUNT_ID?.trim
   '',
 );
 const graphOrigin = `https://graph.facebook.com/${apiVersion}`;
+let token = userToken;
 
 if (!/^\d+$/.test(accountId)) {
   throw new Error('META_SANDBOX_AD_ACCOUNT_ID must be a numeric ID or act_<numeric ID>');
@@ -105,6 +107,11 @@ type PagePost = {
   message?: string;
   permalink_url?: string;
   created_time?: string;
+};
+
+type PageAccount = {
+  id: string;
+  access_token?: string;
 };
 
 type TrackingMode = 'MISSING' | 'PARTIAL' | 'EXACT';
@@ -221,6 +228,43 @@ async function graphRequest<T>(
   }
 
   return parsed as T;
+}
+
+async function usePageAccessToken(): Promise<void> {
+  if (configuredPageAccessToken) {
+    token = configuredPageAccessToken;
+    return;
+  }
+
+  const url = new URL(`${graphOrigin}/me/accounts`);
+  url.searchParams.set('fields', 'id,access_token');
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${userToken}` },
+  });
+  const text = await response.text();
+  let parsed: GraphEnvelope<PageAccount>;
+  try {
+    parsed = JSON.parse(text) as GraphEnvelope<PageAccount>;
+  } catch {
+    throw new Error(
+      `Meta returned non-JSON HTTP ${response.status} while resolving the Page access token`,
+    );
+  }
+
+  if (!response.ok || parsed.error) {
+    throw new Error(
+      `Meta could not resolve a Page access token for ${pageId}: ${parsed.error?.message ?? `HTTP ${response.status}`}`,
+    );
+  }
+
+  const page = (parsed.data ?? []).find((row) => row.id === pageId && row.access_token);
+  if (!page?.access_token) {
+    throw new Error(
+      `Meta user token does not return a Page access token for Page ${pageId}. Reauthorize with Page access, or set META_SANDBOX_PAGE_ACCESS_TOKEN explicitly.`,
+    );
+  }
+
+  token = page.access_token;
 }
 
 function pagingAfter<T>(result: GraphEnvelope<T>): string | null {
@@ -433,6 +477,8 @@ const campaignSpecs = [
 const trackingModes: TrackingMode[] = ['MISSING', 'PARTIAL', 'EXACT'];
 
 async function main() {
+  await usePageAccessToken();
+
   if (listPagePosts) {
     await printRecentPagePosts();
     return;
