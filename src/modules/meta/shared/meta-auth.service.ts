@@ -46,8 +46,6 @@ export class MetaAuthService {
       context.authorizationMode === 'ADS_MANAGEMENT' &&
       !inspection.scopes.includes('ads_management')
     ) {
-      // Do not persist a downgraded token as a successful upgrade. The existing read-only
-      // connection remains untouched and the merchant can retry or choose manual tracking.
       throw new AppError(
         'Meta did not grant the requested ads_management permission',
         403,
@@ -98,6 +96,32 @@ export class MetaAuthService {
       await this.repository.markConnectionReauthRequired(connection.id);
       await invalidateStoreDecisionCaches(storeId);
       throw error;
+    }
+
+    if (env.NODE_ENV === 'development') {
+      // Development must never reuse a merchant/production Meta token or account. The sandbox
+      // credentials are dedicated to local testing and the configured sandbox account becomes the
+      // only selected ad account for all Meta Ads reads/writes in this environment.
+      const sandboxAccessToken = env.META_SANDBOX_ACCESS_TOKEN;
+      const sandboxAdAccountId = env.META_SANDBOX_AD_ACCOUNT_ID;
+      if (!sandboxAccessToken || !sandboxAdAccountId) {
+        throw new AppError(
+          'Meta sandbox credentials are required in development',
+          500,
+          'META_SANDBOX_NOT_CONFIGURED',
+        );
+      }
+
+      return {
+        storeId,
+        connectionId: connection.id,
+        accessToken: sandboxAccessToken,
+        apiVersion: env.META_SANDBOX_API_VERSION ?? env.META_API_VERSION,
+        scopes: connection.scopes,
+        metaBusinessId: null,
+        selectedAdAccountIds: [sandboxAdAccountId],
+        selectedCatalogIds: [],
+      };
     }
 
     if (
