@@ -253,10 +253,12 @@ export class MetaMappingService {
           ...mapping,
           confidence: Number(mapping.confidence),
         })),
-        collectionMappings: (byExternalAd.get(ad.metaAdId) ?? []).map(({ ad: _ad, ...mapping }) => ({
-          ...mapping,
-          confidence: Number(mapping.confidence),
-        })),
+        collectionMappings: (byExternalAd.get(ad.metaAdId) ?? []).map(
+          ({ ad: _ad, metaAdId: _internalAdId, ...mapping }) => ({
+            ...mapping,
+            confidence: Number(mapping.confidence),
+          }),
+        ),
       })),
     };
   }
