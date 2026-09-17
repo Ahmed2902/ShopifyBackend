@@ -94,23 +94,83 @@ export interface SharedExposureEvidence {
   }>;
 }
 
+export interface StorefrontBehaviorMetrics {
+  sessions: number;
+  productViewSessions: number;
+  addToCartSessions: number;
+  cartViewSessions: number;
+  cartViewCheckoutSessions: number;
+  cartViewPurchaseSessions: number;
+  checkoutStartSessions: number;
+  checkoutCompletedSessions: number;
+  linkedPurchaseSessions: number;
+  productViewRate: number | null;
+  viewToCartRate: number | null;
+  cartViewToCheckoutRate: number | null;
+  cartViewToPurchaseRate: number | null;
+  cartAbandonmentRate: number | null;
+  checkoutCompletionRate: number | null;
+  checkoutAbandonmentRate: number | null;
+  linkedPurchaseRate: number | null;
+}
+
+export interface StorefrontBehaviorEvidence {
+  dimension: 'STORE' | 'PRODUCT' | 'LANDING_PAGE';
+  entityId: string | null;
+  externalEntityId: string | null;
+  name: string;
+  current: StorefrontBehaviorMetrics;
+  comparison: StorefrontBehaviorMetrics;
+  sourceRowCount: number;
+}
+
+export interface CommerceHealthMetrics {
+  orders: number;
+  orderValue: number;
+  refunds: number;
+  discounts: number;
+  refundRate: number | null;
+  discountRate: number | null;
+  newOrders: number;
+  returningOrders: number;
+  unknownCustomerOrders: number;
+  knownCustomerCoverage: number | null;
+  returningOrderShare: number | null;
+}
+
+export interface CommerceHealthEvidence {
+  current: CommerceHealthMetrics;
+  comparison: CommerceHealthMetrics;
+}
+
 export type RecommendationCategory =
   | 'CAMPAIGN_EFFICIENCY'
+  | 'ADSET_EFFICIENCY'
+  | 'AD_EFFICIENCY'
   | 'CREATIVE_FATIGUE'
+  | 'VIDEO_RETENTION'
   | 'UNDEREXPOSED_PRODUCT'
   | 'PAID_COMMERCE_MISMATCH'
   | 'MARGIN_TRAP'
-  | 'INVENTORY_SPEND_CONFLICT';
+  | 'INVENTORY_SPEND_CONFLICT'
+  | 'INVENTORY_RISK'
+  | 'STOREFRONT_FUNNEL'
+  | 'PRODUCT_CONVERSION'
+  | 'LANDING_PAGE_QUALITY'
+  | 'COMMERCE_HEALTH'
+  | 'MAPPING_HEALTH';
 
 export type RecommendationSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export type RecommendationEntityType =
+  | 'STORE'
   | 'CAMPAIGN'
   | 'AD_SET'
   | 'AD'
   | 'CREATIVE'
   | 'PRODUCT'
   | 'VARIANT'
-  | 'COLLECTION';
+  | 'COLLECTION'
+  | 'LANDING_PAGE';
 
 export type RecommendationEvidenceQuality = 'HIGH' | 'MEDIUM' | 'LOW';
 export type RecommendationAttributionPrecision =
@@ -119,6 +179,8 @@ export type RecommendationAttributionPrecision =
   | 'SHARED_MULTI_PRODUCT'
   | 'COLLECTION'
   | 'STORE'
+  | 'FIRST_PARTY_OBSERVED'
+  | 'SHOPIFY_COMMERCE'
   | 'UNKNOWN';
 
 export type DecisionAction =
