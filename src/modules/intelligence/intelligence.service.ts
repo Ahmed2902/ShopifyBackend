@@ -8,6 +8,7 @@ import {
   returningCustomerDeteriorationRule,
 } from './commerce-intelligence.rules.js';
 import { videoRetentionDeteriorationRule } from './creative-retention-intelligence.rules.js';
+import { IntelligenceAdSetReadRepository } from './intelligence-adset.read.repository.js';
 import { IntelligenceCommerceHealthReadRepository } from './intelligence-commerce-health.read.repository.js';
 import { IntelligenceCommerceReadRepository } from './intelligence-commerce.read.repository.js';
 import { IntelligenceContextReadRepository } from './intelligence-context.read.repository.js';
@@ -30,7 +31,10 @@ import {
   underexposedProductRule,
 } from './intelligence.rules.js';
 import { buildAdEvidence } from './paid-entity-intelligence.metrics.js';
-import { adEfficiencyDeteriorationRule } from './paid-entity-intelligence.rules.js';
+import {
+  adEfficiencyDeteriorationRule,
+  adSetEfficiencyDeteriorationRule,
+} from './paid-entity-intelligence.rules.js';
 import { buildSharedExposureEvidenceFromAggregates } from './shared-exposure.metrics.js';
 import { buildStorefrontBehaviorEvidence } from './storefront-intelligence.metrics.js';
 import {
@@ -114,6 +118,7 @@ export class IntelligenceService {
     private readonly storefrontReadRepository: IntelligenceStorefrontReadRepository | null = null,
     private readonly commerceHealthReadRepository: IntelligenceCommerceHealthReadRepository | null = null,
     private readonly videoRetentionService: CreativeVideoRetentionService | null = null,
+    private readonly adSetReadRepository: IntelligenceAdSetReadRepository | null = null,
   ) {}
 
   async snapshot(storeId: string, now = new Date()) {
@@ -132,6 +137,7 @@ export class IntelligenceService {
 
     const [
       metaRows,
+      adSets,
       commerceRows,
       mappings,
       inventoryRows,
@@ -148,6 +154,16 @@ export class IntelligenceService {
         comparisonFrom: comparison.metaFrom,
         comparisonTo: comparison.metaTo,
       }),
+      this.adSetReadRepository
+        ? this.adSetReadRepository.getEvidence({
+            storeId,
+            selectedAccountIds: selectedMetaAccounts,
+            currentFrom: current.metaFrom,
+            currentTo: current.metaTo,
+            comparisonFrom: comparison.metaFrom,
+            comparisonTo: comparison.metaTo,
+          })
+        : Promise.resolve([]),
       this.commerceReadRepository.getProductEvidenceAggregates({
         storeId,
         currency: store.currencyCode,
@@ -254,6 +270,10 @@ export class IntelligenceService {
       const result = campaignEfficiencyRule(campaign);
       if (result) recommendations.push(result);
     }
+    for (const adSet of adSets) {
+      const result = adSetEfficiencyDeteriorationRule(adSet, decisionWindow);
+      if (result) recommendations.push(result);
+    }
     for (const ad of ads) {
       const result = adEfficiencyDeteriorationRule(ad, decisionWindow);
       if (result) recommendations.push(result);
@@ -334,6 +354,7 @@ export class IntelligenceService {
       },
       evidence: {
         campaigns: campaigns.length,
+        adSets: adSets.length,
         ads: ads.length,
         creatives: creatives.length,
         products: productResult.products.length,
@@ -620,4 +641,5 @@ export const intelligenceService = new IntelligenceService(
   new IntelligenceStorefrontReadRepository(),
   new IntelligenceCommerceHealthReadRepository(),
   new CreativeVideoRetentionService(),
+  new IntelligenceAdSetReadRepository(),
 );
