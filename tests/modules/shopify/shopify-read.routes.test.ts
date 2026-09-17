@@ -11,6 +11,26 @@ vi.mock('../../../src/modules/billing/billing.middleware.js', () => ({
     () => (_req: Request, _res: Response, next: NextFunction) => next(),
 }));
 
+vi.mock('../../../src/modules/shopify/read/shopify-read.service.js', () => ({
+  shopifyReadService: {
+    getStatus: vi.fn(),
+    getSummary: vi.fn(),
+    listProducts: vi.fn().mockResolvedValue({
+      items: [],
+      page: 1,
+      limit: 50,
+      total: 0,
+      hasMore: false,
+    }),
+    getProduct: vi.fn(),
+    getProductSales: vi.fn(),
+    listInventory: vi.fn(),
+    listLocations: vi.fn(),
+    listOrders: vi.fn(),
+    getOrder: vi.fn(),
+  },
+}));
+
 import { app } from '../../../src/app.js';
 import { issueAccessToken } from '../../../src/modules/auth/auth.utils.js';
 
