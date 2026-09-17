@@ -25,6 +25,10 @@ export interface StorefrontEvidence {
   comparison: StorefrontBehaviorPeriod;
   evidenceQuality: 'HIGH' | 'MEDIUM' | 'LOW';
   limitations: Array<{ code: string; message: string }>;
+  observationStart: Date;
+  observationEnd: Date;
+  comparisonStart: Date;
+  comparisonEnd: Date;
 }
 
 export interface StorefrontDimensionEvidence extends StorefrontEvidence {
