@@ -42,6 +42,7 @@ import {
   viewToCartDeteriorationRule,
 } from './storefront-intelligence.rules.js';
 import type {
+  CommerceHealthEvidence,
   DataQualityEvidence,
   RecommendationDraft,
   RecommendationLimitation,
@@ -84,6 +85,23 @@ function bucketDate(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
 }
 
+function emptyCommerceHealth(): CommerceHealthEvidence {
+  const metrics = () => ({
+    orders: 0,
+    orderValue: 0,
+    refunds: 0,
+    discounts: 0,
+    refundRate: null,
+    discountRate: null,
+    newOrders: 0,
+    returningOrders: 0,
+    unknownCustomerOrders: 0,
+    knownCustomerCoverage: null,
+    returningOrderShare: null,
+  });
+  return { current: metrics(), comparison: metrics() };
+}
+
 export class IntelligenceService {
   constructor(
     private readonly repository: IntelligenceRepository = new IntelligenceRepository(),
@@ -93,12 +111,9 @@ export class IntelligenceService {
       new IntelligenceSharedExposureReadRepository(),
     private readonly contextReadRepository: IntelligenceContextReadRepository =
       new IntelligenceContextReadRepository(),
-    private readonly storefrontReadRepository: IntelligenceStorefrontReadRepository =
-      new IntelligenceStorefrontReadRepository(),
-    private readonly commerceHealthReadRepository: IntelligenceCommerceHealthReadRepository =
-      new IntelligenceCommerceHealthReadRepository(),
-    private readonly videoRetentionService: CreativeVideoRetentionService =
-      new CreativeVideoRetentionService(),
+    private readonly storefrontReadRepository: IntelligenceStorefrontReadRepository | null = null,
+    private readonly commerceHealthReadRepository: IntelligenceCommerceHealthReadRepository | null = null,
+    private readonly videoRetentionService: CreativeVideoRetentionService | null = null,
   ) {}
 
   async snapshot(storeId: string, now = new Date()) {
@@ -147,21 +162,25 @@ export class IntelligenceService {
         from: productWindow.metaFrom,
         to: current.metaTo,
       }),
-      this.storefrontReadRepository.getEvidence({
-        storeId,
-        currentFrom: bucketDate(current.fromDate),
-        currentTo: bucketDate(current.toDate),
-        comparisonFrom: bucketDate(comparison.fromDate),
-        comparisonTo: bucketDate(comparison.toDate),
-      }),
-      this.commerceHealthReadRepository.getEvidence({
-        storeId,
-        currency: store.currencyCode,
-        currentFrom: current.instantFrom,
-        currentTo: current.instantTo,
-        comparisonFrom: comparison.instantFrom,
-        comparisonTo: comparison.instantTo,
-      }),
+      this.storefrontReadRepository
+        ? this.storefrontReadRepository.getEvidence({
+            storeId,
+            currentFrom: bucketDate(current.fromDate),
+            currentTo: bucketDate(current.toDate),
+            comparisonFrom: bucketDate(comparison.fromDate),
+            comparisonTo: bucketDate(comparison.toDate),
+          })
+        : Promise.resolve([]),
+      this.commerceHealthReadRepository
+        ? this.commerceHealthReadRepository.getEvidence({
+            storeId,
+            currency: store.currencyCode,
+            currentFrom: current.instantFrom,
+            currentTo: current.instantTo,
+            comparisonFrom: comparison.instantFrom,
+            comparisonTo: comparison.instantTo,
+          })
+        : Promise.resolve(emptyCommerceHealth()),
     ]);
 
     const metaSourceRowCount = metaRows.reduce(
@@ -214,12 +233,14 @@ export class IntelligenceService {
       inventoryTrusted: store.inventoryIntelligenceMode === 'TRUSTED',
       windowDays: PRODUCT_WINDOW_DAYS,
     });
-    const videoRetention = await this.videoRetentionService.forCreatives({
-      storeId,
-      selectedAccountIds: selectedMetaAccounts,
-      windows: { current, comparison, days: DECISION_WINDOW_DAYS },
-      creatives: creatives.map((creative) => ({ id: creative.entityId })),
-    });
+    const videoRetention = this.videoRetentionService
+      ? await this.videoRetentionService.forCreatives({
+          storeId,
+          selectedAccountIds: selectedMetaAccounts,
+          windows: { current, comparison, days: DECISION_WINDOW_DAYS },
+          creatives: creatives.map((creative) => ({ id: creative.entityId })),
+        })
+      : new Map();
 
     const recommendations: RecommendationDraft[] = [];
     const decisionWindow = {
@@ -506,14 +527,14 @@ export class IntelligenceService {
           metrics: { ageHours: pixelStaleHours, thresholdHours: STALE_SYNC_HOURS },
         });
       }
-      if (pixelRollup.lastError) {
+      if (pixelRollup?.lastError) {
         evidence.push({
           code: 'PIXEL_ROLLUP_ERROR',
           status: 'WARNING',
           surface: 'STOREFRONT_BEHAVIOR',
           message: 'Stride Pixel behavior rollup currently reports an error.',
         });
-      } else if (!pixelRollup.lastRolledUpAt || input.storefrontRowsCount === 0) {
+      } else if (!pixelRollup?.lastRolledUpAt || input.storefrontRowsCount === 0) {
         evidence.push({
           code: 'PIXEL_BEHAVIOR_MISSING',
           status: 'WARNING',
@@ -591,4 +612,12 @@ export class IntelligenceService {
   }
 }
 
-export const intelligenceService = new IntelligenceService();
+export const intelligenceService = new IntelligenceService(
+  new IntelligenceRepository(),
+  new IntelligenceCommerceReadRepository(),
+  new IntelligenceSharedExposureReadRepository(),
+  new IntelligenceContextReadRepository(),
+  new IntelligenceStorefrontReadRepository(),
+  new IntelligenceCommerceHealthReadRepository(),
+  new CreativeVideoRetentionService(),
+);
