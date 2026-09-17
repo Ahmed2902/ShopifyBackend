@@ -6,7 +6,6 @@ export interface StorefrontBehaviorPeriod {
   cartViewCheckoutSessions: number;
   cartViewPurchaseSessions: number;
   checkoutStartSessions: number;
-  checkoutStartPurchaseSessions: number;
   linkedPurchaseSessions: number;
   productViewRate: number | null;
   viewToCartRate: number | null;
