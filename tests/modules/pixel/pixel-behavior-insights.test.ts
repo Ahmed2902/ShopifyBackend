@@ -53,6 +53,23 @@ describe('pixel behavior insights', () => {
     expect(result.largestFunnelDropRate).toBe(0.75);
   });
 
+  it('excludes a non-monotonic stage instead of manufacturing a negative drop', () => {
+    const result = derivePixelBehaviorInsights(
+      input({
+        sessions: 100,
+        productViewSessions: 120,
+        addToCartSessions: 30,
+        cartViewSessions: 20,
+        cartViewCheckoutSessions: 10,
+        checkoutStartSessions: 10,
+        checkoutStartPurchaseSessions: 8,
+      }),
+    );
+
+    expect(result.largestFunnelDropRate).toBeGreaterThanOrEqual(0);
+    expect(result.largestFunnelDropStage).not.toBe('SESSION_TO_PRODUCT');
+  });
+
   it('reports percentage-point movement for stable leak stages', () => {
     const current = derivePixelBehaviorInsights(
       input({ checkoutStartSessions: 100, checkoutStartPurchaseSessions: 50 }),
