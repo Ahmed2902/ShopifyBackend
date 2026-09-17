@@ -19,10 +19,14 @@ export function recommendationDecision(
           : 'Hold the current budget and investigate the efficiency deterioration before scaling further.';
       break;
     case 'creative_fatigue_symptoms':
+      decisionAction = 'TEST';
+      decisionMessage =
+        'Prepare and test a replacement creative before the current fatigue symptoms worsen.';
+      break;
     case 'video_retention_deterioration':
       decisionAction = 'TEST';
       decisionMessage =
-        'Prepare and test a replacement creative before the current deterioration worsens.';
+        'Prepare and test a replacement creative before the current retention deterioration worsens.';
       break;
     case 'underexposed_commerce_winner':
       decisionAction = 'TEST';
@@ -41,6 +45,10 @@ export function recommendationDecision(
       break;
     case 'inventory_spend_conflict':
     case 'shared_exposure_inventory_conflict':
+      decisionAction = 'HOLD';
+      decisionMessage =
+        'Hold aggressive paid scaling until replenishment or inventory protection is confirmed.';
+      break;
     case 'inventory_runway_risk':
       decisionAction = 'HOLD';
       decisionMessage =
@@ -51,6 +59,7 @@ export function recommendationDecision(
     case 'view_to_cart_deterioration':
     case 'storefront_conversion_deterioration':
     case 'product_conversion_deterioration':
+    case 'high_traffic_low_conversion_product':
     case 'landing_page_quality_deterioration':
     case 'refund_rate_deterioration':
     case 'discount_dependency_deterioration':
