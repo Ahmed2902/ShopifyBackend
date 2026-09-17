@@ -94,23 +94,63 @@ export interface SharedExposureEvidence {
   }>;
 }
 
+export interface StorefrontFunnelMetrics {
+  sessions: number;
+  productViewSessions: number;
+  addToCartSessions: number;
+  cartViewSessions: number;
+  cartViewCheckoutSessions: number;
+  cartViewPurchaseSessions: number;
+  checkoutStartSessions: number;
+  checkoutCompletedSessions: number;
+  linkedPurchaseSessions: number;
+  productViewRate: number | null;
+  viewToCartRate: number | null;
+  cartViewToCheckoutRate: number | null;
+  cartViewToPurchaseRate: number | null;
+  cartViewAbandonmentRate: number | null;
+  checkoutCompletionRate: number | null;
+  checkoutAbandonmentRate: number | null;
+  linkedPurchaseRate: number | null;
+}
+
+export interface StorefrontEvidence {
+  entityType: 'STORE' | 'PRODUCT' | 'LANDING_PAGE';
+  entityId: string | null;
+  externalEntityId: string | null;
+  name: string;
+  current: StorefrontFunnelMetrics;
+  comparison: StorefrontFunnelMetrics;
+  qualityState: 'READY' | 'DEGRADED' | 'NOT_READY';
+  limitations: string[];
+}
+
 export type RecommendationCategory =
   | 'CAMPAIGN_EFFICIENCY'
   | 'CREATIVE_FATIGUE'
   | 'UNDEREXPOSED_PRODUCT'
   | 'PAID_COMMERCE_MISMATCH'
   | 'MARGIN_TRAP'
-  | 'INVENTORY_SPEND_CONFLICT';
+  | 'INVENTORY_SPEND_CONFLICT'
+  | 'STOREFRONT_CONVERSION'
+  | 'CART_ABANDONMENT'
+  | 'CHECKOUT_ABANDONMENT'
+  | 'PRODUCT_CONVERSION'
+  | 'LANDING_PAGE_QUALITY'
+  | 'MAPPING_HEALTH'
+  | 'INVENTORY_RISK';
 
 export type RecommendationSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export type RecommendationEntityType =
+  | 'STORE'
   | 'CAMPAIGN'
   | 'AD_SET'
   | 'AD'
   | 'CREATIVE'
   | 'PRODUCT'
   | 'VARIANT'
-  | 'COLLECTION';
+  | 'COLLECTION'
+  | 'LANDING_PAGE';
 
 export type RecommendationEvidenceQuality = 'HIGH' | 'MEDIUM' | 'LOW';
 export type RecommendationAttributionPrecision =
