@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { videoRetentionDeteriorationRule } from '../../../src/modules/intelligence/creative-retention-intelligence.rules.js';
-import { adEfficiencyDeteriorationRule } from '../../../src/modules/intelligence/paid-entity-intelligence.rules.js';
+import {
+  adEfficiencyDeteriorationRule,
+  adSetEfficiencyDeteriorationRule,
+} from '../../../src/modules/intelligence/paid-entity-intelligence.rules.js';
 import type { CreativeEvidence } from '../../../src/modules/intelligence/intelligence.types.js';
 import type { CreativeVideoRetention } from '../../../src/modules/analytics/creative-video-retention.service.js';
 
@@ -11,47 +14,57 @@ const window = {
   comparisonEnd: new Date('2026-08-31T23:59:59.999Z'),
 };
 
+const deterioratingPaidEvidence = {
+  entityId: 'paid-1',
+  externalEntityId: '1001',
+  name: 'Hero paid entity',
+  currency: 'USD',
+  spendShare: 0.35,
+  current: {
+    spend: 150,
+    impressions: 5_000,
+    reach: null,
+    clicks: 100,
+    purchases: 5,
+    purchaseValue: 250,
+    roas: 1.67,
+    cpa: 30,
+    ctr: 0.02,
+    cpc: 1.5,
+    cpm: 30,
+    frequency: null,
+  },
+  comparison: {
+    spend: 100,
+    impressions: 5_000,
+    reach: null,
+    clicks: 150,
+    purchases: 8,
+    purchaseValue: 300,
+    roas: 3,
+    cpa: 12.5,
+    ctr: 0.03,
+    cpc: 0.67,
+    cpm: 20,
+    frequency: null,
+  },
+};
+
 describe('expanded paid intelligence rules', () => {
+  it('detects ad-set-level efficiency deterioration', () => {
+    expect(adSetEfficiencyDeteriorationRule(deterioratingPaidEvidence, window)).toMatchObject({
+      ruleId: 'adset_efficiency_deterioration',
+      category: 'ADSET_EFFICIENCY',
+      entityType: 'AD_SET',
+    });
+  });
+
   it('detects ad-level efficiency deterioration', () => {
-    const result = adEfficiencyDeteriorationRule(
-      {
-        entityId: 'ad-1',
-        externalEntityId: '1001',
-        name: 'Hero ad',
-        currency: 'USD',
-        spendShare: 0.35,
-        current: {
-          spend: 150,
-          impressions: 5_000,
-          reach: null,
-          clicks: 100,
-          purchases: 5,
-          purchaseValue: 250,
-          roas: 1.67,
-          cpa: 30,
-          ctr: 0.02,
-          cpc: 1.5,
-          cpm: 30,
-          frequency: 2.2,
-        },
-        comparison: {
-          spend: 100,
-          impressions: 5_000,
-          reach: null,
-          clicks: 150,
-          purchases: 8,
-          purchaseValue: 300,
-          roas: 3,
-          cpa: 12.5,
-          ctr: 0.03,
-          cpc: 0.67,
-          cpm: 20,
-          frequency: 1.8,
-        },
-      },
-      window,
-    );
-    expect(result).toMatchObject({ ruleId: 'ad_efficiency_deterioration', entityType: 'AD' });
+    expect(adEfficiencyDeteriorationRule(deterioratingPaidEvidence, window)).toMatchObject({
+      ruleId: 'ad_efficiency_deterioration',
+      category: 'AD_EFFICIENCY',
+      entityType: 'AD',
+    });
   });
 
   it('detects supported video-retention deterioration', () => {
