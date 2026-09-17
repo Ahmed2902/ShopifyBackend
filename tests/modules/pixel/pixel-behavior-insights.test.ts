@@ -24,8 +24,8 @@ describe('pixel behavior insights', () => {
       input({ checkoutStartSessions: 100, checkoutStartPurchaseSessions: 55 }),
     );
 
-    expect(result.checkoutCompletionRate).toBe(0.55);
-    expect(result.checkoutAbandonmentRate).toBe(0.45);
+    expect(result.checkoutCompletionRate).toBeCloseTo(0.55, 10);
+    expect(result.checkoutAbandonmentRate).toBeCloseTo(0.45, 10);
   });
 
   it('derives cart abandonment from same-session cart-view purchase overlap', () => {
@@ -33,7 +33,7 @@ describe('pixel behavior insights', () => {
       input({ cartViewSessions: 100, cartViewPurchaseSessions: 42 }),
     );
 
-    expect(result.cartAbandonmentRate).toBe(0.58);
+    expect(result.cartAbandonmentRate).toBeCloseTo(0.58, 10);
   });
 
   it('identifies the largest valid funnel drop without inventing non-monotonic rates', () => {
@@ -50,7 +50,7 @@ describe('pixel behavior insights', () => {
     );
 
     expect(result.largestFunnelDropStage).toBe('CHECKOUT_TO_PURCHASE');
-    expect(result.largestFunnelDropRate).toBe(0.75);
+    expect(result.largestFunnelDropRate).toBeCloseTo(0.75, 10);
   });
 
   it('excludes a non-monotonic stage instead of manufacturing a negative drop', () => {
@@ -78,9 +78,8 @@ describe('pixel behavior insights', () => {
       input({ checkoutStartSessions: 100, checkoutStartPurchaseSessions: 70 }),
     );
 
-    expect(pixelBehaviorInsightChangePoints(current, comparison)).toMatchObject({
-      checkoutCompletionRate: -0.2,
-      checkoutAbandonmentRate: 0.2,
-    });
+    const change = pixelBehaviorInsightChangePoints(current, comparison);
+    expect(change.checkoutCompletionRate).toBeCloseTo(-0.2, 10);
+    expect(change.checkoutAbandonmentRate).toBeCloseTo(0.2, 10);
   });
 });
