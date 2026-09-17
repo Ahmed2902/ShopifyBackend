@@ -94,6 +94,12 @@ export interface SharedExposureEvidence {
   }>;
 }
 
+export type StorefrontFunnelDropStage =
+  | 'SESSION_TO_PRODUCT'
+  | 'PRODUCT_TO_CART'
+  | 'CART_VIEW_TO_CHECKOUT'
+  | 'CHECKOUT_TO_PURCHASE';
+
 export interface StorefrontBehaviorMetrics {
   sessions: number;
   productViewSessions: number;
@@ -102,6 +108,7 @@ export interface StorefrontBehaviorMetrics {
   cartViewCheckoutSessions: number;
   cartViewPurchaseSessions: number;
   checkoutStartSessions: number;
+  checkoutStartPurchaseSessions: number;
   checkoutCompletedSessions: number;
   linkedPurchaseSessions: number;
   productViewRate: number | null;
@@ -112,6 +119,8 @@ export interface StorefrontBehaviorMetrics {
   checkoutCompletionRate: number | null;
   checkoutAbandonmentRate: number | null;
   linkedPurchaseRate: number | null;
+  largestFunnelDropStage: StorefrontFunnelDropStage | null;
+  largestFunnelDropRate: number | null;
 }
 
 export interface StorefrontBehaviorEvidence {
@@ -158,7 +167,8 @@ export type RecommendationCategory =
   | 'PRODUCT_CONVERSION'
   | 'LANDING_PAGE_QUALITY'
   | 'COMMERCE_HEALTH'
-  | 'MAPPING_HEALTH';
+  | 'MAPPING_HEALTH'
+  | 'ATTRIBUTION_HEALTH';
 
 export type RecommendationSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export type RecommendationEntityType =
