@@ -150,7 +150,7 @@ export function checkoutAbandonmentDeteriorationRule(
     category: 'STOREFRONT_FUNNEL',
     ruleId: 'checkout_abandonment_deterioration',
     title: 'Checkout completion weakened',
-    summary: 'Observed checkout starts are completing less often than in the comparison period.',
+    summary: 'Observed checkout starts are reaching a linked valid Shopify purchase less often than in the comparison period.',
     suggestedAction: 'Investigate checkout friction, payment failures and shipping/offer changes before pushing more traffic.',
     severity: severity(points, 0.15),
     sample: evidence.current.checkoutStartSessions,
@@ -161,7 +161,10 @@ export function checkoutAbandonmentDeteriorationRule(
     observationEnd: window.currentEnd,
     comparisonStart: window.comparisonStart,
     comparisonEnd: window.comparisonEnd,
-    payload: { abandonmentRatePointChange: points, completionSource: 'PIXEL_CHECKOUT_COMPLETED' },
+    payload: {
+      abandonmentRatePointChange: points,
+      completionSource: 'SAME_SESSION_LINKED_VALID_SHOPIFY_PURCHASE',
+    },
   });
 }
 
@@ -245,7 +248,12 @@ export function storefrontConversionDeteriorationRule(
     observationEnd: window.currentEnd,
     comparisonStart: window.comparisonStart,
     comparisonEnd: window.comparisonEnd,
-    payload: { ratePointChange: points, relativeChange: relative },
+    payload: {
+      ratePointChange: points,
+      relativeChange: relative,
+      largestFunnelDropStage: evidence.current.largestFunnelDropStage,
+      largestFunnelDropRate: evidence.current.largestFunnelDropRate,
+    },
   });
 }
 
@@ -288,6 +296,46 @@ export function productConversionDeteriorationRule(
     comparisonStart: window.comparisonStart,
     comparisonEnd: window.comparisonEnd,
     payload: { ratePointChange: points, relativeChange: relative },
+  });
+}
+
+export function highTrafficLowConversionProductRule(
+  evidence: StorefrontBehaviorEvidence,
+  window: { currentStart: Date; currentEnd: Date; comparisonStart: Date; comparisonEnd: Date },
+): RecommendationDraft | null {
+  if (evidence.dimension !== 'PRODUCT' || !evidence.entityId) return null;
+  const purchaseRate = evidence.current.linkedPurchaseRate;
+  if (
+    evidence.current.productViewSessions < 150 ||
+    purchaseRate === null ||
+    purchaseRate > 0.015
+  ) {
+    return null;
+  }
+
+  const currentViews = evidence.current.productViewSessions;
+  return base({
+    evidence,
+    category: 'PRODUCT_CONVERSION',
+    ruleId: 'high_traffic_low_conversion_product',
+    title: `${evidence.name} attracts attention but converts weakly`,
+    summary: 'This product has substantial observed product-view traffic but a very low linked Shopify purchase rate.',
+    suggestedAction: 'Investigate product-page intent, offer clarity, inventory and downstream checkout progression before buying more traffic.',
+    severity: currentViews >= 500 && purchaseRate <= 0.01 ? 'HIGH' : 'MEDIUM',
+    sample: currentViews,
+    comparisonSample: Math.max(currentViews, evidence.comparison.productViewSessions),
+    impact: 0.45 + clamp01(currentViews / 1_000) * 0.4,
+    urgency: 0.55 + clamp01((0.015 - purchaseRate) / 0.015) * 0.25,
+    observationStart: window.currentStart,
+    observationEnd: window.currentEnd,
+    comparisonStart: window.comparisonStart,
+    comparisonEnd: window.comparisonEnd,
+    payload: {
+      productViewSessions: currentViews,
+      linkedPurchaseSessions: evidence.current.linkedPurchaseSessions,
+      linkedPurchaseRate: purchaseRate,
+      interpretation: 'High observed interest with weak downstream purchase conversion; no cause is inferred.',
+    },
   });
 }
 
