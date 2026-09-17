@@ -43,6 +43,15 @@ export function recommendationDecision(
       decisionMessage =
         'Hold aggressive paid scaling until replenishment or inventory protection is confirmed.';
       break;
+    case 'cart_abandonment_deterioration':
+    case 'checkout_abandonment_deterioration':
+    case 'storefront_conversion_deterioration':
+    case 'view_to_cart_deterioration':
+    case 'product_view_to_cart_deterioration':
+    case 'high_traffic_low_conversion_product':
+    case 'high_traffic_low_conversion_landing_page':
+      decisionAction = 'INVESTIGATE';
+      break;
     default:
       decisionAction = 'INVESTIGATE';
       break;
