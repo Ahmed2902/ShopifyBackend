@@ -8,8 +8,8 @@ import {
   pixelBehaviorInsightChangePoints,
 } from './pixel-behavior-insights.js';
 import {
-  PixelCheckoutPurchaseReadRepository,
   pixelCheckoutPurchaseReadRepository,
+  type PixelCheckoutPurchaseReadRepository,
 } from './pixel-checkout-purchase.read.repository.js';
 import { pixelBehaviorService, type PixelBehaviorService } from './pixel-behavior.service.js';
 
