@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   cartAbandonmentDeteriorationRule,
   checkoutAbandonmentDeteriorationRule,
+  highTrafficLowConversionProductRule,
   landingPageQualityDeteriorationRule,
   productConversionDeteriorationRule,
   storefrontConversionDeteriorationRule,
@@ -28,6 +29,7 @@ function metrics(overrides: Partial<StorefrontBehaviorMetrics> = {}): Storefront
     cartViewCheckoutSessions: 40,
     cartViewPurchaseSessions: 30,
     checkoutStartSessions: 55,
+    checkoutStartPurchaseSessions: 35,
     checkoutCompletedSessions: 40,
     linkedPurchaseSessions: 35,
     productViewRate: 0.7,
@@ -35,9 +37,11 @@ function metrics(overrides: Partial<StorefrontBehaviorMetrics> = {}): Storefront
     cartViewToCheckoutRate: 0.667,
     cartViewToPurchaseRate: 0.5,
     cartAbandonmentRate: 0.5,
-    checkoutCompletionRate: 0.727,
-    checkoutAbandonmentRate: 0.273,
+    checkoutCompletionRate: 35 / 55,
+    checkoutAbandonmentRate: 1 - 35 / 55,
     linkedPurchaseRate: 0.07,
+    largestFunnelDropStage: 'PRODUCT_TO_CART',
+    largestFunnelDropRate: 0.8,
     ...overrides,
   };
 }
@@ -67,12 +71,19 @@ describe('storefront intelligence rules', () => {
     expect(result).toMatchObject({ ruleId: 'cart_abandonment_deterioration', category: 'STOREFRONT_FUNNEL' });
   });
 
-  it('flags checkout completion deterioration', () => {
+  it('flags strict checkout-to-linked-purchase deterioration', () => {
     const result = checkoutAbandonmentDeteriorationRule(
-      evidence('STORE', { checkoutAbandonmentRate: 0.46 }, { checkoutAbandonmentRate: 0.28 }),
+      evidence(
+        'STORE',
+        { checkoutStartPurchaseSessions: 30, checkoutAbandonmentRate: 0.46 },
+        { checkoutStartPurchaseSessions: 40, checkoutAbandonmentRate: 0.28 },
+      ),
       window,
     );
     expect(result).toMatchObject({ ruleId: 'checkout_abandonment_deterioration' });
+    expect(result?.evidence).toMatchObject({
+      completionSource: 'SAME_SESSION_LINKED_VALID_SHOPIFY_PURCHASE',
+    });
   });
 
   it('flags view-to-cart deterioration only with meaningful relative decline', () => {
@@ -83,12 +94,24 @@ describe('storefront intelligence rules', () => {
     expect(result).toMatchObject({ ruleId: 'view_to_cart_deterioration' });
   });
 
-  it('flags storefront purchase conversion deterioration', () => {
+  it('flags storefront purchase conversion deterioration and carries largest leak evidence', () => {
     const result = storefrontConversionDeteriorationRule(
-      evidence('STORE', { linkedPurchaseRate: 0.045 }, { linkedPurchaseRate: 0.07 }),
+      evidence(
+        'STORE',
+        {
+          linkedPurchaseRate: 0.045,
+          largestFunnelDropStage: 'CHECKOUT_TO_PURCHASE',
+          largestFunnelDropRate: 0.55,
+        },
+        { linkedPurchaseRate: 0.07 },
+      ),
       window,
     );
     expect(result).toMatchObject({ ruleId: 'storefront_conversion_deterioration' });
+    expect(result?.evidence).toMatchObject({
+      largestFunnelDropStage: 'CHECKOUT_TO_PURCHASE',
+      largestFunnelDropRate: 0.55,
+    });
   });
 
   it('flags product and landing-page conversion deterioration', () => {
@@ -104,6 +127,27 @@ describe('storefront intelligence rules', () => {
         window,
       ),
     ).toMatchObject({ ruleId: 'landing_page_quality_deterioration', entityType: 'LANDING_PAGE' });
+  });
+
+  it('flags high-traffic products with persistently weak purchase conversion', () => {
+    const result = highTrafficLowConversionProductRule(
+      evidence(
+        'PRODUCT',
+        {
+          sessions: 600,
+          productViewSessions: 520,
+          linkedPurchaseSessions: 5,
+          linkedPurchaseRate: 0.0083,
+        },
+        { productViewSessions: 400 },
+      ),
+      window,
+    );
+    expect(result).toMatchObject({
+      ruleId: 'high_traffic_low_conversion_product',
+      entityType: 'PRODUCT',
+      severity: 'HIGH',
+    });
   });
 
   it('suppresses thin samples', () => {
