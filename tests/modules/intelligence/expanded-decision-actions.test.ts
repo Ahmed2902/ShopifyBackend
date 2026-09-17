@@ -29,11 +29,30 @@ function recommendation(ruleId: string): RecommendationDraft {
 }
 
 describe('expanded deterministic decision actions', () => {
-  it('keeps storefront and commerce diagnoses as investigations', () => {
-    expect(recommendationDecision(recommendation('checkout_abandonment_deterioration'))).toMatchObject({
-      decisionAction: 'INVESTIGATE',
-      decisionBasis: 'DETERMINISTIC_RULE',
-    });
+  it('keeps storefront, attribution and commerce diagnoses as investigations', () => {
+    for (const ruleId of [
+      'checkout_abandonment_deterioration',
+      'high_traffic_low_conversion_product',
+      'provider_first_party_purchase_gap',
+    ]) {
+      expect(recommendationDecision(recommendation(ruleId))).toMatchObject({
+        decisionAction: 'INVESTIGATE',
+        decisionBasis: 'DETERMINISTIC_RULE',
+      });
+    }
+  });
+
+  it('reduces high-severity paid hierarchy deterioration consistently', () => {
+    for (const ruleId of [
+      'campaign_efficiency_deterioration',
+      'adset_efficiency_deterioration',
+      'ad_efficiency_deterioration',
+    ]) {
+      expect(recommendationDecision(recommendation(ruleId))).toMatchObject({
+        decisionAction: 'REDUCE',
+        decisionConfidence: 'HIGH',
+      });
+    }
   });
 
   it('holds inventory runway risk instead of inventing a forecast action', () => {
