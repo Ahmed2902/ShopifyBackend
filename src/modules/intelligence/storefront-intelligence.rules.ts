@@ -19,7 +19,7 @@ function confidenceFor(sessions: number, base = 0.62) {
   return clamp01(base + Math.min(sessions / 5_000, 1) * 0.28);
 }
 
-function storefrontRecommendation(input: {
+function storefrontRecommendation(evidence: StorefrontEvidence, input: {
   ruleId: string;
   category: 'STOREFRONT_CONVERSION' | 'CART_ABANDONMENT' | 'CHECKOUT_ABANDONMENT';
   severity: 'MEDIUM' | 'HIGH';
@@ -29,8 +29,7 @@ function storefrontRecommendation(input: {
   confidence: number;
   impact: number;
   urgency: number;
-  evidence: Record<string, unknown>;
-  limitations: StorefrontEvidence['limitations'];
+  payload: Record<string, unknown>;
 }): RecommendationDraft {
   return {
     ruleId: input.ruleId,
@@ -48,12 +47,12 @@ function storefrontRecommendation(input: {
     urgencyScore: clamp01(input.urgency),
     evidenceQuality: input.confidence >= 0.82 ? 'HIGH' : input.confidence >= 0.62 ? 'MEDIUM' : 'LOW',
     attributionPrecision: 'STORE',
-    limitations: input.limitations,
-    observationStart: new Date(0),
-    observationEnd: new Date(0),
-    comparisonStart: new Date(0),
-    comparisonEnd: new Date(0),
-    evidence: input.evidence,
+    limitations: evidence.limitations,
+    observationStart: evidence.observationStart,
+    observationEnd: evidence.observationEnd,
+    comparisonStart: evidence.comparisonStart,
+    comparisonEnd: evidence.comparisonEnd,
+    evidence: input.payload,
   };
 }
 
@@ -64,7 +63,7 @@ export function cartAbandonmentDeteriorationRule(evidence: StorefrontEvidence): 
   const delta = points(current.cartAbandonmentRate, comparison.cartAbandonmentRate);
   if (delta === null || delta < 0.08 || current.cartAbandonmentRate === null) return null;
   const confidence = confidenceFor(Math.min(current.cartViewSessions, comparison.cartViewSessions), 0.66);
-  return storefrontRecommendation({
+  return storefrontRecommendation(evidence, {
     ruleId: 'cart_abandonment_deterioration',
     category: 'CART_ABANDONMENT',
     severity: delta >= 0.15 ? 'HIGH' : 'MEDIUM',
@@ -74,8 +73,7 @@ export function cartAbandonmentDeteriorationRule(evidence: StorefrontEvidence): 
     confidence,
     impact: Math.min(current.cartViewSessions / Math.max(current.sessions, 1), 1),
     urgency: clamp01(delta * 4),
-    limitations: evidence.limitations,
-    evidence: { source: 'STRIDE_FIRST_PARTY_BEHAVIOR_PLUS_SHOPIFY_LINKED_ORDERS', current: current.cartAbandonmentRate, comparison: comparison.cartAbandonmentRate, changePoints: delta, cartViewSessions: current.cartViewSessions },
+    payload: { source: 'STRIDE_FIRST_PARTY_BEHAVIOR_PLUS_SHOPIFY_LINKED_ORDERS', current: current.cartAbandonmentRate, comparison: comparison.cartAbandonmentRate, changePoints: delta, cartViewSessions: current.cartViewSessions },
   });
 }
 
@@ -86,7 +84,7 @@ export function checkoutAbandonmentDeteriorationRule(evidence: StorefrontEvidenc
   const delta = points(current.checkoutAbandonmentRate, comparison.checkoutAbandonmentRate);
   if (delta === null || delta < 0.08 || current.checkoutAbandonmentRate === null) return null;
   const confidence = confidenceFor(Math.min(current.checkoutStartSessions, comparison.checkoutStartSessions), 0.68);
-  return storefrontRecommendation({
+  return storefrontRecommendation(evidence, {
     ruleId: 'checkout_abandonment_deterioration',
     category: 'CHECKOUT_ABANDONMENT',
     severity: delta >= 0.15 ? 'HIGH' : 'MEDIUM',
@@ -96,8 +94,7 @@ export function checkoutAbandonmentDeteriorationRule(evidence: StorefrontEvidenc
     confidence,
     impact: Math.min(current.checkoutStartSessions / Math.max(current.sessions, 1), 1),
     urgency: clamp01(delta * 4),
-    limitations: evidence.limitations,
-    evidence: { source: 'STRIDE_FIRST_PARTY_BEHAVIOR_PLUS_SHOPIFY_LINKED_ORDERS', current: current.checkoutAbandonmentRate, comparison: comparison.checkoutAbandonmentRate, changePoints: delta, checkoutStartSessions: current.checkoutStartSessions },
+    payload: { source: 'STRIDE_FIRST_PARTY_BEHAVIOR_PLUS_SHOPIFY_LINKED_ORDERS', current: current.checkoutAbandonmentRate, comparison: comparison.checkoutAbandonmentRate, changePoints: delta, checkoutStartSessions: current.checkoutStartSessions },
   });
 }
 
@@ -108,7 +105,7 @@ export function storefrontConversionDeteriorationRule(evidence: StorefrontEviden
   const delta = points(current.linkedPurchaseRate, comparison.linkedPurchaseRate);
   if (delta === null || delta > -0.02 || current.linkedPurchaseRate === null) return null;
   const confidence = confidenceFor(Math.min(current.sessions, comparison.sessions));
-  return storefrontRecommendation({
+  return storefrontRecommendation(evidence, {
     ruleId: 'storefront_conversion_deterioration',
     category: 'STOREFRONT_CONVERSION',
     severity: delta <= -0.05 ? 'HIGH' : 'MEDIUM',
@@ -118,8 +115,7 @@ export function storefrontConversionDeteriorationRule(evidence: StorefrontEviden
     confidence,
     impact: 0.7,
     urgency: clamp01(Math.abs(delta) * 8),
-    limitations: evidence.limitations,
-    evidence: { source: 'STRIDE_FIRST_PARTY_BEHAVIOR_PLUS_SHOPIFY_LINKED_ORDERS', current: current.linkedPurchaseRate, comparison: comparison.linkedPurchaseRate, changePoints: delta, sessions: current.sessions, largestFunnelDropStage: current.largestFunnelDropStage, largestFunnelDropRate: current.largestFunnelDropRate },
+    payload: { source: 'STRIDE_FIRST_PARTY_BEHAVIOR_PLUS_SHOPIFY_LINKED_ORDERS', current: current.linkedPurchaseRate, comparison: comparison.linkedPurchaseRate, changePoints: delta, sessions: current.sessions, largestFunnelDropStage: current.largestFunnelDropStage, largestFunnelDropRate: current.largestFunnelDropRate },
   });
 }
 
@@ -132,7 +128,7 @@ export function productConversionDeteriorationRule(evidence: StorefrontDimension
   if (delta === null || delta > -0.03 || current.linkedPurchaseRate === null) return null;
   const confidence = confidenceFor(Math.min(current.productViewSessions, comparison.productViewSessions), 0.6);
   return {
-    ...storefrontRecommendation({
+    ...storefrontRecommendation(evidence, {
       ruleId: 'product_conversion_deterioration',
       category: 'STOREFRONT_CONVERSION',
       severity: delta <= -0.07 ? 'HIGH' : 'MEDIUM',
@@ -142,8 +138,7 @@ export function productConversionDeteriorationRule(evidence: StorefrontDimension
       confidence,
       impact: Math.min(current.productViewSessions / 1_000, 1),
       urgency: clamp01(Math.abs(delta) * 7),
-      limitations: evidence.limitations,
-      evidence: { source: 'STRIDE_FIRST_PARTY_BEHAVIOR_PLUS_SHOPIFY_LINKED_ORDERS', currentPurchaseRate: current.linkedPurchaseRate, comparisonPurchaseRate: comparison.linkedPurchaseRate, changePoints: delta, productViewSessions: current.productViewSessions },
+      payload: { source: 'STRIDE_FIRST_PARTY_BEHAVIOR_PLUS_SHOPIFY_LINKED_ORDERS', currentPurchaseRate: current.linkedPurchaseRate, comparisonPurchaseRate: comparison.linkedPurchaseRate, changePoints: delta, productViewSessions: current.productViewSessions },
     }),
     entityType: 'PRODUCT',
     entityId: evidence.entityId,
