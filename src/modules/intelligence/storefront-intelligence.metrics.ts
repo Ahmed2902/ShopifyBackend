@@ -70,7 +70,8 @@ export function buildStorefrontBehaviorEvidence(
     return {
       dimension: identity.dimension,
       entityId: identity.productId,
-      externalEntityId: identity.productExternalId,
+      externalEntityId:
+        identity.dimension === 'LANDING_PAGE' ? identity.dimensionKey : identity.productExternalId,
       name:
         identity.dimension === 'STORE'
           ? 'Storefront'
