@@ -350,6 +350,7 @@ describe('IntelligenceService scenario harness', () => {
     expect(rules).toEqual(
       new Set([
         'campaign_efficiency_deterioration',
+        'ad_efficiency_deterioration',
         'creative_fatigue_symptoms',
         'underexposed_commerce_winner',
         'paid_commerce_exposure_mismatch',
@@ -377,6 +378,10 @@ describe('IntelligenceService scenario harness', () => {
     );
     expect(decisions).toMatchObject({
       campaign_efficiency_deterioration: {
+        decisionAction: 'REDUCE',
+        decisionConfidence: 'HIGH',
+      },
+      ad_efficiency_deterioration: {
         decisionAction: 'REDUCE',
         decisionConfidence: 'HIGH',
       },
