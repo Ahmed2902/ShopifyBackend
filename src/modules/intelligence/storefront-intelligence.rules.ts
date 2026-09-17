@@ -5,6 +5,7 @@ const RULE_VERSION = '1';
 const MIN_STORE_SESSIONS = 250;
 const MIN_STAGE_SESSIONS = 100;
 const MIN_PRODUCT_SESSIONS = 100;
+const MIN_LANDING_SESSIONS = 150;
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -68,7 +69,7 @@ export function cartAbandonmentDeteriorationRule(evidence: StorefrontEvidence): 
     category: 'CART_ABANDONMENT',
     severity: delta >= 0.15 ? 'HIGH' : 'MEDIUM',
     title: 'Cart abandonment increased materially',
-    summary: 'A larger share of observed cart-view sessions failed to reach a linked Shopify purchase than in the comparison period.',
+    summary: 'A larger share of observed cart-view sessions failed to reach a linked valid Shopify purchase than in the comparison period.',
     suggestedAction: 'Investigate the cart-to-checkout and checkout-to-purchase experience before increasing traffic.',
     confidence,
     impact: Math.min(current.cartViewSessions / Math.max(current.sessions, 1), 1),
@@ -89,12 +90,12 @@ export function checkoutAbandonmentDeteriorationRule(evidence: StorefrontEvidenc
     category: 'CHECKOUT_ABANDONMENT',
     severity: delta >= 0.15 ? 'HIGH' : 'MEDIUM',
     title: 'Checkout abandonment increased materially',
-    summary: 'A larger share of sessions that started checkout did not reach a linked Shopify purchase than in the comparison period.',
+    summary: 'A larger share of observed checkout-start sessions did not emit checkout completion than in the comparison period.',
     suggestedAction: 'Review checkout friction, payment/shipping configuration and recent storefront changes before increasing acquisition spend.',
     confidence,
     impact: Math.min(current.checkoutStartSessions / Math.max(current.sessions, 1), 1),
     urgency: clamp01(delta * 4),
-    payload: { source: 'STRIDE_FIRST_PARTY_BEHAVIOR_PLUS_SHOPIFY_LINKED_ORDERS', current: current.checkoutAbandonmentRate, comparison: comparison.checkoutAbandonmentRate, changePoints: delta, checkoutStartSessions: current.checkoutStartSessions },
+    payload: { source: 'STRIDE_FIRST_PARTY_BEHAVIOR', current: current.checkoutAbandonmentRate, comparison: comparison.checkoutAbandonmentRate, changePoints: delta, checkoutStartSessions: current.checkoutStartSessions },
   });
 }
 
@@ -142,6 +143,38 @@ export function productConversionDeteriorationRule(evidence: StorefrontDimension
     }),
     entityType: 'PRODUCT',
     entityId: evidence.entityId,
+    externalEntityId: evidence.externalEntityId,
+  };
+}
+
+export function landingPageQualityDeteriorationRule(evidence: StorefrontDimensionEvidence): RecommendationDraft | null {
+  if (evidence.entityType !== 'LANDING_PAGE') return null;
+  const current = evidence.current;
+  const comparison = evidence.comparison;
+  if (current.sessions < MIN_LANDING_SESSIONS || comparison.sessions < MIN_LANDING_SESSIONS) return null;
+  const purchaseDelta = points(current.linkedPurchaseRate, comparison.linkedPurchaseRate);
+  const productViewDelta = points(current.productViewRate, comparison.productViewRate);
+  const materiallyWeaker =
+    (purchaseDelta !== null && purchaseDelta <= -0.025) ||
+    (productViewDelta !== null && productViewDelta <= -0.1);
+  if (!materiallyWeaker) return null;
+  const magnitude = Math.max(Math.abs(purchaseDelta ?? 0), Math.abs(productViewDelta ?? 0));
+  const confidence = confidenceFor(Math.min(current.sessions, comparison.sessions), 0.61);
+  return {
+    ...storefrontRecommendation(evidence, {
+      ruleId: 'landing_page_quality_deterioration',
+      category: 'STOREFRONT_CONVERSION',
+      severity: magnitude >= 0.12 ? 'HIGH' : 'MEDIUM',
+      title: 'Landing-page downstream quality weakened',
+      summary: `${evidence.name} produced weaker product engagement or linked-purchase progression than in the comparison period.`,
+      suggestedAction: 'Review the landing experience and traffic fit before sending more paid traffic to this route.',
+      confidence,
+      impact: Math.min(current.sessions / 1_500, 1),
+      urgency: clamp01(magnitude * 5),
+      payload: { source: 'STRIDE_FIRST_PARTY_BEHAVIOR_PLUS_SHOPIFY_LINKED_ORDERS', sessions: current.sessions, currentPurchaseRate: current.linkedPurchaseRate, comparisonPurchaseRate: comparison.linkedPurchaseRate, purchaseChangePoints: purchaseDelta, productViewChangePoints: productViewDelta },
+    }),
+    entityType: 'STORE',
+    entityId: null,
     externalEntityId: evidence.externalEntityId,
   };
 }
