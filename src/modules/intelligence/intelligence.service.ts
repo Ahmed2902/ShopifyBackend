@@ -1,4 +1,14 @@
+import { CreativeVideoRetentionService } from '../analytics/creative-video-retention.service.js';
 import { AppError } from '../../errors/app-error.js';
+import {
+  discountDependencyDeteriorationRule,
+  inventoryRunwayRiskRule,
+  mappingCoverageDegradedRule,
+  refundRateDeteriorationRule,
+  returningCustomerDeteriorationRule,
+} from './commerce-intelligence.rules.js';
+import { videoRetentionDeteriorationRule } from './creative-retention-intelligence.rules.js';
+import { IntelligenceCommerceHealthReadRepository } from './intelligence-commerce-health.read.repository.js';
 import { IntelligenceCommerceReadRepository } from './intelligence-commerce.read.repository.js';
 import { IntelligenceContextReadRepository } from './intelligence-context.read.repository.js';
 import { completedWindow } from './intelligence.dates.js';
@@ -9,6 +19,7 @@ import {
 } from './intelligence.metrics.js';
 import { IntelligenceRepository } from './intelligence.repository.js';
 import { IntelligenceSharedExposureReadRepository } from './intelligence-shared-exposure.read.repository.js';
+import { IntelligenceStorefrontReadRepository } from './intelligence-storefront.read.repository.js';
 import {
   campaignEfficiencyRule,
   creativeFatigueRule,
@@ -18,7 +29,18 @@ import {
   sharedExposureInventoryRule,
   underexposedProductRule,
 } from './intelligence.rules.js';
+import { buildAdEvidence } from './paid-entity-intelligence.metrics.js';
+import { adEfficiencyDeteriorationRule } from './paid-entity-intelligence.rules.js';
 import { buildSharedExposureEvidenceFromAggregates } from './shared-exposure.metrics.js';
+import { buildStorefrontBehaviorEvidence } from './storefront-intelligence.metrics.js';
+import {
+  cartAbandonmentDeteriorationRule,
+  checkoutAbandonmentDeteriorationRule,
+  landingPageQualityDeteriorationRule,
+  productConversionDeteriorationRule,
+  storefrontConversionDeteriorationRule,
+  viewToCartDeteriorationRule,
+} from './storefront-intelligence.rules.js';
 import type {
   DataQualityEvidence,
   RecommendationDraft,
@@ -49,11 +71,17 @@ function evidenceQuality(confidenceScore: number, limitations: RecommendationLim
       'META_INSIGHTS_MISSING',
       'META_SYNC_STALE',
       'SHOPIFY_CONNECTION_BLOCKED',
+      'PIXEL_BEHAVIOR_MISSING',
+      'PIXEL_ROLLUP_ERROR',
     ].includes(limitation.code),
   );
   if (!severe && confidenceScore >= 0.82) return 'HIGH' as const;
   if (confidenceScore >= 0.58) return 'MEDIUM' as const;
   return 'LOW' as const;
+}
+
+function bucketDate(value: string): Date {
+  return new Date(`${value}T00:00:00.000Z`);
 }
 
 export class IntelligenceService {
@@ -65,6 +93,12 @@ export class IntelligenceService {
       new IntelligenceSharedExposureReadRepository(),
     private readonly contextReadRepository: IntelligenceContextReadRepository =
       new IntelligenceContextReadRepository(),
+    private readonly storefrontReadRepository: IntelligenceStorefrontReadRepository =
+      new IntelligenceStorefrontReadRepository(),
+    private readonly commerceHealthReadRepository: IntelligenceCommerceHealthReadRepository =
+      new IntelligenceCommerceHealthReadRepository(),
+    private readonly videoRetentionService: CreativeVideoRetentionService =
+      new CreativeVideoRetentionService(),
   ) {}
 
   async snapshot(storeId: string, now = new Date()) {
@@ -81,7 +115,15 @@ export class IntelligenceService {
     const productWindow = completedWindow(now, store.ianaTimezone, PRODUCT_WINDOW_DAYS);
     const selectedMetaAccounts = store.metaConnection?.selectedAdAccountIds ?? [];
 
-    const [metaRows, commerceRows, mappings, inventoryRows, sharedTargets] = await Promise.all([
+    const [
+      metaRows,
+      commerceRows,
+      mappings,
+      inventoryRows,
+      sharedTargets,
+      storefrontRows,
+      commerceHealth,
+    ] = await Promise.all([
       this.repository.getMetaEvidenceRows({
         storeId,
         selectedAccountIds: selectedMetaAccounts,
@@ -105,6 +147,21 @@ export class IntelligenceService {
         from: productWindow.metaFrom,
         to: current.metaTo,
       }),
+      this.storefrontReadRepository.getEvidence({
+        storeId,
+        currentFrom: bucketDate(current.fromDate),
+        currentTo: bucketDate(current.toDate),
+        comparisonFrom: bucketDate(comparison.fromDate),
+        comparisonTo: bucketDate(comparison.toDate),
+      }),
+      this.commerceHealthReadRepository.getEvidence({
+        storeId,
+        currency: store.currencyCode,
+        currentFrom: current.instantFrom,
+        currentTo: current.instantTo,
+        comparisonFrom: comparison.instantFrom,
+        comparisonTo: comparison.instantTo,
+      }),
     ]);
 
     const metaSourceRowCount = metaRows.reduce(
@@ -117,6 +174,10 @@ export class IntelligenceService {
     );
     const inventorySourceRowCount = inventoryRows.reduce(
       (sum, row) => sum + row.sourceInventoryLevelCount,
+      0,
+    );
+    const storefrontSourceRowCount = storefrontRows.reduce(
+      (sum, row) => sum + row.sourceRowCount,
       0,
     );
 
@@ -134,6 +195,8 @@ export class IntelligenceService {
       comparison.metaFrom,
       comparison.metaTo,
     );
+    const ads = buildAdEvidence(metaRows);
+    const storefrontEvidence = buildStorefrontBehaviorEvidence(storefrontRows);
     const productResult = buildProductEvidenceFromAggregates({
       commerceRows,
       mappings,
@@ -151,14 +214,57 @@ export class IntelligenceService {
       inventoryTrusted: store.inventoryIntelligenceMode === 'TRUSTED',
       windowDays: PRODUCT_WINDOW_DAYS,
     });
+    const videoRetention = await this.videoRetentionService.forCreatives({
+      storeId,
+      selectedAccountIds: selectedMetaAccounts,
+      windows: { current, comparison, days: DECISION_WINDOW_DAYS },
+      creatives: creatives.map((creative) => ({ id: creative.entityId })),
+    });
 
     const recommendations: RecommendationDraft[] = [];
+    const decisionWindow = {
+      currentStart: current.metaFrom,
+      currentEnd: current.metaTo,
+      comparisonStart: comparison.metaFrom,
+      comparisonEnd: comparison.metaTo,
+    };
+
     for (const campaign of campaigns) {
       const result = campaignEfficiencyRule(campaign);
       if (result) recommendations.push(result);
     }
+    for (const ad of ads) {
+      const result = adEfficiencyDeteriorationRule(ad, decisionWindow);
+      if (result) recommendations.push(result);
+    }
     for (const creative of creatives) {
-      const result = creativeFatigueRule(creative);
+      const results = [
+        creativeFatigueRule(creative),
+        videoRetentionDeteriorationRule(creative, videoRetention.get(creative.entityId), decisionWindow),
+      ];
+      for (const result of results) if (result) recommendations.push(result);
+    }
+
+    for (const behavior of storefrontEvidence) {
+      const results =
+        behavior.dimension === 'STORE'
+          ? [
+              cartAbandonmentDeteriorationRule(behavior, decisionWindow),
+              checkoutAbandonmentDeteriorationRule(behavior, decisionWindow),
+              viewToCartDeteriorationRule(behavior, decisionWindow),
+              storefrontConversionDeteriorationRule(behavior, decisionWindow),
+            ]
+          : behavior.dimension === 'PRODUCT'
+            ? [productConversionDeteriorationRule(behavior, decisionWindow)]
+            : [landingPageQualityDeteriorationRule(behavior, decisionWindow)];
+      for (const result of results) if (result) recommendations.push(result);
+    }
+
+    for (const result of [
+      refundRateDeteriorationRule(commerceHealth, decisionWindow),
+      discountDependencyDeteriorationRule(commerceHealth, decisionWindow),
+      returningCustomerDeteriorationRule(commerceHealth, decisionWindow),
+    ]) {
       if (result) recommendations.push(result);
     }
 
@@ -172,6 +278,7 @@ export class IntelligenceService {
         shopifyCommerceUsable ? paidCommerceMismatchRule(product, productRuleWindow) : null,
         marginTrapRule(product, productRuleWindow),
         inventorySpendConflictRule(product, productRuleWindow),
+        inventoryRunwayRiskRule(product, productRuleWindow),
       ];
       for (const result of results) if (result) recommendations.push(result);
     }
@@ -179,12 +286,19 @@ export class IntelligenceService {
       const result = sharedExposureInventoryRule(exposure, productRuleWindow);
       if (result) recommendations.push(result);
     }
+    const mappingResult = mappingCoverageDegradedRule({
+      mappingCoverage: productResult.mappingCoverage,
+      totalMetaSpend: productResult.totalMetaSpend,
+      window: productRuleWindow,
+    });
+    if (mappingResult) recommendations.push(mappingResult);
 
     const dataQuality = this.buildDataQuality({
       store,
       metaRowsCount: metaSourceRowCount,
       latestMetaSyncedAt: store.latestMetaInsightSyncedAt,
       inventoryRowsCount: inventorySourceRowCount,
+      storefrontRowsCount: storefrontSourceRowCount,
       productResult,
       now,
     });
@@ -199,11 +313,14 @@ export class IntelligenceService {
       },
       evidence: {
         campaigns: campaigns.length,
+        ads: ads.length,
         creatives: creatives.length,
         products: productResult.products.length,
         sharedExposures: sharedExposure.length,
+        storefrontDimensions: storefrontEvidence.length,
         metaRows: metaSourceRowCount,
         commerceRows: commerceSourceRowCount,
+        storefrontRows: storefrontSourceRowCount,
         shopifyCommerceUsable,
         mappingCoverage: productResult.mappingCoverage,
         costCoverage: this.overallCostCoverage(productResult.products),
@@ -262,6 +379,13 @@ export class IntelligenceService {
         add('META_CURRENCY_MISMATCH');
       }
 
+      if (recommendation.attributionPrecision === 'FIRST_PARTY_OBSERVED') {
+        add('PIXEL_NOT_ACTIVE');
+        add('PIXEL_BEHAVIOR_MISSING');
+        add('PIXEL_ROLLUP_ERROR');
+        add('PIXEL_EVENTS_STALE');
+      }
+
       if (additions.length === 0) return recommendation;
 
       const limitations = [...recommendation.limitations, ...additions];
@@ -291,6 +415,7 @@ export class IntelligenceService {
     metaRowsCount: number;
     latestMetaSyncedAt: Date | null;
     inventoryRowsCount: number;
+    storefrontRowsCount: number;
     productResult: ReturnType<typeof buildProductEvidenceFromAggregates>;
     now: Date;
   }): DataQualityEvidence[] {
@@ -361,6 +486,43 @@ export class IntelligenceService {
       });
     }
 
+    const pixel = input.store.pixelInstallation;
+    const pixelRollup = input.store.storefrontBehaviorRollup;
+    if (!pixel || pixel.status !== 'ACTIVE') {
+      evidence.push({
+        code: 'PIXEL_NOT_ACTIVE',
+        status: 'WARNING',
+        surface: 'STOREFRONT_BEHAVIOR',
+        message: 'Stride Pixel is not active, so storefront behavior decisions are unavailable.',
+      });
+    } else {
+      const pixelStaleHours = ageHours(pixel.lastEventAt, input.now);
+      if (pixelStaleHours !== null && pixelStaleHours > STALE_SYNC_HOURS) {
+        evidence.push({
+          code: 'PIXEL_EVENTS_STALE',
+          status: 'WARNING',
+          surface: 'STOREFRONT_BEHAVIOR',
+          message: 'The latest observed storefront event is older than the freshness window.',
+          metrics: { ageHours: pixelStaleHours, thresholdHours: STALE_SYNC_HOURS },
+        });
+      }
+      if (pixelRollup.lastError) {
+        evidence.push({
+          code: 'PIXEL_ROLLUP_ERROR',
+          status: 'WARNING',
+          surface: 'STOREFRONT_BEHAVIOR',
+          message: 'Stride Pixel behavior rollup currently reports an error.',
+        });
+      } else if (!pixelRollup.lastRolledUpAt || input.storefrontRowsCount === 0) {
+        evidence.push({
+          code: 'PIXEL_BEHAVIOR_MISSING',
+          status: 'WARNING',
+          surface: 'STOREFRONT_BEHAVIOR',
+          message: 'Stride Pixel is active but no rolled-up storefront behavior is available for the analysis windows.',
+        });
+      }
+    }
+
     if (
       input.productResult.totalMetaSpend > 0 &&
       input.productResult.mappingCoverage < MIN_MAPPING_COVERAGE
@@ -422,7 +584,7 @@ export class IntelligenceService {
         code: 'CORE_DATA_HEALTHY',
         status: 'HEALTHY',
         surface: 'CORE',
-        message: 'Core Shopify and Meta evidence passed the current V1 data-quality checks.',
+        message: 'Core Shopify, Meta and storefront evidence passed the current data-quality checks.',
       });
     }
     return evidence;
