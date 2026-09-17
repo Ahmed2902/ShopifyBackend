@@ -173,7 +173,7 @@ export function landingPageQualityDeteriorationRule(evidence: StorefrontDimensio
       urgency: clamp01(magnitude * 5),
       payload: { source: 'STRIDE_FIRST_PARTY_BEHAVIOR_PLUS_SHOPIFY_LINKED_ORDERS', sessions: current.sessions, currentPurchaseRate: current.linkedPurchaseRate, comparisonPurchaseRate: comparison.linkedPurchaseRate, purchaseChangePoints: purchaseDelta, productViewChangePoints: productViewDelta },
     }),
-    entityType: 'STORE',
+    entityType: 'LANDING_PAGE',
     entityId: null,
     externalEntityId: evidence.externalEntityId,
   };
