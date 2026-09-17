@@ -1,3 +1,4 @@
+import { derivePixelBehaviorInsights } from '../pixel/behavior/pixel-behavior-insights.js';
 import type { IntelligenceStorefrontEvidenceRow } from './intelligence-storefront.read.repository.js';
 import type {
   StorefrontBehaviorEvidence,
@@ -20,10 +21,23 @@ function metrics(row: IntelligenceStorefrontEvidenceRow | undefined): Storefront
   const cartViewCheckoutSessions = row?.cartViewCheckoutSessionCount ?? 0;
   const cartViewPurchaseSessions = row?.cartViewPurchaseSessionCount ?? 0;
   const checkoutStartSessions = row?.checkoutStartSessionCount ?? 0;
+  const checkoutStartPurchaseSessions = row?.checkoutStartPurchaseSessionCount ?? 0;
   const checkoutCompletedSessions = row?.checkoutCompletedSessionCount ?? 0;
   const linkedPurchaseSessions = row?.linkedPurchaseSessionCount ?? 0;
   const cartViewToPurchaseRate = rate(cartViewPurchaseSessions, cartViewSessions);
-  const checkoutCompletionRate = rate(checkoutCompletedSessions, checkoutStartSessions);
+  const storeInsights =
+    row?.dimension === 'STORE'
+      ? derivePixelBehaviorInsights({
+          sessions,
+          productViewSessions,
+          addToCartSessions,
+          cartViewSessions,
+          cartViewCheckoutSessions,
+          cartViewPurchaseSessions,
+          checkoutStartSessions,
+          checkoutStartPurchaseSessions,
+        })
+      : null;
 
   return {
     sessions,
@@ -33,6 +47,7 @@ function metrics(row: IntelligenceStorefrontEvidenceRow | undefined): Storefront
     cartViewCheckoutSessions,
     cartViewPurchaseSessions,
     checkoutStartSessions,
+    checkoutStartPurchaseSessions,
     checkoutCompletedSessions,
     linkedPurchaseSessions,
     productViewRate: rate(productViewSessions, sessions),
@@ -40,9 +55,11 @@ function metrics(row: IntelligenceStorefrontEvidenceRow | undefined): Storefront
     cartViewToCheckoutRate: rate(cartViewCheckoutSessions, cartViewSessions),
     cartViewToPurchaseRate,
     cartAbandonmentRate: complement(cartViewToPurchaseRate),
-    checkoutCompletionRate,
-    checkoutAbandonmentRate: complement(checkoutCompletionRate),
+    checkoutCompletionRate: storeInsights?.checkoutCompletionRate ?? null,
+    checkoutAbandonmentRate: storeInsights?.checkoutAbandonmentRate ?? null,
     linkedPurchaseRate: rate(linkedPurchaseSessions, sessions),
+    largestFunnelDropStage: storeInsights?.largestFunnelDropStage ?? null,
+    largestFunnelDropRate: storeInsights?.largestFunnelDropRate ?? null,
   };
 }
 
