@@ -76,7 +76,7 @@ export class IntelligenceAdSetReadRepository {
           SUM(action."value") AS summed_value,
           MAX(action."value") FILTER (WHERE action."value" > 0) AS max_positive_value,
           CASE
-            WHEN action."actionType" = '${Prisma.raw(PURCHASE_ACTION_TYPE)}' THEN 0
+            WHEN action."actionType" = ${PURCHASE_ACTION_TYPE} THEN 0
             WHEN action."actionType" = 'omni_purchase' THEN 1
             WHEN action."actionType" = 'purchase' THEN 2
             WHEN LOWER(action."actionType") LIKE '%purchase%' THEN 3
@@ -86,7 +86,7 @@ export class IntelligenceAdSetReadRepository {
         INNER JOIN scoped_insights scoped ON scoped."id" = action."insightId"
         WHERE action."kind" IN ('ACTION', 'ACTION_VALUE', 'PURCHASE_ROAS', 'WEBSITE_PURCHASE_ROAS')
           AND (
-            action."actionType" IN ('${Prisma.raw(PURCHASE_ACTION_TYPE)}', 'omni_purchase', 'purchase')
+            action."actionType" IN (${PURCHASE_ACTION_TYPE}, 'omni_purchase', 'purchase')
             OR LOWER(action."actionType") LIKE '%purchase%'
           )
         GROUP BY action."insightId", action."kind", action."actionType"
