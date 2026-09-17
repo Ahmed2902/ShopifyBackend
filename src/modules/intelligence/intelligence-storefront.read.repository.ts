@@ -57,10 +57,6 @@ export class IntelligenceStorefrontReadRepository {
     currentTo: Date;
     comparisonFrom: Date;
     comparisonTo: Date;
-    currentInstantFrom: Date;
-    currentInstantTo: Date;
-    comparisonInstantFrom: Date;
-    comparisonInstantTo: Date;
   }): Promise<IntelligenceStorefrontEvidenceRow[]> {
     const [rows, checkoutPurchase] = await Promise.all([
       prisma.$queryRaw<RawStorefrontEvidenceRow[]>(Prisma.sql`
@@ -105,12 +101,12 @@ export class IntelligenceStorefrontReadRepository {
           product."title"
         ORDER BY behavior."dimension", behavior."dimensionKey", period
       `),
-      pixelCheckoutPurchaseReadRepository.getOverlapCounts({
+      pixelCheckoutPurchaseReadRepository.getOverlapCountsForStoreDates({
         storeId: input.storeId,
-        currentFrom: input.currentInstantFrom,
-        currentTo: input.currentInstantTo,
-        comparisonFrom: input.comparisonInstantFrom,
-        comparisonTo: input.comparisonInstantTo,
+        currentFrom: input.currentFrom,
+        currentTo: input.currentTo,
+        comparisonFrom: input.comparisonFrom,
+        comparisonTo: input.comparisonTo,
       }),
     ]);
 
