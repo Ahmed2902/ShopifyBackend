@@ -10,6 +10,10 @@ function evidence(): StorefrontEvidence {
   return {
     evidenceQuality: 'HIGH',
     limitations: [],
+    observationStart: new Date('2026-09-01T00:00:00.000Z'),
+    observationEnd: new Date('2026-09-07T23:59:59.999Z'),
+    comparisonStart: new Date('2026-08-25T00:00:00.000Z'),
+    comparisonEnd: new Date('2026-08-31T23:59:59.999Z'),
     current: {
       sessions: 2_000,
       productViewSessions: 1_500,
