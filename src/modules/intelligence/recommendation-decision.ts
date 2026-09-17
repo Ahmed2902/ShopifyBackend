@@ -11,6 +11,7 @@ export function recommendationDecision(
 
   switch (recommendation.ruleId) {
     case 'campaign_efficiency_deterioration':
+    case 'adset_efficiency_deterioration':
     case 'ad_efficiency_deterioration':
       decisionAction = recommendation.severity === 'HIGH' ? 'REDUCE' : 'HOLD';
       decisionMessage =
