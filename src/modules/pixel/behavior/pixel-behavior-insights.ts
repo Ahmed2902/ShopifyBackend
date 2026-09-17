@@ -1,7 +1,7 @@
 export type StorefrontFunnelDropStage =
   | 'SESSION_TO_PRODUCT'
   | 'PRODUCT_TO_CART'
-  | 'CART_VIEW_TO_CHECKOUT'
+  | 'CART_TO_CHECKOUT'
   | 'CHECKOUT_TO_PURCHASE';
 
 export interface PixelBehaviorInsightInput {
@@ -51,7 +51,7 @@ export function derivePixelBehaviorInsights(
     ['SESSION_TO_PRODUCT', stageDrop(metrics.productViewSessions, metrics.sessions)],
     ['PRODUCT_TO_CART', stageDrop(metrics.addToCartSessions, metrics.productViewSessions)],
     [
-      'CART_VIEW_TO_CHECKOUT',
+      'CART_TO_CHECKOUT',
       stageDrop(metrics.cartViewCheckoutSessions, metrics.cartViewSessions),
     ],
     [
