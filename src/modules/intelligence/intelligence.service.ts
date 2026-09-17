@@ -230,6 +230,12 @@ export class IntelligenceService {
       (sum, row) => sum + row.sourceRowCount,
       0,
     );
+    const storefrontCurrentSourceRowCount = storefrontRows
+      .filter((row) => row.period === 'CURRENT')
+      .reduce((sum, row) => sum + row.sourceRowCount, 0);
+    const storefrontComparisonSourceRowCount = storefrontRows
+      .filter((row) => row.period === 'COMPARISON')
+      .reduce((sum, row) => sum + row.sourceRowCount, 0);
 
     const campaigns = buildCampaignEvidence(
       metaRows,
@@ -368,7 +374,8 @@ export class IntelligenceService {
       metaRowsCount: metaSourceRowCount,
       latestMetaSyncedAt: store.latestMetaInsightSyncedAt,
       inventoryRowsCount: inventorySourceRowCount,
-      storefrontRowsCount: storefrontSourceRowCount,
+      storefrontCurrentRowsCount: storefrontCurrentSourceRowCount,
+      storefrontComparisonRowsCount: storefrontComparisonSourceRowCount,
       productResult,
       now,
     });
@@ -392,6 +399,8 @@ export class IntelligenceService {
         metaRows: metaSourceRowCount,
         commerceRows: commerceSourceRowCount,
         storefrontRows: storefrontSourceRowCount,
+        storefrontCurrentRows: storefrontCurrentSourceRowCount,
+        storefrontComparisonRows: storefrontComparisonSourceRowCount,
         shopifyCommerceUsable,
         mappingCoverage: productResult.mappingCoverage,
         costCoverage: this.overallCostCoverage(productResult.products),
@@ -490,7 +499,8 @@ export class IntelligenceService {
     metaRowsCount: number;
     latestMetaSyncedAt: Date | null;
     inventoryRowsCount: number;
-    storefrontRowsCount: number;
+    storefrontCurrentRowsCount: number;
+    storefrontComparisonRowsCount: number;
     productResult: ReturnType<typeof buildProductEvidenceFromAggregates>;
     now: Date;
   }): DataQualityEvidence[] {
@@ -588,12 +598,20 @@ export class IntelligenceService {
           surface: 'STOREFRONT_BEHAVIOR',
           message: 'Stride Pixel behavior rollup currently reports an error.',
         });
-      } else if (!pixelRollup?.lastRolledUpAt || input.storefrontRowsCount === 0) {
+      } else if (
+        !pixelRollup?.lastRolledUpAt ||
+        input.storefrontCurrentRowsCount === 0 ||
+        input.storefrontComparisonRowsCount === 0
+      ) {
         evidence.push({
           code: 'PIXEL_BEHAVIOR_MISSING',
           status: 'WARNING',
           surface: 'STOREFRONT_BEHAVIOR',
-          message: 'Stride Pixel is active but no rolled-up storefront behavior is available for the analysis windows.',
+          message: 'Stride Pixel is active but comparable storefront behavior is missing from the current or comparison window.',
+          metrics: {
+            currentRows: input.storefrontCurrentRowsCount,
+            comparisonRows: input.storefrontComparisonRowsCount,
+          },
         });
       }
     }
