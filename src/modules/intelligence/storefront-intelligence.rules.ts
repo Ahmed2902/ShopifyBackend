@@ -52,6 +52,7 @@ function base(input: {
   comparisonStart: Date;
   comparisonEnd: Date;
   payload: Record<string, unknown>;
+  interpretation?: string;
 }): RecommendationDraft {
   const support = confidence(input.sample, input.comparisonSample);
   return {
@@ -80,7 +81,8 @@ function base(input: {
       current: input.evidence.current,
       comparison: input.evidence.comparison,
       ...input.payload,
-      interpretation: 'Observed behavior change; no causal explanation is implied.',
+      interpretation:
+        input.interpretation ?? 'Observed behavior change; no causal explanation is implied.',
     },
   };
 }
@@ -262,6 +264,10 @@ export function productConversionDeteriorationRule(
   window: { currentStart: Date; currentEnd: Date; comparisonStart: Date; comparisonEnd: Date },
 ): RecommendationDraft | null {
   if (evidence.dimension !== 'PRODUCT' || !evidence.entityId) return null;
+
+  const absoluteWeakness = highTrafficLowConversionProductRule(evidence, window);
+  if (absoluteWeakness) return absoluteWeakness;
+
   const current = evidence.current.linkedPurchaseRate;
   const previous = evidence.comparison.linkedPurchaseRate;
   const points = delta(current, previous);
@@ -334,8 +340,9 @@ export function highTrafficLowConversionProductRule(
       productViewSessions: currentViews,
       linkedPurchaseSessions: evidence.current.linkedPurchaseSessions,
       linkedPurchaseRate: purchaseRate,
-      interpretation: 'High observed interest with weak downstream purchase conversion; no cause is inferred.',
     },
+    interpretation:
+      'High observed interest with weak downstream purchase conversion; no cause is inferred.',
   });
 }
 
