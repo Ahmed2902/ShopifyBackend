@@ -8,15 +8,21 @@ import {
 } from './commerce-intelligence.rules.js';
 import { intelligenceService, type IntelligenceService } from './intelligence.service.js';
 import { mappingCoverageDegradedRule } from './mapping-intelligence.rules.js';
-import { buildStorefrontEvidence } from './storefront-intelligence.evidence.js';
+import {
+  buildStorefrontDimensionEvidence,
+  buildStorefrontEvidence,
+} from './storefront-intelligence.evidence.js';
 import {
   cartAbandonmentDeteriorationRule,
   checkoutAbandonmentDeteriorationRule,
+  landingPageQualityDeteriorationRule,
+  productConversionDeteriorationRule,
   storefrontConversionDeteriorationRule,
 } from './storefront-intelligence.rules.js';
 import type { RecommendationDraft } from './intelligence.types.js';
 
 const INTELLIGENCE_WINDOW_DAYS = 7;
+const DIMENSION_LIMIT = 100;
 
 function priority(recommendation: RecommendationDraft) {
   return recommendation.impactScore * recommendation.confidenceScore * recommendation.urgencyScore;
@@ -52,16 +58,22 @@ export class IntelligenceSnapshotReadService {
   }
 
   private async buildSnapshot(storeId: string) {
-    const [snapshot, storefrontResult, commerceResult] = await Promise.allSettled([
-      this.service.snapshot(storeId),
-      pixelBehaviorService.overview(storeId, { days: INTELLIGENCE_WINDOW_DAYS }),
-      analyticsWorkspace.overview(storeId, { days: INTELLIGENCE_WINDOW_DAYS }),
-    ]);
+    const query = { days: INTELLIGENCE_WINDOW_DAYS, page: 1, limit: DIMENSION_LIMIT };
+    const [snapshot, storefrontResult, productsResult, landingPagesResult, commerceResult] =
+      await Promise.allSettled([
+        this.service.snapshot(storeId),
+        pixelBehaviorService.overview(storeId, { days: INTELLIGENCE_WINDOW_DAYS }),
+        pixelBehaviorService.products(storeId, query),
+        pixelBehaviorService.landingPages(storeId, query),
+        analyticsWorkspace.overview(storeId, { days: INTELLIGENCE_WINDOW_DAYS }),
+      ]);
     if (snapshot.status === 'rejected') throw snapshot.reason;
 
     const extra: RecommendationDraft[] = [];
     let storefrontSessions: number | null = null;
     let storefrontQuality: string | null = null;
+    let storefrontProductsEvaluated = 0;
+    let landingPagesEvaluated = 0;
 
     if (storefrontResult.status === 'fulfilled') {
       const storefront = storefrontResult.value;
@@ -84,6 +96,57 @@ export class IntelligenceSnapshotReadService {
         ]) {
           if (result) extra.push(result);
         }
+      }
+    }
+
+    if (productsResult.status === 'fulfilled') {
+      const report = productsResult.value;
+      storefrontProductsEvaluated = report.items.length;
+      for (const item of report.items) {
+        const evidence = buildStorefrontDimensionEvidence({
+          entityType: 'PRODUCT',
+          entityId: item.product?.id ?? null,
+          externalEntityId:
+            item.product?.shopifyProductId ?? item.productExternalId ?? item.variantExternalId,
+          name:
+            item.product?.title ??
+            item.productExternalId ??
+            item.variantExternalId ??
+            'Unresolved product',
+          current: item.current,
+          comparison: item.comparison,
+          quality: report.dataQuality,
+          observationStart: report.window.current.instantFrom,
+          observationEnd: report.window.current.instantTo,
+          comparisonStart: report.window.comparison.instantFrom,
+          comparisonEnd: report.window.comparison.instantTo,
+        });
+        if (!evidence) continue;
+        const result = productConversionDeteriorationRule(evidence);
+        if (result) extra.push(result);
+      }
+    }
+
+    if (landingPagesResult.status === 'fulfilled') {
+      const report = landingPagesResult.value;
+      landingPagesEvaluated = report.items.length;
+      for (const item of report.items) {
+        const evidence = buildStorefrontDimensionEvidence({
+          entityType: 'LANDING_PAGE',
+          entityId: null,
+          externalEntityId: item.landingPageUrl ?? item.dimensionKey,
+          name: item.landingPageUrl ?? 'Privacy-normalized landing route',
+          current: item.current,
+          comparison: item.comparison,
+          quality: report.dataQuality,
+          observationStart: report.window.current.instantFrom,
+          observationEnd: report.window.current.instantTo,
+          comparisonStart: report.window.comparison.instantFrom,
+          comparisonEnd: report.window.comparison.instantTo,
+        });
+        if (!evidence) continue;
+        const result = landingPageQualityDeteriorationRule(evidence);
+        if (result) extra.push(result);
       }
     }
 
@@ -125,6 +188,8 @@ export class IntelligenceSnapshotReadService {
         ...snapshot.value.evidence,
         storefrontSessions,
         storefrontQuality,
+        storefrontProductsEvaluated,
+        landingPagesEvaluated,
       },
       recommendations: [
         ...snapshot.value.recommendations,
