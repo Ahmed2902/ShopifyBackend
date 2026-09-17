@@ -23,6 +23,7 @@ export function videoRetentionDeteriorationRule(
   if (!current || !comparison) return null;
 
   const comparisonInvalid =
+    comparison.plays === null ||
     comparison.plays < retention.minimumDiagnosticPlays ||
     retention.limitations.some((limitation) => INVALID_COMPARISON_CODES.has(limitation.code));
   if (comparisonInvalid) return null;
