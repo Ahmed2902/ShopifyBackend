@@ -100,10 +100,19 @@ export type RecommendationCategory =
   | 'UNDEREXPOSED_PRODUCT'
   | 'PAID_COMMERCE_MISMATCH'
   | 'MARGIN_TRAP'
-  | 'INVENTORY_SPEND_CONFLICT';
+  | 'INVENTORY_SPEND_CONFLICT'
+  | 'STOREFRONT_CONVERSION'
+  | 'CART_ABANDONMENT'
+  | 'CHECKOUT_ABANDONMENT'
+  | 'REFUND_HEALTH'
+  | 'DISCOUNT_DEPENDENCY'
+  | 'CUSTOMER_RETENTION'
+  | 'VIDEO_RETENTION'
+  | 'MAPPING_HEALTH';
 
 export type RecommendationSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export type RecommendationEntityType =
+  | 'STORE'
   | 'CAMPAIGN'
   | 'AD_SET'
   | 'AD'
