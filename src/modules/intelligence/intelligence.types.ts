@@ -96,20 +96,20 @@ export interface SharedExposureEvidence {
 
 export type RecommendationCategory =
   | 'CAMPAIGN_EFFICIENCY'
-  | 'PAID_EFFICIENCY'
   | 'CREATIVE_FATIGUE'
   | 'UNDEREXPOSED_PRODUCT'
   | 'PAID_COMMERCE_MISMATCH'
   | 'MARGIN_TRAP'
   | 'INVENTORY_SPEND_CONFLICT'
+  | 'INVENTORY_RISK'
   | 'STOREFRONT_CONVERSION'
   | 'CART_ABANDONMENT'
   | 'CHECKOUT_ABANDONMENT'
   | 'REFUND_HEALTH'
   | 'DISCOUNT_DEPENDENCY'
   | 'CUSTOMER_RETENTION'
-  | 'VIDEO_RETENTION'
-  | 'MAPPING_HEALTH';
+  | 'MAPPING_HEALTH'
+  | 'ATTRIBUTION_HEALTH';
 
 export type RecommendationSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export type RecommendationEntityType =
@@ -120,7 +120,8 @@ export type RecommendationEntityType =
   | 'CREATIVE'
   | 'PRODUCT'
   | 'VARIANT'
-  | 'COLLECTION';
+  | 'COLLECTION'
+  | 'LANDING_PAGE';
 
 export type RecommendationEvidenceQuality = 'HIGH' | 'MEDIUM' | 'LOW';
 export type RecommendationAttributionPrecision =
