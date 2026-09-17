@@ -1,15 +1,10 @@
+import {
+  derivePixelBehaviorInsights,
+  type PixelBehaviorInsightInput,
+} from '../pixel/behavior/pixel-behavior-insights.js';
 import type { StorefrontBehaviorPeriod, StorefrontEvidence } from './storefront-intelligence.types.js';
 
-type BehaviorMetrics = {
-  sessions: number;
-  productViewSessions: number;
-  addToCartSessions: number;
-  cartViewSessions: number;
-  cartViewCheckoutSessions?: number;
-  cartViewPurchaseSessions?: number;
-  checkoutStartSessions: number;
-  checkoutCompletedSessions: number;
-  linkedPurchaseSessions: number;
+type BehaviorMetrics = PixelBehaviorInsightInput & {
   productViewRate: number | null;
   viewToCartRate: number | null;
   cartViewToCheckoutRate?: number | null;
@@ -17,33 +12,8 @@ type BehaviorMetrics = {
   linkedPurchaseRate: number | null;
 };
 
-function safeRate(numerator: number, denominator: number): number | null {
-  return denominator > 0 ? numerator / denominator : null;
-}
-
-function complement(value: number | null): number | null {
-  return value === null ? null : Math.max(0, Math.min(1, 1 - value));
-}
-
-function stageDrop(numerator: number, denominator: number): number | null {
-  if (denominator <= 0 || numerator < 0 || numerator > denominator) return null;
-  return 1 - numerator / denominator;
-}
-
 export function storefrontBehaviorPeriod(metrics: BehaviorMetrics): StorefrontBehaviorPeriod {
-  const cartViewToCheckoutRate = metrics.cartViewToCheckoutRate ?? safeRate(metrics.cartViewCheckoutSessions ?? 0, metrics.cartViewSessions);
-  const cartViewToPurchaseRate = metrics.cartViewToPurchaseRate ?? safeRate(metrics.cartViewPurchaseSessions ?? 0, metrics.cartViewSessions);
-  const checkoutCompletionRate = safeRate(metrics.checkoutCompletedSessions, metrics.checkoutStartSessions);
-  const candidates: Array<[StorefrontBehaviorPeriod['largestFunnelDropStage'], number | null]> = [
-    ['SESSION_TO_PRODUCT', stageDrop(metrics.productViewSessions, metrics.sessions)],
-    ['PRODUCT_TO_CART', stageDrop(metrics.addToCartSessions, metrics.productViewSessions)],
-    ['CART_TO_CHECKOUT', stageDrop(metrics.checkoutStartSessions, metrics.addToCartSessions)],
-    ['CHECKOUT_TO_PURCHASE', stageDrop(metrics.linkedPurchaseSessions, metrics.checkoutStartSessions)],
-  ];
-  const available = candidates.filter((entry): entry is [Exclude<StorefrontBehaviorPeriod['largestFunnelDropStage'], null>, number] => entry[0] !== null && entry[1] !== null);
-  available.sort((left, right) => right[1] - left[1]);
-  const largest = available[0] ?? null;
-
+  const insights = derivePixelBehaviorInsights(metrics);
   return {
     sessions: metrics.sessions,
     productViewSessions: metrics.productViewSessions,
@@ -55,14 +25,18 @@ export function storefrontBehaviorPeriod(metrics: BehaviorMetrics): StorefrontBe
     linkedPurchaseSessions: metrics.linkedPurchaseSessions,
     productViewRate: metrics.productViewRate,
     viewToCartRate: metrics.viewToCartRate,
-    cartViewToCheckoutRate,
-    cartViewToPurchaseRate,
-    cartAbandonmentRate: complement(cartViewToPurchaseRate),
-    checkoutCompletionRate,
-    checkoutAbandonmentRate: complement(checkoutCompletionRate),
+    cartViewToCheckoutRate:
+      metrics.cartViewToCheckoutRate ??
+      (metrics.cartViewSessions > 0
+        ? (metrics.cartViewCheckoutSessions ?? 0) / metrics.cartViewSessions
+        : null),
+    cartViewToPurchaseRate:
+      metrics.cartViewToPurchaseRate ??
+      (metrics.cartViewSessions > 0
+        ? (metrics.cartViewPurchaseSessions ?? 0) / metrics.cartViewSessions
+        : null),
     linkedPurchaseRate: metrics.linkedPurchaseRate,
-    largestFunnelDropStage: largest?.[0] ?? null,
-    largestFunnelDropRate: largest?.[1] ?? null,
+    ...insights,
   };
 }
 
