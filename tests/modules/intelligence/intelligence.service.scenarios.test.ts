@@ -368,7 +368,18 @@ describe('IntelligenceService scenario harness', () => {
       costCoverage: 1,
       shopifyCommerceUsable: true,
     });
-    expect(snapshot.dataQuality.every((item) => item.status === 'HEALTHY')).toBe(true);
+    expect(snapshot.dataQuality).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'PIXEL_NOT_ACTIVE', status: 'WARNING' }),
+      ]),
+    );
+    expect(snapshot.dataQuality).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'SHOPIFY_CONNECTION_BLOCKED' }),
+        expect.objectContaining({ code: 'META_CONNECTION_BLOCKED' }),
+        expect.objectContaining({ code: 'META_INSIGHTS_MISSING' }),
+      ]),
+    );
 
     const decisions = Object.fromEntries(
       snapshot.recommendations.map((recommendation) => [
