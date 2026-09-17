@@ -1,5 +1,6 @@
 import { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
+import { pixelCheckoutPurchaseReadRepository } from '../pixel/behavior/pixel-checkout-purchase.read.repository.js';
 
 export interface IntelligenceStorefrontEvidenceRow {
   period: 'CURRENT' | 'COMPARISON';
@@ -17,6 +18,7 @@ export interface IntelligenceStorefrontEvidenceRow {
   cartViewCheckoutSessionCount: number;
   cartViewPurchaseSessionCount: number;
   checkoutStartSessionCount: number;
+  checkoutStartPurchaseSessionCount: number;
   checkoutCompletedSessionCount: number;
   linkedPurchaseSessionCount: number;
 }
@@ -55,49 +57,62 @@ export class IntelligenceStorefrontReadRepository {
     currentTo: Date;
     comparisonFrom: Date;
     comparisonTo: Date;
+    currentInstantFrom: Date;
+    currentInstantTo: Date;
+    comparisonInstantFrom: Date;
+    comparisonInstantTo: Date;
   }): Promise<IntelligenceStorefrontEvidenceRow[]> {
-    const rows = await prisma.$queryRaw<RawStorefrontEvidenceRow[]>(Prisma.sql`
-      SELECT
-        CASE
-          WHEN behavior."bucketDate" BETWEEN ${input.currentFrom}::date AND ${input.currentTo}::date
-            THEN 'CURRENT'
-          ELSE 'COMPARISON'
-        END AS period,
-        behavior."dimension"::text AS dimension,
-        behavior."dimensionKey" AS dimension_key,
-        behavior."productId" AS product_id,
-        behavior."productExternalId" AS product_external_id,
-        product."title" AS product_title,
-        MAX(behavior."landingPageUrl") AS landing_page_url,
-        COUNT(*) AS source_row_count,
-        COALESCE(SUM(behavior."sessionCount"), 0) AS session_count,
-        COALESCE(SUM(behavior."productViewSessionCount"), 0) AS product_view_session_count,
-        COALESCE(SUM(behavior."addToCartSessionCount"), 0) AS add_to_cart_session_count,
-        COALESCE(SUM(behavior."cartViewSessionCount"), 0) AS cart_view_session_count,
-        COALESCE(SUM(behavior."cartViewCheckoutSessionCount"), 0) AS cart_view_checkout_session_count,
-        COALESCE(SUM(behavior."cartViewPurchaseSessionCount"), 0) AS cart_view_purchase_session_count,
-        COALESCE(SUM(behavior."checkoutStartSessionCount"), 0) AS checkout_start_session_count,
-        COALESCE(SUM(behavior."checkoutCompletedSessionCount"), 0) AS checkout_completed_session_count,
-        COALESCE(SUM(behavior."linkedPurchaseSessionCount"), 0) AS linked_purchase_session_count
-      FROM "StorefrontBehaviorDaily" behavior
-      LEFT JOIN "Product" product
-        ON product."id" = behavior."productId"
-        AND product."storeId" = behavior."storeId"
-      WHERE behavior."storeId" = ${input.storeId}::uuid
-        AND behavior."dimension" IN ('STORE', 'PRODUCT', 'LANDING_PAGE')
-        AND (
-          behavior."bucketDate" BETWEEN ${input.currentFrom}::date AND ${input.currentTo}::date
-          OR behavior."bucketDate" BETWEEN ${input.comparisonFrom}::date AND ${input.comparisonTo}::date
-        )
-      GROUP BY
-        period,
-        behavior."dimension",
-        behavior."dimensionKey",
-        behavior."productId",
-        behavior."productExternalId",
-        product."title"
-      ORDER BY behavior."dimension", behavior."dimensionKey", period
-    `);
+    const [rows, checkoutPurchase] = await Promise.all([
+      prisma.$queryRaw<RawStorefrontEvidenceRow[]>(Prisma.sql`
+        SELECT
+          CASE
+            WHEN behavior."bucketDate" BETWEEN ${input.currentFrom}::date AND ${input.currentTo}::date
+              THEN 'CURRENT'
+            ELSE 'COMPARISON'
+          END AS period,
+          behavior."dimension"::text AS dimension,
+          behavior."dimensionKey" AS dimension_key,
+          behavior."productId" AS product_id,
+          behavior."productExternalId" AS product_external_id,
+          product."title" AS product_title,
+          MAX(behavior."landingPageUrl") AS landing_page_url,
+          COUNT(*) AS source_row_count,
+          COALESCE(SUM(behavior."sessionCount"), 0) AS session_count,
+          COALESCE(SUM(behavior."productViewSessionCount"), 0) AS product_view_session_count,
+          COALESCE(SUM(behavior."addToCartSessionCount"), 0) AS add_to_cart_session_count,
+          COALESCE(SUM(behavior."cartViewSessionCount"), 0) AS cart_view_session_count,
+          COALESCE(SUM(behavior."cartViewCheckoutSessionCount"), 0) AS cart_view_checkout_session_count,
+          COALESCE(SUM(behavior."cartViewPurchaseSessionCount"), 0) AS cart_view_purchase_session_count,
+          COALESCE(SUM(behavior."checkoutStartSessionCount"), 0) AS checkout_start_session_count,
+          COALESCE(SUM(behavior."checkoutCompletedSessionCount"), 0) AS checkout_completed_session_count,
+          COALESCE(SUM(behavior."linkedPurchaseSessionCount"), 0) AS linked_purchase_session_count
+        FROM "StorefrontBehaviorDaily" behavior
+        LEFT JOIN "Product" product
+          ON product."id" = behavior."productId"
+          AND product."storeId" = behavior."storeId"
+        WHERE behavior."storeId" = ${input.storeId}::uuid
+          AND behavior."dimension" IN ('STORE', 'PRODUCT', 'LANDING_PAGE')
+          AND (
+            behavior."bucketDate" BETWEEN ${input.currentFrom}::date AND ${input.currentTo}::date
+            OR behavior."bucketDate" BETWEEN ${input.comparisonFrom}::date AND ${input.comparisonTo}::date
+          )
+        GROUP BY
+          period,
+          behavior."dimension",
+          behavior."dimensionKey",
+          behavior."productId",
+          behavior."productExternalId",
+          product."title"
+        ORDER BY behavior."dimension", behavior."dimensionKey", period
+      `),
+      pixelCheckoutPurchaseReadRepository.getOverlapCounts({
+        storeId: input.storeId,
+        currentFrom: input.currentInstantFrom,
+        currentTo: input.currentInstantTo,
+        comparisonFrom: input.comparisonInstantFrom,
+        comparisonTo: input.comparisonInstantTo,
+      }),
+    ]);
 
     return rows.map((row) => ({
       period: row.period,
@@ -115,6 +130,12 @@ export class IntelligenceStorefrontReadRepository {
       cartViewCheckoutSessionCount: numeric(row.cart_view_checkout_session_count),
       cartViewPurchaseSessionCount: numeric(row.cart_view_purchase_session_count),
       checkoutStartSessionCount: numeric(row.checkout_start_session_count),
+      checkoutStartPurchaseSessionCount:
+        row.dimension === 'STORE'
+          ? row.period === 'CURRENT'
+            ? checkoutPurchase.current
+            : checkoutPurchase.comparison
+          : 0,
       checkoutCompletedSessionCount: numeric(row.checkout_completed_session_count),
       linkedPurchaseSessionCount: numeric(row.linked_purchase_session_count),
     }));
