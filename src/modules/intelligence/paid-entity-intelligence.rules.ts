@@ -4,6 +4,13 @@ import type { RecommendationDraft } from './intelligence.types.js';
 const RULE_VERSION = '1';
 const MIN_IMPRESSIONS = 1_000;
 
+type DecisionWindow = {
+  currentStart: Date;
+  currentEnd: Date;
+  comparisonStart: Date;
+  comparisonEnd: Date;
+};
+
 function change(current: number | null, comparison: number | null): number | null {
   if (current === null || comparison === null || comparison === 0) return null;
   return (current - comparison) / Math.abs(comparison);
@@ -13,9 +20,16 @@ function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
-export function adEfficiencyDeteriorationRule(
+function efficiencyDeteriorationRule(
   evidence: PaidEntityEvidence,
-  window: { currentStart: Date; currentEnd: Date; comparisonStart: Date; comparisonEnd: Date },
+  window: DecisionWindow,
+  identity: {
+    ruleId: 'adset_efficiency_deterioration' | 'ad_efficiency_deterioration';
+    category: 'ADSET_EFFICIENCY' | 'AD_EFFICIENCY';
+    entityType: 'AD_SET' | 'AD';
+    label: 'Ad set' | 'Ad';
+    context: string;
+  },
 ): RecommendationDraft | null {
   if (
     evidence.current.impressions < MIN_IMPRESSIONS ||
@@ -42,16 +56,16 @@ export function adEfficiencyDeteriorationRule(
   );
 
   return {
-    ruleId: 'ad_efficiency_deterioration',
+    ruleId: identity.ruleId,
     ruleVersion: RULE_VERSION,
-    category: 'AD_EFFICIENCY',
+    category: identity.category,
     severity: magnitude >= 0.4 ? 'HIGH' : 'MEDIUM',
-    entityType: 'AD',
+    entityType: identity.entityType,
     entityId: evidence.entityId,
     externalEntityId: evidence.externalEntityId,
-    title: 'Ad efficiency weakened while spend increased',
-    summary: 'This ad received more spend while provider-reported ROAS or CPA materially weakened versus the comparison period.',
-    suggestedAction: 'Hold further scaling and inspect the ad, creative and audience context before increasing spend.',
+    title: `${identity.label} efficiency weakened while spend increased`,
+    summary: `This ${identity.label.toLowerCase()} received more spend while provider-reported ROAS or CPA materially weakened versus the comparison period.`,
+    suggestedAction: `Hold further scaling and inspect ${identity.context} before increasing spend.`,
     impactScore: clamp01(Math.max(evidence.spendShare, 0.1)),
     confidenceScore: clamp01(0.62 + support * 0.25 + (ctrChange !== null ? 0.08 : 0)),
     urgencyScore: clamp01(0.55 + magnitude * 0.45),
@@ -76,4 +90,30 @@ export function adEfficiencyDeteriorationRule(
       },
     },
   };
+}
+
+export function adSetEfficiencyDeteriorationRule(
+  evidence: PaidEntityEvidence,
+  window: DecisionWindow,
+): RecommendationDraft | null {
+  return efficiencyDeteriorationRule(evidence, window, {
+    ruleId: 'adset_efficiency_deterioration',
+    category: 'ADSET_EFFICIENCY',
+    entityType: 'AD_SET',
+    label: 'Ad set',
+    context: 'the ad set, audience and its child ads',
+  });
+}
+
+export function adEfficiencyDeteriorationRule(
+  evidence: PaidEntityEvidence,
+  window: DecisionWindow,
+): RecommendationDraft | null {
+  return efficiencyDeteriorationRule(evidence, window, {
+    ruleId: 'ad_efficiency_deterioration',
+    category: 'AD_EFFICIENCY',
+    entityType: 'AD',
+    label: 'Ad',
+    context: 'the ad, creative and audience context',
+  });
 }
