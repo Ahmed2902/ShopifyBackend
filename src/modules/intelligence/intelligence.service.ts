@@ -1,5 +1,6 @@
 import { CreativeVideoRetentionService } from '../analytics/creative-video-retention.service.js';
 import { AppError } from '../../errors/app-error.js';
+import { providerFirstPartyPurchaseGapRule } from './attribution-intelligence.rules.js';
 import {
   discountDependencyDeteriorationRule,
   inventoryRunwayRiskRule,
@@ -9,6 +10,7 @@ import {
 } from './commerce-intelligence.rules.js';
 import { videoRetentionDeteriorationRule } from './creative-retention-intelligence.rules.js';
 import { IntelligenceAdSetReadRepository } from './intelligence-adset.read.repository.js';
+import { IntelligenceAttributionHealthReadRepository } from './intelligence-attribution-health.read.repository.js';
 import { IntelligenceCommerceHealthReadRepository } from './intelligence-commerce-health.read.repository.js';
 import { IntelligenceCommerceReadRepository } from './intelligence-commerce.read.repository.js';
 import { IntelligenceContextReadRepository } from './intelligence-context.read.repository.js';
@@ -119,6 +121,7 @@ export class IntelligenceService {
     private readonly commerceHealthReadRepository: IntelligenceCommerceHealthReadRepository | null = null,
     private readonly videoRetentionService: CreativeVideoRetentionService | null = null,
     private readonly adSetReadRepository: IntelligenceAdSetReadRepository | null = null,
+    private readonly attributionHealthReadRepository: IntelligenceAttributionHealthReadRepository | null = null,
   ) {}
 
   async snapshot(storeId: string, now = new Date()) {
@@ -138,6 +141,7 @@ export class IntelligenceService {
     const [
       metaRows,
       adSets,
+      attributionHealth,
       commerceRows,
       mappings,
       inventoryRows,
@@ -164,6 +168,17 @@ export class IntelligenceService {
             comparisonTo: comparison.metaTo,
           })
         : Promise.resolve([]),
+      this.attributionHealthReadRepository
+        ? this.attributionHealthReadRepository.getEvidence({
+            storeId,
+            from: bucketDate(current.fromDate),
+            to: bucketDate(current.toDate),
+          })
+        : Promise.resolve({
+            quality: 'NOT_READY' as const,
+            metaTouchedSessions: 0,
+            metaLinkedPurchaseSessions: 0,
+          }),
       this.commerceReadRepository.getProductEvidenceAggregates({
         storeId,
         currency: store.currencyCode,
@@ -286,6 +301,20 @@ export class IntelligenceService {
       for (const result of results) if (result) recommendations.push(result);
     }
 
+    const providerPurchases = campaigns.reduce(
+      (sum, campaign) => sum + campaign.current.purchases,
+      0,
+    );
+    const attributionGap = providerFirstPartyPurchaseGapRule({
+      providerPurchases,
+      firstPartyMetaPurchaseJourneys: attributionHealth.metaLinkedPurchaseSessions,
+      metaTouchedSessions: attributionHealth.metaTouchedSessions,
+      attributionQuality: attributionHealth.quality,
+      observationStart: current.metaFrom,
+      observationEnd: current.metaTo,
+    });
+    if (attributionGap) recommendations.push(attributionGap);
+
     for (const behavior of storefrontEvidence) {
       const results =
         behavior.dimension === 'STORE'
@@ -366,6 +395,10 @@ export class IntelligenceService {
         shopifyCommerceUsable,
         mappingCoverage: productResult.mappingCoverage,
         costCoverage: this.overallCostCoverage(productResult.products),
+        attributionQuality: attributionHealth.quality,
+        metaTouchedSessions: attributionHealth.metaTouchedSessions,
+        firstPartyMetaPurchaseJourneys: attributionHealth.metaLinkedPurchaseSessions,
+        providerPurchases,
       },
       recommendations: contextualRecommendations
         .map((recommendation) => ({ ...recommendation, priority: priority(recommendation) }))
@@ -642,4 +675,5 @@ export const intelligenceService = new IntelligenceService(
   new IntelligenceCommerceHealthReadRepository(),
   new CreativeVideoRetentionService(),
   new IntelligenceAdSetReadRepository(),
+  new IntelligenceAttributionHealthReadRepository(),
 );
