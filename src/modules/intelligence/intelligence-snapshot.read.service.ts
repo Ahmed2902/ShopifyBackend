@@ -22,6 +22,14 @@ function priority(recommendation: RecommendationDraft) {
   return recommendation.impactScore * recommendation.confidenceScore * recommendation.urgencyScore;
 }
 
+function dayStart(value: string) {
+  return new Date(`${value}T00:00:00.000Z`);
+}
+
+function dayEnd(value: string) {
+  return new Date(`${value}T23:59:59.999Z`);
+}
+
 /**
  * Shared cache/coalescing boundary for the expensive deterministic snapshot.
  *
@@ -89,10 +97,10 @@ export class IntelligenceSnapshotReadService {
         currency: commerce.currency,
         classificationCoverageCurrent: commerce.commerce.current.orders > 0 ? currentKnown / commerce.commerce.current.orders : 0,
         classificationCoverageComparison: commerce.commerce.comparison.orders > 0 ? comparisonKnown / commerce.commerce.comparison.orders : 0,
-        observationStart: commerce.window.current.instantFrom,
-        observationEnd: commerce.window.current.instantTo,
-        comparisonStart: commerce.window.comparison.instantFrom,
-        comparisonEnd: commerce.window.comparison.instantTo,
+        observationStart: dayStart(commerce.window.current.from),
+        observationEnd: dayEnd(commerce.window.current.to),
+        comparisonStart: dayStart(commerce.window.comparison.from),
+        comparisonEnd: dayEnd(commerce.window.comparison.to),
       };
       for (const result of [
         refundDeteriorationRule(evidence),
@@ -106,8 +114,8 @@ export class IntelligenceSnapshotReadService {
     const mapping = mappingCoverageDegradedRule({
       mappingCoverage: snapshot.value.evidence.mappingCoverage,
       metaRows: snapshot.value.evidence.metaRows,
-      observationStart: new Date(`${snapshot.value.windows.product.from}T00:00:00.000Z`),
-      observationEnd: new Date(`${snapshot.value.windows.product.to}T23:59:59.999Z`),
+      observationStart: dayStart(snapshot.value.windows.product.from),
+      observationEnd: dayEnd(snapshot.value.windows.product.to),
     });
     if (mapping) extra.push(mapping);
 
