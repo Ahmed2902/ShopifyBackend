@@ -2,6 +2,10 @@ import type { CreativeVideoRetention } from '../analytics/creative-video-retenti
 import type { CreativeEvidence, RecommendationDraft } from './intelligence.types.js';
 
 const RULE_VERSION = '1';
+const INVALID_COMPARISON_CODES = new Set([
+  'COMPARISON_INSUFFICIENT_PLAYS',
+  'COMPARISON_INCONSISTENT_PROVIDER_DATA',
+]);
 
 function pointChange(current: number | null, comparison: number | null): number | null {
   if (current === null || comparison === null) return null;
@@ -17,6 +21,11 @@ export function videoRetentionDeteriorationRule(
   const current = retention.current;
   const comparison = retention.comparison;
   if (!current || !comparison) return null;
+
+  const comparisonInvalid =
+    comparison.plays < retention.minimumDiagnosticPlays ||
+    retention.limitations.some((limitation) => INVALID_COMPARISON_CODES.has(limitation.code));
+  if (comparisonInvalid) return null;
 
   const hookPoints = pointChange(current.rates.to25, comparison.rates.to25);
   const completionPoints = pointChange(current.rates.completion, comparison.rates.completion);
