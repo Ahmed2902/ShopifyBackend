@@ -96,6 +96,7 @@ export interface SharedExposureEvidence {
 
 export type RecommendationCategory =
   | 'CAMPAIGN_EFFICIENCY'
+  | 'PAID_EFFICIENCY'
   | 'CREATIVE_FATIGUE'
   | 'UNDEREXPOSED_PRODUCT'
   | 'PAID_COMMERCE_MISMATCH'
