@@ -66,14 +66,6 @@ const envSchema = z.object({
   META_STATE_SECRET: z.string().min(32),
   META_INITIAL_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(365).default(365),
   META_REFRESH_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(365).default(35),
-  // Development must use a dedicated Meta sandbox user/account. Production never consumes these
-  // values; they are intentionally separate from the merchant OAuth credentials above.
-  META_SANDBOX_ACCESS_TOKEN: z.string().min(1).optional(),
-  META_SANDBOX_AD_ACCOUNT_ID: z.string().min(1).optional(),
-  META_SANDBOX_API_VERSION: z
-    .string()
-    .regex(/^v\d+\.\d+$/)
-    .optional(),
   TIKTOK_APP_ID: z.string().default(''),
   TIKTOK_APP_SECRET: z.string().default(''),
   TIKTOK_SCOPES: z.string().default(''),
@@ -114,15 +106,6 @@ if (parsedEnv.NODE_ENV === 'production') {
   }
   if (isLoopbackUrl(parsedEnv.SHOPIFY_REDIRECT_URI)) {
     throw new Error('SHOPIFY_REDIRECT_URI must be a public callback URL in production');
-  }
-}
-
-if (parsedEnv.NODE_ENV === 'development') {
-  if (!parsedEnv.META_SANDBOX_ACCESS_TOKEN) {
-    throw new Error('META_SANDBOX_ACCESS_TOKEN is required in development');
-  }
-  if (!parsedEnv.META_SANDBOX_AD_ACCOUNT_ID) {
-    throw new Error('META_SANDBOX_AD_ACCOUNT_ID is required in development');
   }
 }
 
