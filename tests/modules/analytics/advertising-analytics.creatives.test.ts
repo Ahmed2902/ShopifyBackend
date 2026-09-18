@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AdvertisingAnalyticsReadRepository } from '../../../src/modules/analytics/advertising-analytics.read.repository.js';
+import type { AdvertisingEntityAnalyticsReadRepository } from '../../../src/modules/analytics/advertising-entity-analytics.read.repository.js';
 import { AdvertisingAnalyticsService } from '../../../src/modules/analytics/advertising-analytics.service.js';
 import type { AnalyticsRepository } from '../../../src/modules/analytics/analytics.repository.js';
 import type { CreativeAdvertisingReadRepository } from '../../../src/modules/analytics/creative-advertising.read.repository.js';
@@ -82,22 +83,39 @@ function build() {
   const creativeReadRepository = {
     getRows: vi.fn().mockResolvedValue([metricRow('creative-old')]),
   } as unknown as CreativeAdvertisingReadRepository;
+  const entityReadRepository = {
+    getAggregateRows: vi.fn().mockResolvedValue([
+      {
+        period: 'CURRENT',
+        entityId: 'creative-old',
+        accountCurrency: 'USD',
+        spend: 50,
+        impressions: 1_000,
+        clicks: 100,
+        purchases: 2,
+        purchaseValue: 150,
+        weightedFrequency: 1_200,
+      },
+    ]),
+  } as unknown as AdvertisingEntityAnalyticsReadRepository;
 
   return {
     repository,
     creativeReadRepository,
+    entityReadRepository,
     service: new AdvertisingAnalyticsService(
       repository,
       readRepository,
       videoRetentionService,
       creativeReadRepository,
+      entityReadRepository,
     ),
   };
 }
 
 describe('AdvertisingAnalyticsService creative snapshot metrics', () => {
-  it('keeps creative list spend and outcomes bound to the immutable insight snapshot', async () => {
-    const { repository, creativeReadRepository, service } = build();
+  it('keeps creative list spend and outcomes bound to the immutable insight snapshot aggregate', async () => {
+    const { repository, creativeReadRepository, entityReadRepository, service } = build();
 
     const result = await service.creatives(store as never, windows, 1, 50);
 
@@ -106,13 +124,15 @@ describe('AdvertisingAnalyticsService creative snapshot metrics', () => {
     expect(result.items[1]?.entity.id).toBe('creative-new');
     expect(result.items[1]?.current.spend).toBe(0);
     expect(repository.getMetaRows).not.toHaveBeenCalled();
-    expect(creativeReadRepository.getRows).toHaveBeenCalledWith(expect.objectContaining({
-      creativeIds: ['creative-old', 'creative-new'],
+    expect(creativeReadRepository.getRows).not.toHaveBeenCalled();
+    expect(entityReadRepository.getAggregateRows).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'CREATIVE',
+      entityIds: ['creative-old', 'creative-new'],
     }));
   });
 
   it('uses snapshot-bound rows for creative detail and daily metrics', async () => {
-    const { repository, creativeReadRepository, service } = build();
+    const { repository, creativeReadRepository, entityReadRepository, service } = build();
 
     const result = await service.creative(store as never, windows, 'creative-old');
 
@@ -121,6 +141,7 @@ describe('AdvertisingAnalyticsService creative snapshot metrics', () => {
     expect(result.daily[0]).toMatchObject({ date: '2026-09-02', spend: 50 });
     expect(result.attributionSettings).toEqual(['7d_click_1d_view']);
     expect(repository.getMetaRows).not.toHaveBeenCalled();
+    expect(entityReadRepository.getAggregateRows).not.toHaveBeenCalled();
     expect(creativeReadRepository.getRows).toHaveBeenCalledWith(expect.objectContaining({
       creativeIds: ['creative-old'],
     }));
