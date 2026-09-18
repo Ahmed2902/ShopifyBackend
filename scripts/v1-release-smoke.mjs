@@ -34,7 +34,11 @@ const results = [];
 await check('API liveness', '/health/live', { auth: false });
 await check('API readiness', '/health/ready', { auth: false });
 
-const billing = await check('Billing state', `/v1/stores/${storeId}/billing`);
+const billing = options.refreshBilling
+  ? await check('Billing provider refresh', `/v1/stores/${storeId}/billing/refresh`, {
+      method: 'POST',
+    })
+  : await check('Billing state', `/v1/stores/${storeId}/billing`);
 assert(billing.body?.accessActive === true, 'Billing access is not active');
 
 const billingPortal = await check('Billing portal', `/v1/stores/${storeId}/billing/portal`);
@@ -55,12 +59,6 @@ if (expectations.shopifyBilling) {
     typeof billingPortal.body?.url === 'string' && billingPortal.body.url.length > 0,
     'Shopify pricing portal URL is missing',
   );
-}
-
-if (options.refreshBilling) {
-  await check('Billing provider refresh', `/v1/stores/${storeId}/billing/refresh`, {
-    method: 'POST',
-  });
 }
 
 const pixelStatus = await check('Stride Pixel status', `/v1/stores/${storeId}/pixel/status`);
