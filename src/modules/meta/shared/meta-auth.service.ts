@@ -98,32 +98,6 @@ export class MetaAuthService {
       throw error;
     }
 
-    if (env.NODE_ENV === 'development') {
-      // Development must never reuse a merchant/production Meta token or account. The sandbox
-      // credentials are dedicated to local testing and the configured sandbox account becomes the
-      // only selected ad account for all Meta Ads reads/writes in this environment.
-      const sandboxAccessToken = env.META_SANDBOX_ACCESS_TOKEN;
-      const sandboxAdAccountId = env.META_SANDBOX_AD_ACCOUNT_ID;
-      if (!sandboxAccessToken || !sandboxAdAccountId) {
-        throw new AppError(
-          'Meta sandbox credentials are required in development',
-          500,
-          'META_SANDBOX_NOT_CONFIGURED',
-        );
-      }
-
-      return {
-        storeId,
-        connectionId: connection.id,
-        accessToken: sandboxAccessToken,
-        apiVersion: env.META_SANDBOX_API_VERSION ?? env.META_API_VERSION,
-        scopes: connection.scopes,
-        metaBusinessId: null,
-        selectedAdAccountIds: [sandboxAdAccountId],
-        selectedCatalogIds: [],
-      };
-    }
-
     if (
       connection.tokenExpiresAt &&
       connection.tokenExpiresAt.getTime() <= Date.now() + TOKEN_EXPIRY_SKEW_MS
