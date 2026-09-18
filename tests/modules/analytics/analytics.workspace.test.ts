@@ -1,11 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AdvertisingAnalyticsReadRepository } from '../../../src/modules/analytics/advertising-analytics.read.repository.js';
 import type { AnalyticsRepository } from '../../../src/modules/analytics/analytics.repository.js';
+
+const getEntityAggregateRows = vi.hoisted(() => vi.fn());
+vi.mock('../../../src/modules/analytics/advertising-entity-analytics.read.repository.js', () => ({
+  AdvertisingEntityAnalyticsReadRepository: class {
+    getAggregateRows = getEntityAggregateRows;
+  },
+}));
+
 import { AnalyticsWorkspace } from '../../../src/modules/analytics/analytics.workspace.js';
 
 const storeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const campaignId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const now = new Date('2026-09-03T12:00:00.000Z');
+getEntityAggregateRows.mockResolvedValue([]);
 
 function storeContext(
   inventoryIntelligenceMode = 'DISABLED',
@@ -241,7 +250,9 @@ describe('AnalyticsWorkspace', () => {
     expect(result.attributionSettings).toEqual(['7d_click_1d_view']);
   });
 
-  it('bounds campaign insight reads to the entities on the requested page', async () => {
+  it('bounds campaign aggregate reads to the entities on the requested page', async () => {
+    getEntityAggregateRows.mockClear();
+    getEntityAggregateRows.mockResolvedValue([]);
     const repository = buildRepository({
       getCampaignsPage: vi.fn().mockResolvedValue({
         total: 1,
@@ -271,13 +282,17 @@ describe('AnalyticsWorkspace', () => {
     );
 
     expect(result.items).toHaveLength(1);
-    expect(repository.getMetaRows).toHaveBeenCalledWith(
+    expect(repository.getMetaRows).not.toHaveBeenCalled();
+    expect(getEntityAggregateRows).toHaveBeenCalledWith(expect.objectContaining({
       storeId,
-      ['act_101'],
-      expect.any(Date),
-      expect.any(Date),
-      { campaignIds: [campaignId] },
-    );
+      selectedAccountIds: ['act_101'],
+      entityIds: [campaignId],
+      kind: 'CAMPAIGN',
+      currentFrom: expect.any(Date),
+      currentTo: expect.any(Date),
+      comparisonFrom: expect.any(Date),
+      comparisonTo: expect.any(Date),
+    }));
   });
 
   it('labels collection analytics as current-membership applied to historical order cohorts', async () => {
