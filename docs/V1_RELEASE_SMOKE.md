@@ -9,6 +9,9 @@ The default run is read-only and verifies:
 - API liveness and PostgreSQL-backed readiness;
 - authenticated billing state and the billing portal contract;
 - Stride Pixel installation/status and operational health endpoints;
+- storefront behavior analytics and recent Pixel sessions;
+- first-party attribution sources and Meta-touch evidence;
+- advanced attribution paths/mapping evidence when the current plan includes that entitlement;
 - Meta connection/configuration state;
 - fresh Analytics Dashboard composition;
 - fresh 30-day Business Brief composition;
@@ -36,9 +39,12 @@ Once the corresponding provider pieces are configured, turn on strict expectatio
 $env:EXPECT_SHOPIFY_BILLING="true"
 $env:EXPECT_PIXEL_ACTIVE="true"
 $env:EXPECT_META_CONNECTED="true"
+$env:EXPECT_LINKED_PURCHASE_SESSION="true"
 $env:EXPECT_MIN_MAPPING_COVERAGE="0.50"
 npm run smoke:v1-release
 ```
+
+`EXPECT_LINKED_PURCHASE_SESSION=true` filters recent sessions to checkout-completed journeys and requires at least one to be linked to a non-test, non-cancelled Shopify order. Enable it **after** performing a real storefront checkout and giving the worker/reconciliation path a chance to process the order.
 
 `EXPECT_MIN_MAPPING_COVERAGE` accepts a decimal from `0` to `1`. Only set a minimum after the test store actually has usable real Meta ads and deterministic mapping evidence. Do not invent a passing threshold for an empty sandbox account.
 
@@ -101,7 +107,14 @@ page view
 → Shopify order ingestion/reconciliation
 ```
 
-Confirm the session becomes linked to the real Shopify order. Checkout-complete browser evidence alone must never become commerce revenue truth.
+Then run with:
+
+```powershell
+$env:EXPECT_LINKED_PURCHASE_SESSION="true"
+npm run smoke:v1-release
+```
+
+The run must find a checkout-completed session whose `orderLinkStatus` is `LINKED` and whose Shopify order is neither test nor cancelled. Checkout-complete browser evidence alone must never become commerce revenue truth.
 
 ### Product × Ads
 
@@ -122,6 +135,7 @@ Treat these as release blockers until explained:
 - billing access is unexpectedly inactive;
 - strict Shopify billing expectation is enabled but provider verification is not Shopify-backed;
 - strict Pixel expectation is enabled but installation is not `ACTIVE` or lacks a Shopify Web Pixel ID;
+- linked-purchase expectation is enabled but no real checkout-completed session reconciles to a valid Shopify order;
 - fresh dashboard/report/intelligence reads fail;
 - intelligence response lacks recommendation or data-quality contracts;
 - a configured mapping minimum is not met;
