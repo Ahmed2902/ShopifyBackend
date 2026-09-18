@@ -108,23 +108,28 @@ if (expectations.linkedPurchaseSession) {
 
 const attributionSources = await check(
   'Pixel attribution sources',
-  `/v1/stores/${storeId}/pixel/attribution/sources?days=30`,
+  `/v1/stores/${storeId}/pixel/attribution/sources?days=30&page=1&limit=20`,
 );
 const attributionMetaAds = await check(
   'Pixel Meta attribution',
-  `/v1/stores/${storeId}/pixel/attribution/meta-ads?days=30`,
+  `/v1/stores/${storeId}/pixel/attribution/meta-ads?days=30&page=1&limit=20`,
 );
 
 let attributionPaths = null;
-let mappingEvidence = null;
+let productMappingEvidence = null;
+let collectionMappingEvidence = null;
 if (billing.body?.entitlements?.advancedAttribution === true) {
   attributionPaths = await check(
     'Advanced attribution paths',
-    `/v1/stores/${storeId}/pixel/attribution/paths?days=30`,
+    `/v1/stores/${storeId}/pixel/attribution/paths?days=30&page=1&limit=20`,
   );
-  mappingEvidence = await check(
-    'Pixel mapping evidence',
-    `/v1/stores/${storeId}/pixel/attribution/mapping-evidence?days=30`,
+  productMappingEvidence = await check(
+    'Pixel product mapping evidence',
+    `/v1/stores/${storeId}/pixel/attribution/mapping-evidence?days=30&page=1&limit=20&targetType=PRODUCT`,
+  );
+  collectionMappingEvidence = await check(
+    'Pixel collection mapping evidence',
+    `/v1/stores/${storeId}/pixel/attribution/mapping-evidence?days=30&page=1&limit=20&targetType=COLLECTION`,
   );
 } else {
   results.push({
@@ -204,7 +209,8 @@ printSummary({
   attributionSources,
   attributionMetaAds,
   attributionPaths,
-  mappingEvidence,
+  productMappingEvidence,
+  collectionMappingEvidence,
   metaStatus,
   intelligence,
   mappings,
