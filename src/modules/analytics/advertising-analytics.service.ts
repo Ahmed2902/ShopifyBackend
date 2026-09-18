@@ -24,7 +24,6 @@ import { CreativeAdvertisingReadRepository } from './creative-advertising.read.r
 import { CreativeVideoRetentionService } from './creative-video-retention.service.js';
 
 type StoreContext = NonNullable<Awaited<ReturnType<AnalyticsRepository['getStoreContext']>>>;
-type MetaRow = Awaited<ReturnType<AnalyticsRepository['getMetaRows']>>[number];
 type CreativeMetaRow = Awaited<ReturnType<CreativeAdvertisingReadRepository['getRows']>>[number];
 
 type MetaKind = 'CAMPAIGN' | 'ADSET' | 'AD';
