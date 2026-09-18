@@ -95,12 +95,17 @@ export class ProductLeaderboardService {
           )
         );
       });
-    const validCurrent = rankedIds.map((productId) => current.get(productId) ?? emptyProductMetrics());
-    const validComparison = rankedIds.map(
-      (productId) => comparison.get(productId) ?? emptyProductMetrics(),
+    const rankedIdSet = new Set(rankedIds);
+    const currentTotals = totalProductMetrics(
+      [...current.entries()]
+        .filter(([productId]) => rankedIdSet.has(productId))
+        .map(([, metrics]) => metrics),
     );
-    const currentTotals = totalProductMetrics(validCurrent);
-    const comparisonTotals = totalProductMetrics(validComparison);
+    const comparisonTotals = totalProductMetrics(
+      [...comparison.entries()]
+        .filter(([productId]) => rankedIdSet.has(productId))
+        .map(([, metrics]) => metrics),
+    );
 
     return {
       window: windowResponse(windows),
