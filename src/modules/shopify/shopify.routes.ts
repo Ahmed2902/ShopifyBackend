@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireRole, requireStoreMembership } from '../../middleware/store.middleware.js';
 import { requireActiveSubscription } from '../billing/billing.middleware.js';
+import { shopifyCollectionController } from './collection/shopify-collection.controller.js';
 import { shopifyPrivacyController } from './privacy/shopify-privacy.controller.js';
 import { shopifyReadController } from './read/shopify-read.controller.js';
 import { shopifyController } from './shopify.controller.js';
@@ -40,6 +41,7 @@ shopifyStoreRouter.get('/locations', shopifyReadController.locations);
 shopifyStoreRouter.get('/orders', shopifyReadController.orders);
 shopifyStoreRouter.get('/orders/:orderId', shopifyReadController.order);
 
+shopifyStoreRouter.post('/collections', ownerOrAdmin, shopifyCollectionController.create);
 shopifyStoreRouter.post('/sync', ownerOrAdmin, shopifyController.sync);
 shopifyStoreRouter.post('/orders/backfill', ownerOrAdmin, shopifyController.startOrderBackfill);
 shopifyStoreRouter.get('/orders/backfill/:syncRunId', ownerOrAdmin, shopifyController.getOrderBackfill);
