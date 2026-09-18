@@ -58,13 +58,90 @@ function lifecycleStorageUnavailable(error: unknown): boolean {
   return code === 'P2021' || code === 'P2022';
 }
 
+function entityKey(type: RecommendationDraft['entityType'], id: string) {
+  return `${type}:${id}`;
+}
+
+async function loadEntityNames(storeId: string, recommendations: RankedRecommendation[]) {
+  const ids = {
+    campaigns: new Set<string>(),
+    adSets: new Set<string>(),
+    ads: new Set<string>(),
+    creatives: new Set<string>(),
+    products: new Set<string>(),
+    collections: new Set<string>(),
+  };
+
+  for (const recommendation of recommendations) {
+    if (!recommendation.entityId || recommendation.entityName) continue;
+    if (recommendation.entityType === 'CAMPAIGN') ids.campaigns.add(recommendation.entityId);
+    else if (recommendation.entityType === 'AD_SET') ids.adSets.add(recommendation.entityId);
+    else if (recommendation.entityType === 'AD') ids.ads.add(recommendation.entityId);
+    else if (recommendation.entityType === 'CREATIVE') ids.creatives.add(recommendation.entityId);
+    else if (recommendation.entityType === 'PRODUCT') ids.products.add(recommendation.entityId);
+    else if (recommendation.entityType === 'COLLECTION') ids.collections.add(recommendation.entityId);
+  }
+
+  const [campaigns, adSets, ads, creatives, products, collections] = await Promise.all([
+    ids.campaigns.size
+      ? prisma.metaCampaign.findMany({
+          where: { id: { in: [...ids.campaigns] }, adAccount: { storeId } },
+          select: { id: true, name: true },
+        })
+      : Promise.resolve([]),
+    ids.adSets.size
+      ? prisma.metaAdSet.findMany({
+          where: { id: { in: [...ids.adSets] }, adAccount: { storeId } },
+          select: { id: true, name: true },
+        })
+      : Promise.resolve([]),
+    ids.ads.size
+      ? prisma.metaAd.findMany({
+          where: { id: { in: [...ids.ads] }, adAccount: { storeId } },
+          select: { id: true, name: true },
+        })
+      : Promise.resolve([]),
+    ids.creatives.size
+      ? prisma.metaCreative.findMany({
+          where: { id: { in: [...ids.creatives] }, adAccount: { storeId } },
+          select: { id: true, name: true, title: true },
+        })
+      : Promise.resolve([]),
+    ids.products.size
+      ? prisma.product.findMany({
+          where: { id: { in: [...ids.products] }, storeId, deletedAt: null },
+          select: { id: true, title: true },
+        })
+      : Promise.resolve([]),
+    ids.collections.size
+      ? prisma.collection.findMany({
+          where: { id: { in: [...ids.collections] }, storeId, deletedAt: null },
+          select: { id: true, title: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const names = new Map<string, string>();
+  for (const item of campaigns) names.set(entityKey('CAMPAIGN', item.id), item.name);
+  for (const item of adSets) names.set(entityKey('AD_SET', item.id), item.name);
+  for (const item of ads) names.set(entityKey('AD', item.id), item.name);
+  for (const item of creatives) {
+    names.set(entityKey('CREATIVE', item.id), item.title ?? item.name ?? `Creative ${item.id}`);
+  }
+  for (const item of products) names.set(entityKey('PRODUCT', item.id), item.title);
+  for (const item of collections) names.set(entityKey('COLLECTION', item.id), item.title);
+  return names;
+}
+
 function decorateRecommendation(
   recommendation: RankedRecommendation,
-  lifecycle?: { state: RecommendationLifecycleState; updatedAt: Date } | null,
+  lifecycle: { state: RecommendationLifecycleState; updatedAt: Date } | null | undefined,
+  entityName: string | null,
 ) {
   const occurrenceKey = recommendationOccurrenceKey(recommendation);
   return {
     ...recommendation,
+    entityName: recommendation.entityName ?? entityName,
     ...recommendationDecision(recommendation),
     occurrenceKey,
     lifecycleState: lifecycle?.state ?? ('OPEN' as const),
@@ -75,6 +152,7 @@ function decorateRecommendation(
 export class RecommendationLifecycleService {
   async attach(storeId: string, recommendations: RankedRecommendation[]) {
     const occurrenceKeys = recommendations.map(recommendationOccurrenceKey);
+    const entityNamesPromise = loadEntityNames(storeId, recommendations);
     let stored: Array<{
       occurrenceKey: string;
       state: RecommendationLifecycleState;
@@ -96,11 +174,15 @@ export class RecommendationLifecycleService {
       }
     }
 
+    const entityNames = await entityNamesPromise;
     const storedByKey = new Map(stored.map((item) => [item.occurrenceKey, item]));
     return recommendations.map((recommendation) =>
       decorateRecommendation(
         recommendation,
         storedByKey.get(recommendationOccurrenceKey(recommendation)) ?? null,
+        recommendation.entityId
+          ? entityNames.get(entityKey(recommendation.entityType, recommendation.entityId)) ?? null
+          : null,
       ),
     );
   }
