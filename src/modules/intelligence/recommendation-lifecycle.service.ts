@@ -52,29 +52,57 @@ function transitionTimestamps(state: RecommendationLifecycleState, now: Date) {
   }
 }
 
+function lifecycleStorageUnavailable(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = 'code' in error ? String(error.code) : '';
+  return code === 'P2021' || code === 'P2022';
+}
+
+function decorateRecommendation(
+  recommendation: RankedRecommendation,
+  lifecycle?: { state: RecommendationLifecycleState; updatedAt: Date } | null,
+) {
+  const occurrenceKey = recommendationOccurrenceKey(recommendation);
+  return {
+    ...recommendation,
+    ...recommendationDecision(recommendation),
+    occurrenceKey,
+    lifecycleState: lifecycle?.state ?? ('OPEN' as const),
+    lifecycleUpdatedAt: lifecycle?.updatedAt ?? null,
+  };
+}
+
 export class RecommendationLifecycleService {
   async attach(storeId: string, recommendations: RankedRecommendation[]) {
     const occurrenceKeys = recommendations.map(recommendationOccurrenceKey);
-    const stored =
-      occurrenceKeys.length === 0
-        ? []
-        : await prisma.recommendationLifecycle.findMany({
-            where: { storeId, occurrenceKey: { in: occurrenceKeys } },
-            select: { occurrenceKey: true, state: true, updatedAt: true },
-          });
-    const storedByKey = new Map(stored.map((item) => [item.occurrenceKey, item]));
+    let stored: Array<{
+      occurrenceKey: string;
+      state: RecommendationLifecycleState;
+      updatedAt: Date;
+    }> = [];
 
-    return recommendations.map((recommendation) => {
-      const occurrenceKey = recommendationOccurrenceKey(recommendation);
-      const lifecycle = storedByKey.get(occurrenceKey);
-      return {
-        ...recommendation,
-        ...recommendationDecision(recommendation),
-        occurrenceKey,
-        lifecycleState: lifecycle?.state ?? ('OPEN' as const),
-        lifecycleUpdatedAt: lifecycle?.updatedAt ?? null,
-      };
-    });
+    if (occurrenceKeys.length > 0) {
+      try {
+        stored = await prisma.recommendationLifecycle.findMany({
+          where: { storeId, occurrenceKey: { in: occurrenceKeys } },
+          select: { occurrenceKey: true, state: true, updatedAt: true },
+        });
+      } catch (error) {
+        // Lifecycle persistence is secondary state. A developer database that has not yet
+        // applied the lifecycle migration must not make the deterministic decision feed 500.
+        // We still surface the recommendations as OPEN; writes fail explicitly below until
+        // the migration is applied.
+        if (!lifecycleStorageUnavailable(error)) throw error;
+      }
+    }
+
+    const storedByKey = new Map(stored.map((item) => [item.occurrenceKey, item]));
+    return recommendations.map((recommendation) =>
+      decorateRecommendation(
+        recommendation,
+        storedByKey.get(recommendationOccurrenceKey(recommendation)) ?? null,
+      ),
+    );
   }
 
   async setState(
@@ -97,20 +125,31 @@ export class RecommendationLifecycleService {
     const now = new Date();
     const timestamps = transitionTimestamps(state, now);
 
-    return prisma.recommendationLifecycle.upsert({
-      where: { storeId_occurrenceKey: { storeId, occurrenceKey } },
-      create: { storeId, occurrenceKey, state, ...timestamps },
-      update: { state, ...timestamps },
-      select: {
-        occurrenceKey: true,
-        state: true,
-        reviewedAt: true,
-        dismissedAt: true,
-        resolvedAt: true,
-        reopenedAt: true,
-        updatedAt: true,
-      },
-    });
+    try {
+      return await prisma.recommendationLifecycle.upsert({
+        where: { storeId_occurrenceKey: { storeId, occurrenceKey } },
+        create: { storeId, occurrenceKey, state, ...timestamps },
+        update: { state, ...timestamps },
+        select: {
+          occurrenceKey: true,
+          state: true,
+          reviewedAt: true,
+          dismissedAt: true,
+          resolvedAt: true,
+          reopenedAt: true,
+          updatedAt: true,
+        },
+      });
+    } catch (error) {
+      if (lifecycleStorageUnavailable(error)) {
+        throw new AppError(
+          'Recommendation lifecycle storage is not available. Apply the latest database migrations and retry.',
+          503,
+          'RECOMMENDATION_LIFECYCLE_UNAVAILABLE',
+        );
+      }
+      throw error;
+    }
   }
 }
 
