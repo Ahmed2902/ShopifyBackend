@@ -71,21 +71,24 @@ Inspect:
 - sessions/journey explorer
 - attribution sources/exact Meta ad/path evidence
 
-## 5. Meta Marketing API sandbox/development testing
+## 5. Meta connected-account fixture testing
 
-1. In Meta for Developers, open the existing Stride app and ensure Marketing API is configured.
-2. Treat **app mode** and **Sandbox Ad Account** as separate safety controls. Use only the Sandbox Ad Account for this fixture. Meta currently rejects app-created ad creatives from a Development-mode app with code `100` / subcode `1885183`, so the app must be switched to **Live/Public** before Step 8 can create creatives/ads. The sandbox account still prevents these fixtures from becoming a real merchant delivery test.
-3. Verify the app has the permissions/features required by the current Stride path. Read-only analytics requires `ads_read`; the optional tracking mutation path requires `ads_management` when enabled.
-4. In Marketing API tools, create/select a Sandbox Ad Account if that option is available for the app.
-5. Ensure the Facebook account/test user used for OAuth has access to the sandbox/test ad account.
-6. Connect Meta through Stride OAuth and verify the returned account list is restricted to accessible accounts.
-7. Select the sandbox/test account in Stride and run sync.
-8. Run `npm run dev:meta-sandbox-seed:dry-run`, inspect the exact target, then run `npm run dev:meta-sandbox-seed:write`. Do not pass `--confirm-sandbox-write` through `npm run`; the dedicated write script avoids npm treating it as CLI configuration. Create enough campaign/ad-set/ad/creative hierarchy to validate entity sync, mapping, status, creative identity, selected-account scoping, and optional tracking-parameter mutation.
-9. Verify disconnect/reconnect, expired/revoked token behavior, account selection changes, and permission denial.
+Use a real Stride Meta OAuth connection and selected ad-account identity, but do not depend on that account having delivered ads.
 
-Important: code `100` / subcode `1885183` is an app-mode gate. Changing the image URL/hash, Page ID, or creative payload does not fix that condition. Switch the Meta app to Live/Public, keep the confirmed target pointed at the Sandbox Ad Account, and rerun the idempotent seeder; already-created PAUSED hierarchy is reused.
+1. Connect Meta through the normal Stride OAuth flow.
+2. Verify accessible account discovery and select the intended test ad account.
+3. Confirm the selected account exists locally as `MetaAdAccount` and has no provider-imported hierarchy you need to preserve.
+4. Configure the local fixture target with the exact Stride store UUID and selected Meta account ID.
+5. Preview the target with `npm run dev:meta-fixtures`.
+6. Seed normalized hierarchy/mappings/60-day daily ad Insights with `npm run dev:meta-fixtures:write`.
+7. Exercise Advertising, campaign/ad-set/ad/creative views, video retention, Product x Ads, mappings, currency isolation, Business Brief, data quality, confidence, and the deterministic Intelligence snapshot.
+8. Confirm the fixture namespace is obvious (`stride_fixture_`) and no UI/report claims those rows prove live Meta fetching.
+9. Remove only generated data with `npm run dev:meta-fixtures:cleanup` when finished.
+10. Separately verify disconnect/reconnect, expired/revoked token behavior, account selection changes, and permission denial through the normal Meta OAuth connection.
 
-Important: a Meta sandbox may not provide realistic delivered-ad insights/spend. If sandbox insights are empty, use it to validate auth/entity/mutation safety and later use a controlled real ad account with minimal spend for true insights/ROAS ingestion.
+The fixture writer never calls Meta write APIs and never modifies the real Meta connection/account identity. The only provider behavior not proven by this stage is reading hierarchy/Insights from the Meta API itself.
+
+Before the first production merchant is considered fully validated, connect a consenting account with actual delivery history and run hierarchy + Insights sync. Compare a sample of campaigns, ads, spend, impressions, clicks, purchases, purchase value and attribution settings against Meta Ads Manager. That is the provider-fetch proof gate.
 
 ## 6. Cross-source truth validation
 
@@ -154,7 +157,8 @@ Do not call V1 production-ready until:
 - full Shopify journey succeeds
 - delayed-order recovery succeeds
 - Pixel health/backlogs recover to healthy
-- Meta sandbox/dev auth/entity flow succeeds
+- connected-account Meta fixture flows succeed across analytics/intelligence/mapping surfaces
+- real Meta hierarchy + Insights fetching is validated against at least one consenting merchant account with delivery history
 - at least one source-resolution/mapping scenario is validated
 - auth email retry succeeds after a simulated provider failure
 - privacy webhooks are validated
