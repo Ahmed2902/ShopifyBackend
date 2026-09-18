@@ -11,6 +11,8 @@ export function recommendationDecision(
 
   switch (recommendation.ruleId) {
     case 'campaign_efficiency_deterioration':
+    case 'adset_efficiency_deterioration':
+    case 'ad_efficiency_deterioration':
       decisionAction = recommendation.severity === 'HIGH' ? 'REDUCE' : 'HOLD';
       decisionMessage =
         recommendation.severity === 'HIGH'
@@ -21,6 +23,11 @@ export function recommendationDecision(
       decisionAction = 'TEST';
       decisionMessage =
         'Prepare and test a replacement creative before the current fatigue symptoms worsen.';
+      break;
+    case 'video_retention_deterioration':
+      decisionAction = 'TEST';
+      decisionMessage =
+        'Prepare and test a replacement creative before the current retention deterioration worsens.';
       break;
     case 'underexposed_commerce_winner':
       decisionAction = 'TEST';
@@ -42,6 +49,24 @@ export function recommendationDecision(
       decisionAction = 'HOLD';
       decisionMessage =
         'Hold aggressive paid scaling until replenishment or inventory protection is confirmed.';
+      break;
+    case 'inventory_runway_risk':
+      decisionAction = 'HOLD';
+      decisionMessage =
+        'Hold aggressive demand growth until replenishment or inventory protection is confirmed.';
+      break;
+    case 'cart_abandonment_deterioration':
+    case 'checkout_abandonment_deterioration':
+    case 'view_to_cart_deterioration':
+    case 'storefront_conversion_deterioration':
+    case 'product_conversion_deterioration':
+    case 'high_traffic_low_conversion_product':
+    case 'landing_page_quality_deterioration':
+    case 'refund_rate_deterioration':
+    case 'discount_dependency_deterioration':
+    case 'returning_customer_deterioration':
+    case 'mapping_coverage_degraded':
+      decisionAction = 'INVESTIGATE';
       break;
     default:
       decisionAction = 'INVESTIGATE';
