@@ -1,19 +1,17 @@
 # Intelligence scenario harness
 
-This harness exists to validate Stride V1's deterministic decision engine against deliberately constructed scenarios without pretending that Meta Sandbox can generate real delivery history.
+This harness validates Stride V1's deterministic decision engine against deliberately constructed scenarios without claiming that generated delivery history came from Meta.
 
 ## Why the harness is split in two
 
-Meta Sandbox is useful for provider integration behavior: OAuth, account discovery, hierarchy sync, currencies/time zones, creatives, ads, and tracking parameters. Sandbox ads do not produce realistic spend, impressions, purchases, ROAS, CPA, or fatigue history.
+Recommendation validation uses normalized synthetic evidence shaped exactly like the evidence that Stride's repositories produce after Meta + Shopify synchronization. Service-level scenario tests then pass that evidence through the real metric builders, data-quality layer, rules, ranking, and deterministic decision mapper.
 
-Recommendation validation therefore uses normalized synthetic evidence shaped exactly like the evidence that Stride's repositories produce after Meta + Shopify synchronization. Service-level scenario tests then pass that evidence through the real metric builders, data-quality layer, rules, ranking, and deterministic decision mapper.
+For end-to-end application testing, the local fixture writer can insert realistic Meta hierarchy and daily Insights rows beneath a real connected Stride store/ad-account identity. This exercises the same database reads, analytics, mappings, reports and intelligence paths as provider-imported rows while leaving the actual Meta API fetch path explicitly unvalidated.
 
 This gives us two independent proofs:
 
-1. Meta Sandbox proves provider plumbing.
-2. The scenario harness proves deterministic decision semantics.
-
-A real merchant ad account with historical delivery remains the final pre-production validation of both layers together.
+1. Connected-account database fixtures prove normalized analytics/intelligence behavior without mutating Meta.
+2. A consenting merchant account with real delivery history proves OAuth, discovery and provider fetching against real Meta data.
 
 ## Commands
 
@@ -116,64 +114,46 @@ Inventory recommendations only exist when the merchant has explicitly selected t
 
 Shared-ad recommendations keep Meta spend at the ad level. They intentionally add `SHARED_SPEND_NOT_ALLOCATED` rather than inventing product-level spend allocation.
 
-## Meta Sandbox seeding
+## Connected-account Meta fixtures
 
-The Meta seeder is a provider-plumbing utility, not a recommendation-data generator. It creates only PAUSED campaigns, ad sets and ads, and it must never be pointed at a live merchant account. Existing campaigns, ad sets, creatives, and ads are discovered across all Graph API pages before the seeder decides whether anything is missing, so rerunning it does not create duplicates merely because an existing object sits beyond the first page.
+`meta-fixture-seed.ts` creates normalized database fixtures only. It never calls Meta and never writes campaigns, ads, creatives or budgets back to a provider account.
 
-### Development-mode Meta apps
-
-A Meta app in Development mode can create sandbox campaigns and ad sets but Meta may reject a new ad creative built with `object_story_spec` with error subcode `1885183`. That happens because `object_story_spec` asks Meta to create an unpublished Page post, and Meta requires the app to be public for that operation.
-
-For sandbox testing, the seeder supports the safer workaround: reuse an already-published Facebook Page post through `object_story_id`. The creative still gets its own `url_tags`, so Stride can create and audit the deliberate MISSING / PARTIAL / EXACT tracking states without making the Meta app Live early.
-
-1. Create a normal published post on the configured Facebook Page. Prefer a post containing a clickable destination link.
-2. Make sure the sandbox token has `pages_read_engagement` for that Page.
-3. List recent Page posts:
+The fixture target must already be a real connected Stride store and a selected `MetaAdAccount`. Preview the exact target before any write:
 
 ```bash
-npm run dev:meta-sandbox-posts
+META_FIXTURE_STORE_ID=<store-uuid> \
+META_FIXTURE_AD_ACCOUNT_ID=act_123456789 \
+META_FIXTURE_CONFIRM_AD_ACCOUNT_ID=act_123456789 \
+npm run dev:meta-fixtures
 ```
 
-4. Copy a returned Graph post ID such as `1171948176011994_123456789` into:
+Write realistic fixture hierarchy, mappings and 60 days of daily ad-level Insights:
 
 ```bash
-META_SANDBOX_OBJECT_STORY_ID=1171948176011994_123456789
+npm run dev:meta-fixtures:write
 ```
 
-The seeder validates that the story ID has `<PAGE_ID>_<POST_ID>` form and belongs to `META_SANDBOX_PAGE_ID`. While this variable is present it takes precedence over image-based story creation.
-
-If the app is later Live and allowed to create ad stories, `META_SANDBOX_IMAGE_HASH` and `META_SANDBOX_IMAGE_URL` remain supported. A public image URL is sent directly as `object_story_spec.link_data.picture`; the seeder never needs to call `/{ad-account}/adimages`, which some sandbox/test apps reject with OAuthException code 3.
-
-Always inspect the target first with the read-only dry run:
+Remove only generated rows:
 
 ```bash
-npm run dev:meta-sandbox-seed:dry-run
+npm run dev:meta-fixtures:cleanup
 ```
 
-Write mode requires two independent confirmations: an acknowledgement embedded in the dedicated npm script and a second copy of the exact target account ID. The confirmation ID accepts either the numeric form or the same `act_` form as the target.
+Every generated provider-facing ID and Insight key begins with `stride_fixture_`. Fixture rows also carry `rawJson.fixture=true` where the model supports raw provider evidence. Cleanup targets that namespace and leaves the real `MetaConnection`, real `MetaAdAccount`, Shopify data, and future provider-imported Meta rows untouched.
 
-Example for a Development-mode app:
+The fixture scenarios include healthy growth, severe efficiency deterioration, video creative fatigue/retention decay, shared multi-product exposure, deliberately missing mapping coverage, product mappings and collection mappings. This is intended to exercise the application after provider ingestion, not to claim the provider fetch itself was tested.
 
-```bash
-META_SANDBOX_AD_ACCOUNT_ID=act_123456789
-META_SANDBOX_CONFIRM_AD_ACCOUNT_ID=act_123456789
-META_SANDBOX_PAGE_ID=1171948176011994
-META_SANDBOX_OBJECT_STORY_ID=1171948176011994_123456789
-npm run dev:meta-sandbox-seed:write
-```
-
-Use the dedicated `:write` script instead of passing `--confirm-sandbox-write` through npm manually. This avoids npm treating the custom flag as npm configuration and printing the `Unknown cli config` warning.
-
-The command refuses write mode when `NODE_ENV=production`, refuses writes without the internal confirmation, and refuses writes unless `META_SANDBOX_CONFIRM_AD_ACCOUNT_ID` exactly matches the normalized target account ID. Use the dry run first every time and never use production merchant credentials.
+The writer refuses `NODE_ENV=production`, requires the exact store/account target, and requires a second confirmation account ID before `--write` or `--cleanup` can execute.
 
 ## Safety / environment rules
 
-Scenario code must not:
+Scenario and fixture code must not:
 
 - contain Meta access tokens;
-- run against production data automatically;
+- call Meta write APIs;
 - mutate live merchant ad accounts;
 - claim synthetic evidence came from Meta;
+- overwrite the real Meta connection/account identity;
 - turn deterministic V1 output into AI/ML claims.
 
-Use Meta Sandbox for write-path integration tests and synthetic repository evidence for recommendation scenarios until a consenting real test merchant account is available.
+Use connected-account database fixtures for normalized V1 testing. Validate Meta OAuth/discovery/fetching separately against a consenting merchant account with real delivery history.
