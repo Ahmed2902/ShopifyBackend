@@ -217,6 +217,8 @@ export interface RecommendationDraft {
   entityType: RecommendationEntityType;
   entityId: string | null;
   externalEntityId: string | null;
+  /** Human-readable entity label used by clients to distinguish same-rule findings. */
+  entityName?: string | null;
   title: string;
   summary: string;
   suggestedAction: string;
