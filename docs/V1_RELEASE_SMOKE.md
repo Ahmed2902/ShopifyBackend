@@ -46,7 +46,7 @@ npm run smoke:v1-release
 
 `EXPECT_LINKED_PURCHASE_SESSION=true` filters recent sessions to checkout-completed journeys and requires at least one to be linked to a non-test, non-cancelled Shopify order. Enable it **after** performing a real storefront checkout and giving the worker/reconciliation path a chance to process the order.
 
-`EXPECT_MIN_MAPPING_COVERAGE` accepts a decimal from `0` to `1`. Only set a minimum after the test store actually has usable real Meta ads and deterministic mapping evidence. Do not invent a passing threshold for an empty sandbox account.
+`EXPECT_MIN_MAPPING_COVERAGE` accepts a decimal from `0` to `1`. Only set a minimum after the test store has usable ads or explicitly generated connected-account fixture evidence. Do not invent a passing threshold for an account with no mapping-capable data.
 
 ## Optional live checks
 
@@ -118,14 +118,14 @@ The run must find a checkout-completed session whose `orderLinkStatus` is `LINKE
 
 ### Product × Ads
 
-Use an account with actual usable ads. Confirm:
+Use real provider-delivered ads for final provider-fetch validation, or connected-account database fixtures for application-level validation. Confirm:
 
 - exact deterministic mappings appear when evidence supports them;
 - shared/multi-product exposure stays shared and is not equally allocated;
 - low mapping coverage is visible as data-quality evidence;
 - mapping-dependent decisions remain suppressed or lower-confidence when evidence is insufficient.
 
-Meta sandbox limitations are not a reason to manufacture mapping evidence.
+Database fixtures validate normalized Stride behavior only. They do not prove that the Meta API hierarchy/Insights fetch path works against a real merchant account.
 
 ## Interpreting failures
 
