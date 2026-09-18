@@ -350,6 +350,7 @@ describe('IntelligenceService scenario harness', () => {
     expect(rules).toEqual(
       new Set([
         'campaign_efficiency_deterioration',
+        'ad_efficiency_deterioration',
         'creative_fatigue_symptoms',
         'underexposed_commerce_winner',
         'paid_commerce_exposure_mismatch',
@@ -367,7 +368,18 @@ describe('IntelligenceService scenario harness', () => {
       costCoverage: 1,
       shopifyCommerceUsable: true,
     });
-    expect(snapshot.dataQuality.every((item) => item.status === 'HEALTHY')).toBe(true);
+    expect(snapshot.dataQuality).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'PIXEL_NOT_ACTIVE', status: 'WARNING' }),
+      ]),
+    );
+    expect(snapshot.dataQuality).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'SHOPIFY_CONNECTION_BLOCKED' }),
+        expect.objectContaining({ code: 'META_CONNECTION_BLOCKED' }),
+        expect.objectContaining({ code: 'META_INSIGHTS_MISSING' }),
+      ]),
+    );
 
     const decisions = Object.fromEntries(
       snapshot.recommendations.map((recommendation) => [
@@ -377,6 +389,10 @@ describe('IntelligenceService scenario harness', () => {
     );
     expect(decisions).toMatchObject({
       campaign_efficiency_deterioration: {
+        decisionAction: 'REDUCE',
+        decisionConfidence: 'HIGH',
+      },
+      ad_efficiency_deterioration: {
         decisionAction: 'REDUCE',
         decisionConfidence: 'HIGH',
       },

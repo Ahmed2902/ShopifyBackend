@@ -2,6 +2,7 @@ import { Prisma } from '../../generated/prisma/client.js';
 import type {
   ConnectionStatus,
   InventoryIntelligenceMode,
+  PixelInstallationStatus,
   SyncStatus,
 } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
@@ -22,16 +23,17 @@ type RawIntelligenceContext = {
   meta_status: ConnectionStatus | null;
   selected_ad_account_ids: string[] | null;
   latest_meta_insight_synced_at: Date | null;
+  pixel_status: PixelInstallationStatus | null;
+  pixel_last_event_at: Date | null;
+  pixel_rollup_last_at: Date | null;
+  pixel_rollup_error: string | null;
 };
 
 /**
  * Compact tenant/integration metadata required to plan one intelligence snapshot.
  *
  * One SQL round trip returns Store settings, provider connection state, latest successful Shopify
- * order-history readiness and latest completed Meta Insights sync. SyncRun is the authoritative
- * freshness boundary: it is marked SUCCEEDED only after all selected accounts in that run finish,
- * while MAX(MetaInsightDaily.syncedAt) can scan a large fact table and can misrepresent a successful
- * zero-write refresh as stale.
+ * order-history readiness, latest completed Meta Insights sync and storefront behavior freshness.
  */
 export class IntelligenceContextReadRepository {
   async getContext(storeId: string) {
@@ -51,7 +53,11 @@ export class IntelligenceContextReadRepository {
         history."finishedAt" AS history_finished_at,
         meta."status" AS meta_status,
         meta."selectedAdAccountIds" AS selected_ad_account_ids,
-        meta_freshness.latest_synced_at AS latest_meta_insight_synced_at
+        meta_freshness.latest_synced_at AS latest_meta_insight_synced_at,
+        pixel."status" AS pixel_status,
+        pixel."lastEventAt" AS pixel_last_event_at,
+        behavior_rollup."lastRolledUpAt" AS pixel_rollup_last_at,
+        behavior_rollup."lastError" AS pixel_rollup_error
       FROM "Store" store
       LEFT JOIN "ShopifyConnection" shopify ON shopify."storeId" = store."id"
       LEFT JOIN LATERAL (
@@ -79,6 +85,8 @@ export class IntelligenceContextReadRepository {
         ORDER BY sync."createdAt" DESC
         LIMIT 1
       ) meta_freshness ON TRUE
+      LEFT JOIN "PixelInstallation" pixel ON pixel."storeId" = store."id"
+      LEFT JOIN "StorefrontBehaviorRollupState" behavior_rollup ON behavior_rollup."storeId" = store."id"
       WHERE store."id" = ${storeId}::uuid
       LIMIT 1
     `);
@@ -117,6 +125,17 @@ export class IntelligenceContextReadRepository {
               finishedAt: row.history_finished_at,
             },
       latestMetaInsightSyncedAt: row.latest_meta_insight_synced_at,
+      pixelInstallation:
+        row.pixel_status === null
+          ? null
+          : {
+              status: row.pixel_status,
+              lastEventAt: row.pixel_last_event_at,
+            },
+      storefrontBehaviorRollup: {
+        lastRolledUpAt: row.pixel_rollup_last_at,
+        lastError: row.pixel_rollup_error,
+      },
     };
   }
 }
