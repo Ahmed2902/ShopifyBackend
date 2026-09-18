@@ -6,6 +6,7 @@ import { adExposureController } from './ad-exposure.controller.js';
 import { analyticsController } from './analytics.controller.js';
 import { dashboardController } from './dashboard.controller.js';
 import { performanceAnalyticsController } from './performance-analytics.controller.js';
+import { productLeaderboardController } from './product-leaderboard.controller.js';
 import { reportController } from './report.controller.js';
 import { tiktokMonitorController } from './tiktok-monitor.controller.js';
 
@@ -17,6 +18,7 @@ analyticsRouter.get('/report', reportController.read);
 analyticsRouter.get('/overview', analyticsController.overview);
 analyticsRouter.get('/performance', performanceAnalyticsController.daily);
 analyticsRouter.get('/products', analyticsController.products);
+analyticsRouter.get('/products/leaderboard', productLeaderboardController.read);
 analyticsRouter.get('/products/:productId', analyticsController.product);
 analyticsRouter.get('/product-ads', analyticsController.productAds);
 analyticsRouter.get('/product-ads/:productId', analyticsController.productAdsProduct);
