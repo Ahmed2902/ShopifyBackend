@@ -1,7 +1,6 @@
 import { AppError } from '../../errors/app-error.js';
 import {
   aggregateMeta,
-  aggregateMetaBy,
   emptyMetaMetrics,
   metricChanges,
   type MetaMetricRow,
@@ -12,6 +11,12 @@ import {
   type AdvertisingOverviewAggregateRow,
   type AdvertisingOverviewPeriod,
 } from './advertising-analytics.read.repository.js';
+import {
+  AdvertisingEntityAnalyticsReadRepository,
+  type AdvertisingEntityAggregateRow,
+  type AdvertisingEntityKind,
+  type AdvertisingEntityPeriod,
+} from './advertising-entity-analytics.read.repository.js';
 import type { AnalyticsRepository } from './analytics.repository.js';
 import { inRange, pagination, splitMeta, windowResponse } from './analytics.shared.js';
 import type { AnalyticsWindows } from './analytics.shared.js';
@@ -24,12 +29,6 @@ type CreativeMetaRow = Awaited<ReturnType<CreativeAdvertisingReadRepository['get
 
 type MetaKind = 'CAMPAIGN' | 'ADSET' | 'AD';
 type MetaFilter = Parameters<AnalyticsRepository['getMetaRows']>[4];
-
-function selector(kind: MetaKind): (row: MetaRow) => string | null {
-  if (kind === 'CAMPAIGN') return (row) => row.campaign?.id ?? null;
-  if (kind === 'ADSET') return (row) => row.adSet?.id ?? null;
-  return (row) => row.ad?.id ?? null;
-}
 
 function filter(kind: MetaKind, ids: string[]): MetaFilter {
   if (kind === 'CAMPAIGN') return { campaignIds: ids };
@@ -61,7 +60,14 @@ function splitCreative(rows: CreativeMetaRow[], windows: AnalyticsWindows) {
   };
 }
 
-function overviewMetrics(row: AdvertisingOverviewAggregateRow | undefined): MetaMetrics {
+function aggregateMetrics(row: {
+  spend: number;
+  impressions: number;
+  clicks: number;
+  purchases: number;
+  purchaseValue: number;
+  weightedFrequency: number;
+} | undefined): MetaMetrics {
   if (!row) return emptyMetaMetrics();
   return {
     spend: row.spend,
@@ -79,6 +85,18 @@ function overviewMetrics(row: AdvertisingOverviewAggregateRow | undefined): Meta
   };
 }
 
+function overviewMetrics(row: AdvertisingOverviewAggregateRow | undefined): MetaMetrics {
+  return aggregateMetrics(row);
+}
+
+function entityRow(
+  rows: AdvertisingEntityAggregateRow[],
+  entityId: string,
+  period: AdvertisingEntityPeriod,
+) {
+  return rows.find((row) => row.entityId === entityId && row.period === period);
+}
+
 export class AdvertisingAnalyticsService {
   constructor(
     private readonly repository: AnalyticsRepository,
@@ -88,6 +106,8 @@ export class AdvertisingAnalyticsService {
       new CreativeVideoRetentionService(),
     private readonly creativeReadRepository: CreativeAdvertisingReadRepository =
       new CreativeAdvertisingReadRepository(),
+    private readonly entityReadRepository: AdvertisingEntityAnalyticsReadRepository =
+      new AdvertisingEntityAnalyticsReadRepository(),
   ) {}
 
   async overview(store: StoreContext, windows: AnalyticsWindows) {
@@ -211,12 +231,15 @@ export class AdvertisingAnalyticsService {
     const page = await this.repository.getCreativesPage(store.id, selected, pageNumber, limit);
     const creativeIds = page.items.map((item) => item.id);
     const [rows, videoRetention] = await Promise.all([
-      this.creativeReadRepository.getRows({
+      this.entityReadRepository.getAggregateRows({
         storeId: store.id,
         selectedAccountIds: selected,
-        creativeIds,
-        from: windows.comparison.metaFrom,
-        to: windows.current.metaTo,
+        entityIds: creativeIds,
+        kind: 'CREATIVE',
+        currentFrom: windows.current.metaFrom,
+        currentTo: windows.current.metaTo,
+        comparisonFrom: windows.comparison.metaFrom,
+        comparisonTo: windows.comparison.metaTo,
       }),
       this.videoRetentionService.forCreatives({
         storeId: store.id,
@@ -225,18 +248,17 @@ export class AdvertisingAnalyticsService {
         creatives: page.items,
       }),
     ]);
-    const split = splitCreative(rows, windows);
-    const current = aggregateMetaBy(split.current, (row) => row.creativeIdSnapshot);
-    const comparison = aggregateMetaBy(split.comparison, (row) => row.creativeIdSnapshot);
 
     return {
       window: windowResponse(windows),
       pagination: pagination(pageNumber, limit, page.total),
       items: page.items.map((entity) => {
-        const currentMetrics = current.get(entity.id) ?? emptyMetaMetrics();
-        const comparisonMetrics = comparison.get(entity.id) ?? emptyMetaMetrics();
+        const currentMetrics = aggregateMetrics(entityRow(rows, entity.id, 'CURRENT'));
+        const comparisonMetrics = aggregateMetrics(entityRow(rows, entity.id, 'COMPARISON'));
         const currency =
-          rows.find((row) => row.creativeIdSnapshot === entity.id)?.accountCurrency ?? null;
+          entityRow(rows, entity.id, 'CURRENT')?.accountCurrency ??
+          entityRow(rows, entity.id, 'COMPARISON')?.accountCurrency ??
+          null;
         return {
           entity,
           currency,
@@ -253,31 +275,33 @@ export class AdvertisingAnalyticsService {
     store: StoreContext,
     windows: AnalyticsWindows,
     page: { total: number; items: T[] },
-    kind: MetaKind,
+    kind: AdvertisingEntityKind,
     pageNumber: number,
     limit: number,
   ) {
     const ids = page.items.map((item) => item.id);
     const selected = store.metaConnection?.selectedAdAccountIds ?? [];
-    const rows = await this.repository.getMetaRows(
-      store.id,
-      selected,
-      windows.comparison.metaFrom,
-      windows.current.metaTo,
-      filter(kind, ids),
-    );
-    const split = splitMeta(rows, windows);
-    const entityId = selector(kind);
-    const current = aggregateMetaBy(split.current, entityId);
-    const comparison = aggregateMetaBy(split.comparison, entityId);
+    const rows = await this.entityReadRepository.getAggregateRows({
+      storeId: store.id,
+      selectedAccountIds: selected,
+      entityIds: ids,
+      kind,
+      currentFrom: windows.current.metaFrom,
+      currentTo: windows.current.metaTo,
+      comparisonFrom: windows.comparison.metaFrom,
+      comparisonTo: windows.comparison.metaTo,
+    });
 
     return {
       window: windowResponse(windows),
       pagination: pagination(pageNumber, limit, page.total),
       items: page.items.map((entity) => {
-        const currentMetrics = current.get(entity.id) ?? emptyMetaMetrics();
-        const comparisonMetrics = comparison.get(entity.id) ?? emptyMetaMetrics();
-        const currency = rows.find((row) => entityId(row) === entity.id)?.accountCurrency ?? null;
+        const currentMetrics = aggregateMetrics(entityRow(rows, entity.id, 'CURRENT'));
+        const comparisonMetrics = aggregateMetrics(entityRow(rows, entity.id, 'COMPARISON'));
+        const currency =
+          entityRow(rows, entity.id, 'CURRENT')?.accountCurrency ??
+          entityRow(rows, entity.id, 'COMPARISON')?.accountCurrency ??
+          null;
         return {
           entity,
           currency,
