@@ -9,6 +9,7 @@ const expectations = {
   shopifyBilling: booleanEnv('EXPECT_SHOPIFY_BILLING'),
   pixelActive: booleanEnv('EXPECT_PIXEL_ACTIVE'),
   metaConnected: booleanEnv('EXPECT_META_CONNECTED'),
+  linkedPurchaseSession: booleanEnv('EXPECT_LINKED_PURCHASE_SESSION'),
   minimumMappingCoverage: optionalNumberEnv('EXPECT_MIN_MAPPING_COVERAGE'),
 };
 
@@ -38,7 +39,10 @@ assert(billing.body?.accessActive === true, 'Billing access is not active');
 
 const billingPortal = await check('Billing portal', `/v1/stores/${storeId}/billing/portal`);
 if (expectations.shopifyBilling) {
-  assert(billing.body?.provider === 'SHOPIFY', `Expected Shopify billing, received ${String(billing.body?.provider)}`);
+  assert(
+    billing.body?.provider === 'SHOPIFY',
+    `Expected Shopify billing, received ${String(billing.body?.provider)}`,
+  );
   assert(
     billing.body?.verification?.source === 'SHOPIFY_PARTNER_API',
     `Expected SHOPIFY_PARTNER_API verification, received ${String(billing.body?.verification?.source)}`,
@@ -47,21 +51,87 @@ if (expectations.shopifyBilling) {
     billingPortal.body?.mode === 'SHOPIFY_APP_PRICING',
     `Expected SHOPIFY_APP_PRICING portal, received ${String(billingPortal.body?.mode)}`,
   );
-  assert(typeof billingPortal.body?.url === 'string' && billingPortal.body.url.length > 0, 'Shopify pricing portal URL is missing');
+  assert(
+    typeof billingPortal.body?.url === 'string' && billingPortal.body.url.length > 0,
+    'Shopify pricing portal URL is missing',
+  );
 }
 
 if (options.refreshBilling) {
-  await check('Billing provider refresh', `/v1/stores/${storeId}/billing/refresh`, { method: 'POST' });
+  await check('Billing provider refresh', `/v1/stores/${storeId}/billing/refresh`, {
+    method: 'POST',
+  });
 }
 
 const pixelStatus = await check('Stride Pixel status', `/v1/stores/${storeId}/pixel/status`);
 const pixelHealth = await check('Stride Pixel health', `/v1/stores/${storeId}/pixel/health`);
 if (expectations.pixelActive) {
-  assert(pixelStatus.body?.status === 'ACTIVE', `Expected ACTIVE Pixel, received ${String(pixelStatus.body?.status)}`);
   assert(
-    typeof pixelStatus.body?.shopifyWebPixelId === 'string' && pixelStatus.body.shopifyWebPixelId.length > 0,
+    pixelStatus.body?.status === 'ACTIVE',
+    `Expected ACTIVE Pixel, received ${String(pixelStatus.body?.status)}`,
+  );
+  assert(
+    typeof pixelStatus.body?.shopifyWebPixelId === 'string' &&
+      pixelStatus.body.shopifyWebPixelId.length > 0,
     'ACTIVE Pixel is missing shopifyWebPixelId',
   );
+}
+
+const pixelBehavior = await check(
+  'Storefront behavior analytics',
+  `/v1/stores/${storeId}/pixel/analytics/overview?days=30`,
+);
+
+const sessionQuery = expectations.linkedPurchaseSession
+  ? '?page=1&limit=50&checkoutCompleted=true'
+  : '?page=1&limit=20';
+const pixelSessions = await check(
+  'Pixel session evidence',
+  `/v1/stores/${storeId}/pixel/sessions${sessionQuery}`,
+);
+assert(Array.isArray(pixelSessions.body?.items), 'Pixel sessions response is missing items[]');
+
+if (expectations.linkedPurchaseSession) {
+  const linked = pixelSessions.body.items.find(
+    (session) =>
+      session?.checkoutCompletedAt &&
+      session?.orderLinkStatus === 'LINKED' &&
+      session?.order &&
+      session.order.isTest === false &&
+      session.order.cancelledAt === null,
+  );
+  assert(
+    linked,
+    'No recent checkout-completed Pixel session is linked to a non-test, non-cancelled Shopify order',
+  );
+}
+
+const attributionSources = await check(
+  'Pixel attribution sources',
+  `/v1/stores/${storeId}/pixel/attribution/sources?days=30`,
+);
+const attributionMetaAds = await check(
+  'Pixel Meta attribution',
+  `/v1/stores/${storeId}/pixel/attribution/meta-ads?days=30`,
+);
+
+let attributionPaths = null;
+let mappingEvidence = null;
+if (billing.body?.entitlements?.advancedAttribution === true) {
+  attributionPaths = await check(
+    'Advanced attribution paths',
+    `/v1/stores/${storeId}/pixel/attribution/paths?days=30`,
+  );
+  mappingEvidence = await check(
+    'Pixel mapping evidence',
+    `/v1/stores/${storeId}/pixel/attribution/mapping-evidence?days=30`,
+  );
+} else {
+  results.push({
+    name: 'Advanced attribution endpoints',
+    ok: true,
+    note: 'Skipped because current plan does not include ADVANCED_ATTRIBUTION.',
+  });
 }
 
 const metaStatus = await check('Meta connection', `/v1/stores/${storeId}/integrations/meta/status`);
@@ -86,8 +156,14 @@ const intelligence = await check(
   'Intelligence snapshot (fresh)',
   `/v1/stores/${storeId}/intelligence/snapshot?fresh=true`,
 );
-assert(Array.isArray(intelligence.body?.recommendations), 'Intelligence snapshot is missing recommendations[]');
-assert(Array.isArray(intelligence.body?.dataQuality), 'Intelligence snapshot is missing dataQuality[]');
+assert(
+  Array.isArray(intelligence.body?.recommendations),
+  'Intelligence snapshot is missing recommendations[]',
+);
+assert(
+  Array.isArray(intelligence.body?.dataQuality),
+  'Intelligence snapshot is missing dataQuality[]',
+);
 
 const mappings = await check(
   'Product × Ads analytics',
@@ -118,7 +194,21 @@ if (options.sendAuthEmail) {
   });
 }
 
-printSummary({ billing, billingPortal, pixelStatus, pixelHealth, metaStatus, intelligence, mappings });
+printSummary({
+  billing,
+  billingPortal,
+  pixelStatus,
+  pixelHealth,
+  pixelBehavior,
+  pixelSessions,
+  attributionSources,
+  attributionMetaAds,
+  attributionPaths,
+  mappingEvidence,
+  metaStatus,
+  intelligence,
+  mappings,
+});
 
 async function check(name, path, input = {}) {
   const method = input.method ?? 'GET';
@@ -143,9 +233,7 @@ async function check(name, path, input = {}) {
     const durationMs = Date.now() - startedAt;
 
     if (!response.ok) {
-      throw new Error(
-        `${name} failed with HTTP ${response.status}: ${compactBody(body)}`,
-      );
+      throw new Error(`${name} failed with HTTP ${response.status}: ${compactBody(body)}`);
     }
 
     results.push({ name, ok: true, status: response.status, durationMs });
@@ -169,10 +257,17 @@ async function check(name, path, input = {}) {
 
 function printSummary(context) {
   const highPriority = Array.isArray(context.intelligence.body?.recommendations)
-    ? context.intelligence.body.recommendations.filter((item) => item?.severity === 'HIGH' || item?.severity === 'CRITICAL').length
+    ? context.intelligence.body.recommendations.filter(
+        (item) => item?.severity === 'HIGH' || item?.severity === 'CRITICAL',
+      ).length
     : null;
   const blockedQuality = Array.isArray(context.intelligence.body?.dataQuality)
     ? context.intelligence.body.dataQuality.filter((item) => item?.status === 'BLOCKED').length
+    : null;
+  const linkedPurchases = Array.isArray(context.pixelSessions.body?.items)
+    ? context.pixelSessions.body.items.filter(
+        (session) => session?.orderLinkStatus === 'LINKED' && session?.order?.isTest === false,
+      ).length
     : null;
 
   console.log('\nStride V1 release smoke summary');
@@ -191,16 +286,25 @@ function printSummary(context) {
   console.log(`- Billing access active: ${String(context.billing.body?.accessActive ?? 'unknown')}`);
   console.log(`- Billing portal mode: ${context.billingPortal.body?.mode ?? 'unknown'}`);
   console.log(`- Pixel status: ${context.pixelStatus.body?.status ?? 'unknown'}`);
-  console.log(`- Pixel last event: ${context.pixelStatus.body?.lastEventAt ?? context.pixelHealth.body?.lastEventAt ?? 'unknown'}`);
-  console.log(`- Meta connected/configured: ${String(context.metaStatus.body?.connected ?? false)}/${String(context.metaStatus.body?.configured ?? false)}`);
-  console.log(`- Intelligence findings: ${context.intelligence.body?.recommendations?.length ?? 'unknown'} (${highPriority ?? 'unknown'} high/critical)`);
+  console.log(
+    `- Pixel last event: ${context.pixelStatus.body?.lastEventAt ?? context.pixelHealth.body?.lastEventAt ?? 'unknown'}`,
+  );
+  console.log(`- Recent linked non-test purchase sessions: ${linkedPurchases ?? 'unknown'}`);
+  console.log(
+    `- Meta connected/configured: ${String(context.metaStatus.body?.connected ?? false)}/${String(context.metaStatus.body?.configured ?? false)}`,
+  );
+  console.log(
+    `- Intelligence findings: ${context.intelligence.body?.recommendations?.length ?? 'unknown'} (${highPriority ?? 'unknown'} high/critical)`,
+  );
   console.log(`- Blocked data-quality surfaces: ${blockedQuality ?? 'unknown'}`);
-  console.log(`- Product × Ads mapping coverage: ${formatPercent(context.mappings.body?.summary?.current?.mappingCoverage)}`);
+  console.log(
+    `- Product × Ads mapping coverage: ${formatPercent(context.mappings.body?.summary?.current?.mappingCoverage)}`,
+  );
 
   console.log('\nThis command validates API-visible release evidence. It does not replace:');
   console.log('- clicking the real Shopify hosted pricing flow and exercising subscribe/change/cancel;');
   console.log('- confirming a real auth email arrives and its link completes the browser flow;');
-  console.log('- completing a real storefront checkout and verifying later Shopify-order reconciliation;');
+  console.log('- performing the storefront checkout itself before enabling EXPECT_LINKED_PURCHASE_SESSION;');
   console.log('- validating Product × Ads against real ads when the connected provider account has usable ad data.');
 }
 
