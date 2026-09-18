@@ -1,4 +1,5 @@
 import { AppError } from '../../../errors/app-error.js';
+import { prisma } from '../../../lib/prisma.js';
 import { invalidateStoreDecisionCaches } from '../../../lib/store-decision-cache.js';
 import { ShopifyCatalogRepository } from '../catalog/shopify-catalog.repository.js';
 import { ShopifyRepository } from '../shopify.repository.js';
@@ -105,10 +106,28 @@ export class ShopifyCollectionService {
     }
 
     await this.catalogRepository.persistCollections(storeId, [collection.data]);
+    const localCollection = await prisma.collection.findUnique({
+      where: {
+        storeId_shopifyCollectionId: {
+          storeId,
+          shopifyCollectionId: collection.data.id,
+        },
+      },
+      select: { id: true },
+    });
+    if (!localCollection) {
+      throw new AppError(
+        'The collection was created in Shopify but Stride could not read the synchronized record.',
+        500,
+        'SHOPIFY_COLLECTION_LOCAL_SYNC_FAILED',
+      );
+    }
+
     await invalidateStoreDecisionCaches(storeId);
 
     return {
       collection: {
+        id: localCollection.id,
         shopifyCollectionId: collection.data.id,
         title: collection.data.title,
         handle: collection.data.handle ?? null,
