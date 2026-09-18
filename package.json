@@ -33,6 +33,8 @@
     "dev:meta-sandbox-seed:dry-run": "tsx scripts/meta-sandbox-seed.ts --dry-run",
     "dev:meta-sandbox-seed:write": "tsx scripts/meta-sandbox-seed.ts --confirm-sandbox-write",
     "perf:analytics": "node scripts/benchmark-analytics.mjs",
+    "smoke:v1-release": "node scripts/v1-release-smoke.mjs",
+    "smoke:v1-release:check": "node --check scripts/v1-release-smoke.mjs",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
     "db:logs": "docker compose logs -f postgres",
@@ -42,7 +44,7 @@
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:migrate:status": "prisma migrate status",
     "prisma:migrate:check": "prisma migrate diff --exit-code --from-config-datasource --to-schema prisma",
-    "ci": "npm run prisma:validate && npm run lint && npm run typecheck && npm run test"
+    "ci": "npm run prisma:validate && npm run lint && npm run typecheck && npm run test && npm run smoke:v1-release:check"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.0.0",
