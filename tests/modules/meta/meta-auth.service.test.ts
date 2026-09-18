@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { env } from '../../../src/config/env.js';
+import { encryptSecret } from '../../../src/modules/integrations/integration.utils.js';
 import type { MetaRepository } from '../../../src/modules/meta/meta.repository.js';
 import { MetaAuthService } from '../../../src/modules/meta/shared/meta-auth.service.js';
 import type { MetaApiService } from '../../../src/modules/meta/shared/meta-api.service.js';
@@ -51,9 +52,6 @@ function build(options?: { role?: 'OWNER' | 'ADMIN' | 'MEMBER'; scopes?: string[
 afterEach(() => {
   vi.restoreAllMocks();
   env.NODE_ENV = 'test';
-  env.META_SANDBOX_ACCESS_TOKEN = undefined;
-  env.META_SANDBOX_AD_ACCOUNT_ID = undefined;
-  env.META_SANDBOX_API_VERSION = undefined;
 });
 
 describe('MetaAuthService', () => {
@@ -110,7 +108,7 @@ describe('MetaAuthService', () => {
     expect(repository.upsertConnection).not.toHaveBeenCalled();
   });
 
-  it('routes development Meta API context to the configured sandbox account and token', async () => {
+  it('uses the stored merchant Meta connection in development', async () => {
     const { repository, service } = build();
     vi.mocked(repository.findConnectionForStore).mockResolvedValue({
       id: connectionId,
@@ -120,8 +118,8 @@ describe('MetaAuthService', () => {
       metaBusinessId: 'real-business-id',
       selectedAdAccountIds: ['act-real-account'],
       selectedCatalogIds: ['real-catalog-id'],
-      accessTokenCiphertext: 'real-token-ciphertext',
-      tokenExpiresAt: new Date(Date.now() - 60_000),
+      accessTokenCiphertext: encryptSecret('real-meta-token'),
+      tokenExpiresAt: new Date(Date.now() + 60 * 60_000),
       scopes: requestedScopes,
       apiVersion: 'v26.0',
       lastSyncedAt: null,
@@ -129,48 +127,18 @@ describe('MetaAuthService', () => {
     } as never);
 
     env.NODE_ENV = 'development';
-    env.META_SANDBOX_ACCESS_TOKEN = 'sandbox-token';
-    env.META_SANDBOX_AD_ACCOUNT_ID = 'act-sandbox-account';
-    env.META_SANDBOX_API_VERSION = 'v26.0';
 
     await expect(service.getApiContext(storeId)).resolves.toEqual({
       storeId,
       connectionId,
-      accessToken: 'sandbox-token',
+      accessToken: 'real-meta-token',
       apiVersion: 'v26.0',
       scopes: requestedScopes,
-      metaBusinessId: null,
-      selectedAdAccountIds: ['act-sandbox-account'],
-      selectedCatalogIds: [],
+      metaBusinessId: 'real-business-id',
+      selectedAdAccountIds: ['act-real-account'],
+      selectedCatalogIds: ['real-catalog-id'],
     });
     expect(repository.markConnectionReauthRequired).not.toHaveBeenCalled();
-  });
-
-  it('fails closed when development sandbox credentials are missing', async () => {
-    const { repository, service } = build();
-    vi.mocked(repository.findConnectionForStore).mockResolvedValue({
-      id: connectionId,
-      storeId,
-      status: 'ACTIVE',
-      metaUserId: 'meta-user-1',
-      metaBusinessId: null,
-      selectedAdAccountIds: ['act-real-account'],
-      selectedCatalogIds: [],
-      accessTokenCiphertext: 'real-token-ciphertext',
-      tokenExpiresAt: new Date(Date.now() + 60_000),
-      scopes: ['ads_read'],
-      apiVersion: 'v26.0',
-      lastSyncedAt: null,
-      adAccounts: [],
-    } as never);
-
-    env.NODE_ENV = 'development';
-    env.META_SANDBOX_ACCESS_TOKEN = undefined;
-    env.META_SANDBOX_AD_ACCOUNT_ID = undefined;
-
-    await expect(service.getApiContext(storeId)).rejects.toMatchObject({
-      code: 'META_SANDBOX_NOT_CONFIGURED',
-    });
   });
 
   it('marks an active stored connection for reauthorization when the base ads_read permission is missing', async () => {
