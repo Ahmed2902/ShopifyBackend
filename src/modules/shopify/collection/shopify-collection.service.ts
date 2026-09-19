@@ -153,6 +153,17 @@ export class ShopifyCollectionService {
       );
     }
 
+    const existingMemberships = await prisma.productCollection.findMany({
+      where: {
+        collectionId: collection.id,
+        productId: { in: products.map((product) => product.id) },
+      },
+      select: { productId: true },
+    });
+    const existingProductIds = new Set(existingMemberships.map((membership) => membership.productId));
+    const productsToAdd = products.filter((product) => !existingProductIds.has(product.id));
+    if (productsToAdd.length === 0) return { added: 0 };
+
     const accessToken = await this.authService.resolveAccessToken(
       store.myshopifyDomain,
       connection,
@@ -165,7 +176,7 @@ export class ShopifyCollectionService {
       query: COLLECTION_ADD_PRODUCTS_MUTATION,
       variables: {
         id: collection.shopifyCollectionId,
-        productIds: products.map((product) => product.shopifyProductId),
+        productIds: productsToAdd.map((product) => product.shopifyProductId),
       },
     });
 
@@ -180,7 +191,7 @@ export class ShopifyCollectionService {
     }
 
     await prisma.productCollection.createMany({
-      data: products.map((product) => ({
+      data: productsToAdd.map((product) => ({
         collectionId: collection.id,
         productId: product.id,
       })),
@@ -188,7 +199,7 @@ export class ShopifyCollectionService {
     });
     await invalidateStoreDecisionCaches(storeId);
 
-    return { added: products.length };
+    return { added: productsToAdd.length };
   }
 
   private async requireWritableStore(storeId: string) {
