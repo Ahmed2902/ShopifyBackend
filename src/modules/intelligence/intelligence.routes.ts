@@ -11,10 +11,16 @@ intelligenceRouter.use(requireAuth, requireStoreMembership, requireActiveSubscri
 
 intelligenceRouter.get('/snapshot', intelligenceController.snapshot);
 intelligenceRouter.get('/settings', intelligenceController.settings);
+intelligenceRouter.get('/settings/inventory-planning', intelligenceController.inventoryPlanning);
 intelligenceRouter.patch(
   '/settings/inventory',
   ownerOrAdmin,
   intelligenceController.updateInventoryMode,
+);
+intelligenceRouter.patch(
+  '/settings/inventory-planning',
+  ownerOrAdmin,
+  intelligenceController.updateInventoryPlanning,
 );
 intelligenceRouter.patch(
   '/recommendations/lifecycle',
