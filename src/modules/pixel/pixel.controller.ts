@@ -20,6 +20,29 @@ function collectorRejectionCode(error: unknown): string {
   return 'PIXEL_COLLECTOR_ERROR';
 }
 
+function collectorReachability(collectorUrl: string | null) {
+  if (!collectorUrl) {
+    return {
+      storefrontReachable: false,
+      warning: 'No Pixel collector URL is configured. Set APP_URL or PIXEL_COLLECTOR_URL before installing the Pixel.',
+    };
+  }
+  try {
+    const url = new URL(collectorUrl);
+    const localHost = ['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(url.hostname);
+    const privateIpv4 = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(url.hostname);
+    if (url.protocol !== 'https:' || localHost || privateIpv4) {
+      return {
+        storefrontReachable: false,
+        warning: 'Shopify storefront Web Pixels need a public HTTPS collector. Localhost, private-network and HTTP collector URLs cannot receive real storefront traffic.',
+      };
+    }
+    return { storefrontReachable: true, warning: null };
+  } catch {
+    return { storefrontReachable: false, warning: 'The configured Pixel collector URL is invalid.' };
+  }
+}
+
 export class PixelController {
   constructor(private readonly service: PixelService) {}
 
@@ -47,11 +70,23 @@ export class PixelController {
   };
 
   status = async (req: Request, res: Response) => {
-    res.status(200).json(await this.service.getStatus(req.context.storeId!));
+    const status = await this.service.getStatus(req.context.storeId!);
+    const reachability = collectorReachability(status.collectorUrl);
+    res.status(200).json({
+      ...status,
+      storefrontReachable: reachability.storefrontReachable,
+      collectorWarning: reachability.warning,
+    });
   };
 
   install = async (req: Request, res: Response) => {
-    res.status(200).json(await this.service.installShopifyPixel(req.context.storeId!));
+    const result = await this.service.installShopifyPixel(req.context.storeId!);
+    const reachability = collectorReachability(result.collectorUrl);
+    res.status(200).json({
+      ...result,
+      storefrontReachable: reachability.storefrontReachable,
+      collectorWarning: reachability.warning,
+    });
   };
 
   debugValidate = async (req: Request, res: Response) => {
