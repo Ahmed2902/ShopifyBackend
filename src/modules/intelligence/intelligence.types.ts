@@ -59,6 +59,8 @@ export interface ProductEvidence {
   stockAvailable: number | null;
   recentUnitsPerDay: number | null;
   daysCover: number | null;
+  restockLeadTimeDays: number;
+  lowStockThresholdUnits: number;
 }
 
 export interface SharedExposureProductEvidence {
@@ -81,6 +83,8 @@ export interface SharedExposureEvidence {
   sharedAdSpend: number;
   impressions: number;
   inventoryTrusted: boolean;
+  restockLeadTimeDays: number;
+  lowStockThresholdUnits: number;
   products: SharedExposureProductEvidence[];
   collectionMembershipTruncated: boolean;
   collections: Array<{
