@@ -24,9 +24,25 @@ const COLLECTION_CREATE_MUTATION = `#graphql
   }
 `;
 
+const COLLECTION_ADD_PRODUCTS_MUTATION = `#graphql
+  mutation StrideCollectionAddProducts($id: ID!, $productIds: [ID!]!) {
+    collectionAddProducts(id: $id, productIds: $productIds) {
+      collection { id }
+      userErrors { field message }
+    }
+  }
+`;
+
 type CollectionCreateResponse = {
   collectionCreate?: {
     collection?: unknown | null;
+    userErrors?: Array<{ field?: string[] | null; message: string }>;
+  } | null;
+};
+
+type CollectionAddProductsResponse = {
+  collectionAddProducts?: {
+    collection?: { id?: string | null } | null;
     userErrors?: Array<{ field?: string[] | null; message: string }>;
   } | null;
 };
@@ -50,7 +66,7 @@ export class ShopifyCollectionService {
     this.catalogRepository = input?.catalogRepository ?? new ShopifyCatalogRepository();
   }
 
-  async create(storeId: string, title: string) {
+  async create(storeId: string, title: string, productIds: string[] = []) {
     const store = await this.repository.findConnectionForSync(storeId);
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
     const connection = store.shopifyConnection;
@@ -71,6 +87,23 @@ export class ShopifyCollectionService {
         'SHOPIFY_COLLECTION_WRITE_SCOPE_REQUIRED',
       );
     }
+
+    const uniqueProductIds = [...new Set(productIds)];
+    const products = uniqueProductIds.length
+      ? await prisma.product.findMany({
+          where: { storeId, id: { in: uniqueProductIds }, deletedAt: null },
+          select: { id: true, shopifyProductId: true, title: true },
+        })
+      : [];
+    if (products.length !== uniqueProductIds.length) {
+      throw new AppError(
+        'One or more selected products do not belong to this store or are no longer available.',
+        422,
+        'SHOPIFY_COLLECTION_PRODUCTS_INVALID',
+      );
+    }
+    const productById = new Map(products.map((product) => [product.id, product]));
+    const shopifyProductIds = uniqueProductIds.map((id) => productById.get(id)!.shopifyProductId);
 
     const accessToken = await this.authService.resolveAccessToken(
       store.myshopifyDomain,
@@ -105,7 +138,43 @@ export class ShopifyCollectionService {
       );
     }
 
+    if (shopifyProductIds.length > 0) {
+      const addResponse = await this.apiService.requestAdminGraphql<CollectionAddProductsResponse>({
+        shop: store.myshopifyDomain,
+        accessToken,
+        apiVersion: connection.apiVersion,
+        connectionId: connection.id,
+        query: COLLECTION_ADD_PRODUCTS_MUTATION,
+        variables: { id: collection.data.id, productIds: shopifyProductIds },
+      });
+      const addErrors = addResponse.collectionAddProducts?.userErrors ?? [];
+      if (addErrors.length > 0) {
+        throw new AppError(
+          `The collection was created in Shopify, but the selected products could not be added: ${addErrors[0]?.message ?? 'Shopify rejected the membership update'}`,
+          422,
+          'SHOPIFY_COLLECTION_PRODUCTS_ADD_FAILED',
+          {
+            shopifyCollectionId: collection.data.id,
+            userErrors: addErrors.slice(0, 5),
+          },
+        );
+      }
+    }
+
     await this.catalogRepository.persistCollections(storeId, [collection.data]);
+    const membershipPersisted = await this.catalogRepository.replaceCollectionProducts(
+      storeId,
+      collection.data.id,
+      shopifyProductIds,
+    );
+    if (!membershipPersisted) {
+      throw new AppError(
+        'The collection was created in Shopify but Stride could not synchronize its selected products.',
+        500,
+        'SHOPIFY_COLLECTION_MEMBERSHIP_SYNC_FAILED',
+      );
+    }
+
     const localCollection = await prisma.collection.findUnique({
       where: {
         storeId_shopifyCollectionId: {
@@ -131,6 +200,7 @@ export class ShopifyCollectionService {
         shopifyCollectionId: collection.data.id,
         title: collection.data.title,
         handle: collection.data.handle ?? null,
+        productCount: shopifyProductIds.length,
       },
     };
   }
