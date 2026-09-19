@@ -45,12 +45,11 @@ export class ShopifyCollectionService {
   }) {
     this.repository = input?.repository ?? new ShopifyRepository();
     this.apiService = input?.apiService ?? new ShopifyApiService(this.repository);
-    this.authService =
-      input?.authService ?? new ShopifyAuthService(this.repository, this.apiService);
+    this.authService = input?.authService ?? new ShopifyAuthService(this.repository, this.apiService);
     this.catalogRepository = input?.catalogRepository ?? new ShopifyCatalogRepository();
   }
 
-  async create(storeId: string, title: string) {
+  async create(storeId: string, title: string, productIds: string[] = []) {
     const store = await this.repository.findConnectionForSync(storeId);
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
     const connection = store.shopifyConnection;
@@ -58,11 +57,7 @@ export class ShopifyCollectionService {
       throw new AppError('Shopify is not connected for this store', 409, 'SHOPIFY_NOT_CONNECTED');
     }
     if (connection.status !== 'ACTIVE') {
-      throw new AppError(
-        'Shopify connection requires merchant attention',
-        409,
-        'SHOPIFY_CONNECTION_INACTIVE',
-      );
+      throw new AppError('Shopify connection requires merchant attention', 409, 'SHOPIFY_CONNECTION_INACTIVE');
     }
     if (!connection.scopes.includes('write_products')) {
       throw new AppError(
@@ -72,17 +67,43 @@ export class ShopifyCollectionService {
       );
     }
 
-    const accessToken = await this.authService.resolveAccessToken(
-      store.myshopifyDomain,
-      connection,
-    );
+    const uniqueProductIds = [...new Set(productIds)];
+    const selectedProducts = uniqueProductIds.length
+      ? await prisma.product.findMany({
+          where: { id: { in: uniqueProductIds }, storeId, deletedAt: null },
+          select: { id: true, shopifyProductId: true, title: true },
+        })
+      : [];
+    if (selectedProducts.length !== uniqueProductIds.length) {
+      throw new AppError(
+        'One or more selected products are not available in this store.',
+        422,
+        'SHOPIFY_COLLECTION_PRODUCTS_INVALID',
+      );
+    }
+
+    const accessToken = await this.authService.resolveAccessToken(store.myshopifyDomain, connection);
+    const collectionInput: Record<string, unknown> = { title };
+    if (selectedProducts.length > 0) {
+      collectionInput.sources = [
+        {
+          source: {
+            title: `${title} products`,
+            inclusion: {
+              selections: selectedProducts.map((product) => ({ productId: product.shopifyProductId })),
+            },
+          },
+        },
+      ];
+    }
+
     const response = await this.apiService.requestAdminGraphql<CollectionCreateResponse>({
       shop: store.myshopifyDomain,
       accessToken,
       apiVersion: connection.apiVersion,
       connectionId: connection.id,
       query: COLLECTION_CREATE_MUTATION,
-      variables: { collection: { title } },
+      variables: { collection: collectionInput },
     });
 
     const result = response.collectionCreate;
@@ -123,6 +144,20 @@ export class ShopifyCollectionService {
       );
     }
 
+    if (selectedProducts.length > 0) {
+      await prisma.$transaction(async (tx) => {
+        await tx.productCollection.deleteMany({ where: { collectionId: localCollection.id } });
+        await tx.productCollection.createMany({
+          data: selectedProducts.map((product, index) => ({
+            collectionId: localCollection.id,
+            productId: product.id,
+            position: index + 1,
+          })),
+          skipDuplicates: true,
+        });
+      });
+    }
+
     await invalidateStoreDecisionCaches(storeId);
 
     return {
@@ -131,6 +166,7 @@ export class ShopifyCollectionService {
         shopifyCollectionId: collection.data.id,
         title: collection.data.title,
         handle: collection.data.handle ?? null,
+        productCount: selectedProducts.length,
       },
     };
   }
