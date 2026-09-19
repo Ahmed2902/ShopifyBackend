@@ -171,6 +171,8 @@ model Store {
   shopifyCreatedAt             DateTime?
   inventoryIntelligenceMode    InventoryIntelligenceMode @default(DISABLED)
   inventoryReviewedAt          DateTime?
+  inventoryRestockLeadTimeDays Int                       @default(14)
+  inventoryLowStockThreshold   Int                       @default(5)
   createdAt                    DateTime                  @default(now())
   updatedAt                    DateTime                  @updatedAt
 
