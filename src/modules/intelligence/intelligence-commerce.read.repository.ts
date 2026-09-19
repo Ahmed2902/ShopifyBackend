@@ -15,6 +15,8 @@ export interface IntelligenceCommerceEvidenceRow {
   refunds: number;
   cogs: number;
   costCoveredUnits: number;
+  restockLeadTimeDays: number;
+  lowStockThreshold: number;
 }
 
 export interface IntelligenceInventoryEvidenceRow {
@@ -37,6 +39,8 @@ type RawIntelligenceCommerceEvidenceRow = {
   refunds: Prisma.Decimal | string | number | null;
   cogs: Prisma.Decimal | string | number | null;
   cost_covered_units: bigint | number | null;
+  restock_lead_time_days: number;
+  low_stock_threshold: number;
 };
 
 type RawIntelligenceInventoryEvidenceRow = {
@@ -51,13 +55,7 @@ function numeric(value: Prisma.Decimal | string | number | bigint | null): numbe
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-/**
- * High-volume Shopify evidence reads for the deterministic intelligence engine.
- *
- * The rule layer needs product-level economics/depletion plus current available stock. PostgreSQL
- * resolves refunds, historical unit costs, and multi-location inventory before returning compact
- * product rows instead of complete line/refund/cost/inventory histories.
- */
+/** High-volume Shopify evidence reads for the deterministic intelligence engine. */
 export class IntelligenceCommerceReadRepository {
   async getProductEvidenceAggregates(input: {
     storeId: string;
@@ -67,9 +65,7 @@ export class IntelligenceCommerceReadRepository {
   }): Promise<IntelligenceCommerceEvidenceRow[]> {
     const rows = await prisma.$queryRaw<RawIntelligenceCommerceEvidenceRow[]>(Prisma.sql`
       WITH scoped_orders AS (
-        SELECT
-          o."id",
-          COALESCE(o."processedAt", o."shopifyCreatedAt") AS order_at
+        SELECT o."id", COALESCE(o."processedAt", o."shopifyCreatedAt") AS order_at
         FROM "Order" o
         WHERE o."storeId" = ${input.storeId}::uuid
           AND o."isTest" = FALSE
@@ -77,19 +73,12 @@ export class IntelligenceCommerceReadRepository {
           AND o."currencyCode" = ${input.currency}
           AND (
             o."processedAt" BETWEEN ${input.from} AND ${input.to}
-            OR (
-              o."processedAt" IS NULL
-              AND o."shopifyCreatedAt" BETWEEN ${input.from} AND ${input.to}
-            )
+            OR (o."processedAt" IS NULL AND o."shopifyCreatedAt" BETWEEN ${input.from} AND ${input.to})
           )
       ),
       scoped_lines AS (
         SELECT
-          li."id",
-          li."orderId",
-          li."productId",
-          li."variantId",
-          li."quantity",
+          li."id", li."orderId", li."productId", li."variantId", li."quantity",
           COALESCE(li."discountedTotal", 0) AS revenue,
           scoped.order_at,
           product."shopifyProductId" AS shopify_product_id,
@@ -130,6 +119,11 @@ export class IntelligenceCommerceReadRepository {
           ORDER BY cost."effectiveFrom" DESC
           LIMIT 1
         ) unit_cost ON TRUE
+      ),
+      store_settings AS (
+        SELECT "inventoryRestockLeadTimeDays", "inventoryLowStockThreshold"
+        FROM "Store"
+        WHERE "id" = ${input.storeId}::uuid
       )
       SELECT
         enriched."productId" AS product_id,
@@ -143,15 +137,12 @@ export class IntelligenceCommerceReadRepository {
         COALESCE(SUM(enriched.cogs_units), 0) AS cogs_units,
         COALESCE(SUM(enriched.revenue), 0) AS revenue,
         COALESCE(SUM(enriched.refunds), 0) AS refunds,
-        COALESCE(
-          SUM(enriched.unit_cost * enriched.cogs_units) FILTER (WHERE enriched.unit_cost IS NOT NULL),
-          0
-        ) AS cogs,
-        COALESCE(
-          SUM(enriched.cogs_units) FILTER (WHERE enriched.unit_cost IS NOT NULL),
-          0
-        ) AS cost_covered_units
+        COALESCE(SUM(enriched.unit_cost * enriched.cogs_units) FILTER (WHERE enriched.unit_cost IS NOT NULL), 0) AS cogs,
+        COALESCE(SUM(enriched.cogs_units) FILTER (WHERE enriched.unit_cost IS NOT NULL), 0) AS cost_covered_units,
+        MAX(store_settings."inventoryRestockLeadTimeDays")::int AS restock_lead_time_days,
+        MAX(store_settings."inventoryLowStockThreshold")::int AS low_stock_threshold
       FROM enriched_lines enriched
+      CROSS JOIN store_settings
       GROUP BY enriched."productId", enriched.shopify_product_id, enriched."title"
       ORDER BY enriched."productId"
     `);
@@ -170,6 +161,8 @@ export class IntelligenceCommerceReadRepository {
       refunds: numeric(row.refunds),
       cogs: numeric(row.cogs),
       costCoveredUnits: numeric(row.cost_covered_units),
+      restockLeadTimeDays: row.restock_lead_time_days,
+      lowStockThreshold: row.low_stock_threshold,
     }));
   }
 
