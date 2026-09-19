@@ -170,6 +170,8 @@ model Store {
   enabledPresentmentCurrencies String[]                  @default([])
   shopifyCreatedAt             DateTime?
   inventoryIntelligenceMode    InventoryIntelligenceMode @default(DISABLED)
+  inventoryRestockLeadTimeDays Int                       @default(14)
+  inventoryLowStockThreshold   Int                       @default(5)
   inventoryReviewedAt          DateTime?
   createdAt                    DateTime                  @default(now())
   updatedAt                    DateTime                  @updatedAt
