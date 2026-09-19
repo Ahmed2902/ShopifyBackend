@@ -24,9 +24,25 @@ const COLLECTION_CREATE_MUTATION = `#graphql
   }
 `;
 
+const COLLECTION_ADD_PRODUCTS_MUTATION = `#graphql
+  mutation StrideCollectionAddProducts($id: ID!, $productIds: [ID!]!) {
+    collectionAddProducts(id: $id, productIds: $productIds) {
+      collection { id }
+      userErrors { field message }
+    }
+  }
+`;
+
 type CollectionCreateResponse = {
   collectionCreate?: {
     collection?: unknown | null;
+    userErrors?: Array<{ field?: string[] | null; message: string }>;
+  } | null;
+};
+
+type CollectionAddProductsResponse = {
+  collectionAddProducts?: {
+    collection?: { id?: string } | null;
     userErrors?: Array<{ field?: string[] | null; message: string }>;
   } | null;
 };
@@ -50,7 +66,7 @@ export class ShopifyCollectionService {
     this.catalogRepository = input?.catalogRepository ?? new ShopifyCatalogRepository();
   }
 
-  async create(storeId: string, title: string) {
+  async create(storeId: string, input: { title: string; productIds?: string[] }) {
     const store = await this.repository.findConnectionForSync(storeId);
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
     const connection = store.shopifyConnection;
@@ -72,6 +88,21 @@ export class ShopifyCollectionService {
       );
     }
 
+    const requestedProductIds = [...new Set(input.productIds ?? [])];
+    const products = requestedProductIds.length
+      ? await prisma.product.findMany({
+          where: { storeId, id: { in: requestedProductIds }, deletedAt: null },
+          select: { id: true, shopifyProductId: true, title: true },
+        })
+      : [];
+    if (products.length !== requestedProductIds.length) {
+      throw new AppError(
+        'One or more selected products no longer belong to this store.',
+        400,
+        'SHOPIFY_COLLECTION_PRODUCTS_INVALID',
+      );
+    }
+
     const accessToken = await this.authService.resolveAccessToken(
       store.myshopifyDomain,
       connection,
@@ -82,7 +113,7 @@ export class ShopifyCollectionService {
       apiVersion: connection.apiVersion,
       connectionId: connection.id,
       query: COLLECTION_CREATE_MUTATION,
-      variables: { collection: { title } },
+      variables: { collection: { title: input.title } },
     });
 
     const result = response.collectionCreate;
@@ -105,7 +136,45 @@ export class ShopifyCollectionService {
       );
     }
 
+    if (products.length > 0) {
+      const addResponse = await this.apiService.requestAdminGraphql<CollectionAddProductsResponse>({
+        shop: store.myshopifyDomain,
+        accessToken,
+        apiVersion: connection.apiVersion,
+        connectionId: connection.id,
+        query: COLLECTION_ADD_PRODUCTS_MUTATION,
+        variables: {
+          id: collection.data.id,
+          productIds: products.map((product) => product.shopifyProductId),
+        },
+      });
+      const addErrors = addResponse.collectionAddProducts?.userErrors ?? [];
+      if (addErrors.length > 0) {
+        throw new AppError(
+          `Collection was created, but Shopify could not add the selected products: ${addErrors[0]?.message ?? 'unknown provider error'}`,
+          422,
+          'SHOPIFY_COLLECTION_PRODUCTS_ADD_FAILED',
+          { collectionId: collection.data.id, userErrors: addErrors.slice(0, 5) },
+        );
+      }
+    }
+
     await this.catalogRepository.persistCollections(storeId, [collection.data]);
+    if (products.length > 0) {
+      const membershipPersisted = await this.catalogRepository.replaceCollectionProducts(
+        storeId,
+        collection.data.id,
+        products.map((product) => product.shopifyProductId),
+      );
+      if (!membershipPersisted) {
+        throw new AppError(
+          'The collection and its products were created in Shopify, but Stride could not persist the local membership snapshot.',
+          500,
+          'SHOPIFY_COLLECTION_MEMBERSHIP_SYNC_FAILED',
+        );
+      }
+    }
+
     const localCollection = await prisma.collection.findUnique({
       where: {
         storeId_shopifyCollectionId: {
@@ -131,6 +200,7 @@ export class ShopifyCollectionService {
         shopifyCollectionId: collection.data.id,
         title: collection.data.title,
         handle: collection.data.handle ?? null,
+        productCount: products.length,
       },
     };
   }
