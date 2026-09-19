@@ -3,6 +3,7 @@ import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireRole, requireStoreMembership } from '../../middleware/store.middleware.js';
 import { requireActiveSubscription } from '../billing/billing.middleware.js';
 import { intelligenceController } from './intelligence.controller.js';
+import { inventoryPlanningController } from './inventory-planning.controller.js';
 
 const ownerOrAdmin = requireRole('OWNER', 'ADMIN');
 
@@ -15,6 +16,12 @@ intelligenceRouter.patch(
   '/settings/inventory',
   ownerOrAdmin,
   intelligenceController.updateInventoryMode,
+);
+intelligenceRouter.get('/settings/inventory-planning', inventoryPlanningController.read);
+intelligenceRouter.patch(
+  '/settings/inventory-planning',
+  ownerOrAdmin,
+  inventoryPlanningController.update,
 );
 intelligenceRouter.patch(
   '/recommendations/lifecycle',
