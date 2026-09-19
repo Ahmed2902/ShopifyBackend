@@ -1,0 +1,3 @@
+ALTER TABLE "Store"
+  ADD COLUMN "inventoryRestockLeadDays" INTEGER NOT NULL DEFAULT 14,
+  ADD COLUMN "inventoryLowStockThreshold" INTEGER NOT NULL DEFAULT 5;
