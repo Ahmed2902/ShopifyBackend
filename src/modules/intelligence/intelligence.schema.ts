@@ -7,14 +7,21 @@ export const intelligenceReadQuerySchema = z.object({
     .transform((value) => value === 'true'),
 });
 
-export const inventoryModeUpdateSchema = z.object({
-  mode: z.enum(['DISABLED', 'TRUSTED', 'UNRELIABLE']),
-});
+export const inventoryModeUpdateSchema = z
+  .object({
+    mode: z.enum(['DISABLED', 'TRUSTED', 'UNRELIABLE']).optional(),
+    restockLeadTimeDays: z.coerce.number().int().min(1).max(365).optional(),
+    lowStockThreshold: z.coerce.number().int().min(0).max(1_000_000).optional(),
+  })
+  .refine(
+    (value) =>
+      value.mode !== undefined ||
+      value.restockLeadTimeDays !== undefined ||
+      value.lowStockThreshold !== undefined,
+    { message: 'At least one inventory setting must be provided' },
+  );
 
 export const recommendationLifecycleUpdateSchema = z.object({
-  // Generated occurrence keys are compact (<200 chars today). Keep the public mutation bounded
-  // below PostgreSQL btree index-entry limits even for multi-byte input rather than allowing an
-  // authenticated client to manufacture an oversized unique-index value.
   occurrenceKey: z.string().trim().min(1).max(512),
   state: z.enum(['OPEN', 'REVIEWED', 'DISMISSED', 'RESOLVED']),
 });
