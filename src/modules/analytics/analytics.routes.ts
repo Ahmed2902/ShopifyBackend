@@ -4,6 +4,7 @@ import { requireStoreMembership } from '../../middleware/store.middleware.js';
 import { requireActiveSubscription } from '../billing/billing.middleware.js';
 import { adExposureController } from './ad-exposure.controller.js';
 import { analyticsController } from './analytics.controller.js';
+import { collectionDetailController } from './collection-detail.controller.js';
 import { dashboardController } from './dashboard.controller.js';
 import { performanceAnalyticsController } from './performance-analytics.controller.js';
 import { productLeaderboardController } from './product-leaderboard.controller.js';
@@ -25,6 +26,7 @@ analyticsRouter.get('/product-ads/:productId', analyticsController.productAdsPro
 analyticsRouter.get('/ad-exposure', adExposureController.list);
 analyticsRouter.get('/ad-exposure/:adId', adExposureController.detail);
 analyticsRouter.get('/collections', analyticsController.collections);
+analyticsRouter.get('/collections/:collectionId', collectionDetailController.read);
 analyticsRouter.get('/customers', analyticsController.customers);
 analyticsRouter.get('/inventory', analyticsController.inventory);
 

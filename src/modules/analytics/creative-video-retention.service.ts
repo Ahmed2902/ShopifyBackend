@@ -14,7 +14,8 @@ export type CreativeVideoRetentionStage =
   | 'START_TO_25'
   | 'P25_TO_50'
   | 'P50_TO_75'
-  | 'P75_TO_100';
+  | 'P75_TO_95'
+  | 'P95_TO_100';
 
 export interface CreativeVideoRetentionPeriod {
   plays: number | null;
@@ -37,7 +38,8 @@ export interface CreativeVideoRetentionPeriod {
     startTo25: number | null;
     p25To50: number | null;
     p50To75: number | null;
-    p75To100: number | null;
+    p75To95: number | null;
+    p95To100: number | null;
   };
   largestDropStage: CreativeVideoRetentionStage | null;
   largestDropRate: number | null;
@@ -185,7 +187,8 @@ function largestDrop(transitions: CreativeVideoRetentionPeriod['transitions']) {
     ['START_TO_25', transitions.startTo25],
     ['P25_TO_50', transitions.p25To50],
     ['P50_TO_75', transitions.p50To75],
-    ['P75_TO_100', transitions.p75To100],
+    ['P75_TO_95', transitions.p75To95],
+    ['P95_TO_100', transitions.p95To100],
   ];
   const available = candidates.filter((entry): entry is [CreativeVideoRetentionStage, number] =>
     entry[1] !== null && Number.isFinite(entry[1]),
@@ -235,7 +238,8 @@ export function summarizeCreativeVideoRetentionRows(
     startTo25: rates.to25,
     p25To50: rate(watched50, watched25),
     p50To75: rate(watched75, watched50),
-    p75To100: rate(watched100, watched75),
+    p75To95: rate(watched95, watched75),
+    p95To100: rate(watched100, watched95),
   };
   const drop = largestDrop(transitions);
 
