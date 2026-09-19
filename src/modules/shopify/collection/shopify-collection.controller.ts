@@ -4,12 +4,13 @@ import { shopifyCollectionService } from './shopify-collection.service.js';
 
 const createCollectionSchema = z.object({
   title: z.string().trim().min(1).max(255),
+  productIds: z.array(z.string().uuid()).max(250).default([]),
 });
 
 export class ShopifyCollectionController {
   create = async (req: Request, res: Response) => {
-    const { title } = createCollectionSchema.parse(req.body);
-    const result = await shopifyCollectionService.create(req.context.storeId!, title);
+    const input = createCollectionSchema.parse(req.body);
+    const result = await shopifyCollectionService.create(req.context.storeId!, input);
     res.status(201).json(result);
   };
 }
