@@ -21,6 +21,8 @@ export interface IntelligenceInventoryEvidenceRow {
   productId: string;
   sourceInventoryLevelCount: number;
   available: number;
+  restockLeadTimeDays: number;
+  lowStockThresholdUnits: number;
 }
 
 type RawIntelligenceCommerceEvidenceRow = {
@@ -43,6 +45,8 @@ type RawIntelligenceInventoryEvidenceRow = {
   product_id: string;
   source_inventory_level_count: bigint;
   available: bigint | number | null;
+  restock_lead_time_days: number;
+  low_stock_threshold_units: number;
 };
 
 function numeric(value: Prisma.Decimal | string | number | bigint | null): number {
@@ -178,19 +182,22 @@ export class IntelligenceCommerceReadRepository {
       SELECT
         variant."productId" AS product_id,
         COUNT(*) AS source_inventory_level_count,
-        COALESCE(SUM(level."available"), 0) AS available
+        COALESCE(SUM(level."available"), 0) AS available,
+        store."inventoryRestockLeadTimeDays" AS restock_lead_time_days,
+        store."inventoryLowStockThresholdUnits" AS low_stock_threshold_units
       FROM "InventoryLevelCurrent" level
       INNER JOIN "InventoryItem" item ON item."id" = level."inventoryItemId"
       INNER JOIN "ProductVariant" variant ON variant."id" = item."variantId"
       INNER JOIN "Product" product ON product."id" = variant."productId"
       INNER JOIN "Location" location ON location."id" = level."locationId"
+      INNER JOIN "Store" store ON store."id" = item."storeId"
       WHERE item."storeId" = ${storeId}::uuid
         AND item."deletedAt" IS NULL
         AND variant."deletedAt" IS NULL
         AND product."deletedAt" IS NULL
         AND location."deletedAt" IS NULL
         AND location."isActive" = TRUE
-      GROUP BY variant."productId"
+      GROUP BY variant."productId", store."inventoryRestockLeadTimeDays", store."inventoryLowStockThresholdUnits"
       ORDER BY variant."productId"
     `);
 
@@ -198,6 +205,8 @@ export class IntelligenceCommerceReadRepository {
       productId: row.product_id,
       sourceInventoryLevelCount: numeric(row.source_inventory_level_count),
       available: numeric(row.available),
+      restockLeadTimeDays: Math.max(1, numeric(row.restock_lead_time_days)),
+      lowStockThresholdUnits: Math.max(0, numeric(row.low_stock_threshold_units)),
     }));
   }
 }
