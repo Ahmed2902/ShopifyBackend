@@ -182,21 +182,27 @@ model Store {
   metaConnection                  MetaConnection?
   tiktokConnection                TikTokConnection?
   pixelInstallation               PixelInstallation?
+  shopifyDataRequests             ShopifyDataRequest[]
+  shopifyOrderRedactions          ShopifyOrderRedaction[]
+  metaAdAccounts                  MetaAdAccount[]
+  metaCatalogs                    MetaProductCatalog[]
+  tiktokAdvertisers               TikTokAdvertiser[]
+  tiktokCatalogs                  TikTokCatalog[]
   products                        Product[]
   variants                        ProductVariant[]
   collections                     Collection[]
-  locations                       Location[]
   inventoryItems                  InventoryItem[]
+  locations                       Location[]
   orders                          Order[]
-  recommendationLifecycle         RecommendationLifecycle[]
+  restocks                        Restock[]
   storefrontEvents                StorefrontEvent[]
+  storefrontSessionRepairs        StorefrontSessionRepair[]
   storefrontSessions              StorefrontSession[]
-  storefrontTouches               StorefrontTouch[]
-  storefrontInteractions          StorefrontInteraction[]
-  storefrontAttributionSnapshots  StorefrontAttributionSnapshot[]
   storefrontBehaviorDaily         StorefrontBehaviorDaily[]
-  storefrontBehaviorRollupState   StorefrontBehaviorRollupState?
-  storefrontSourceInvalidation    StorefrontSourceInvalidationState?
-
-  @@index([createdAt])
+  storefrontBehaviorRollup        StorefrontBehaviorRollupState?
+  storefrontAttributionDaily      StorefrontAttributionDaily[]
+  storefrontAttributionPaths      StorefrontAttributionPathDaily[]
+  storefrontMetaTargetEvidence    StorefrontMetaTargetEvidenceDaily[]
+  storefrontAttributionRollup     StorefrontAttributionRollupState?
+  recommendationLifecycles        RecommendationLifecycle[]
 }
