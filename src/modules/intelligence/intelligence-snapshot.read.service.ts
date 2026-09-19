@@ -1,5 +1,6 @@
 import { intelligenceSnapshotCachedReads } from '../../lib/store-decision-cache.js';
 import { intelligenceService, type IntelligenceService } from './intelligence.service.js';
+import { merchantInventoryRiskService } from './merchant-inventory-risk.service.js';
 
 /**
  * Shared cache/coalescing boundary for the expensive deterministic snapshot.
@@ -14,7 +15,17 @@ export class IntelligenceSnapshotReadService {
   read(storeId: string, options: { fresh?: boolean } = {}) {
     return intelligenceSnapshotCachedReads.run(
       storeId,
-      () => this.service.snapshot(storeId),
+      async () => {
+        const [snapshot, merchantInventoryRisk] = await Promise.all([
+          this.service.snapshot(storeId),
+          merchantInventoryRiskService.recommendations(storeId),
+        ]);
+        const recommendations = [
+          ...snapshot.recommendations.filter((item) => item.ruleId !== 'inventory_runway_risk'),
+          ...merchantInventoryRisk,
+        ].sort((left, right) => right.priority - left.priority);
+        return { ...snapshot, recommendations };
+      },
       { fresh: options.fresh ?? false, versionScope: storeId },
     );
   }
