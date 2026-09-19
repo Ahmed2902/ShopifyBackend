@@ -59,9 +59,11 @@ export interface ProductEvidence {
   stockAvailable: number | null;
   recentUnitsPerDay: number | null;
   daysCover: number | null;
-  restockLeadTimeDays: number;
-  lowStockThreshold: number;
-  lowStock: boolean;
+  /** Merchant replenishment lead time; omitted only in older unit fixtures. */
+  restockLeadTimeDays?: number;
+  /** Merchant quantity threshold; omitted only in older unit fixtures. */
+  lowStockThreshold?: number;
+  lowStock?: boolean;
 }
 
 export interface SharedExposureProductEvidence {
@@ -71,7 +73,7 @@ export interface SharedExposureProductEvidence {
   stockAvailable: number | null;
   recentUnitsPerDay: number | null;
   daysCover: number | null;
-  lowStock: boolean;
+  lowStock?: boolean;
 }
 
 export interface SharedExposureEvidence {
@@ -85,8 +87,8 @@ export interface SharedExposureEvidence {
   sharedAdSpend: number;
   impressions: number;
   inventoryTrusted: boolean;
-  restockLeadTimeDays: number;
-  lowStockThreshold: number;
+  restockLeadTimeDays?: number;
+  lowStockThreshold?: number;
   products: SharedExposureProductEvidence[];
   collectionMembershipTruncated: boolean;
   collections: Array<{
