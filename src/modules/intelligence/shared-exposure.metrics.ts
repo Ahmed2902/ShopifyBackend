@@ -22,18 +22,14 @@ function acceptedProductMappings(ad: TargetRow) {
   const confirmed = ad.productMappings.filter((mapping) => mapping.isMerchantConfirmed);
   return confirmed.length > 0
     ? confirmed
-    : ad.productMappings.filter(
-        (mapping) => numeric(mapping.confidence) >= MIN_AUTOMATIC_CONFIDENCE,
-      );
+    : ad.productMappings.filter((mapping) => numeric(mapping.confidence) >= MIN_AUTOMATIC_CONFIDENCE);
 }
 
 function acceptedCollectionMappings(ad: TargetRow) {
   const confirmed = ad.collectionMappings.filter((mapping) => mapping.isMerchantConfirmed);
   return confirmed.length > 0
     ? confirmed
-    : ad.collectionMappings.filter(
-        (mapping) => numeric(mapping.confidence) >= MIN_AUTOMATIC_CONFIDENCE,
-      );
+    : ad.collectionMappings.filter((mapping) => numeric(mapping.confidence) >= MIN_AUTOMATIC_CONFIDENCE);
 }
 
 function inventoryByProduct(rows: InventoryRow[]) {
@@ -85,18 +81,21 @@ function finishSharedExposureEvidence(
     metaRows: MetaRow[];
     inventoryTrusted: boolean;
     windowDays: number;
+    restockLeadTimeDays?: number;
+    lowStockThreshold?: number;
   },
   stock: Map<string, number>,
   depletion: Map<string, number>,
 ): SharedExposureEvidence[] {
   const meta = metaByAd(input.metaRows);
+  const restockLeadTimeDays = Math.max(0, input.restockLeadTimeDays ?? 14);
+  const lowStockThreshold = Math.max(0, input.lowStockThreshold ?? 5);
 
   return input.targets.flatMap((ad) => {
     if (ad.targetScope !== 'MULTI_PRODUCT' && ad.targetScope !== 'COLLECTION') return [];
 
     const directMappings = ad.targetScope === 'MULTI_PRODUCT' ? acceptedProductMappings(ad) : [];
-    const collectionMappings =
-      ad.targetScope === 'COLLECTION' ? acceptedCollectionMappings(ad) : [];
+    const collectionMappings = ad.targetScope === 'COLLECTION' ? acceptedCollectionMappings(ad) : [];
     const products = new Map<string, { id: string; shopifyProductId: string; title: string }>();
 
     for (const mapping of directMappings) {
@@ -107,7 +106,6 @@ function finishSharedExposureEvidence(
         title: mapping.product.title,
       });
     }
-
     for (const mapping of collectionMappings) {
       if (mapping.collection.deletedAt !== null) continue;
       for (const membership of mapping.collection.products) {
@@ -120,19 +118,14 @@ function finishSharedExposureEvidence(
         });
       }
     }
-
     if (products.size === 0) return [];
 
     const productEvidence: SharedExposureProductEvidence[] = [...products.values()].map((product) => {
       const stockAvailable = stock.get(product.id) ?? null;
       const depletedUnits = depletion.get(product.id) ?? 0;
-      const recentUnitsPerDay =
-        depletedUnits > 0 ? depletedUnits / Math.max(1, input.windowDays) : null;
+      const recentUnitsPerDay = depletedUnits > 0 ? depletedUnits / Math.max(1, input.windowDays) : null;
       const daysCover =
-        input.inventoryTrusted &&
-        stockAvailable !== null &&
-        recentUnitsPerDay !== null &&
-        recentUnitsPerDay > 0
+        input.inventoryTrusted && stockAvailable !== null && recentUnitsPerDay !== null && recentUnitsPerDay > 0
           ? Math.max(0, stockAvailable) / recentUnitsPerDay
           : null;
       return {
@@ -142,6 +135,7 @@ function finishSharedExposureEvidence(
         stockAvailable,
         recentUnitsPerDay,
         daysCover,
+        lowStock: stockAvailable !== null && stockAvailable <= lowStockThreshold,
       };
     });
 
@@ -165,29 +159,26 @@ function finishSharedExposureEvidence(
         };
       });
 
-    return [
-      {
-        entityId: ad.id,
-        externalEntityId: ad.metaAdId,
-        name: ad.name,
-        currency: ad.adAccount.currency,
-        scope: ad.targetScope,
-        scopeConfidence: numeric(ad.targetScopeConfidence),
-        merchantConfirmed,
-        sharedAdSpend: adMetrics.spend,
-        impressions: adMetrics.impressions,
-        inventoryTrusted: input.inventoryTrusted,
-        products: productEvidence,
-        collectionMembershipTruncated: collections.some(
-          (collection) => collection.membershipTruncated,
-        ),
-        collections,
-      } satisfies SharedExposureEvidence,
-    ];
+    return [{
+      entityId: ad.id,
+      externalEntityId: ad.metaAdId,
+      name: ad.name,
+      currency: ad.adAccount.currency,
+      scope: ad.targetScope,
+      scopeConfidence: numeric(ad.targetScopeConfidence),
+      merchantConfirmed,
+      sharedAdSpend: adMetrics.spend,
+      impressions: adMetrics.impressions,
+      inventoryTrusted: input.inventoryTrusted,
+      restockLeadTimeDays,
+      lowStockThreshold,
+      products: productEvidence,
+      collectionMembershipTruncated: collections.some((collection) => collection.membershipTruncated),
+      collections,
+    } satisfies SharedExposureEvidence];
   });
 }
 
-/** Raw characterization path retained for unit tests and DB parity checks. */
 export function buildSharedExposureEvidence(input: {
   targets: TargetRow[];
   metaRows: MetaRow[];
@@ -195,6 +186,8 @@ export function buildSharedExposureEvidence(input: {
   inventoryRows: InventoryRow[];
   inventoryTrusted: boolean;
   windowDays: number;
+  restockLeadTimeDays?: number;
+  lowStockThreshold?: number;
 }): SharedExposureEvidence[] {
   return finishSharedExposureEvidence(
     input,
@@ -210,9 +203,16 @@ export function buildSharedExposureEvidenceFromAggregates(input: {
   inventoryRows: IntelligenceInventoryEvidenceRow[];
   inventoryTrusted: boolean;
   windowDays: number;
+  restockLeadTimeDays?: number;
+  lowStockThreshold?: number;
 }): SharedExposureEvidence[] {
+  const settings = input.commerceRows[0];
   return finishSharedExposureEvidence(
-    input,
+    {
+      ...input,
+      restockLeadTimeDays: input.restockLeadTimeDays ?? settings?.restockLeadTimeDays ?? 14,
+      lowStockThreshold: input.lowStockThreshold ?? settings?.lowStockThreshold ?? 5,
+    },
     inventoryByProductFromAggregates(input.inventoryRows),
     depletionByProductFromAggregates(input.commerceRows),
   );
