@@ -12,6 +12,8 @@ type RawIntelligenceContext = {
   currency_code: string;
   iana_timezone: string;
   inventory_mode: InventoryIntelligenceMode;
+  inventory_restock_lead_time_days: number;
+  inventory_low_stock_threshold: number;
   inventory_reviewed_at: Date | null;
   shopify_status: ConnectionStatus | null;
   shopify_scopes: string[] | null;
@@ -29,12 +31,7 @@ type RawIntelligenceContext = {
   pixel_rollup_error: string | null;
 };
 
-/**
- * Compact tenant/integration metadata required to plan one intelligence snapshot.
- *
- * One SQL round trip returns Store settings, provider connection state, latest successful Shopify
- * order-history readiness, latest completed Meta Insights sync and storefront behavior freshness.
- */
+/** Compact tenant/integration metadata required to plan one intelligence snapshot. */
 export class IntelligenceContextReadRepository {
   async getContext(storeId: string) {
     const rows = await prisma.$queryRaw<RawIntelligenceContext[]>(Prisma.sql`
@@ -43,6 +40,8 @@ export class IntelligenceContextReadRepository {
         store."currencyCode" AS currency_code,
         store."ianaTimezone" AS iana_timezone,
         store."inventoryIntelligenceMode" AS inventory_mode,
+        store."inventoryRestockLeadTimeDays" AS inventory_restock_lead_time_days,
+        store."inventoryLowStockThreshold" AS inventory_low_stock_threshold,
         store."inventoryReviewedAt" AS inventory_reviewed_at,
         shopify."status" AS shopify_status,
         shopify."scopes" AS shopify_scopes,
@@ -61,11 +60,7 @@ export class IntelligenceContextReadRepository {
       FROM "Store" store
       LEFT JOIN "ShopifyConnection" shopify ON shopify."storeId" = store."id"
       LEFT JOIN LATERAL (
-        SELECT
-          sync."status",
-          sync."recordsRead",
-          sync."recordsWritten",
-          sync."finishedAt"
+        SELECT sync."status", sync."recordsRead", sync."recordsWritten", sync."finishedAt"
         FROM "SyncRun" sync
         WHERE sync."shopifyConnectionId" = shopify."id"
           AND sync."provider" = 'SHOPIFY'
@@ -99,6 +94,8 @@ export class IntelligenceContextReadRepository {
       currencyCode: row.currency_code,
       ianaTimezone: row.iana_timezone,
       inventoryIntelligenceMode: row.inventory_mode,
+      inventoryRestockLeadTimeDays: row.inventory_restock_lead_time_days,
+      inventoryLowStockThreshold: row.inventory_low_stock_threshold,
       inventoryReviewedAt: row.inventory_reviewed_at,
       shopifyConnection:
         row.shopify_status === null
