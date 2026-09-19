@@ -4,7 +4,7 @@ import type {
   RecommendationDraft,
 } from './intelligence.types.js';
 
-const RULE_VERSION = '1';
+const RULE_VERSION = '2';
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -66,17 +66,10 @@ export function refundRateDeteriorationRule(
   const points = pointChange(current, comparison);
   const relative = relativeChange(current, comparison);
   if (
-    evidence.current.orders < 20 ||
-    evidence.comparison.orders < 20 ||
-    current === null ||
-    comparison === null ||
-    points === null ||
-    current < 0.05 ||
-    points < 0.04 ||
+    evidence.current.orders < 20 || evidence.comparison.orders < 20 || current === null ||
+    comparison === null || points === null || current < 0.05 || points < 0.04 ||
     (relative !== null && relative < 0.4)
-  ) {
-    return null;
-  }
+  ) return null;
 
   return storeRecommendation({
     ruleId: 'refund_rate_deterioration',
@@ -88,13 +81,7 @@ export function refundRateDeteriorationRule(
     impactScore: Math.max(current, points * 2),
     urgencyScore: 0.55 + points,
     window,
-    evidence: {
-      source: 'SHOPIFY_COMMERCE',
-      current: evidence.current,
-      comparison: evidence.comparison,
-      refundRatePointChange: points,
-      interpretation: 'Observed refund deterioration; no root cause is inferred.',
-    },
+    evidence: { source: 'SHOPIFY_COMMERCE', current: evidence.current, comparison: evidence.comparison, refundRatePointChange: points, interpretation: 'Observed refund deterioration; no root cause is inferred.' },
   });
 }
 
@@ -106,16 +93,9 @@ export function discountDependencyDeteriorationRule(
   const comparison = evidence.comparison.discountRate;
   const points = pointChange(current, comparison);
   if (
-    evidence.current.orders < 20 ||
-    evidence.comparison.orders < 20 ||
-    current === null ||
-    comparison === null ||
-    points === null ||
-    current < 0.1 ||
-    points < 0.05
-  ) {
-    return null;
-  }
+    evidence.current.orders < 20 || evidence.comparison.orders < 20 || current === null ||
+    comparison === null || points === null || current < 0.1 || points < 0.05
+  ) return null;
 
   return storeRecommendation({
     ruleId: 'discount_dependency_deterioration',
@@ -127,13 +107,7 @@ export function discountDependencyDeteriorationRule(
     impactScore: Math.max(current, points * 2),
     urgencyScore: 0.45 + points,
     window,
-    evidence: {
-      source: 'SHOPIFY_COMMERCE',
-      current: evidence.current,
-      comparison: evidence.comparison,
-      discountRatePointChange: points,
-      interpretation: 'Observed discount dependence; promotional intent is not inferred.',
-    },
+    evidence: { source: 'SHOPIFY_COMMERCE', current: evidence.current, comparison: evidence.comparison, discountRatePointChange: points, interpretation: 'Observed discount dependence; promotional intent is not inferred.' },
   });
 }
 
@@ -149,19 +123,10 @@ export function returningCustomerDeteriorationRule(
   const currentKnown = evidence.current.newOrders + evidence.current.returningOrders;
   const comparisonKnown = evidence.comparison.newOrders + evidence.comparison.returningOrders;
   if (
-    currentCoverage === null ||
-    comparisonCoverage === null ||
-    currentCoverage < 0.8 ||
-    comparisonCoverage < 0.8 ||
-    currentKnown < 20 ||
-    comparisonKnown < 20 ||
-    current === null ||
-    comparison === null ||
-    points === null ||
-    points > -0.1
-  ) {
-    return null;
-  }
+    currentCoverage === null || comparisonCoverage === null || currentCoverage < 0.8 ||
+    comparisonCoverage < 0.8 || currentKnown < 20 || comparisonKnown < 20 ||
+    current === null || comparison === null || points === null || points > -0.1
+  ) return null;
 
   return storeRecommendation({
     ruleId: 'returning_customer_deterioration',
@@ -173,13 +138,7 @@ export function returningCustomerDeteriorationRule(
     impactScore: 0.45 + Math.min(0.35, Math.abs(points)),
     urgencyScore: 0.45 + Math.min(0.35, Math.abs(points)),
     window,
-    evidence: {
-      source: 'SHOPIFY_CUSTOMER_ORDER_CLASSIFICATION',
-      current: evidence.current,
-      comparison: evidence.comparison,
-      returningSharePointChange: points,
-      interpretation: 'Order classification only; this is not cohort retention or customer LTV.',
-    },
+    evidence: { source: 'SHOPIFY_CUSTOMER_ORDER_CLASSIFICATION', current: evidence.current, comparison: evidence.comparison, returningSharePointChange: points, interpretation: 'Order classification only; this is not cohort retention or customer LTV.' },
   });
 }
 
@@ -187,31 +146,34 @@ export function inventoryRunwayRiskRule(
   evidence: ProductEvidence,
   window: { start: Date; end: Date },
 ): RecommendationDraft | null {
+  const leadTime = Math.max(0, evidence.restockLeadTimeDays ?? 14);
+  const lowThreshold = Math.max(0, evidence.lowStockThreshold ?? 5);
+  const lowStock = evidence.lowStock ?? (evidence.stockAvailable !== null && evidence.stockAvailable <= lowThreshold);
+  const insideLeadTime = evidence.daysCover !== null && evidence.daysCover >= 0 && evidence.daysCover <= leadTime;
   if (
     !evidence.inventoryTrusted ||
-    evidence.daysCover === null ||
-    evidence.daysCover < 0 ||
-    evidence.daysCover > 7 ||
-    evidence.recentUnitsPerDay === null ||
-    evidence.recentUnitsPerDay <= 0 ||
+    (!insideLeadTime && !lowStock) ||
+    evidence.recentUnitsPerDay === null || evidence.recentUnitsPerDay <= 0 ||
     (evidence.units < 3 && evidence.revenueShare < 0.03) ||
     evidence.mappedMetaSpend > 0
-  ) {
-    return null;
-  }
+  ) return null;
 
-  const urgency = clamp01((7 - evidence.daysCover) / 7 + 0.45);
+  const cover = evidence.daysCover ?? leadTime;
+  const urgency = leadTime <= 0 ? (lowStock ? 1 : 0) : clamp01((leadTime - Math.min(cover, leadTime)) / Math.max(1, leadTime) + (lowStock ? 0.55 : 0.35));
+  const criticalBoundary = Math.max(1, Math.min(leadTime, Math.ceil(leadTime * 0.35)));
   return {
     ruleId: 'inventory_runway_risk',
     ruleVersion: RULE_VERSION,
     category: 'INVENTORY_RISK',
-    severity: evidence.daysCover <= 3 ? 'CRITICAL' : 'HIGH',
+    severity: lowStock || cover <= criticalBoundary ? 'CRITICAL' : 'HIGH',
     entityType: 'PRODUCT',
     entityId: evidence.entityId,
     externalEntityId: evidence.externalEntityId,
-    title: 'Observed stock runway is getting short',
-    summary: 'Trusted Shopify inventory and recent observed unit velocity imply limited stock cover even without mapped paid-spend pressure.',
-    suggestedAction: 'Confirm replenishment or protect availability before demand exhausts current stock.',
+    title: lowStock ? 'Stock is at or below the merchant low-stock threshold' : 'Observed stock runway is shorter than replenishment lead time',
+    summary: lowStock
+      ? 'Trusted Shopify inventory is at or below the merchant-defined low-stock quantity while recent observed demand is still consuming units.'
+      : 'At the recent observed unit velocity, current stock cover is shorter than the merchant-defined time needed to replenish this product.',
+    suggestedAction: 'Start or confirm replenishment now, or protect availability until replacement stock can arrive.',
     impactScore: clamp01(Math.max(0.25, evidence.revenueShare)),
     confidenceScore: 0.82,
     urgencyScore: urgency,
@@ -225,10 +187,12 @@ export function inventoryRunwayRiskRule(
     evidence: {
       source: 'TRUSTED_SHOPIFY_INVENTORY_PLUS_OBSERVED_VELOCITY',
       stockAvailable: evidence.stockAvailable,
+      lowStockThreshold: lowThreshold,
       recentUnitsPerDay: evidence.recentUnitsPerDay,
       daysCover: evidence.daysCover,
+      restockLeadTimeDays: leadTime,
       revenueShare: evidence.revenueShare,
-      inventoryInterpretation: 'CURRENT_VELOCITY_RUNWAY_NOT_FORECAST',
+      interpretation: 'Current observed velocity compared with merchant replenishment settings; not a demand forecast.',
     },
   };
 }
@@ -261,11 +225,6 @@ export function mappingCoverageDegradedRule(input: {
     observationEnd: input.window.end,
     comparisonStart: null,
     comparisonEnd: null,
-    evidence: {
-      source: 'STRIDE_MAPPING_COVERAGE',
-      mappingCoverage: input.mappingCoverage,
-      unmappedCoverage: 1 - input.mappingCoverage,
-      totalMetaSpend: input.totalMetaSpend,
-    },
+    evidence: { source: 'STRIDE_MAPPING_COVERAGE', mappingCoverage: input.mappingCoverage, unmappedCoverage: 1 - input.mappingCoverage, totalMetaSpend: input.totalMetaSpend },
   };
 }
