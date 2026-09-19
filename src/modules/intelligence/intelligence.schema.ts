@@ -11,6 +11,11 @@ export const inventoryModeUpdateSchema = z.object({
   mode: z.enum(['DISABLED', 'TRUSTED', 'UNRELIABLE']),
 });
 
+export const inventoryPlanningUpdateSchema = z.object({
+  restockLeadTimeDays: z.coerce.number().int().min(0).max(3650),
+  lowStockThreshold: z.coerce.number().int().min(0).max(1_000_000_000),
+});
+
 export const recommendationLifecycleUpdateSchema = z.object({
   // Generated occurrence keys are compact (<200 chars today). Keep the public mutation bounded
   // below PostgreSQL btree index-entry limits even for multi-byte input rather than allowing an
