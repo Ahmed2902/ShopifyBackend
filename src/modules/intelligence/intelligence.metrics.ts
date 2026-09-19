@@ -15,7 +15,6 @@ type CommerceRow = Awaited<ReturnType<IntelligenceRepository['getCommerceRows']>
 type CostRow = Awaited<ReturnType<IntelligenceRepository['getVariantCosts']>>[number];
 type MappingRow = Awaited<ReturnType<IntelligenceRepository['getActiveProductMappings']>>[number];
 type InventoryRow = Awaited<ReturnType<IntelligenceRepository['getInventoryLevels']>>[number];
-
 type MetaAction = MetaRow['actions'][number];
 
 interface MetaAccumulator {
@@ -51,14 +50,7 @@ function number(value: unknown): number {
 }
 
 function emptyMetaAccumulator(): MetaAccumulator {
-  return {
-    spend: 0,
-    impressions: 0,
-    clicks: 0,
-    purchases: 0,
-    purchaseValue: 0,
-    weightedFrequency: 0,
-  };
+  return { spend: 0, impressions: 0, clicks: 0, purchases: 0, purchaseValue: 0, weightedFrequency: 0 };
 }
 
 function purchaseRank(actionType: string): number {
@@ -72,7 +64,6 @@ function selectedPurchaseValue(actions: MetaAction[], kind: 'ACTION' | 'ACTION_V
     (action) => action.kind === kind && purchaseRank(action.actionType) < 100,
   );
   if (candidates.length === 0) return 0;
-
   const bestRank = Math.min(...candidates.map((action) => purchaseRank(action.actionType)));
   const selectedType = candidates.find((action) => purchaseRank(action.actionType) === bestRank)?.actionType;
   if (!selectedType) return 0;
@@ -87,7 +78,6 @@ function selectedPurchaseRoas(actions: MetaAction[]): number | null {
       (action) => String(action.kind) === kind && purchaseRank(action.actionType) < 100,
     );
     if (candidates.length === 0) continue;
-
     const bestRank = Math.min(...candidates.map((action) => purchaseRank(action.actionType)));
     const selectedType = candidates.find((action) => purchaseRank(action.actionType) === bestRank)?.actionType;
     if (!selectedType) continue;
@@ -109,7 +99,6 @@ function addMetaRow(target: MetaAccumulator, row: MetaRow): void {
   const fallbackRoas = selectedPurchaseRoas(row.actions);
   const purchaseValue = directPurchaseValue > 0 ? directPurchaseValue : spend * (fallbackRoas ?? 0);
   const frequency = row.frequency === null ? null : number(row.frequency);
-
   target.spend += spend;
   target.impressions += Number.isFinite(impressions) ? impressions : 0;
   target.clicks += Number.isFinite(clicks) ? clicks : 0;
@@ -122,7 +111,6 @@ function finishMetaMetrics(value: MetaAccumulator): HistoricalMetrics {
   return {
     spend: value.spend,
     impressions: value.impressions,
-    // Reach is not additive across ad-level daily rows, so period reach is deliberately suppressed.
     reach: null,
     clicks: value.clicks,
     purchases: value.purchases,
@@ -151,7 +139,6 @@ function groupMetaEvidence(
 }> {
   const groups = new Map<string, EntityAccumulator>();
   const currentSpendByCurrency = new Map<string, number>();
-
   for (const row of rows) {
     const entity = identity(row);
     if (!entity) continue;
@@ -162,7 +149,6 @@ function groupMetaEvidence(
       comparison: emptyMetaAccumulator(),
     };
     groups.set(key, group);
-
     if (row.date >= currentStart && row.date <= currentEnd) {
       addMetaRow(group.current, row);
       currentSpendByCurrency.set(
@@ -173,7 +159,6 @@ function groupMetaEvidence(
       addMetaRow(group.comparison, row);
     }
   }
-
   return [...groups.values()].map((group) => {
     const current = finishMetaMetrics(group.current);
     const totalSpend = currentSpendByCurrency.get(group.currency) ?? 0;
@@ -275,15 +260,14 @@ interface ProductEvidenceContext {
   storeCurrency: string;
   inventoryTrusted: boolean;
   windowDays: number;
+  restockLeadTimeDays?: number;
+  lowStockThreshold?: number;
 }
 
 type ProductStockRow = { productId: string; available: number };
 
 function rawProductStock(rows: InventoryRow[]): ProductStockRow[] {
-  return rows.map((row) => ({
-    productId: row.inventoryItem.variant.productId,
-    available: row.available,
-  }));
+  return rows.map((row) => ({ productId: row.inventoryItem.variant.productId, available: row.available }));
 }
 
 function compactProductStock(rows: IntelligenceInventoryEvidenceRow[]): ProductStockRow[] {
@@ -310,24 +294,18 @@ function exactProductMappings(mappings: MappingRow[]): Map<string, ExactProductM
     rows.push(mapping);
     byAd.set(mapping.metaAdId, rows);
   }
-
   const exact = new Map<string, ExactProductMapping>();
   for (const [adId, rows] of byAd) {
     const confirmed = rows.filter((row) => row.isMerchantConfirmed);
-    const candidates =
-      confirmed.length > 0
-        ? confirmed
-        : rows.filter((row) => number(row.confidence) >= 0.7);
+    const candidates = confirmed.length > 0
+      ? confirmed
+      : rows.filter((row) => number(row.confidence) >= 0.7);
     if (candidates.length === 0) continue;
-
     const productIds = new Set(candidates.map((row) => row.productId));
     if (productIds.size !== 1) continue;
-
     exact.set(adId, {
       productId: candidates[0]!.productId,
-      confidence: confirmed.length > 0
-        ? 1
-        : Math.max(...candidates.map((row) => number(row.confidence))),
+      confidence: confirmed.length > 0 ? 1 : Math.max(...candidates.map((row) => number(row.confidence))),
       product: candidates[0]!.product,
     });
   }
@@ -406,12 +384,11 @@ function finishProductEvidence(
 
   const stockByProduct = new Map<string, number>();
   for (const row of stockRows) {
-    stockByProduct.set(
-      row.productId,
-      (stockByProduct.get(row.productId) ?? 0) + row.available,
-    );
+    stockByProduct.set(row.productId, (stockByProduct.get(row.productId) ?? 0) + row.available);
   }
 
+  const restockLeadTimeDays = Math.max(0, input.restockLeadTimeDays ?? 14);
+  const lowStockThreshold = Math.max(0, input.lowStockThreshold ?? 5);
   const mappingCoverage = totalMetaSpend > 0 ? exactMappedSpend / totalMetaSpend : 0;
   const evidence: ProductEvidence[] = [...products.values()].map((product) => {
     const netRevenue = Math.max(0, product.revenue - product.refunds);
@@ -422,19 +399,16 @@ function finishProductEvidence(
       weightedConfidence: 0,
     };
     const confidenceValues = productMappingConfidence.get(product.entityId) ?? [];
-    const mappingConfidence =
-      paid.spend > 0
-        ? paid.weightedConfidence / paid.spend
-        : confidenceValues.length > 0
-          ? Math.max(...confidenceValues)
-          : 0;
+    const mappingConfidence = paid.spend > 0
+      ? paid.weightedConfidence / paid.spend
+      : confidenceValues.length > 0
+        ? Math.max(...confidenceValues)
+        : 0;
     const costCoverage = product.cogsUnits > 0 ? product.costCoveredUnits / product.cogsUnits : 0;
     const contributionBeforeAds = costCoverage >= 0.8 ? netRevenue - product.cogs : null;
-    const contributionAfterAds =
-      contributionBeforeAds === null ? null : contributionBeforeAds - paid.spend;
+    const contributionAfterAds = contributionBeforeAds === null ? null : contributionBeforeAds - paid.spend;
     const stockAvailable = stockByProduct.get(product.entityId) ?? null;
-    const recentUnitsPerDay =
-      product.cogsUnits > 0 ? product.cogsUnits / Math.max(1, input.windowDays) : null;
+    const recentUnitsPerDay = product.cogsUnits > 0 ? product.cogsUnits / Math.max(1, input.windowDays) : null;
     const daysCover =
       stockAvailable !== null && recentUnitsPerDay !== null && recentUnitsPerDay > 0
         ? Math.max(0, stockAvailable) / recentUnitsPerDay
@@ -463,16 +437,13 @@ function finishProductEvidence(
       stockAvailable,
       recentUnitsPerDay,
       daysCover,
+      restockLeadTimeDays,
+      lowStockThreshold,
+      lowStock: stockAvailable !== null && stockAvailable <= lowStockThreshold,
     };
   });
 
-  return {
-    products: evidence,
-    totalMetaSpend,
-    exactMappedSpend,
-    mappingCoverage,
-    suppressedMetaSpend,
-  };
+  return { products: evidence, totalMetaSpend, exactMappedSpend, mappingCoverage, suppressedMetaSpend };
 }
 
 /** Raw characterization path retained for unit tests and DB parity checks. */
@@ -508,7 +479,6 @@ export function buildProductEvidence(input: ProductEvidenceContext & {
     aggregate.refunds += refunds;
     aggregate.units += netUnits;
     aggregate.cogsUnits += cogsUnits;
-
     if (row.variantId && cogsUnits > 0) {
       const unitCost = costAt(
         input.costRows,
@@ -523,7 +493,6 @@ export function buildProductEvidence(input: ProductEvidenceContext & {
     }
     products.set(row.productId, aggregate);
   }
-
   return finishProductEvidence(products, input, rawProductStock(input.inventoryRows));
 }
 
@@ -545,5 +514,14 @@ export function buildProductEvidenceFromAggregates(input: ProductEvidenceContext
       costCoveredUnits: row.costCoveredUnits,
     });
   }
-  return finishProductEvidence(products, input, compactProductStock(input.inventoryRows));
+  const settings = input.commerceRows[0];
+  return finishProductEvidence(
+    products,
+    {
+      ...input,
+      restockLeadTimeDays: input.restockLeadTimeDays ?? settings?.restockLeadTimeDays ?? 14,
+      lowStockThreshold: input.lowStockThreshold ?? settings?.lowStockThreshold ?? 5,
+    },
+    compactProductStock(input.inventoryRows),
+  );
 }
