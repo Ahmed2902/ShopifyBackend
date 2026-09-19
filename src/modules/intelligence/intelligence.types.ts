@@ -59,6 +59,10 @@ export interface ProductEvidence {
   stockAvailable: number | null;
   recentUnitsPerDay: number | null;
   daysCover: number | null;
+  /** Merchant-entered factory/supplier lead time used for replenishment risk thresholds. */
+  restockLeadTimeDays?: number;
+  /** Merchant-entered absolute stock quantity considered low. */
+  lowStockThreshold?: number;
 }
 
 export interface SharedExposureProductEvidence {
@@ -81,6 +85,8 @@ export interface SharedExposureEvidence {
   sharedAdSpend: number;
   impressions: number;
   inventoryTrusted: boolean;
+  restockLeadTimeDays?: number;
+  lowStockThreshold?: number;
   products: SharedExposureProductEvidence[];
   collectionMembershipTruncated: boolean;
   collections: Array<{
