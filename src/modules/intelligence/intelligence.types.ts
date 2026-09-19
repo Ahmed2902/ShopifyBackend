@@ -59,6 +59,9 @@ export interface ProductEvidence {
   stockAvailable: number | null;
   recentUnitsPerDay: number | null;
   daysCover: number | null;
+  restockLeadTimeDays: number;
+  lowStockThreshold: number;
+  lowStock: boolean;
 }
 
 export interface SharedExposureProductEvidence {
@@ -68,6 +71,7 @@ export interface SharedExposureProductEvidence {
   stockAvailable: number | null;
   recentUnitsPerDay: number | null;
   daysCover: number | null;
+  lowStock: boolean;
 }
 
 export interface SharedExposureEvidence {
@@ -81,6 +85,8 @@ export interface SharedExposureEvidence {
   sharedAdSpend: number;
   impressions: number;
   inventoryTrusted: boolean;
+  restockLeadTimeDays: number;
+  lowStockThreshold: number;
   products: SharedExposureProductEvidence[];
   collectionMembershipTruncated: boolean;
   collections: Array<{
@@ -193,14 +199,7 @@ export type RecommendationAttributionPrecision =
   | 'SHOPIFY_COMMERCE'
   | 'UNKNOWN';
 
-export type DecisionAction =
-  | 'SCALE'
-  | 'HOLD'
-  | 'REDUCE'
-  | 'PAUSE'
-  | 'TEST'
-  | 'INVESTIGATE';
-
+export type DecisionAction = 'SCALE' | 'HOLD' | 'REDUCE' | 'PAUSE' | 'TEST' | 'INVESTIGATE';
 export type DecisionConfidence = 'LOW' | 'MEDIUM' | 'HIGH';
 export type RecommendationLifecycleState = 'OPEN' | 'REVIEWED' | 'DISMISSED' | 'RESOLVED';
 
@@ -243,10 +242,27 @@ export interface RecommendationDecisionMetadata {
   decisionMessage: string;
 }
 
+export interface RecommendationWithPriority extends RecommendationDraft {
+  priority: number;
+}
+
+export interface RecommendationWithLifecycle
+  extends RecommendationWithPriority,
+    RecommendationDecisionMetadata {
+  occurrenceKey: string;
+  lifecycleState: RecommendationLifecycleState;
+  lifecycleUpdatedAt: Date | null;
+}
+
 export interface DataQualityEvidence {
-  code: string;
+  surface:
+    | 'SHOPIFY_COMMERCE'
+    | 'META_ADVERTISING'
+    | 'META_PRODUCT_MAPPING'
+    | 'SHOPIFY_INVENTORY'
+    | 'STOREFRONT_BEHAVIOR'
+    | 'CROSS_CHANNEL_PRODUCT_ADS';
   status: 'HEALTHY' | 'WARNING' | 'BLOCKED';
-  surface: string;
+  code: string;
   message: string;
-  metrics?: Record<string, unknown>;
 }
