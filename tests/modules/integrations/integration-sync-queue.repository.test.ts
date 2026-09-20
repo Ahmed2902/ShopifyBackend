@@ -59,6 +59,7 @@ describeDatabase('IntegrationRepository manual sync queue', () => {
     expect(left.syncRun.id).toBe(right.syncRun.id);
     expect([left.created, right.created].filter(Boolean)).toHaveLength(1);
     expect(left.syncRun.status).toBe('PENDING');
+    expect(left.syncRun.activeQueueKey).toBe(`SHOPIFY:${connectionId}:CatalogInventory`);
 
     const staleBefore = new Date(Date.now() - 30 * 60_000);
     await expect(
@@ -78,7 +79,40 @@ describeDatabase('IntegrationRepository manual sync queue', () => {
 
     expect(first?.shopifyConnection?.storeId).toBe(store.id);
     expect(first?.startedAt).not.toBeNull();
+    expect(first?.leaseExpiresAt).not.toBeNull();
     expect(second).toBeNull();
+  });
+
+  it('renews an active lease and does not expose it as claimable before lease expiry', async () => {
+    const store = await createStore();
+    const connectionId = store.shopifyConnection!.id;
+    const repository = new IntegrationRepository();
+    const queued = await repository.enqueueExclusiveSyncRun({
+      provider: 'SHOPIFY',
+      connectionId,
+      resourceType: 'CatalogInventory',
+      mode: 'MANUAL',
+      apiVersion: '2026-07',
+    });
+    const staleBefore = new Date(Date.now() - 30 * 60_000);
+    await repository.claimShopifySyncRun(queued.syncRun.id, 'CatalogInventory', staleBefore);
+
+    const beforeRenewal = await prisma.syncRun.findUniqueOrThrow({
+      where: { id: queued.syncRun.id },
+      select: { leaseExpiresAt: true },
+    });
+    await repository.renewShopifySyncRunLease(queued.syncRun.id, new Date());
+    const afterRenewal = await prisma.syncRun.findUniqueOrThrow({
+      where: { id: queued.syncRun.id },
+      select: { leaseExpiresAt: true },
+    });
+
+    expect(afterRenewal.leaseExpiresAt!.getTime()).toBeGreaterThanOrEqual(
+      beforeRenewal.leaseExpiresAt!.getTime(),
+    );
+    await expect(
+      repository.listClaimableShopifySyncRunIds('CatalogInventory', 10, staleBefore),
+    ).resolves.not.toContainEqual({ id: queued.syncRun.id });
   });
 
   it('allows a worker to reclaim a stale running sync after a process crash', async () => {
@@ -95,7 +129,7 @@ describeDatabase('IntegrationRepository manual sync queue', () => {
     const oldStartedAt = new Date(Date.now() - 60 * 60_000);
     await prisma.syncRun.update({
       where: { id: queued.syncRun.id },
-      data: { status: 'RUNNING', startedAt: oldStartedAt },
+      data: { status: 'RUNNING', startedAt: oldStartedAt, leaseExpiresAt: new Date(Date.now() - 1) },
     });
 
     const staleBefore = new Date(Date.now() - 30 * 60_000);
@@ -110,5 +144,30 @@ describeDatabase('IntegrationRepository manual sync queue', () => {
     );
     expect(reclaimed?.shopifyConnection?.storeId).toBe(store.id);
     expect(reclaimed!.startedAt!.getTime()).toBeGreaterThan(oldStartedAt.getTime());
+    expect(reclaimed!.leaseExpiresAt!.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it('releases the active queue key on terminal completion so a later manual sync can enqueue', async () => {
+    const store = await createStore();
+    const connectionId = store.shopifyConnection!.id;
+    const repository = new IntegrationRepository();
+    const input = {
+      provider: 'SHOPIFY' as const,
+      connectionId,
+      resourceType: 'CatalogInventory',
+      mode: 'MANUAL',
+      apiVersion: '2026-07',
+    };
+
+    const first = await repository.enqueueExclusiveSyncRun(input);
+    await repository.completeSyncRun(first.syncRun.id, {
+      recordsRead: 10,
+      recordsWritten: 10,
+      partial: false,
+    });
+    const second = await repository.enqueueExclusiveSyncRun(input);
+
+    expect(second.created).toBe(true);
+    expect(second.syncRun.id).not.toBe(first.syncRun.id);
   });
 });
