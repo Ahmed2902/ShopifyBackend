@@ -348,18 +348,22 @@ export class IntelligenceService {
       store.shopifyConnection?.status === 'ACTIVE' &&
       (commerceSourceRowCount > 0 || store.successfulOrderHistorySync?.status === 'SUCCEEDED');
     const productRuleWindow = { start: productWindow.metaFrom, end: productWindow.metaTo };
+    const inventoryPlanning = {
+      restockLeadTimeDays: store.inventoryRestockLeadTimeDays,
+      lowStockThreshold: store.inventoryLowStockThreshold,
+    };
     for (const product of productResult.products) {
       const results = [
         underexposedProductRule(product, productRuleWindow),
         shopifyCommerceUsable ? paidCommerceMismatchRule(product, productRuleWindow) : null,
         marginTrapRule(product, productRuleWindow),
-        inventorySpendConflictRule(product, productRuleWindow),
-        inventoryRunwayRiskRule(product, productRuleWindow),
+        inventorySpendConflictRule(product, productRuleWindow, inventoryPlanning),
+        inventoryRunwayRiskRule(product, productRuleWindow, inventoryPlanning),
       ];
       for (const result of results) if (result) recommendations.push(result);
     }
     for (const exposure of sharedExposure) {
-      const result = sharedExposureInventoryRule(exposure, productRuleWindow);
+      const result = sharedExposureInventoryRule(exposure, productRuleWindow, inventoryPlanning);
       if (result) recommendations.push(result);
     }
     const mappingResult = mappingCoverageDegradedRule({
