@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const collection = vi.hoisted(() => ({ findUnique: vi.fn() }));
-vi.mock('../../../src/lib/prisma.js', () => ({ prisma: { collection } }));
-vi.mock('../../../src/lib/store-decision-cache.js', () => ({
-  invalidateStoreDecisionCaches: vi.fn().mockResolvedValue(undefined),
+const collection = vi.hoisted(() => ({ findUnique: vi.fn(), findFirst: vi.fn() }));
+const product = vi.hoisted(() => ({ findMany: vi.fn() }));
+const productCollection = vi.hoisted(() => ({ findMany: vi.fn(), createMany: vi.fn() }));
+vi.mock('../../../src/lib/prisma.js', () => ({
+  prisma: { collection, product, productCollection },
 }));
+const invalidateStoreDecisionCaches = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock('../../../src/lib/store-decision-cache.js', () => ({ invalidateStoreDecisionCaches }));
 
 import { ShopifyCollectionService } from '../../../src/modules/shopify/collection/shopify-collection.service.js';
 
 const storeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const collectionId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const productId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 
 function service(scopes: string[]) {
   const repository = {
@@ -62,7 +67,16 @@ function service(scopes: string[]) {
 describe('ShopifyCollectionService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    collection.findUnique.mockResolvedValue({ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' });
+    collection.findUnique.mockResolvedValue({ id: collectionId });
+    collection.findFirst.mockResolvedValue({
+      id: collectionId,
+      shopifyCollectionId: 'gid://shopify/Collection/123',
+    });
+    product.findMany.mockResolvedValue([
+      { id: productId, shopifyProductId: 'gid://shopify/Product/456' },
+    ]);
+    productCollection.findMany.mockResolvedValue([]);
+    productCollection.createMany.mockResolvedValue({ count: 1 });
   });
 
   it('fails clearly when an existing install has not approved write_products', async () => {
@@ -97,10 +111,47 @@ describe('ShopifyCollectionService', () => {
       },
     }));
     expect(result.collection).toEqual({
-      id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      id: collectionId,
       shopifyCollectionId: 'gid://shopify/Collection/123',
       title: 'Fall winners',
       handle: 'fall-winners',
     });
+  });
+
+  it('adds only new store-owned products to Shopify and persists the membership locally', async () => {
+    const subject = service(['read_products', 'write_products']);
+    subject.apiService.requestAdminGraphql.mockResolvedValueOnce({
+      collectionAddProducts: { userErrors: [] },
+    });
+
+    const result = await subject.instance.addProducts(storeId, collectionId, [productId]);
+
+    expect(product.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: { in: [productId] }, storeId, deletedAt: null },
+    }));
+    expect(subject.apiService.requestAdminGraphql).toHaveBeenCalledWith(expect.objectContaining({
+      variables: {
+        id: 'gid://shopify/Collection/123',
+        productIds: ['gid://shopify/Product/456'],
+      },
+    }));
+    expect(productCollection.createMany).toHaveBeenCalledWith({
+      data: [{ collectionId, productId }],
+      skipDuplicates: true,
+    });
+    expect(invalidateStoreDecisionCaches).toHaveBeenCalledWith(storeId);
+    expect(result).toEqual({ added: 1 });
+  });
+
+  it('does not call Shopify when every requested product is already a member', async () => {
+    const subject = service(['read_products', 'write_products']);
+    productCollection.findMany.mockResolvedValueOnce([{ productId }]);
+
+    await expect(subject.instance.addProducts(storeId, collectionId, [productId])).resolves.toEqual({
+      added: 0,
+    });
+
+    expect(subject.apiService.requestAdminGraphql).not.toHaveBeenCalled();
+    expect(productCollection.createMany).not.toHaveBeenCalled();
   });
 });
