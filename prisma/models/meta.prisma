@@ -94,7 +94,7 @@ model MetaCampaign {
   effectiveStatus      String?
   objective            String?
   buyingType           String?
-  bidStrategy          String?
+  bidStrategy           String?
   dailyBudgetMinor     BigInt?
   lifetimeBudgetMinor  BigInt?
   budgetRemainingMinor BigInt?
@@ -298,8 +298,8 @@ model MetaCatalogItem {
   visibility               String?
   deletedAt                DateTime?
   rawJson                  Json?
-  createdAt                DateTime @default(now())
-  updatedAt                DateTime @updatedAt
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
 
   catalog           MetaProductCatalog          @relation(fields: [catalogId], references: [id], onDelete: Restrict)
   variantMappings   CatalogItemVariantMapping[]
@@ -439,6 +439,7 @@ model MetaInsightDaily {
   actions   MetaInsightAction[]
 
   @@index([adAccountId, date, level])
+  @@index([adAccountId, level, date])
   @@index([campaignId, date])
   @@index([adSetId, date])
   @@index([adId, date])
