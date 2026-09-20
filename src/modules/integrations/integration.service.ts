@@ -38,17 +38,31 @@ export class IntegrationService {
     return this.repository.enqueueExclusiveSyncRun({ ...input, mode: input.mode ?? null });
   }
 
-  async listClaimableShopifySyncRunIds(resourceType: string, limit: number, staleBefore: Date) {
+  async listClaimableShopifySyncRunIds(resourceType: string, limit: number, expiredAt: Date) {
     const rows = await this.repository.listClaimableShopifySyncRunIds(
       resourceType,
       limit,
-      staleBefore,
+      expiredAt,
     );
     return rows.map((row) => row.id);
   }
 
-  claimShopifySyncRun(syncRunId: string, resourceType: string, staleBefore: Date) {
-    return this.repository.claimShopifySyncRun(syncRunId, resourceType, staleBefore);
+  claimShopifySyncRun(
+    syncRunId: string,
+    resourceType: string,
+    expiredAt: Date,
+    leaseExpiresAt: Date,
+  ) {
+    return this.repository.claimShopifySyncRun(
+      syncRunId,
+      resourceType,
+      expiredAt,
+      leaseExpiresAt,
+    );
+  }
+
+  renewShopifySyncRunLease(syncRunId: string, leaseExpiresAt: Date) {
+    return this.repository.renewShopifySyncRunLease(syncRunId, leaseExpiresAt);
   }
 
   attachProviderOperation(syncRunId: string, providerOperationId: string) {
@@ -70,9 +84,6 @@ export class IntegrationService {
       completed.tiktokConnection?.storeId ??
       null;
 
-    // The provider write is already committed. Cache invalidation is fail-open and version-based,
-    // so Redis cannot make a successful synchronization fail and an older in-flight analytical
-    // reader cannot repopulate the authoritative generation afterward.
     if (storeId) await invalidateStoreDecisionCaches(storeId);
     return completed;
   }
@@ -133,5 +144,4 @@ export class IntegrationService {
   }
 }
 
-// Keep construction close to the feature instead of in a separate *.module.ts file.
 export const integrationService = new IntegrationService(new IntegrationRepository());
