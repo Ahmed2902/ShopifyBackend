@@ -1,3 +1,4 @@
+import { profileBackgroundOperation } from '../../observability/operation-performance.js';
 import { shopifyService, type ShopifyService } from '../shopify/shopify.service.js';
 import { ReconciliationRepository } from './reconciliation.repository.js';
 
@@ -24,7 +25,16 @@ export class ReconciliationService {
       claimed += 1;
 
       try {
-        await this.shopifyService.refreshStoreData(claim.storeId);
+        await profileBackgroundOperation(
+          'provider_sync',
+          {
+            provider: 'SHOPIFY',
+            mode: 'PERIODIC',
+            storeId: claim.storeId,
+            connectionId,
+          },
+          () => this.shopifyService.refreshStoreData(claim.storeId),
+        );
         succeeded += 1;
       } catch {
         failed += 1;
