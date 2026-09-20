@@ -4,7 +4,15 @@ import { env } from '../config/env.js';
 import { PrismaClient } from '../generated/prisma/client.js';
 import { recordPrismaQuery } from '../observability/request-performance.js';
 
-const adapter = new PrismaPg({ connectionString: env.DATABASE_URL });
+// Prisma 7 delegates pooling to node-postgres. Configure the pool explicitly so the API/worker
+// lifecycle is predictable across environments: keep warm connections long enough for interactive
+// traffic, cap per-process fan-out, and fail connection acquisition instead of hanging forever.
+const adapter = new PrismaPg({
+  connectionString: env.DATABASE_URL,
+  max: env.DATABASE_POOL_MAX,
+  idleTimeoutMillis: env.DATABASE_POOL_IDLE_TIMEOUT_MS,
+  connectionTimeoutMillis: env.DATABASE_POOL_CONNECTION_TIMEOUT_MS,
+});
 const basePrisma = new PrismaClient({ adapter });
 
 async function measurePrismaOperation<T>(

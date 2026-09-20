@@ -7,6 +7,9 @@ const envSchema = z.object({
   APP_URL: z.string().url().optional(),
   FRONTEND_URL: z.string().url().optional(),
   DATABASE_URL: z.string().min(1),
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
+  DATABASE_POOL_IDLE_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(1_800_000).default(300_000),
+  DATABASE_POOL_CONNECTION_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(5_000),
   CORS_ORIGIN: z.string().url().optional(),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   LOG_REQUEST_PERFORMANCE: z
