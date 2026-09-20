@@ -38,31 +38,21 @@ export class IntegrationService {
     return this.repository.enqueueExclusiveSyncRun({ ...input, mode: input.mode ?? null });
   }
 
-  async listClaimableShopifySyncRunIds(resourceType: string, limit: number, expiredAt: Date) {
+  async listClaimableShopifySyncRunIds(resourceType: string, limit: number, staleBefore: Date) {
     const rows = await this.repository.listClaimableShopifySyncRunIds(
       resourceType,
       limit,
-      expiredAt,
+      staleBefore,
     );
     return rows.map((row) => row.id);
   }
 
-  claimShopifySyncRun(
-    syncRunId: string,
-    resourceType: string,
-    expiredAt: Date,
-    leaseExpiresAt: Date,
-  ) {
-    return this.repository.claimShopifySyncRun(
-      syncRunId,
-      resourceType,
-      expiredAt,
-      leaseExpiresAt,
-    );
+  claimShopifySyncRun(syncRunId: string, resourceType: string, staleBefore: Date) {
+    return this.repository.claimShopifySyncRun(syncRunId, resourceType, staleBefore);
   }
 
-  renewShopifySyncRunLease(syncRunId: string, leaseExpiresAt: Date) {
-    return this.repository.renewShopifySyncRunLease(syncRunId, leaseExpiresAt);
+  renewShopifySyncRunLease(syncRunId: string, now = new Date()) {
+    return this.repository.renewShopifySyncRunLease(syncRunId, now);
   }
 
   attachProviderOperation(syncRunId: string, providerOperationId: string) {
