@@ -8,9 +8,9 @@ import type {
   ShopifyVariant,
 } from '../../../src/modules/shopify/shopify.schema.js';
 import {
+  bulkReplaceInventoryLevels,
   bulkUpsertCollections,
   bulkUpsertInventoryItems,
-  bulkUpsertInventoryLevels,
   bulkUpsertProducts,
   bulkUpsertVariants,
 } from '../../../src/modules/shopify/shared/shopify-bulk-write.js';
@@ -129,10 +129,38 @@ describe('Shopify bulk write helpers', () => {
 
     expect(executeRaw).toHaveBeenCalledTimes(1);
   });
+
+  it('uses two bounded Prisma writes for an inventory-level page', async () => {
+    const deleteMany = vi.fn().mockResolvedValue({ count: 50 });
+    const createMany = vi.fn().mockResolvedValue({ count: 50 });
+    const db = { inventoryLevelCurrent: { deleteMany, createMany } } as unknown as Pick<
+      Prisma.TransactionClient,
+      'inventoryLevelCurrent'
+    >;
+    const now = new Date('2026-09-20T00:00:00.000Z');
+    const rows = Array.from({ length: 50 }, () => ({
+      inventoryItemId: randomUUID(),
+      locationId: randomUUID(),
+      available: 1,
+      incoming: 0,
+      committed: 0,
+      onHand: 1,
+      reserved: 0,
+      damaged: 0,
+      safetyStock: 0,
+      qualityControl: 0,
+      sourceUpdatedAt: now,
+    }));
+
+    await bulkReplaceInventoryLevels(db, rows, now);
+
+    expect(deleteMany).toHaveBeenCalledTimes(1);
+    expect(createMany).toHaveBeenCalledTimes(1);
+  });
 });
 
-describeDatabase('Shopify bulk write SQL', () => {
-  it('upserts catalog and inventory pages while preserving one row per Shopify identity', async () => {
+describeDatabase('Shopify bulk write persistence', () => {
+  it('upserts catalog pages and replaces current inventory levels without duplicate identities', async () => {
     const store = await createStore();
     const firstProduct = product('gid://shopify/Product/1', 'Original title');
     const secondProduct = product('gid://shopify/Product/2');
@@ -210,7 +238,7 @@ describeDatabase('Shopify bulk write SQL', () => {
     const now = new Date('2026-09-20T00:00:00.000Z');
 
     await prisma.$transaction((tx) =>
-      bulkUpsertInventoryLevels(
+      bulkReplaceInventoryLevels(
         tx,
         [
           {
@@ -231,7 +259,7 @@ describeDatabase('Shopify bulk write SQL', () => {
       ),
     );
     await prisma.$transaction((tx) =>
-      bulkUpsertInventoryLevels(
+      bulkReplaceInventoryLevels(
         tx,
         [
           {
