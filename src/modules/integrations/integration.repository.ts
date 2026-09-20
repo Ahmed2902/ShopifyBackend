@@ -1,4 +1,4 @@
-import type { Prisma } from '../../generated/prisma/client.js';
+import { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
 import { INTEGRATION_PROVIDERS, type IntegrationProviderName } from './integration.schema.js';
 
@@ -197,8 +197,6 @@ export class IntegrationRepository {
         lastError: null,
       },
       include: {
-        // Resolve the owning Store in the same committed write. IntegrationService uses this only
-        // to advance Store-scoped analytical cache generations; no follow-up lookup is required.
         shopifyConnection: { select: { storeId: true } },
         metaConnection: { select: { storeId: true } },
         tiktokConnection: { select: { storeId: true } },
