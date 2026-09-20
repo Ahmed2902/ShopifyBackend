@@ -2,6 +2,8 @@ import { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
 import { INTEGRATION_PROVIDERS, type IntegrationProviderName } from './integration.schema.js';
 
+const QUEUED_SYNC_LEASE_MS = 30 * 60_000;
+
 function syncRunConnectionData(
   provider: IntegrationProviderName,
   connectionId: string,
@@ -130,7 +132,8 @@ export class IntegrationRepository {
     throw new Error('Unable to enqueue sync after resolving a concurrent queue race');
   }
 
-  listClaimableShopifySyncRunIds(resourceType: string, limit: number, expiredAt: Date) {
+  listClaimableShopifySyncRunIds(resourceType: string, limit: number, staleBefore: Date) {
+    const now = new Date();
     return prisma.syncRun.findMany({
       where: {
         provider: 'SHOPIFY',
@@ -139,7 +142,8 @@ export class IntegrationRepository {
         activeQueueKey: { not: null },
         OR: [
           { status: 'PENDING' },
-          { status: 'RUNNING', leaseExpiresAt: { lte: expiredAt } },
+          { status: 'RUNNING', leaseExpiresAt: { lte: now } },
+          { status: 'RUNNING', leaseExpiresAt: null, startedAt: { lte: staleBefore } },
         ],
       },
       orderBy: { createdAt: 'asc' },
@@ -148,13 +152,9 @@ export class IntegrationRepository {
     });
   }
 
-  async claimShopifySyncRun(
-    syncRunId: string,
-    resourceType: string,
-    expiredAt: Date,
-    leaseExpiresAt: Date,
-  ) {
+  async claimShopifySyncRun(syncRunId: string, resourceType: string, staleBefore: Date) {
     const startedAt = new Date();
+    const leaseExpiresAt = new Date(startedAt.getTime() + QUEUED_SYNC_LEASE_MS);
     const claimed = await prisma.syncRun.updateMany({
       where: {
         id: syncRunId,
@@ -164,7 +164,8 @@ export class IntegrationRepository {
         activeQueueKey: { not: null },
         OR: [
           { status: 'PENDING' },
-          { status: 'RUNNING', leaseExpiresAt: { lte: expiredAt } },
+          { status: 'RUNNING', leaseExpiresAt: { lte: startedAt } },
+          { status: 'RUNNING', leaseExpiresAt: null, startedAt: { lte: staleBefore } },
         ],
       },
       data: {
@@ -188,7 +189,7 @@ export class IntegrationRepository {
     });
   }
 
-  renewShopifySyncRunLease(syncRunId: string, leaseExpiresAt: Date) {
+  renewShopifySyncRunLease(syncRunId: string, now = new Date()) {
     return prisma.syncRun.updateMany({
       where: {
         id: syncRunId,
@@ -196,7 +197,7 @@ export class IntegrationRepository {
         status: 'RUNNING',
         activeQueueKey: { not: null },
       },
-      data: { leaseExpiresAt },
+      data: { leaseExpiresAt: new Date(now.getTime() + QUEUED_SYNC_LEASE_MS) },
     });
   }
 
