@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
 import { INTEGRATION_PROVIDERS, type IntegrationProviderName } from './integration.schema.js';
@@ -34,6 +35,12 @@ function queueKey(provider: IntegrationProviderName, connectionId: string, resou
 function isUniqueConstraintError(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }
+
+const owningStoreInclude = {
+  shopifyConnection: { select: { storeId: true } },
+  metaConnection: { select: { storeId: true } },
+  tiktokConnection: { select: { storeId: true } },
+} as const;
 
 export class IntegrationRepository {
   findSummary(storeId: string) {
@@ -155,6 +162,7 @@ export class IntegrationRepository {
   async claimShopifySyncRun(syncRunId: string, resourceType: string, staleBefore: Date) {
     const startedAt = new Date();
     const leaseExpiresAt = new Date(startedAt.getTime() + QUEUED_SYNC_LEASE_MS);
+    const leaseToken = randomUUID();
     const claimed = await prisma.syncRun.updateMany({
       where: {
         id: syncRunId,
@@ -172,6 +180,7 @@ export class IntegrationRepository {
         status: 'RUNNING',
         startedAt,
         leaseExpiresAt,
+        leaseToken,
         finishedAt: null,
         lastError: null,
       },
@@ -184,20 +193,76 @@ export class IntegrationRepository {
         id: true,
         startedAt: true,
         leaseExpiresAt: true,
+        leaseToken: true,
         shopifyConnection: { select: { storeId: true } },
       },
     });
   }
 
-  renewShopifySyncRunLease(syncRunId: string, now = new Date()) {
+  renewShopifySyncRunLease(syncRunId: string, leaseToken: string, now = new Date()) {
     return prisma.syncRun.updateMany({
       where: {
         id: syncRunId,
         provider: 'SHOPIFY',
         status: 'RUNNING',
         activeQueueKey: { not: null },
+        leaseToken,
       },
       data: { leaseExpiresAt: new Date(now.getTime() + QUEUED_SYNC_LEASE_MS) },
+    });
+  }
+
+  async completeClaimedShopifySyncRun(
+    syncRunId: string,
+    leaseToken: string,
+    input: { recordsRead: number; recordsWritten: number; partial: boolean },
+  ) {
+    return prisma.$transaction(async (tx) => {
+      const completed = await tx.syncRun.updateMany({
+        where: {
+          id: syncRunId,
+          provider: 'SHOPIFY',
+          status: 'RUNNING',
+          activeQueueKey: { not: null },
+          leaseToken,
+        },
+        data: {
+          status: input.partial ? 'PARTIAL' : 'SUCCEEDED',
+          recordsRead: input.recordsRead,
+          recordsWritten: input.recordsWritten,
+          activeQueueKey: null,
+          leaseExpiresAt: null,
+          leaseToken: null,
+          finishedAt: new Date(),
+          lastError: null,
+        },
+      });
+      if (completed.count === 0) return null;
+      return tx.syncRun.findUnique({ where: { id: syncRunId }, include: owningStoreInclude });
+    });
+  }
+
+  async failClaimedShopifySyncRun(syncRunId: string, leaseToken: string, lastError: string) {
+    return prisma.$transaction(async (tx) => {
+      const failed = await tx.syncRun.updateMany({
+        where: {
+          id: syncRunId,
+          provider: 'SHOPIFY',
+          status: 'RUNNING',
+          activeQueueKey: { not: null },
+          leaseToken,
+        },
+        data: {
+          status: 'FAILED',
+          activeQueueKey: null,
+          leaseExpiresAt: null,
+          leaseToken: null,
+          finishedAt: new Date(),
+          lastError,
+        },
+      });
+      if (failed.count === 0) return null;
+      return tx.syncRun.findUnique({ where: { id: syncRunId }, include: owningStoreInclude });
     });
   }
 
@@ -220,14 +285,11 @@ export class IntegrationRepository {
         recordsWritten: input.recordsWritten,
         activeQueueKey: null,
         leaseExpiresAt: null,
+        leaseToken: null,
         finishedAt: new Date(),
         lastError: null,
       },
-      include: {
-        shopifyConnection: { select: { storeId: true } },
-        metaConnection: { select: { storeId: true } },
-        tiktokConnection: { select: { storeId: true } },
-      },
+      include: owningStoreInclude,
     });
   }
 
@@ -238,9 +300,11 @@ export class IntegrationRepository {
         status: 'FAILED',
         activeQueueKey: null,
         leaseExpiresAt: null,
+        leaseToken: null,
         finishedAt: new Date(),
         lastError,
       },
+      include: owningStoreInclude,
     });
   }
 
