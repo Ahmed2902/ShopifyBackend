@@ -39,8 +39,6 @@ async function redisCommand(parts: string[], timeoutMs: number): Promise<RedisCo
     if (!response.ok || !payload || payload.error) return { ok: false, result: null };
     return { ok: true, result: payload.result ?? null };
   } catch {
-    // Analytical caching is an optimization only. Redis failure must never make
-    // an otherwise valid database-backed read unavailable.
     return { ok: false, result: null };
   } finally {
     recordRequestPerformanceSpan('redis.http', performance.now() - startedAt);
@@ -68,13 +66,6 @@ export class RedisJsonCache {
     }
   }
 
-  /**
-   * Resolve the Store generation and its versioned value in one Redis round trip.
-   *
-   * Stride uses Redis over HTTP, unlike Systemly's persistent Redis client. Doing separate GETs for
-   * the version and payload doubles network latency on every warm analytical read. The Lua command
-   * keeps the same versioned-cache semantics while making a warm dashboard one Redis request.
-   */
   async getVersioned<T>(scope: string, key: string): Promise<VersionedRead<T> | null> {
     const command = await redisCommand(
       [
@@ -97,8 +88,6 @@ export class RedisJsonCache {
     try {
       return { version: String(rawVersion), value: JSON.parse(rawValue) as T };
     } catch {
-      // Treat malformed cache contents as a miss under the resolved generation. Source truth is
-      // still authoritative and will overwrite the bad value after a successful load.
       return { version: String(rawVersion), value: null };
     }
   }
@@ -111,7 +100,7 @@ export class RedisJsonCache {
         this.timeoutMs,
       );
     } catch {
-      // JSON serialization failures or Redis failures must not break the source read.
+      // Cache writes are fail-open; source truth has already been computed.
     }
   }
 
@@ -119,13 +108,6 @@ export class RedisJsonCache {
     await redisCommand(['DEL', this.key(key)], this.timeoutMs);
   }
 
-  /**
-   * Return the current logical generation for a cache scope.
-   *
-   * Missing version keys are generation zero. Redis transport failure is different: callers
-   * receive null and must bypass caching rather than guessing a generation that could expose an
-   * older cached value after an invalidation.
-   */
   async getVersion(scope: string): Promise<string | null> {
     const command = await redisCommand(['GET', this.key(`version:${scope}`)], this.timeoutMs);
     if (!command.ok) return null;
@@ -136,11 +118,6 @@ export class RedisJsonCache {
     return null;
   }
 
-  /**
-   * Advance the logical cache generation. Old values are deliberately left to expire by TTL;
-   * they can no longer be read once the version changes, which makes invalidation safe even when
-   * an older in-flight loader finishes after the mutation/refresh boundary.
-   */
   async incrementVersion(scope: string): Promise<string | null> {
     const command = await redisCommand(['INCR', this.key(`version:${scope}`)], this.timeoutMs);
     if (!command.ok) return null;
@@ -152,9 +129,7 @@ export class RedisJsonCache {
 }
 
 export class CachedReadCoordinator {
-  /** Coalesce the complete read path so simultaneous readers do not duplicate Redis round trips. */
   private readonly reads: InFlightCoalescer;
-  /** Coalesce source work across a fresh reader and ordinary readers that resolve to the same version. */
   private readonly sourceReads: InFlightCoalescer;
 
   constructor(
@@ -174,52 +149,55 @@ export class CachedReadCoordinator {
     const versionScope = options.versionScope ?? key;
     const operationKey = `${fresh ? 'fresh' : 'read'}:${versionScope}:${key}`;
 
-    // Fresh reads never join an ordinary read that may have started before the refresh boundary.
-    // Multiple simultaneous clicks on Refresh do coalesce with each other, so one interaction
-    // still produces one generation bump and one source computation.
-    return this.reads.run(operationKey, async () => {
-      if (!fresh) {
-        const resolved = await this.cache.getVersioned<T>(versionScope, key);
-        // Redis/version lookup is fail-open. Do not read or write a guessed generation because a
-        // transient version-key failure followed by a successful data GET could resurrect stale data.
-        if (resolved === null) {
+    return this.reads.run(
+      operationKey,
+      async () => {
+        if (!fresh) {
+          const resolved = await this.cache.getVersioned<T>(versionScope, key);
+          if (resolved === null) {
+            recordCacheOutcome('error');
+            return loader();
+          }
+          if (resolved.value !== null) {
+            recordCacheOutcome('hit');
+            return resolved.value;
+          }
+          recordCacheOutcome('miss');
+
+          const versionedKey = `v${resolved.version}:${key}`;
+          return this.sourceReads.run(
+            versionedKey,
+            async () => {
+              const value = await loader();
+              await this.cache.set(versionedKey, value);
+              return value;
+            },
+            { onJoin: () => recordCacheOutcome('coalesced') },
+          );
+        }
+
+        recordCacheOutcome('fresh');
+        const version = await this.cache.incrementVersion(versionScope);
+        if (version === null) {
           recordCacheOutcome('error');
           return loader();
         }
-        if (resolved.value !== null) {
-          recordCacheOutcome('hit');
-          return resolved.value;
-        }
-        recordCacheOutcome('miss');
 
-        const versionedKey = `v${resolved.version}:${key}`;
-        return this.sourceReads.run(versionedKey, async () => {
-          const value = await loader();
-          await this.cache.set(versionedKey, value);
-          return value;
-        });
-      }
-
-      recordCacheOutcome('fresh');
-      const version = await this.cache.incrementVersion(versionScope);
-      if (version === null) {
-        recordCacheOutcome('error');
-        return loader();
-      }
-
-      const versionedKey = `v${version}:${key}`;
-      return this.sourceReads.run(versionedKey, async () => {
-        const value = await loader();
-        await this.cache.set(versionedKey, value);
-        return value;
-      });
-    });
+        const versionedKey = `v${version}:${key}`;
+        return this.sourceReads.run(
+          versionedKey,
+          async () => {
+            const value = await loader();
+            await this.cache.set(versionedKey, value);
+            return value;
+          },
+          { onJoin: () => recordCacheOutcome('coalesced') },
+        );
+      },
+      { onJoin: () => recordCacheOutcome('coalesced') },
+    );
   }
 
-  /**
-   * Versioned invalidation mirrors Systemly's proven analytics-cache model. It is race-safe:
-   * an older computation may finish later, but it can only populate the old generation key.
-   */
   async invalidate(versionScope: string): Promise<void> {
     await this.cache.incrementVersion(versionScope);
   }
