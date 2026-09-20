@@ -38,7 +38,7 @@ export const requestPerformanceMiddleware: RequestHandler = (req, res, next) => 
     queryIntervals: [],
     slowestQueries: [],
     spans: {},
-    cacheOutcomes: { hit: 0, miss: 0, bypass: 0, error: 0, fresh: 0 },
+    cacheOutcomes: { hit: 0, miss: 0, bypass: 0, error: 0, fresh: 0, coalesced: 0 },
   };
 
   runWithRequestPerformanceContext(context, () => {
