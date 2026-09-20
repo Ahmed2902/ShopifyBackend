@@ -21,6 +21,7 @@ const ORDER_HISTORY_RESOURCE = 'OrdersRefunds';
 const RECONCILIATION_RESOURCE = 'StoreReconciliation';
 const FALLBACK_RECONCILIATION_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 const MANUAL_SYNC_CLAIM_STALE_MS = 30 * 60_000;
+const MANUAL_SYNC_LEASE_HEARTBEAT_MS = 5 * 60_000;
 
 export class ShopifyService {
   private readonly apiService: ShopifyApiService;
@@ -177,11 +178,23 @@ export class ShopifyService {
       if (!claim || !storeId) continue;
       claimed += 1;
 
+      const heartbeat = setInterval(() => {
+        void this.integrationService.renewShopifySyncRunLease(syncRunId).catch((error) => {
+          logger.warn(
+            { err: error, syncRunId, storeId },
+            'Failed to renew manual Shopify sync lease',
+          );
+        });
+      }, MANUAL_SYNC_LEASE_HEARTBEAT_MS);
+      heartbeat.unref();
+
       try {
         await this.executeCatalogAndInventorySync(storeId, syncRunId);
         succeeded += 1;
       } catch {
         failed += 1;
+      } finally {
+        clearInterval(heartbeat);
       }
     }
 
