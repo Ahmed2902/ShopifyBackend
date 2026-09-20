@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   getPrismaQueryWallTimeMs,
+  measureRequestPerformanceSpan,
   recordCacheOutcome,
   recordPrismaQuery,
   recordRequestPerformanceSpan,
@@ -56,6 +57,26 @@ describe('request performance context', () => {
 
     expect(value.spans['redis.http']).toEqual({ count: 2, durationMs: 20 });
     expect(value.cacheOutcomes).toMatchObject({ hit: 2, miss: 1 });
+  });
+
+  it('measures async provider work and records the span even when it fails', async () => {
+    const value = context();
+
+    await runWithRequestPerformanceContext(value, async () => {
+      await expect(
+        measureRequestPerformanceSpan('shopify.admin_api.http', async () => 'ok'),
+      ).resolves.toBe('ok');
+      await expect(
+        measureRequestPerformanceSpan('meta.graph_api.http', async () => {
+          throw new Error('provider failed');
+        }),
+      ).rejects.toThrow('provider failed');
+    });
+
+    expect(value.spans['shopify.admin_api.http']?.count).toBe(1);
+    expect(value.spans['shopify.admin_api.http']?.durationMs).toBeGreaterThanOrEqual(0);
+    expect(value.spans['meta.graph_api.http']?.count).toBe(1);
+    expect(value.spans['meta.graph_api.http']?.durationMs).toBeGreaterThanOrEqual(0);
   });
 
   it('uses union wall time so overlapping parallel queries are not double counted', () => {
