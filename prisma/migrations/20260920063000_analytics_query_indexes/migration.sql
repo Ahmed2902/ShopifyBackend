@@ -1,7 +1,9 @@
--- Meta analytical reads constrain account + insight level before scanning a date range.
-CREATE INDEX "MetaInsightDaily_adAccountId_level_date_idx"
+-- These tables are written continuously by provider/order ingestion. Build the analytical indexes
+-- without blocking inserts/updates/deletes on an established production database.
+-- Prisma ORM v7 cannot express CONCURRENTLY in @@index, so the schema declares the index shape and
+-- this reviewed migration supplies the PostgreSQL deployment option.
+CREATE INDEX CONCURRENTLY "MetaInsightDaily_adAccountId_level_date_idx"
 ON "MetaInsightDaily"("adAccountId", "level", "date");
 
--- Product economics/leaderboard reads constrain product identity before joining back to orders.
-CREATE INDEX "OrderLineItem_productId_orderId_idx"
+CREATE INDEX CONCURRENTLY "OrderLineItem_productId_orderId_idx"
 ON "OrderLineItem"("productId", "orderId");
