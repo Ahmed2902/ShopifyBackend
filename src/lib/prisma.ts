@@ -2,6 +2,7 @@ import { performance } from 'node:perf_hooks';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { env } from '../config/env.js';
 import { PrismaClient } from '../generated/prisma/client.js';
+import { recordOperationPrismaQuery } from '../observability/operation-performance.js';
 import { recordPrismaQuery } from '../observability/request-performance.js';
 
 const adapter = new PrismaPg({ connectionString: env.DATABASE_URL });
@@ -17,18 +18,20 @@ async function measurePrismaOperation<T>(
     return await execute();
   } finally {
     const endedAtMs = performance.now();
-    recordPrismaQuery({
+    const sample = {
       model,
       operation,
       durationMs: Math.max(0, endedAtMs - startedAtMs),
       startedAtMs,
       endedAtMs,
-    });
+    };
+    recordPrismaQuery(sample);
+    recordOperationPrismaQuery(sample);
   }
 }
 
 const instrumentedPrisma = basePrisma.$extends({
-  name: 'request-performance-instrumentation',
+  name: 'performance-instrumentation',
   query: {
     $allModels: {
       $allOperations({ model, operation, args, query }) {
@@ -50,6 +53,4 @@ const instrumentedPrisma = basePrisma.$extends({
   },
 });
 
-// Keep the public PrismaClient type stable at this single boundary. Query extensions retain
-// the runtime API, while several repository helpers intentionally accept Prisma.TransactionClient.
 export const prisma = instrumentedPrisma as unknown as PrismaClient;
