@@ -98,8 +98,11 @@ export class IntegrationRepository {
   }) {
     const lockKey = `${input.provider}:${input.connectionId}:${input.resourceType}`;
     return prisma.$transaction(async (tx) => {
-      await tx.$queryRaw(Prisma.sql`
-        SELECT pg_advisory_xact_lock(hashtext(${lockKey}))
+      // Put the void-returning advisory lock in FROM so Prisma only has to deserialize an integer.
+      // The xact lock is held until this transaction commits/rolls back.
+      await tx.$queryRaw<Array<{ locked: number }>>(Prisma.sql`
+        SELECT 1 AS locked
+        FROM pg_advisory_xact_lock(hashtext(${lockKey}))
       `);
 
       const existing = await tx.syncRun.findFirst({
