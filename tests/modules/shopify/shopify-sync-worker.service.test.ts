@@ -5,17 +5,19 @@ import type { ShopifyRepository } from '../../../src/modules/shopify/shopify.rep
 
 const syncRunId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const storeId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const leaseToken = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 
 describe('ShopifyService manual sync worker lease', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('renews the claimed SyncRun lease while executing and clears the heartbeat afterward', async () => {
+  it('renews the claimed SyncRun lease with its owner token and clears the heartbeat afterward', async () => {
     const integrations = {
       listClaimableShopifySyncRunIds: vi.fn().mockResolvedValue([syncRunId]),
       claimShopifySyncRun: vi.fn().mockResolvedValue({
         id: syncRunId,
+        leaseToken,
         shopifyConnection: { storeId },
       }),
       renewShopifySyncRunLease: vi.fn().mockResolvedValue({ count: 1 }),
@@ -33,7 +35,12 @@ describe('ShopifyService manual sync worker lease', () => {
     const execute = vi
       .spyOn(
         service as unknown as {
-          executeCatalogAndInventorySync(store: string, run: string): Promise<unknown>;
+          executeCatalogAndInventorySync(
+            store: string,
+            run: string,
+            token?: string,
+            lost?: () => boolean,
+          ): Promise<unknown>;
         },
         'executeCatalogAndInventorySync',
       )
@@ -42,10 +49,12 @@ describe('ShopifyService manual sync worker lease', () => {
     const processing = service.processManualSyncQueue(1);
     await vi.waitFor(() => expect(interval).toHaveBeenCalledTimes(1));
     heartbeatCallback?.();
-    await vi.waitFor(() => expect(integrations.renewShopifySyncRunLease).toHaveBeenCalledWith(syncRunId));
+    await vi.waitFor(() =>
+      expect(integrations.renewShopifySyncRunLease).toHaveBeenCalledWith(syncRunId, leaseToken),
+    );
 
     await expect(processing).resolves.toEqual({ claimed: 1, succeeded: 1, failed: 0 });
-    expect(execute).toHaveBeenCalledWith(storeId, syncRunId);
+    expect(execute).toHaveBeenCalledWith(storeId, syncRunId, leaseToken, expect.any(Function));
     expect(heartbeat.unref).toHaveBeenCalledTimes(1);
     expect(clear).toHaveBeenCalledWith(heartbeat);
   });
