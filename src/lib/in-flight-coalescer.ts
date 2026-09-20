@@ -3,9 +3,12 @@ export class InFlightCoalescer {
 
   constructor(private readonly maxEntries = 250) {}
 
-  run<T>(key: string, loader: () => Promise<T>): Promise<T> {
+  run<T>(key: string, loader: () => Promise<T>, options: { onJoin?: () => void } = {}): Promise<T> {
     const existing = this.inFlight.get(key) as Promise<T> | undefined;
-    if (existing) return existing;
+    if (existing) {
+      options.onJoin?.();
+      return existing;
+    }
 
     // Coalescing is an optimization. Once the bounded map is saturated, run the
     // request normally rather than retaining unbounded tenant/query keys.
