@@ -5,7 +5,7 @@ const storeId = process.env.STORE_ID;
 const accessToken = process.env.ACCESS_TOKEN;
 const iterations = Number.parseInt(process.env.BENCHMARK_ITERATIONS ?? '20', 10);
 const warmups = Number.parseInt(process.env.BENCHMARK_WARMUPS ?? '3', 10);
-const concurrency = Number.parseInt(process.env.BENCHMARK_CONCURRENCY ?? '5', 10);
+const configuredConcurrency = Number.parseInt(process.env.BENCHMARK_CONCURRENCY ?? '5', 10);
 const timeoutMs = Number.parseInt(process.env.BENCHMARK_TIMEOUT_MS ?? '30000', 10);
 const enforceBudgets = process.env.BENCHMARK_ENFORCE_BUDGETS === 'true';
 const jsonPath = process.env.BENCHMARK_JSON_PATH;
@@ -14,8 +14,9 @@ if (!storeId) throw new Error('STORE_ID is required');
 if (!accessToken) throw new Error('ACCESS_TOKEN is required');
 if (!Number.isInteger(iterations) || iterations < 1) throw new Error('BENCHMARK_ITERATIONS must be >= 1');
 if (!Number.isInteger(warmups) || warmups < 0) throw new Error('BENCHMARK_WARMUPS must be >= 0');
-if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error('BENCHMARK_CONCURRENCY must be >= 1');
+if (!Number.isInteger(configuredConcurrency) || configuredConcurrency < 1) throw new Error('BENCHMARK_CONCURRENCY must be >= 1');
 
+const effectiveConcurrency = Math.min(configuredConcurrency, iterations);
 const headers = { Authorization: `Bearer ${accessToken}` };
 const store = encodeURIComponent(storeId);
 const warmBudget = 300;
@@ -111,7 +112,7 @@ async function benchmarkConcurrent(testCase) {
   const samples = [];
   let next = 0;
   const startedAt = performance.now();
-  const workers = Array.from({ length: Math.min(concurrency, iterations) }, async () => {
+  const workers = Array.from({ length: effectiveConcurrency }, async () => {
     while (true) {
       const index = next;
       next += 1;
@@ -123,13 +124,13 @@ async function benchmarkConcurrent(testCase) {
   const elapsedMs = performance.now() - startedAt;
   return {
     ...summarize(samples),
-    concurrency,
+    concurrency: effectiveConcurrency,
     throughputRps: round((samples.length * 1_000) / elapsedMs),
   };
 }
 
 console.log(
-  `Analytics benchmark v2: ${baseUrl} · store ${storeId} · ${iterations} measured / ${warmups} warmup · concurrency ${concurrency}`,
+  `Analytics benchmark v2: ${baseUrl} · store ${storeId} · ${iterations} measured / ${warmups} warmup · concurrency ${effectiveConcurrency}${effectiveConcurrency !== configuredConcurrency ? ` (configured ${configuredConcurrency})` : ''}`,
 );
 const results = [];
 const violations = [];
@@ -145,6 +146,7 @@ for (const testCase of cases) {
       p95BudgetMs: testCase.p95BudgetMs,
       budgetPassed,
       ...sequential,
+      concurrentWorkers: concurrentResult?.concurrency ?? null,
       concurrentP95Ms: concurrentResult?.p95Ms ?? null,
       concurrentP99Ms: concurrentResult?.p99Ms ?? null,
       throughputRps: concurrentResult?.throughputRps ?? null,
@@ -165,7 +167,7 @@ console.table(results);
 if (jsonPath) {
   await writeFile(
     jsonPath,
-    `${JSON.stringify({ generatedAt: new Date().toISOString(), baseUrl, storeId, iterations, warmups, concurrency, results }, null, 2)}\n`,
+    `${JSON.stringify({ generatedAt: new Date().toISOString(), baseUrl, storeId, iterations, warmups, configuredConcurrency, effectiveConcurrency, results }, null, 2)}\n`,
     'utf8',
   );
   console.log(`Wrote benchmark JSON to ${jsonPath}`);
