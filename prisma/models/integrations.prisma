@@ -118,6 +118,8 @@ model SyncRun {
   cursor               String?
   recordsRead          Int                 @default(0)
   recordsWritten       Int                 @default(0)
+  activeQueueKey       String?             @unique
+  leaseExpiresAt       DateTime?
   startedAt            DateTime?
   finishedAt           DateTime?
   lastError            String?
@@ -130,7 +132,7 @@ model SyncRun {
   payloads          ExternalPayload[]
 
   @@index([provider, resourceType, createdAt])
-  @@index([provider, resourceType, status, createdAt])
+  @@index([provider, resourceType, status, leaseExpiresAt, createdAt])
   @@index([providerOperationId])
   @@index([shopifyConnectionId, createdAt])
   @@index([metaConnectionId, createdAt])
@@ -145,7 +147,7 @@ model WebhookDelivery {
   metaConnectionId     String?             @db.Uuid
   tiktokConnectionId   String?             @db.Uuid
   topic                String
-  apiVersion           String?
+  apiVersion            String?
   triggeredAt          DateTime?
   receivedAt           DateTime            @default(now())
   processingStartedAt  DateTime?
