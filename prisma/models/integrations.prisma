@@ -92,10 +92,10 @@ model TikTokConnection {
   refreshTokenCiphertext String?
   refreshTokenExpiresAt  DateTime?
   scopes                 String[]         @default([])
-  apiVersion              String
-  lastSyncedAt            DateTime?
-  createdAt               DateTime         @default(now())
-  updatedAt               DateTime         @updatedAt
+  apiVersion             String
+  lastSyncedAt           DateTime?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
 
   store             Store                   @relation(fields: [storeId], references: [id], onDelete: Restrict)
   advertisers       TikTokAdvertiser[]
@@ -120,6 +120,7 @@ model SyncRun {
   recordsWritten       Int                 @default(0)
   activeQueueKey       String?             @unique
   leaseExpiresAt       DateTime?
+  leaseToken           String?
   startedAt            DateTime?
   finishedAt           DateTime?
   lastError            String?
@@ -147,7 +148,7 @@ model WebhookDelivery {
   metaConnectionId     String?             @db.Uuid
   tiktokConnectionId   String?             @db.Uuid
   topic                String
-  apiVersion            String?
+  apiVersion           String?
   triggeredAt          DateTime?
   receivedAt           DateTime            @default(now())
   processingStartedAt  DateTime?
