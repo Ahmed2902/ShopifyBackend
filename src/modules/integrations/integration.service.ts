@@ -28,6 +28,29 @@ export class IntegrationService {
     return this.repository.createSyncRun({ ...input, mode: input.mode ?? null });
   }
 
+  enqueueExclusiveSyncRun(input: {
+    provider: IntegrationProviderName;
+    connectionId: string;
+    resourceType: string;
+    mode?: string;
+    apiVersion: string;
+  }) {
+    return this.repository.enqueueExclusiveSyncRun({ ...input, mode: input.mode ?? null });
+  }
+
+  async listClaimableShopifySyncRunIds(resourceType: string, limit: number, staleBefore: Date) {
+    const rows = await this.repository.listClaimableShopifySyncRunIds(
+      resourceType,
+      limit,
+      staleBefore,
+    );
+    return rows.map((row) => row.id);
+  }
+
+  claimShopifySyncRun(syncRunId: string, resourceType: string, staleBefore: Date) {
+    return this.repository.claimShopifySyncRun(syncRunId, resourceType, staleBefore);
+  }
+
   attachProviderOperation(syncRunId: string, providerOperationId: string) {
     return this.repository.attachProviderOperation(syncRunId, providerOperationId);
   }
