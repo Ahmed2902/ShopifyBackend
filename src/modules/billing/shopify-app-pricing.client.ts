@@ -1,5 +1,6 @@
 import { env } from '../../config/env.js';
 import { AppError } from '../../errors/app-error.js';
+import { measureRequestPerformanceSpan } from '../../observability/request-performance.js';
 
 export type ShopifyAppPricingSubscription = {
   shop: {
@@ -83,7 +84,11 @@ function storeHandle(myshopifyDomain: string) {
   const suffix = '.myshopify.com';
   const normalized = myshopifyDomain.trim().toLowerCase();
   if (!normalized.endsWith(suffix)) {
-    throw new AppError('Store domain is not a valid myshopify.com domain.', 400, 'INVALID_SHOPIFY_DOMAIN');
+    throw new AppError(
+      'Store domain is not a valid myshopify.com domain.',
+      400,
+      'INVALID_SHOPIFY_DOMAIN',
+    );
   }
   return normalized.slice(0, -suffix.length);
 }
@@ -112,18 +117,20 @@ export class ShopifyAppPricingClient {
 
     let response: Response;
     try {
-      response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Shopify-Access-Token': config.accessToken,
-        },
-        body: JSON.stringify({
-          query: ACTIVE_SUBSCRIPTION_QUERY,
-          variables: { appId: config.appId, shopId },
+      response = await measureRequestPerformanceSpan('shopify.billing_api.http', () =>
+        fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Access-Token': config.accessToken,
+          },
+          body: JSON.stringify({
+            query: ACTIVE_SUBSCRIPTION_QUERY,
+            variables: { appId: config.appId, shopId },
+          }),
+          signal: AbortSignal.timeout(10_000),
         }),
-        signal: AbortSignal.timeout(10_000),
-      });
+      );
     } catch (error) {
       throw new AppError(
         'Shopify billing status could not be verified right now.',
