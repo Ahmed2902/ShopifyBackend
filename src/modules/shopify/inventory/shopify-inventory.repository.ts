@@ -1,7 +1,7 @@
 import type { Prisma } from '../../../generated/prisma/client.js';
 import { prisma } from '../../../lib/prisma.js';
 import type { ShopifyInventoryLevel, ShopifyLocation } from '../shopify.schema.js';
-import { bulkUpsertInventoryLevels } from '../shared/shopify-bulk-write.js';
+import { bulkReplaceInventoryLevels } from '../shared/shopify-bulk-write.js';
 import type { ShopifyInventorySnapshotSource } from '../shopify.types.js';
 
 const DB_WRITE_CONCURRENCY = 12;
@@ -146,7 +146,7 @@ export class ShopifyInventoryRepository {
     });
 
     await prisma.$transaction(async (tx) => {
-      await bulkUpsertInventoryLevels(
+      await bulkReplaceInventoryLevels(
         tx,
         rows.map((row) => ({
           inventoryItemId: row.inventoryItemId,
