@@ -130,6 +130,7 @@ model SyncRun {
   payloads          ExternalPayload[]
 
   @@index([provider, resourceType, createdAt])
+  @@index([provider, resourceType, status, createdAt])
   @@index([providerOperationId])
   @@index([shopifyConnectionId, createdAt])
   @@index([metaConnectionId, createdAt])
