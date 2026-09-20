@@ -175,21 +175,31 @@ export class ShopifyService {
         staleBefore,
       );
       const storeId = claim?.shopifyConnection?.storeId;
-      if (!claim || !storeId) continue;
+      const leaseToken = claim?.leaseToken;
+      if (!claim || !storeId || !leaseToken) continue;
       claimed += 1;
 
+      let leaseLost = false;
       const heartbeat = setInterval(() => {
-        void this.integrationService.renewShopifySyncRunLease(syncRunId).catch((error) => {
-          logger.warn(
-            { err: error, syncRunId, storeId },
-            'Failed to renew manual Shopify sync lease',
-          );
-        });
+        void this.integrationService
+          .renewShopifySyncRunLease(syncRunId, leaseToken)
+          .then((renewed) => {
+            if (renewed.count === 0) {
+              leaseLost = true;
+              logger.warn({ syncRunId, storeId }, 'Manual Shopify sync lease was lost');
+            }
+          })
+          .catch((error) => {
+            logger.warn(
+              { err: error, syncRunId, storeId },
+              'Failed to renew manual Shopify sync lease',
+            );
+          });
       }, MANUAL_SYNC_LEASE_HEARTBEAT_MS);
       heartbeat.unref();
 
       try {
-        await this.executeCatalogAndInventorySync(storeId, syncRunId);
+        await this.executeCatalogAndInventorySync(storeId, syncRunId, leaseToken, () => leaseLost);
         succeeded += 1;
       } catch {
         failed += 1;
@@ -203,8 +213,7 @@ export class ShopifyService {
 
   /**
    * Synchronous entry point retained for internal callers/tests. Browser-triggered manual syncs use
-   * enqueueCatalogAndInventorySync() and the worker queue so provider/database latency never holds
-   * the HTTP request open.
+   * the queue worker so provider/database latency never holds the HTTP request open.
    */
   async syncCatalogAndInventory(storeId: string) {
     const { connection } = await this.loadSyncTarget(storeId);
@@ -411,7 +420,12 @@ export class ShopifyService {
     }
   }
 
-  private async executeCatalogAndInventorySync(storeId: string, syncRunId: string) {
+  private async executeCatalogAndInventorySync(
+    storeId: string,
+    syncRunId: string,
+    leaseToken?: string,
+    leaseWasLost: () => boolean = () => false,
+  ) {
     try {
       const { connection, syncContextBase } = await this.loadSyncTarget(storeId);
       const syncContext: ShopifySyncContext = { ...syncContextBase, syncRunId };
@@ -419,8 +433,19 @@ export class ShopifyService {
         syncContext,
         connection.lastSyncedAt ? 'MANUAL_RECONCILIATION' : 'INITIAL_SYNC',
       );
+
+      if (leaseToken && leaseWasLost()) {
+        throw new AppError('Manual Shopify sync lease was lost', 409, 'SYNC_LEASE_LOST');
+      }
+
       await this.repository.markConnectionSynced(connection.id);
-      await this.integrationService.completeSyncRun(syncRunId, result);
+      const completed = leaseToken
+        ? await this.integrationService.completeClaimedShopifySyncRun(syncRunId, leaseToken, result)
+        : await this.integrationService.completeSyncRun(syncRunId, result);
+      if (leaseToken && !completed) {
+        throw new AppError('Manual Shopify sync lease was lost', 409, 'SYNC_LEASE_LOST');
+      }
+
       return {
         syncRunId,
         status: 'SUCCEEDED' as const,
@@ -428,7 +453,13 @@ export class ShopifyService {
         ...result,
       };
     } catch (error) {
-      await this.integrationService.failSyncRun(syncRunId, error).catch(() => undefined);
+      if (leaseToken) {
+        await this.integrationService
+          .failClaimedShopifySyncRun(syncRunId, leaseToken, error)
+          .catch(() => undefined);
+      } else {
+        await this.integrationService.failSyncRun(syncRunId, error).catch(() => undefined);
+      }
       throw error;
     }
   }
