@@ -39,6 +39,7 @@ export const requestPerformanceMiddleware: RequestHandler = (req, res, next) => 
     slowestQueries: [],
     spans: {},
     cacheOutcomes: { hit: 0, miss: 0, bypass: 0, error: 0, fresh: 0, coalesced: 0 },
+    memoizedReads: new Map(),
   };
 
   runWithRequestPerformanceContext(context, () => {
