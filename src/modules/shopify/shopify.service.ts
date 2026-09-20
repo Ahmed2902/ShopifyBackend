@@ -1,5 +1,6 @@
 import { AppError } from '../../errors/app-error.js';
 import { logger } from '../../lib/logger.js';
+import { profileBackgroundOperation } from '../../observability/operation-performance.js';
 import { integrationService, type IntegrationService } from '../integrations/integration.service.js';
 import { ShopifyBulkService } from './bulk/shopify-bulk.service.js';
 import { ShopifyCatalogRepository } from './catalog/shopify-catalog.repository.js';
@@ -199,7 +200,17 @@ export class ShopifyService {
       heartbeat.unref();
 
       try {
-        await this.executeCatalogAndInventorySync(storeId, syncRunId, leaseToken, () => leaseLost);
+        await profileBackgroundOperation(
+          'provider_sync',
+          {
+            provider: 'SHOPIFY',
+            mode: 'MANUAL',
+            storeId,
+            syncRunId,
+          },
+          () =>
+            this.executeCatalogAndInventorySync(storeId, syncRunId, leaseToken, () => leaseLost),
+        );
         succeeded += 1;
       } catch {
         failed += 1;
