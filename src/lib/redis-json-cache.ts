@@ -1,4 +1,9 @@
+import { performance } from 'node:perf_hooks';
 import { env } from '../config/env.js';
+import {
+  recordCacheOutcome,
+  recordRequestPerformanceSpan,
+} from '../observability/request-performance.js';
 import { InFlightCoalescer } from './in-flight-coalescer.js';
 
 type RedisPayload = { result?: unknown; error?: string };
@@ -19,6 +24,7 @@ const VERSIONED_GET_SCRIPT = [
 ].join('\n');
 
 async function redisCommand(parts: string[], timeoutMs: number): Promise<RedisCommandResult> {
+  const startedAt = performance.now();
   try {
     const response = await fetch(env.REDIS_REST_URL, {
       method: 'POST',
@@ -36,6 +42,8 @@ async function redisCommand(parts: string[], timeoutMs: number): Promise<RedisCo
     // Analytical caching is an optimization only. Redis failure must never make
     // an otherwise valid database-backed read unavailable.
     return { ok: false, result: null };
+  } finally {
+    recordRequestPerformanceSpan('redis.http', performance.now() - startedAt);
   }
 }
 
@@ -174,8 +182,15 @@ export class CachedReadCoordinator {
         const resolved = await this.cache.getVersioned<T>(versionScope, key);
         // Redis/version lookup is fail-open. Do not read or write a guessed generation because a
         // transient version-key failure followed by a successful data GET could resurrect stale data.
-        if (resolved === null) return loader();
-        if (resolved.value !== null) return resolved.value;
+        if (resolved === null) {
+          recordCacheOutcome('error');
+          return loader();
+        }
+        if (resolved.value !== null) {
+          recordCacheOutcome('hit');
+          return resolved.value;
+        }
+        recordCacheOutcome('miss');
 
         const versionedKey = `v${resolved.version}:${key}`;
         return this.sourceReads.run(versionedKey, async () => {
@@ -185,8 +200,12 @@ export class CachedReadCoordinator {
         });
       }
 
+      recordCacheOutcome('fresh');
       const version = await this.cache.incrementVersion(versionScope);
-      if (version === null) return loader();
+      if (version === null) {
+        recordCacheOutcome('error');
+        return loader();
+      }
 
       const versionedKey = `v${version}:${key}`;
       return this.sourceReads.run(versionedKey, async () => {
