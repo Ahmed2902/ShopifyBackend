@@ -12,7 +12,7 @@ interface PrismaQueryInterval {
   endedAtMs: number;
 }
 
-export type CacheOutcome = 'hit' | 'miss' | 'bypass' | 'error' | 'fresh';
+export type CacheOutcome = 'hit' | 'miss' | 'bypass' | 'error' | 'fresh' | 'coalesced';
 
 export interface RequestPerformanceSpan {
   count: number;
