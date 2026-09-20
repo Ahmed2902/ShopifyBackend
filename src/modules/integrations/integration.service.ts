@@ -5,6 +5,19 @@ import { IntegrationRepository } from './integration.repository.js';
 import type { IntegrationProviderName } from './integration.schema.js';
 import { toErrorMessage } from './integration.utils.js';
 
+function storeIdFromSyncRun(run: {
+  shopifyConnection?: { storeId: string } | null;
+  metaConnection?: { storeId: string } | null;
+  tiktokConnection?: { storeId: string } | null;
+}) {
+  return (
+    run.shopifyConnection?.storeId ??
+    run.metaConnection?.storeId ??
+    run.tiktokConnection?.storeId ??
+    null
+  );
+}
+
 export class IntegrationService {
   constructor(private readonly repository: IntegrationRepository) {}
 
@@ -41,21 +54,22 @@ export class IntegrationService {
       recordsWritten: stats.recordsWritten ?? 0,
       partial: stats.partial ?? false,
     });
-    const storeId =
-      completed.shopifyConnection?.storeId ??
-      completed.metaConnection?.storeId ??
-      completed.tiktokConnection?.storeId ??
-      null;
 
-    // The provider write is already committed. Cache invalidation is fail-open and version-based,
-    // so Redis cannot make a successful synchronization fail and an older in-flight analytical
-    // reader cannot repopulate the authoritative generation afterward.
+    // Source writes are committed before the SyncRun status changes. Advance Store generations for
+    // both complete and partial success so old analytical payloads cannot outlive provider writes.
+    const storeId = storeIdFromSyncRun(completed);
     if (storeId) await invalidateStoreDecisionCaches(storeId);
     return completed;
   }
 
-  failSyncRun(syncRunId: string, error: unknown) {
-    return this.repository.failSyncRun(syncRunId, toErrorMessage(error));
+  async failSyncRun(syncRunId: string, error: unknown) {
+    const failed = await this.repository.failSyncRun(syncRunId, toErrorMessage(error));
+
+    // A provider sync can commit one or more pages before a later page fails. Invalidate on failure
+    // as well: source truth may have changed even though the overall run did not succeed.
+    const storeId = storeIdFromSyncRun(failed);
+    if (storeId) await invalidateStoreDecisionCaches(storeId);
+    return failed;
   }
 
   getShopifySyncRun(storeId: string, syncRunId: string, resourceType: string) {
@@ -110,5 +124,4 @@ export class IntegrationService {
   }
 }
 
-// Keep construction close to the feature instead of in a separate *.module.ts file.
 export const integrationService = new IntegrationService(new IntegrationRepository());
