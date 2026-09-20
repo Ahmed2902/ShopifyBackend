@@ -25,6 +25,12 @@ function syncRunConnectionFilter(
   return { provider, tiktokConnectionId: connectionId };
 }
 
+const syncRunStoreInclude = {
+  shopifyConnection: { select: { storeId: true } },
+  metaConnection: { select: { storeId: true } },
+  tiktokConnection: { select: { storeId: true } },
+} as const;
+
 export class IntegrationRepository {
   findSummary(storeId: string) {
     return prisma.store.findUnique({
@@ -109,13 +115,7 @@ export class IntegrationRepository {
         finishedAt: new Date(),
         lastError: null,
       },
-      include: {
-        // Resolve the owning Store in the same committed write. IntegrationService uses this only
-        // to advance Store-scoped analytical cache generations; no follow-up lookup is required.
-        shopifyConnection: { select: { storeId: true } },
-        metaConnection: { select: { storeId: true } },
-        tiktokConnection: { select: { storeId: true } },
-      },
+      include: syncRunStoreInclude,
     });
   }
 
@@ -123,6 +123,7 @@ export class IntegrationRepository {
     return prisma.syncRun.update({
       where: { id: syncRunId },
       data: { status: 'FAILED', finishedAt: new Date(), lastError },
+      include: syncRunStoreInclude,
     });
   }
 
