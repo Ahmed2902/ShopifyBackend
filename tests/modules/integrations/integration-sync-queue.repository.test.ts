@@ -80,10 +80,11 @@ describeDatabase('IntegrationRepository manual sync queue', () => {
     expect(first?.shopifyConnection?.storeId).toBe(store.id);
     expect(first?.startedAt).not.toBeNull();
     expect(first?.leaseExpiresAt).not.toBeNull();
+    expect(first?.leaseToken).toEqual(expect.any(String));
     expect(second).toBeNull();
   });
 
-  it('renews an active lease and does not expose it as claimable before lease expiry', async () => {
+  it('renews an active lease only for the worker that owns its token', async () => {
     const store = await createStore();
     const connectionId = store.shopifyConnection!.id;
     const repository = new IntegrationRepository();
@@ -95,13 +96,23 @@ describeDatabase('IntegrationRepository manual sync queue', () => {
       apiVersion: '2026-07',
     });
     const staleBefore = new Date(Date.now() - 30 * 60_000);
-    await repository.claimShopifySyncRun(queued.syncRun.id, 'CatalogInventory', staleBefore);
+    const claim = await repository.claimShopifySyncRun(
+      queued.syncRun.id,
+      'CatalogInventory',
+      staleBefore,
+    );
+    expect(claim?.leaseToken).toEqual(expect.any(String));
 
     const beforeRenewal = await prisma.syncRun.findUniqueOrThrow({
       where: { id: queued.syncRun.id },
       select: { leaseExpiresAt: true },
     });
-    await repository.renewShopifySyncRunLease(queued.syncRun.id, new Date());
+    await expect(
+      repository.renewShopifySyncRunLease(queued.syncRun.id, 'wrong-token', new Date()),
+    ).resolves.toMatchObject({ count: 0 });
+    await expect(
+      repository.renewShopifySyncRunLease(queued.syncRun.id, claim!.leaseToken!, new Date()),
+    ).resolves.toMatchObject({ count: 1 });
     const afterRenewal = await prisma.syncRun.findUniqueOrThrow({
       where: { id: queued.syncRun.id },
       select: { leaseExpiresAt: true },
@@ -113,6 +124,57 @@ describeDatabase('IntegrationRepository manual sync queue', () => {
     await expect(
       repository.listClaimableShopifySyncRunIds('CatalogInventory', 10, staleBefore),
     ).resolves.not.toContainEqual({ id: queued.syncRun.id });
+  });
+
+  it('fences a stale worker after another worker reclaims the expired lease', async () => {
+    const store = await createStore();
+    const connectionId = store.shopifyConnection!.id;
+    const repository = new IntegrationRepository();
+    const queued = await repository.enqueueExclusiveSyncRun({
+      provider: 'SHOPIFY',
+      connectionId,
+      resourceType: 'CatalogInventory',
+      mode: 'MANUAL',
+      apiVersion: '2026-07',
+    });
+    const staleBefore = new Date(Date.now() - 30 * 60_000);
+    const firstClaim = await repository.claimShopifySyncRun(
+      queued.syncRun.id,
+      'CatalogInventory',
+      staleBefore,
+    );
+    expect(firstClaim?.leaseToken).toEqual(expect.any(String));
+
+    await prisma.syncRun.update({
+      where: { id: queued.syncRun.id },
+      data: { leaseExpiresAt: new Date(Date.now() - 1) },
+    });
+    const secondClaim = await repository.claimShopifySyncRun(
+      queued.syncRun.id,
+      'CatalogInventory',
+      staleBefore,
+    );
+    expect(secondClaim?.leaseToken).toEqual(expect.any(String));
+    expect(secondClaim!.leaseToken).not.toBe(firstClaim!.leaseToken);
+
+    await expect(
+      repository.renewShopifySyncRunLease(queued.syncRun.id, firstClaim!.leaseToken!),
+    ).resolves.toMatchObject({ count: 0 });
+    await expect(
+      repository.completeClaimedShopifySyncRun(queued.syncRun.id, firstClaim!.leaseToken!, {
+        recordsRead: 1,
+        recordsWritten: 1,
+        partial: false,
+      }),
+    ).resolves.toBeNull();
+
+    await expect(
+      repository.completeClaimedShopifySyncRun(queued.syncRun.id, secondClaim!.leaseToken!, {
+        recordsRead: 10,
+        recordsWritten: 10,
+        partial: false,
+      }),
+    ).resolves.toMatchObject({ status: 'SUCCEEDED' });
   });
 
   it('allows a worker to reclaim a stale running sync after a process crash', async () => {
@@ -129,7 +191,12 @@ describeDatabase('IntegrationRepository manual sync queue', () => {
     const oldStartedAt = new Date(Date.now() - 60 * 60_000);
     await prisma.syncRun.update({
       where: { id: queued.syncRun.id },
-      data: { status: 'RUNNING', startedAt: oldStartedAt, leaseExpiresAt: new Date(Date.now() - 1) },
+      data: {
+        status: 'RUNNING',
+        startedAt: oldStartedAt,
+        leaseExpiresAt: new Date(Date.now() - 1),
+        leaseToken: randomUUID(),
+      },
     });
 
     const staleBefore = new Date(Date.now() - 30 * 60_000);
@@ -145,6 +212,7 @@ describeDatabase('IntegrationRepository manual sync queue', () => {
     expect(reclaimed?.shopifyConnection?.storeId).toBe(store.id);
     expect(reclaimed!.startedAt!.getTime()).toBeGreaterThan(oldStartedAt.getTime());
     expect(reclaimed!.leaseExpiresAt!.getTime()).toBeGreaterThan(Date.now());
+    expect(reclaimed?.leaseToken).toEqual(expect.any(String));
   });
 
   it('releases the active queue key on terminal completion so a later manual sync can enqueue', async () => {
