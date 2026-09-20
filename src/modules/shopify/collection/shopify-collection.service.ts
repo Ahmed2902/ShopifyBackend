@@ -24,6 +24,19 @@ const COLLECTION_CREATE_MUTATION = `#graphql
   }
 `;
 
+const PRODUCT_COLLECTION_MEMBERSHIP_QUERY = `#graphql
+  query StrideProductCollectionMembership($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on Product {
+        id
+        collections(first: 250) {
+          nodes { id }
+        }
+      }
+    }
+  }
+`;
+
 const COLLECTION_ADD_PRODUCTS_MUTATION = `#graphql
   mutation StrideCollectionAddProducts($id: ID!, $productIds: [ID!]!) {
     collectionAddProducts(id: $id, productIds: $productIds) {
@@ -37,6 +50,13 @@ type CollectionCreateResponse = {
     collection?: unknown | null;
     userErrors?: Array<{ field?: string[] | null; message: string }>;
   } | null;
+};
+
+type ProductCollectionMembershipResponse = {
+  nodes?: Array<{
+    id?: string | null;
+    collections?: { nodes?: Array<{ id?: string | null }> | null } | null;
+  } | null> | null;
 };
 
 type CollectionAddProductsResponse = {
@@ -153,45 +173,62 @@ export class ShopifyCollectionService {
       );
     }
 
-    const existingMemberships = await prisma.productCollection.findMany({
-      where: {
-        collectionId: collection.id,
-        productId: { in: products.map((product) => product.id) },
-      },
-      select: { productId: true },
-    });
-    const existingProductIds = new Set(existingMemberships.map((membership) => membership.productId));
-    const productsToAdd = products.filter((product) => !existingProductIds.has(product.id));
-    if (productsToAdd.length === 0) return { added: 0 };
-
     const accessToken = await this.authService.resolveAccessToken(
       store.myshopifyDomain,
       connection,
     );
-    const response = await this.apiService.requestAdminGraphql<CollectionAddProductsResponse>({
-      shop: store.myshopifyDomain,
-      accessToken,
-      apiVersion: connection.apiVersion,
-      connectionId: connection.id,
-      query: COLLECTION_ADD_PRODUCTS_MUTATION,
-      variables: {
-        id: collection.shopifyCollectionId,
-        productIds: productsToAdd.map((product) => product.shopifyProductId),
-      },
-    });
+    const membershipResponse =
+      await this.apiService.requestAdminGraphql<ProductCollectionMembershipResponse>({
+        shop: store.myshopifyDomain,
+        accessToken,
+        apiVersion: connection.apiVersion,
+        connectionId: connection.id,
+        query: PRODUCT_COLLECTION_MEMBERSHIP_QUERY,
+        variables: { ids: products.map((product) => product.shopifyProductId) },
+      });
 
-    const errors = response.collectionAddProducts?.userErrors ?? [];
-    if (errors.length > 0) {
-      throw new AppError(
-        errors[0]?.message ?? 'Shopify rejected the collection membership update',
-        422,
-        'SHOPIFY_COLLECTION_ADD_PRODUCTS_FAILED',
-        { userErrors: errors.slice(0, 5) },
-      );
+    const remoteMembers = new Set(
+      (membershipResponse.nodes ?? [])
+        .filter((node): node is NonNullable<typeof node> => Boolean(node?.id))
+        .filter((node) =>
+          (node.collections?.nodes ?? []).some(
+            (remoteCollection) => remoteCollection.id === collection.shopifyCollectionId,
+          ),
+        )
+        .map((node) => node.id!),
+    );
+    const productsToAdd = products.filter(
+      (product) => !remoteMembers.has(product.shopifyProductId),
+    );
+
+    if (productsToAdd.length > 0) {
+      const response = await this.apiService.requestAdminGraphql<CollectionAddProductsResponse>({
+        shop: store.myshopifyDomain,
+        accessToken,
+        apiVersion: connection.apiVersion,
+        connectionId: connection.id,
+        query: COLLECTION_ADD_PRODUCTS_MUTATION,
+        variables: {
+          id: collection.shopifyCollectionId,
+          productIds: productsToAdd.map((product) => product.shopifyProductId),
+        },
+      });
+
+      const errors = response.collectionAddProducts?.userErrors ?? [];
+      if (errors.length > 0) {
+        throw new AppError(
+          errors[0]?.message ?? 'Shopify rejected the collection membership update',
+          422,
+          'SHOPIFY_COLLECTION_ADD_PRODUCTS_FAILED',
+          { userErrors: errors.slice(0, 5) },
+        );
+      }
     }
 
+    // Shopify is authoritative for the mutation decision. The local join is repaired after
+    // verifying the remote state so stale local membership can never suppress a Shopify write.
     await prisma.productCollection.createMany({
-      data: productsToAdd.map((product) => ({
+      data: products.map((product) => ({
         collectionId: collection.id,
         productId: product.id,
       })),
