@@ -3,6 +3,10 @@ import type { Prisma } from '../../../generated/prisma/client.js';
 import type { ShopifyCollection, ShopifyProduct, ShopifyVariant } from '../shopify.schema.js';
 
 export type ShopifyBulkSqlClient = Pick<Prisma.TransactionClient, '$executeRaw'>;
+export type ShopifyInventoryLevelClient = Pick<
+  Prisma.TransactionClient,
+  'inventoryLevelCurrent'
+>;
 
 function optionalIso(value: string | null | undefined): string | null {
   return value ?? null;
@@ -13,10 +17,10 @@ function jsonPayload(value: unknown): string {
 }
 
 /**
- * Full-sync persistence is page-oriented. Keep those pages set-based so a 100-row Shopify page
- * costs one database write instead of one UPDATE round trip per existing entity.
- *
- * Single-entity webhook reconciliation deliberately remains on the ordinary Prisma upsert path.
+ * Full-sync persistence is page-oriented. Keep heterogeneous entity pages set-based so a 100-row
+ * Shopify page costs one database write instead of one UPDATE round trip per existing entity.
+ * Prisma does not currently provide a heterogeneous bulk-upsert API, so these entity helpers use
+ * parameterized PostgreSQL ON CONFLICT while single-entity webhook reconciliation stays on Prisma.
  */
 export async function bulkUpsertProducts(
   db: ShopifyBulkSqlClient,
@@ -416,84 +420,31 @@ export interface InventoryLevelBulkRow {
   sourceUpdatedAt: Date | null;
 }
 
-export async function bulkUpsertInventoryLevels(
-  db: ShopifyBulkSqlClient,
+/**
+ * Current inventory-level rows have no dependents keyed by their internal row ID, so Prisma can
+ * replace them safely inside the surrounding transaction. This keeps the write bounded to two
+ * statements per page without raw SQL or per-row updates.
+ */
+export async function bulkReplaceInventoryLevels(
+  db: ShopifyInventoryLevelClient,
   rows: InventoryLevelBulkRow[],
   reconciledAt: Date,
 ): Promise<void> {
   if (rows.length === 0) return;
 
-  const payload = rows.map((row) => ({
-    id: randomUUID(),
-    ...row,
-    sourceUpdatedAt: row.sourceUpdatedAt?.toISOString() ?? null,
-    lastReconciledAt: reconciledAt.toISOString(),
-  }));
+  await db.inventoryLevelCurrent.deleteMany({
+    where: {
+      OR: rows.map((row) => ({
+        inventoryItemId: row.inventoryItemId,
+        locationId: row.locationId,
+      })),
+    },
+  });
 
-  await db.$executeRaw`
-    WITH input AS (
-      SELECT *
-      FROM jsonb_to_recordset(${jsonPayload(payload)}::jsonb) AS row(
-        id uuid,
-        "inventoryItemId" uuid,
-        "locationId" uuid,
-        available integer,
-        incoming integer,
-        committed integer,
-        "onHand" integer,
-        reserved integer,
-        damaged integer,
-        "safetyStock" integer,
-        "qualityControl" integer,
-        "sourceUpdatedAt" timestamp,
-        "lastReconciledAt" timestamp
-      )
-    )
-    INSERT INTO "InventoryLevelCurrent" (
-      "id",
-      "inventoryItemId",
-      "locationId",
-      "available",
-      "incoming",
-      "committed",
-      "onHand",
-      "reserved",
-      "damaged",
-      "safetyStock",
-      "qualityControl",
-      "sourceUpdatedAt",
-      "lastReconciledAt",
-      "createdAt",
-      "updatedAt"
-    )
-    SELECT
-      input.id,
-      input."inventoryItemId",
-      input."locationId",
-      input.available,
-      input.incoming,
-      input.committed,
-      input."onHand",
-      input.reserved,
-      input.damaged,
-      input."safetyStock",
-      input."qualityControl",
-      input."sourceUpdatedAt",
-      input."lastReconciledAt",
-      CURRENT_TIMESTAMP,
-      CURRENT_TIMESTAMP
-    FROM input
-    ON CONFLICT ("inventoryItemId", "locationId") DO UPDATE SET
-      "available" = EXCLUDED."available",
-      "incoming" = EXCLUDED."incoming",
-      "committed" = EXCLUDED."committed",
-      "onHand" = EXCLUDED."onHand",
-      "reserved" = EXCLUDED."reserved",
-      "damaged" = EXCLUDED."damaged",
-      "safetyStock" = EXCLUDED."safetyStock",
-      "qualityControl" = EXCLUDED."qualityControl",
-      "sourceUpdatedAt" = EXCLUDED."sourceUpdatedAt",
-      "lastReconciledAt" = EXCLUDED."lastReconciledAt",
-      "updatedAt" = CURRENT_TIMESTAMP
-  `;
+  await db.inventoryLevelCurrent.createMany({
+    data: rows.map((row) => ({
+      ...row,
+      lastReconciledAt: reconciledAt,
+    })),
+  });
 }
