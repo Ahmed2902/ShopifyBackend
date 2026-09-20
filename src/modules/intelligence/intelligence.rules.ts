@@ -13,6 +13,11 @@ const MIN_PERIOD_IMPRESSIONS = 1_000;
 const MIN_PRODUCT_MAPPING_CONFIDENCE = 0.7;
 const LOW_GLOBAL_MAPPING_COVERAGE = 0.6;
 
+type InventoryPlanningAssumptions = {
+  restockLeadTimeDays: number;
+  lowStockThreshold: number;
+};
+
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
@@ -33,6 +38,36 @@ function priorityParts(impact: number, confidence: number, urgency: number) {
     impactScore: clamp01(impact),
     confidenceScore: clamp01(confidence),
     urgencyScore: clamp01(urgency),
+  };
+}
+
+function inventoryReorderState(
+  input: { stockAvailable: number | null; recentUnitsPerDay: number | null },
+  planning: InventoryPlanningAssumptions,
+) {
+  if (
+    input.stockAvailable === null ||
+    input.stockAvailable < 0 ||
+    input.recentUnitsPerDay === null ||
+    input.recentUnitsPerDay <= 0
+  ) {
+    return null;
+  }
+  const leadTimeDays = Math.max(0, planning.restockLeadTimeDays);
+  const lowStockThreshold = Math.max(0, planning.lowStockThreshold);
+  const leadTimeDemand = input.recentUnitsPerDay * leadTimeDays;
+  const reorderPoint = Math.ceil(leadTimeDemand + lowStockThreshold);
+  const criticalDays = Math.max(1, leadTimeDays / 2);
+  const criticalDemand = input.recentUnitsPerDay * criticalDays;
+  const shortfall = Math.max(0, reorderPoint - input.stockAvailable);
+  return {
+    leadTimeDemand,
+    reorderPoint,
+    atRisk: input.stockAvailable <= reorderPoint,
+    critical:
+      input.stockAvailable <= lowStockThreshold ||
+      input.stockAvailable <= criticalDemand,
+    urgency: clamp01(0.55 + shortfall / Math.max(1, reorderPoint) * 0.45),
   };
 }
 
@@ -424,25 +459,17 @@ export function marginTrapRule(
 export function inventorySpendConflictRule(
   evidence: ProductEvidence,
   window: { start: Date; end: Date },
+  planning: InventoryPlanningAssumptions = { restockLeadTimeDays: 10, lowStockThreshold: 0 },
 ): RecommendationDraft | null {
-  if (
-    !evidence.inventoryTrusted ||
-    evidence.daysCover === null ||
-    evidence.daysCover > 10 ||
-    evidence.daysCover < 0 ||
-    evidence.mappedMetaSpend <= 0 ||
-    evidence.recentUnitsPerDay === null ||
-    evidence.recentUnitsPerDay <= 0
-  ) {
-    return null;
-  }
+  if (!evidence.inventoryTrusted || evidence.mappedMetaSpend <= 0) return null;
+  const state = inventoryReorderState(evidence, planning);
+  if (!state?.atRisk) return null;
 
   const limitations = productLimitations(evidence);
-  const urgency = clamp01((10 - evidence.daysCover) / 10 + 0.4);
   const parts = priorityParts(
     Math.max(evidence.revenueShare, evidence.mappedSpendShare),
     0.8 * productCoverageConfidenceFactor(evidence.mappingCoverage),
-    urgency,
+    state.urgency,
   );
   const context = recommendationContext({
     baseConfidence: parts.confidenceScore,
@@ -454,13 +481,13 @@ export function inventorySpendConflictRule(
     ruleId: 'inventory_spend_conflict',
     ruleVersion: RULE_VERSION,
     category: 'INVENTORY_SPEND_CONFLICT',
-    severity: evidence.daysCover <= 5 ? 'CRITICAL' : 'HIGH',
+    severity: state.critical ? 'CRITICAL' : 'HIGH',
     entityType: 'PRODUCT',
     entityId: evidence.entityId,
     externalEntityId: evidence.externalEntityId,
-    title: 'Paid exposure is supporting a product with limited observed stock cover',
+    title: 'Paid exposure is supporting a product at its reorder point',
     summary:
-      'Trusted Shopify inventory and recent observed unit velocity imply limited cover while mapped Meta spend remains active.',
+      'Trusted Shopify inventory and recent observed unit velocity place current stock at or below the merchant-configured reorder point while mapped Meta spend remains active.',
     suggestedAction: 'Protect inventory or confirm replenishment before aggressive paid scaling.',
     impactScore: parts.impactScore,
     urgencyScore: parts.urgencyScore,
@@ -476,7 +503,11 @@ export function inventorySpendConflictRule(
       daysCover: round(evidence.daysCover, 2),
       mappedMetaSpend: round(evidence.mappedMetaSpend, 2),
       mappingCoverage: round(evidence.mappingCoverage),
-      inventoryInterpretation: 'CURRENT_VELOCITY_RUNWAY_NOT_FORECAST',
+      restockLeadTimeDays: planning.restockLeadTimeDays,
+      lowStockThreshold: planning.lowStockThreshold,
+      leadTimeDemand: round(state.leadTimeDemand, 2),
+      reorderPoint: state.reorderPoint,
+      inventoryInterpretation: 'CURRENT_VELOCITY_REORDER_POINT_NOT_FORECAST',
     },
   };
 }
@@ -484,6 +515,7 @@ export function inventorySpendConflictRule(
 export function sharedExposureInventoryRule(
   evidence: SharedExposureEvidence,
   window: { start: Date; end: Date },
+  planning: InventoryPlanningAssumptions = { restockLeadTimeDays: 10, lowStockThreshold: 0 },
 ): RecommendationDraft | null {
   if (
     !evidence.inventoryTrusted ||
@@ -495,18 +527,22 @@ export function sharedExposureInventoryRule(
   }
 
   const affected = evidence.products
+    .map((product) => ({ product, state: inventoryReorderState(product, planning) }))
     .filter(
-      (product) =>
-        product.daysCover !== null &&
-        product.daysCover >= 0 &&
-        product.daysCover <= 10 &&
-        product.recentUnitsPerDay !== null &&
-        product.recentUnitsPerDay > 0,
+      (entry): entry is {
+        product: SharedExposureEvidence['products'][number];
+        state: NonNullable<ReturnType<typeof inventoryReorderState>>;
+      } => Boolean(entry.state?.atRisk),
     )
-    .sort((left, right) => (left.daysCover ?? Infinity) - (right.daysCover ?? Infinity));
+    .sort((left, right) => left.state.reorderPoint - right.state.reorderPoint);
   if (affected.length === 0) return null;
 
-  const minimumDaysCover = affected[0]!.daysCover!;
+  const mostUrgent = affected.reduce((best, entry) =>
+    entry.state.urgency > best.state.urgency ? entry : best,
+  );
+  const minimumDaysCover = Math.min(
+    ...affected.map((entry) => entry.product.daysCover ?? Number.POSITIVE_INFINITY),
+  );
   const limitations: RecommendationLimitation[] = [
     {
       code: 'SHARED_SPEND_NOT_ALLOCATED',
@@ -529,7 +565,7 @@ export function sharedExposureInventoryRule(
     }
   }
 
-  const urgency = clamp01((10 - minimumDaysCover) / 10 + 0.4);
+  const urgency = mostUrgent.state.urgency;
   const support = clamp01(evidence.impressions / 15_000);
   const baseConfidence =
     (evidence.merchantConfirmed ? 0.82 : 0.62 + evidence.scopeConfidence * 0.18) + support * 0.08;
@@ -544,16 +580,16 @@ export function sharedExposureInventoryRule(
     ruleId: 'shared_exposure_inventory_conflict',
     ruleVersion: RULE_VERSION,
     category: 'INVENTORY_SPEND_CONFLICT',
-    severity: minimumDaysCover <= 5 ? 'CRITICAL' : 'HIGH',
+    severity: affected.some((entry) => entry.state.critical) ? 'CRITICAL' : 'HIGH',
     entityType: 'AD',
     entityId: evidence.entityId,
     externalEntityId: evidence.externalEntityId,
     title:
       evidence.scope === 'COLLECTION'
-        ? 'Collection ad includes products with limited observed stock cover'
-        : 'Multi-product ad includes products with limited observed stock cover',
+        ? 'Collection ad includes products at their reorder point'
+        : 'Multi-product ad includes products at their reorder point',
     summary:
-      'Trusted Shopify inventory shows limited observed cover for one or more products promoted by this shared-exposure ad while Meta spend remains active.',
+      'Trusted Shopify inventory shows one or more promoted products at or below the merchant-configured reorder point while Meta spend remains active.',
     suggestedAction:
       'Review the affected products and replenishment plan before increasing this shared ad exposure. Do not infer spend per product from the shared ad total.',
     impactScore: clamp01(Math.max(0.2, evidence.sharedAdSpend > 0 ? 0.55 : 0)),
@@ -572,16 +608,21 @@ export function sharedExposureInventoryRule(
       scopeConfidence: round(evidence.scopeConfidence),
       merchantConfirmed: evidence.merchantConfirmed,
       collectionMembershipTruncated: evidence.collectionMembershipTruncated,
-      affectedProducts: affected.map((product) => ({
+      restockLeadTimeDays: planning.restockLeadTimeDays,
+      lowStockThreshold: planning.lowStockThreshold,
+      minimumDaysCover: Number.isFinite(minimumDaysCover) ? round(minimumDaysCover, 2) : null,
+      affectedProducts: affected.map(({ product, state }) => ({
         entityId: product.entityId,
         externalEntityId: product.externalEntityId,
         name: product.name,
         stockAvailable: product.stockAvailable,
         recentUnitsPerDay: round(product.recentUnitsPerDay, 2),
         daysCover: round(product.daysCover, 2),
+        leadTimeDemand: round(state.leadTimeDemand, 2),
+        reorderPoint: state.reorderPoint,
       })),
       collections: evidence.collections,
-      inventoryInterpretation: 'CURRENT_VELOCITY_RUNWAY_NOT_FORECAST',
+      inventoryInterpretation: 'CURRENT_VELOCITY_REORDER_POINT_NOT_FORECAST',
       spendInterpretation: 'AD_LEVEL_SHARED_EXPOSURE_NOT_PRODUCT_LEVEL_ATTRIBUTION',
     },
   };

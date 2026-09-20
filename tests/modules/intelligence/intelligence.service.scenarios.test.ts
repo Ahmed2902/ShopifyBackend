@@ -254,6 +254,8 @@ function storeContext(overrides: Record<string, unknown> = {}) {
     ianaTimezone: 'UTC',
     inventoryIntelligenceMode: 'TRUSTED',
     inventoryReviewedAt: now,
+    inventoryRestockLeadTimeDays: 14,
+    inventoryLowStockThreshold: 5,
     shopifyConnection: {
       status: 'ACTIVE',
       scopes: ['read_orders', 'read_all_orders'],
@@ -409,6 +411,23 @@ describe('IntelligenceService scenario harness', () => {
         decisionConfidence: 'MEDIUM',
       },
     });
+  });
+
+  it('uses merchant restock lead time and safety threshold to control inventory decisions', async () => {
+    const defaultSnapshot = await buildService().snapshot(storeId, now);
+    const relaxedSnapshot = await buildService({
+      context: storeContext({
+        inventoryRestockLeadTimeDays: 1,
+        inventoryLowStockThreshold: 0,
+      }),
+    }).snapshot(storeId, now);
+
+    expect(defaultSnapshot.recommendations.map((item) => item.ruleId)).toEqual(
+      expect.arrayContaining(['inventory_spend_conflict', 'shared_exposure_inventory_conflict']),
+    );
+    expect(relaxedSnapshot.recommendations.map((item) => item.ruleId)).not.toEqual(
+      expect.arrayContaining(['inventory_spend_conflict', 'shared_exposure_inventory_conflict']),
+    );
   });
 
   it('downgrades product recommendation confidence when global mapping coverage becomes very low', async () => {

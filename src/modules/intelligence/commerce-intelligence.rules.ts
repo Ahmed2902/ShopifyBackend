@@ -6,6 +6,11 @@ import type {
 
 const RULE_VERSION = '1';
 
+type InventoryPlanningAssumptions = {
+  restockLeadTimeDays: number;
+  lowStockThreshold: number;
+};
+
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
@@ -186,12 +191,12 @@ export function returningCustomerDeteriorationRule(
 export function inventoryRunwayRiskRule(
   evidence: ProductEvidence,
   window: { start: Date; end: Date },
+  planning: InventoryPlanningAssumptions = { restockLeadTimeDays: 7, lowStockThreshold: 0 },
 ): RecommendationDraft | null {
   if (
     !evidence.inventoryTrusted ||
-    evidence.daysCover === null ||
-    evidence.daysCover < 0 ||
-    evidence.daysCover > 7 ||
+    evidence.stockAvailable === null ||
+    evidence.stockAvailable < 0 ||
     evidence.recentUnitsPerDay === null ||
     evidence.recentUnitsPerDay <= 0 ||
     (evidence.units < 3 && evidence.revenueShare < 0.03) ||
@@ -200,17 +205,26 @@ export function inventoryRunwayRiskRule(
     return null;
   }
 
-  const urgency = clamp01((7 - evidence.daysCover) / 7 + 0.45);
+  const leadTimeDemand = evidence.recentUnitsPerDay * Math.max(0, planning.restockLeadTimeDays);
+  const reorderPoint = Math.ceil(leadTimeDemand + Math.max(0, planning.lowStockThreshold));
+  if (evidence.stockAvailable > reorderPoint) return null;
+
+  const shortfall = Math.max(0, reorderPoint - evidence.stockAvailable);
+  const urgency = clamp01(0.55 + shortfall / Math.max(1, reorderPoint) * 0.45);
+  const critical =
+    evidence.stockAvailable <= Math.max(0, planning.lowStockThreshold) ||
+    evidence.stockAvailable <= leadTimeDemand;
+
   return {
     ruleId: 'inventory_runway_risk',
     ruleVersion: RULE_VERSION,
     category: 'INVENTORY_RISK',
-    severity: evidence.daysCover <= 3 ? 'CRITICAL' : 'HIGH',
+    severity: critical ? 'CRITICAL' : 'HIGH',
     entityType: 'PRODUCT',
     entityId: evidence.entityId,
     externalEntityId: evidence.externalEntityId,
     title: 'Observed stock runway is getting short',
-    summary: 'Trusted Shopify inventory and recent observed unit velocity imply limited stock cover even without mapped paid-spend pressure.',
+    summary: 'Trusted Shopify inventory and recent observed unit velocity place current stock at or below the merchant-configured reorder point even without mapped paid-spend pressure.',
     suggestedAction: 'Confirm replenishment or protect availability before demand exhausts current stock.',
     impactScore: clamp01(Math.max(0.25, evidence.revenueShare)),
     confidenceScore: 0.82,
@@ -228,7 +242,11 @@ export function inventoryRunwayRiskRule(
       recentUnitsPerDay: evidence.recentUnitsPerDay,
       daysCover: evidence.daysCover,
       revenueShare: evidence.revenueShare,
-      inventoryInterpretation: 'CURRENT_VELOCITY_RUNWAY_NOT_FORECAST',
+      restockLeadTimeDays: planning.restockLeadTimeDays,
+      lowStockThreshold: planning.lowStockThreshold,
+      leadTimeDemand,
+      reorderPoint,
+      inventoryInterpretation: 'CURRENT_VELOCITY_REORDER_POINT_NOT_FORECAST',
     },
   };
 }

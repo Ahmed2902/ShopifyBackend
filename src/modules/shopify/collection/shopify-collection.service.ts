@@ -24,9 +24,43 @@ const COLLECTION_CREATE_MUTATION = `#graphql
   }
 `;
 
+const PRODUCT_COLLECTION_MEMBERSHIP_QUERY = `#graphql
+  query StrideProductCollectionMembership($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on Product {
+        id
+        collections(first: 250) {
+          nodes { id }
+        }
+      }
+    }
+  }
+`;
+
+const COLLECTION_ADD_PRODUCTS_MUTATION = `#graphql
+  mutation StrideCollectionAddProducts($id: ID!, $productIds: [ID!]!) {
+    collectionAddProducts(id: $id, productIds: $productIds) {
+      userErrors { field message }
+    }
+  }
+`;
+
 type CollectionCreateResponse = {
   collectionCreate?: {
     collection?: unknown | null;
+    userErrors?: Array<{ field?: string[] | null; message: string }>;
+  } | null;
+};
+
+type ProductCollectionMembershipResponse = {
+  nodes?: Array<{
+    id?: string | null;
+    collections?: { nodes?: Array<{ id?: string | null }> | null } | null;
+  } | null> | null;
+};
+
+type CollectionAddProductsResponse = {
+  collectionAddProducts?: {
     userErrors?: Array<{ field?: string[] | null; message: string }>;
   } | null;
 };
@@ -51,27 +85,8 @@ export class ShopifyCollectionService {
   }
 
   async create(storeId: string, title: string) {
-    const store = await this.repository.findConnectionForSync(storeId);
-    if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
-    const connection = store.shopifyConnection;
-    if (!connection) {
-      throw new AppError('Shopify is not connected for this store', 409, 'SHOPIFY_NOT_CONNECTED');
-    }
-    if (connection.status !== 'ACTIVE') {
-      throw new AppError(
-        'Shopify connection requires merchant attention',
-        409,
-        'SHOPIFY_CONNECTION_INACTIVE',
-      );
-    }
-    if (!connection.scopes.includes('write_products')) {
-      throw new AppError(
-        'Creating Shopify collections requires write_products. Reconnect Shopify once to approve the new collection-management permission.',
-        409,
-        'SHOPIFY_COLLECTION_WRITE_SCOPE_REQUIRED',
-      );
-    }
-
+    const store = await this.requireWritableStore(storeId);
+    const connection = store.shopifyConnection!;
     const accessToken = await this.authService.resolveAccessToken(
       store.myshopifyDomain,
       connection,
@@ -133,6 +148,119 @@ export class ShopifyCollectionService {
         handle: collection.data.handle ?? null,
       },
     };
+  }
+
+  async addProducts(storeId: string, collectionId: string, productIds: string[]) {
+    const store = await this.requireWritableStore(storeId);
+    const connection = store.shopifyConnection!;
+    const [collection, products] = await Promise.all([
+      prisma.collection.findFirst({
+        where: { id: collectionId, storeId, deletedAt: null },
+        select: { id: true, shopifyCollectionId: true },
+      }),
+      prisma.product.findMany({
+        where: { id: { in: productIds }, storeId, deletedAt: null },
+        select: { id: true, shopifyProductId: true },
+      }),
+    ]);
+
+    if (!collection) throw new AppError('Collection not found', 404, 'COLLECTION_NOT_FOUND');
+    if (products.length !== productIds.length) {
+      throw new AppError(
+        'One or more selected products do not belong to this store or are no longer available',
+        404,
+        'PRODUCT_NOT_FOUND',
+      );
+    }
+
+    const accessToken = await this.authService.resolveAccessToken(
+      store.myshopifyDomain,
+      connection,
+    );
+    const membershipResponse =
+      await this.apiService.requestAdminGraphql<ProductCollectionMembershipResponse>({
+        shop: store.myshopifyDomain,
+        accessToken,
+        apiVersion: connection.apiVersion,
+        connectionId: connection.id,
+        query: PRODUCT_COLLECTION_MEMBERSHIP_QUERY,
+        variables: { ids: products.map((product) => product.shopifyProductId) },
+      });
+
+    const remoteMembers = new Set(
+      (membershipResponse.nodes ?? [])
+        .filter((node): node is NonNullable<typeof node> => Boolean(node?.id))
+        .filter((node) =>
+          (node.collections?.nodes ?? []).some(
+            (remoteCollection) => remoteCollection.id === collection.shopifyCollectionId,
+          ),
+        )
+        .map((node) => node.id!),
+    );
+    const productsToAdd = products.filter(
+      (product) => !remoteMembers.has(product.shopifyProductId),
+    );
+
+    if (productsToAdd.length > 0) {
+      const response = await this.apiService.requestAdminGraphql<CollectionAddProductsResponse>({
+        shop: store.myshopifyDomain,
+        accessToken,
+        apiVersion: connection.apiVersion,
+        connectionId: connection.id,
+        query: COLLECTION_ADD_PRODUCTS_MUTATION,
+        variables: {
+          id: collection.shopifyCollectionId,
+          productIds: productsToAdd.map((product) => product.shopifyProductId),
+        },
+      });
+
+      const errors = response.collectionAddProducts?.userErrors ?? [];
+      if (errors.length > 0) {
+        throw new AppError(
+          errors[0]?.message ?? 'Shopify rejected the collection membership update',
+          422,
+          'SHOPIFY_COLLECTION_ADD_PRODUCTS_FAILED',
+          { userErrors: errors.slice(0, 5) },
+        );
+      }
+    }
+
+    // Shopify is authoritative for the mutation decision. The local join is repaired after
+    // verifying the remote state so stale local membership can never suppress a Shopify write.
+    await prisma.productCollection.createMany({
+      data: products.map((product) => ({
+        collectionId: collection.id,
+        productId: product.id,
+      })),
+      skipDuplicates: true,
+    });
+    await invalidateStoreDecisionCaches(storeId);
+
+    return { added: productsToAdd.length };
+  }
+
+  private async requireWritableStore(storeId: string) {
+    const store = await this.repository.findConnectionForSync(storeId);
+    if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
+    const connection = store.shopifyConnection;
+    if (!connection) {
+      throw new AppError('Shopify is not connected for this store', 409, 'SHOPIFY_NOT_CONNECTED');
+    }
+    if (connection.status !== 'ACTIVE') {
+      throw new AppError(
+        'Shopify connection requires merchant attention',
+        409,
+        'SHOPIFY_CONNECTION_INACTIVE',
+      );
+    }
+    if (!connection.scopes.includes('write_products')) {
+      throw new AppError(
+        'Managing Shopify collections requires write_products. Reconnect Shopify once to approve the collection-management permission.',
+        409,
+        'SHOPIFY_COLLECTION_WRITE_SCOPE_REQUIRED',
+      );
+    }
+    return store;
   }
 }
 

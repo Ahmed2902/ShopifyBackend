@@ -42,6 +42,11 @@ shopifyStoreRouter.get('/orders', shopifyReadController.orders);
 shopifyStoreRouter.get('/orders/:orderId', shopifyReadController.order);
 
 shopifyStoreRouter.post('/collections', ownerOrAdmin, shopifyCollectionController.create);
+shopifyStoreRouter.post(
+  '/collections/:collectionId/products',
+  ownerOrAdmin,
+  shopifyCollectionController.addProducts,
+);
 shopifyStoreRouter.post('/sync', ownerOrAdmin, shopifyController.sync);
 shopifyStoreRouter.post('/orders/backfill', ownerOrAdmin, shopifyController.startOrderBackfill);
 shopifyStoreRouter.get('/orders/backfill/:syncRunId', ownerOrAdmin, shopifyController.getOrderBackfill);
