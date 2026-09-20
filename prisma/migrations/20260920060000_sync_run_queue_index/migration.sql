@@ -5,5 +5,5 @@ ADD COLUMN "leaseExpiresAt" TIMESTAMP(3);
 CREATE UNIQUE INDEX "SyncRun_activeQueueKey_key"
 ON "SyncRun"("activeQueueKey");
 
-CREATE INDEX "SyncRun_provider_resourceType_status_leaseExpiresAt_createdAt_idx"
+CREATE INDEX "SyncRun_queue_claim_idx"
 ON "SyncRun"("provider", "resourceType", "status", "leaseExpiresAt", "createdAt");
