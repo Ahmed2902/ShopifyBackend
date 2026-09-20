@@ -28,6 +28,7 @@ export interface RequestPerformanceContext {
   slowestQueries: PrismaQuerySample[];
   spans: Record<string, RequestPerformanceSpan>;
   cacheOutcomes: Record<CacheOutcome, number>;
+  memoizedReads: Map<string, Promise<unknown>>;
 }
 
 type RecordedPrismaQuery = PrismaQuerySample & PrismaQueryInterval;
