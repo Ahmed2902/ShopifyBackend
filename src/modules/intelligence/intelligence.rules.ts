@@ -53,16 +53,20 @@ function inventoryReorderState(
   ) {
     return null;
   }
-  const leadTimeDemand = input.recentUnitsPerDay * Math.max(0, planning.restockLeadTimeDays);
-  const reorderPoint = Math.ceil(leadTimeDemand + Math.max(0, planning.lowStockThreshold));
+  const leadTimeDays = Math.max(0, planning.restockLeadTimeDays);
+  const lowStockThreshold = Math.max(0, planning.lowStockThreshold);
+  const leadTimeDemand = input.recentUnitsPerDay * leadTimeDays;
+  const reorderPoint = Math.ceil(leadTimeDemand + lowStockThreshold);
+  const criticalDays = Math.max(1, leadTimeDays / 2);
+  const criticalDemand = input.recentUnitsPerDay * criticalDays;
   const shortfall = Math.max(0, reorderPoint - input.stockAvailable);
   return {
     leadTimeDemand,
     reorderPoint,
     atRisk: input.stockAvailable <= reorderPoint,
     critical:
-      input.stockAvailable <= Math.max(0, planning.lowStockThreshold) ||
-      input.stockAvailable <= leadTimeDemand,
+      input.stockAvailable <= lowStockThreshold ||
+      input.stockAvailable <= criticalDemand,
     urgency: clamp01(0.55 + shortfall / Math.max(1, reorderPoint) * 0.45),
   };
 }
