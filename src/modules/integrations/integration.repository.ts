@@ -89,6 +89,93 @@ export class IntegrationRepository {
     });
   }
 
+  async enqueueExclusiveSyncRun(input: {
+    provider: IntegrationProviderName;
+    connectionId: string;
+    resourceType: string;
+    mode: string | null;
+    apiVersion: string;
+  }) {
+    const lockKey = `${input.provider}:${input.connectionId}:${input.resourceType}`;
+    return prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`
+        SELECT pg_advisory_xact_lock(hashtext(${lockKey}))
+      `);
+
+      const existing = await tx.syncRun.findFirst({
+        where: {
+          ...syncRunConnectionFilter(input.provider, input.connectionId),
+          resourceType: input.resourceType,
+          status: { in: ['PENDING', 'RUNNING'] },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (existing) return { syncRun: existing, created: false } as const;
+
+      const syncRun = await tx.syncRun.create({
+        data: {
+          provider: input.provider,
+          resourceType: input.resourceType,
+          mode: input.mode,
+          apiVersion: input.apiVersion,
+          status: 'PENDING',
+          startedAt: null,
+          ...syncRunConnectionData(input.provider, input.connectionId),
+        },
+      });
+      return { syncRun, created: true } as const;
+    });
+  }
+
+  listClaimableShopifySyncRunIds(resourceType: string, limit: number, staleBefore: Date) {
+    return prisma.syncRun.findMany({
+      where: {
+        provider: 'SHOPIFY',
+        resourceType,
+        shopifyConnectionId: { not: null },
+        OR: [
+          { status: 'PENDING' },
+          { status: 'RUNNING', startedAt: { lte: staleBefore } },
+        ],
+      },
+      orderBy: { createdAt: 'asc' },
+      take: limit,
+      select: { id: true },
+    });
+  }
+
+  async claimShopifySyncRun(syncRunId: string, resourceType: string, staleBefore: Date) {
+    const startedAt = new Date();
+    const claimed = await prisma.syncRun.updateMany({
+      where: {
+        id: syncRunId,
+        provider: 'SHOPIFY',
+        resourceType,
+        shopifyConnectionId: { not: null },
+        OR: [
+          { status: 'PENDING' },
+          { status: 'RUNNING', startedAt: { lte: staleBefore } },
+        ],
+      },
+      data: {
+        status: 'RUNNING',
+        startedAt,
+        finishedAt: null,
+        lastError: null,
+      },
+    });
+    if (claimed.count === 0) return null;
+
+    return prisma.syncRun.findUnique({
+      where: { id: syncRunId },
+      select: {
+        id: true,
+        startedAt: true,
+        shopifyConnection: { select: { storeId: true } },
+      },
+    });
+  }
+
   attachProviderOperation(syncRunId: string, providerOperationId: string) {
     return prisma.syncRun.update({
       where: { id: syncRunId },
@@ -141,6 +228,7 @@ export class IntegrationRepository {
         recordsRead: true,
         recordsWritten: true,
         lastError: true,
+        startedAt: true,
         finishedAt: true,
         apiVersion: true,
         shopifyConnectionId: true,
