@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { performance } from 'node:perf_hooks';
 
 export interface PrismaQuerySample {
   model: string | null;
@@ -69,6 +70,18 @@ export function recordRequestPerformanceSpan(name: string, durationMs: number): 
   current.count += 1;
   current.durationMs += durationMs;
   context.spans[name] = current;
+}
+
+export async function measureRequestPerformanceSpan<T>(
+  name: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const startedAt = performance.now();
+  try {
+    return await operation();
+  } finally {
+    recordRequestPerformanceSpan(name, performance.now() - startedAt);
+  }
 }
 
 export function recordCacheOutcome(outcome: CacheOutcome): void {
