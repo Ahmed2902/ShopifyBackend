@@ -14,6 +14,8 @@ import { ShopifyCollectionService } from '../../../src/modules/shopify/collectio
 const storeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const collectionId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const productId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const shopifyCollectionId = 'gid://shopify/Collection/123';
+const shopifyProductId = 'gid://shopify/Product/456';
 
 function service(scopes: string[]) {
   const repository = {
@@ -37,7 +39,7 @@ function service(scopes: string[]) {
     requestAdminGraphql: vi.fn().mockResolvedValue({
       collectionCreate: {
         collection: {
-          id: 'gid://shopify/Collection/123',
+          id: shopifyCollectionId,
           title: 'Fall winners',
           handle: 'fall-winners',
           descriptionHtml: '',
@@ -70,10 +72,10 @@ describe('ShopifyCollectionService', () => {
     collection.findUnique.mockResolvedValue({ id: collectionId });
     collection.findFirst.mockResolvedValue({
       id: collectionId,
-      shopifyCollectionId: 'gid://shopify/Collection/123',
+      shopifyCollectionId,
     });
     product.findMany.mockResolvedValue([
-      { id: productId, shopifyProductId: 'gid://shopify/Product/456' },
+      { id: productId, shopifyProductId },
     ]);
     productCollection.findMany.mockResolvedValue([]);
     productCollection.createMany.mockResolvedValue({ count: 1 });
@@ -100,39 +102,46 @@ describe('ShopifyCollectionService', () => {
     }));
     expect(subject.catalogRepository.persistCollections).toHaveBeenCalledWith(
       storeId,
-      [expect.objectContaining({ id: 'gid://shopify/Collection/123', title: 'Fall winners' })],
+      [expect.objectContaining({ id: shopifyCollectionId, title: 'Fall winners' })],
     );
     expect(collection.findUnique).toHaveBeenCalledWith(expect.objectContaining({
       where: {
         storeId_shopifyCollectionId: {
           storeId,
-          shopifyCollectionId: 'gid://shopify/Collection/123',
+          shopifyCollectionId,
         },
       },
     }));
     expect(result.collection).toEqual({
       id: collectionId,
-      shopifyCollectionId: 'gid://shopify/Collection/123',
+      shopifyCollectionId,
       title: 'Fall winners',
       handle: 'fall-winners',
     });
   });
 
-  it('adds only new store-owned products to Shopify and persists the membership locally', async () => {
+  it('adds remotely missing store-owned products to Shopify and persists membership locally', async () => {
     const subject = service(['read_products', 'write_products']);
-    subject.apiService.requestAdminGraphql.mockResolvedValueOnce({
-      collectionAddProducts: { userErrors: [] },
-    });
+    subject.apiService.requestAdminGraphql
+      .mockResolvedValueOnce({
+        nodes: [{ id: shopifyProductId, collections: { nodes: [] } }],
+      })
+      .mockResolvedValueOnce({
+        collectionAddProducts: { userErrors: [] },
+      });
 
     const result = await subject.instance.addProducts(storeId, collectionId, [productId]);
 
     expect(product.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: { in: [productId] }, storeId, deletedAt: null },
     }));
-    expect(subject.apiService.requestAdminGraphql).toHaveBeenCalledWith(expect.objectContaining({
+    expect(subject.apiService.requestAdminGraphql).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      variables: { ids: [shopifyProductId] },
+    }));
+    expect(subject.apiService.requestAdminGraphql).toHaveBeenNthCalledWith(2, expect.objectContaining({
       variables: {
-        id: 'gid://shopify/Collection/123',
-        productIds: ['gid://shopify/Product/456'],
+        id: shopifyCollectionId,
+        productIds: [shopifyProductId],
       },
     }));
     expect(productCollection.createMany).toHaveBeenCalledWith({
@@ -143,15 +152,46 @@ describe('ShopifyCollectionService', () => {
     expect(result).toEqual({ added: 1 });
   });
 
-  it('does not call Shopify when every requested product is already a member', async () => {
+  it('does not issue the add mutation when Shopify already has every requested product', async () => {
     const subject = service(['read_products', 'write_products']);
-    productCollection.findMany.mockResolvedValueOnce([{ productId }]);
+    subject.apiService.requestAdminGraphql.mockResolvedValueOnce({
+      nodes: [{
+        id: shopifyProductId,
+        collections: { nodes: [{ id: shopifyCollectionId }] },
+      }],
+    });
 
     await expect(subject.instance.addProducts(storeId, collectionId, [productId])).resolves.toEqual({
       added: 0,
     });
 
-    expect(subject.apiService.requestAdminGraphql).not.toHaveBeenCalled();
-    expect(productCollection.createMany).not.toHaveBeenCalled();
+    expect(subject.apiService.requestAdminGraphql).toHaveBeenCalledTimes(1);
+    expect(productCollection.createMany).toHaveBeenCalledWith({
+      data: [{ collectionId, productId }],
+      skipDuplicates: true,
+    });
+  });
+
+  it('repairs a stale local membership by adding the product when Shopify no longer has it', async () => {
+    const subject = service(['read_products', 'write_products']);
+    productCollection.findMany.mockResolvedValueOnce([{ productId }]);
+    subject.apiService.requestAdminGraphql
+      .mockResolvedValueOnce({
+        nodes: [{ id: shopifyProductId, collections: { nodes: [] } }],
+      })
+      .mockResolvedValueOnce({
+        collectionAddProducts: { userErrors: [] },
+      });
+
+    await expect(subject.instance.addProducts(storeId, collectionId, [productId])).resolves.toEqual({
+      added: 1,
+    });
+
+    expect(subject.apiService.requestAdminGraphql).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      variables: {
+        id: shopifyCollectionId,
+        productIds: [shopifyProductId],
+      },
+    }));
   });
 });
