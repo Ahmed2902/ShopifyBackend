@@ -1,12 +1,13 @@
 import { Prisma } from '../../../generated/prisma/client.js';
 import { prisma } from '../../../lib/prisma.js';
-import type {
-  ShopifyCollection,
-  ShopifyProduct,
-  ShopifyVariant,
-} from '../shopify.schema.js';
+import type { ShopifyCollection, ShopifyProduct, ShopifyVariant } from '../shopify.schema.js';
+import {
+  bulkUpsertCollections,
+  bulkUpsertInventoryItems,
+  bulkUpsertProducts,
+  bulkUpsertVariants,
+} from '../shared/shopify-bulk-write.js';
 
-const DB_WRITE_CONCURRENCY = 12;
 const CATALOG_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 30_000 } as const;
 
 type RepairSqlClient = Pick<Prisma.TransactionClient, '$executeRaw'>;
@@ -17,87 +18,12 @@ interface CatalogRepairEvidence {
   collectionIds?: string[];
 }
 
-function optionalDate(value: string | null | undefined): Date | null {
-  return value ? new Date(value) : null;
-}
-
-async function runBatched<T>(items: T[], task: (item: T) => Promise<unknown>): Promise<void> {
-  for (let index = 0; index < items.length; index += DB_WRITE_CONCURRENCY) {
-    await Promise.all(items.slice(index, index + DB_WRITE_CONCURRENCY).map(task));
-  }
-}
-
 function distinct(values: string[] | undefined): string[] {
   return [...new Set(values ?? [])];
 }
 
 function sqlValues(values: string[]) {
   return Prisma.join(values.map((value) => Prisma.sql`${value}`));
-}
-
-function productData(product: ShopifyProduct) {
-  return {
-    title: product.title,
-    handle: product.handle ?? null,
-    productType: product.productType ?? null,
-    vendor: product.vendor ?? null,
-    tags: product.tags,
-    status: product.status,
-    totalInventory: product.totalInventory ?? null,
-    tracksInventory: product.tracksInventory,
-    publishedAt: optionalDate(product.publishedAt),
-    shopifyCreatedAt: optionalDate(product.createdAt),
-    shopifyUpdatedAt: optionalDate(product.updatedAt),
-    deletedAt: null,
-    rawJson: product as unknown as Prisma.InputJsonValue,
-  };
-}
-
-function variantData(variant: ShopifyVariant, productId: string) {
-  return {
-    productId,
-    title: variant.title,
-    displayName: variant.displayName ?? null,
-    sku: variant.sku ?? null,
-    barcode: variant.barcode ?? null,
-    price: variant.price ?? null,
-    compareAtPrice: variant.compareAtPrice ?? null,
-    position: variant.position ?? null,
-    availableForSale: variant.availableForSale,
-    inventoryQuantity: variant.inventoryQuantity ?? null,
-    inventoryPolicy: variant.inventoryPolicy ?? null,
-    shopifyCreatedAt: optionalDate(variant.createdAt),
-    shopifyUpdatedAt: optionalDate(variant.updatedAt),
-    deletedAt: null,
-    rawJson: variant as unknown as Prisma.InputJsonValue,
-  };
-}
-
-function inventoryItemData(variant: ShopifyVariant) {
-  const item = variant.inventoryItem;
-  return {
-    shopifyInventoryItemId: item.id,
-    sku: item.sku ?? variant.sku ?? null,
-    tracked: item.tracked,
-    requiresShipping: item.requiresShipping,
-    shopifyCreatedAt: optionalDate(item.createdAt),
-    shopifyUpdatedAt: optionalDate(item.updatedAt),
-    deletedAt: null,
-    rawJson: item as unknown as Prisma.InputJsonValue,
-  };
-}
-
-function collectionData(collection: ShopifyCollection) {
-  return {
-    title: collection.title,
-    handle: collection.handle ?? null,
-    descriptionHtml: collection.descriptionHtml ?? null,
-    sortOrder: collection.sortOrder ?? null,
-    imageUrl: collection.image?.url ?? null,
-    shopifyUpdatedAt: optionalDate(collection.updatedAt),
-    deletedAt: null,
-    rawJson: collection as unknown as Prisma.InputJsonValue,
-  };
 }
 
 async function enqueuePixelResolutionRepairsWith(
@@ -203,35 +129,7 @@ export class ShopifyCatalogRepository {
 
     const ids = products.map((product) => product.id);
     await prisma.$transaction(async (tx) => {
-      const existing = await tx.product.findMany({
-        where: { storeId, shopifyProductId: { in: ids } },
-        select: { id: true, shopifyProductId: true },
-      });
-      const existingByExternalId = new Map(
-        existing.map((product) => [product.shopifyProductId, product.id]),
-      );
-
-      const newProducts = products.filter((product) => !existingByExternalId.has(product.id));
-      if (newProducts.length > 0) {
-        await tx.product.createMany({
-          data: newProducts.map((product) => ({
-            storeId,
-            shopifyProductId: product.id,
-            ...productData(product),
-          })),
-          skipDuplicates: true,
-        });
-      }
-
-      const updates = products.filter((product) => existingByExternalId.has(product.id));
-      await runBatched(updates, (product) =>
-        tx.product.update({
-          where: { id: existingByExternalId.get(product.id)! },
-          data: productData(product),
-          select: { id: true },
-        }),
-      );
-
+      await bulkUpsertProducts(tx, storeId, products);
       await enqueuePixelResolutionRepairsWith(tx, storeId, { productIds: ids });
     }, CATALOG_TRANSACTION_OPTIONS);
   }
@@ -242,45 +140,15 @@ export class ShopifyCatalogRepository {
     const variantExternalIds = variants.map((variant) => variant.id);
     const persisted = await prisma.$transaction(async (tx) => {
       const productExternalIds = [...new Set(variants.map((variant) => variant.product.id))];
-
-      const [products, existingVariants] = await Promise.all([
-        tx.product.findMany({
-          where: { storeId, shopifyProductId: { in: productExternalIds }, deletedAt: null },
-          select: { id: true, shopifyProductId: true },
-        }),
-        tx.productVariant.findMany({
-          where: { storeId, shopifyVariantId: { in: variantExternalIds } },
-          select: { id: true, shopifyVariantId: true },
-        }),
-      ]);
+      const products = await tx.product.findMany({
+        where: { storeId, shopifyProductId: { in: productExternalIds }, deletedAt: null },
+        select: { id: true, shopifyProductId: true },
+      });
 
       const productMap = new Map(products.map((product) => [product.shopifyProductId, product.id]));
       if (productExternalIds.some((id) => !productMap.has(id))) return false;
 
-      const existingVariantMap = new Map(
-        existingVariants.map((variant) => [variant.shopifyVariantId, variant.id]),
-      );
-      const newVariants = variants.filter((variant) => !existingVariantMap.has(variant.id));
-
-      if (newVariants.length > 0) {
-        await tx.productVariant.createMany({
-          data: newVariants.map((variant) => ({
-            storeId,
-            shopifyVariantId: variant.id,
-            ...variantData(variant, productMap.get(variant.product.id)!),
-          })),
-          skipDuplicates: true,
-        });
-      }
-
-      const updates = variants.filter((variant) => existingVariantMap.has(variant.id));
-      await runBatched(updates, (variant) =>
-        tx.productVariant.update({
-          where: { id: existingVariantMap.get(variant.id)! },
-          data: variantData(variant, productMap.get(variant.product.id)!),
-          select: { id: true },
-        }),
-      );
+      await bulkUpsertVariants(tx, storeId, variants, productMap);
 
       const persistedVariants = await tx.productVariant.findMany({
         where: { storeId, shopifyVariantId: { in: variantExternalIds } },
@@ -310,37 +178,7 @@ export class ShopifyCatalogRepository {
         await tx.variantOption.createMany({ data: optionRows });
       }
 
-      const existingItems = await tx.inventoryItem.findMany({
-        where: { variantId: { in: persistedIds } },
-        select: { id: true, variantId: true },
-      });
-      const itemByVariantId = new Map(existingItems.map((item) => [item.variantId, item.id]));
-      const newItems = variants.filter(
-        (variant) => !itemByVariantId.has(persistedMap.get(variant.id)!),
-      );
-
-      if (newItems.length > 0) {
-        await tx.inventoryItem.createMany({
-          data: newItems.map((variant) => ({
-            storeId,
-            variantId: persistedMap.get(variant.id)!,
-            ...inventoryItemData(variant),
-          })),
-          skipDuplicates: true,
-        });
-      }
-
-      const itemUpdates = variants.filter((variant) =>
-        itemByVariantId.has(persistedMap.get(variant.id)!),
-      );
-      await runBatched(itemUpdates, (variant) => {
-        const variantId = persistedMap.get(variant.id)!;
-        return tx.inventoryItem.update({
-          where: { id: itemByVariantId.get(variantId)! },
-          data: inventoryItemData(variant),
-          select: { id: true },
-        });
-      });
+      await bulkUpsertInventoryItems(tx, storeId, variants, persistedMap);
 
       const inventoryItemCount = await tx.inventoryItem.count({
         where: { storeId, variantId: { in: persistedIds }, deletedAt: null },
@@ -381,35 +219,43 @@ export class ShopifyCatalogRepository {
     });
     const currentByVariant = new Map(currentCosts.map((cost) => [cost.variantId, cost]));
 
-    for (const variant of withCost) {
+    const changes = withCost.flatMap((variant) => {
       const variantId = variantMap.get(variant.id);
       const cost = variant.inventoryItem.unitCost;
-      if (!variantId || !cost) continue;
+      if (!variantId || !cost) return [];
 
       const current = currentByVariant.get(variantId);
-      if (current && current.amount.toString() === cost.amount && current.currency === cost.currencyCode) {
-        continue;
+      if (
+        current &&
+        current.amount.toString() === cost.amount &&
+        current.currency === cost.currencyCode
+      ) {
+        return [];
       }
 
-      const effectiveFrom = new Date();
-      await prisma.$transaction(async (tx) => {
-        if (current) {
-          await tx.variantCost.update({
-            where: { id: current.id },
-            data: { effectiveUntil: effectiveFrom },
-          });
-        }
-        await tx.variantCost.create({
-          data: {
-            variantId,
-            amount: cost.amount,
-            currency: cost.currencyCode,
-            source: 'SHOPIFY',
-            effectiveFrom,
-          },
+      return [{ variantId, cost, currentId: current?.id ?? null }];
+    });
+    if (changes.length === 0) return;
+
+    const effectiveFrom = new Date();
+    await prisma.$transaction(async (tx) => {
+      const currentIds = changes.flatMap((change) => (change.currentId ? [change.currentId] : []));
+      if (currentIds.length > 0) {
+        await tx.variantCost.updateMany({
+          where: { id: { in: currentIds } },
+          data: { effectiveUntil: effectiveFrom },
         });
+      }
+      await tx.variantCost.createMany({
+        data: changes.map((change) => ({
+          variantId: change.variantId,
+          amount: change.cost.amount,
+          currency: change.cost.currencyCode,
+          source: 'SHOPIFY',
+          effectiveFrom,
+        })),
       });
-    }
+    });
   }
 
   async persistCollections(storeId: string, collections: ShopifyCollection[]): Promise<void> {
@@ -417,23 +263,7 @@ export class ShopifyCatalogRepository {
     const collectionIds = collections.map((collection) => collection.id);
 
     await prisma.$transaction(async (tx) => {
-      await runBatched(collections, (collection) =>
-        tx.collection.upsert({
-          where: {
-            storeId_shopifyCollectionId: {
-              storeId,
-              shopifyCollectionId: collection.id,
-            },
-          },
-          create: {
-            storeId,
-            shopifyCollectionId: collection.id,
-            ...collectionData(collection),
-          },
-          update: collectionData(collection),
-          select: { id: true },
-        }),
-      );
+      await bulkUpsertCollections(tx, storeId, collections);
       await enqueuePixelResolutionRepairsWith(tx, storeId, { collectionIds });
     }, CATALOG_TRANSACTION_OPTIONS);
   }
