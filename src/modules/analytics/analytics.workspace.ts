@@ -1,4 +1,5 @@
 import { AppError } from '../../errors/app-error.js';
+import { memoizeRequestRead } from '../../lib/request-read-cache.js';
 import { AdvertisingAnalyticsReadRepository } from './advertising-analytics.read.repository.js';
 import { AdvertisingAnalyticsService } from './advertising-analytics.service.js';
 import { resolveAnalyticsWindows } from './analytics.dates.js';
@@ -46,7 +47,9 @@ export class AnalyticsWorkspace {
         this.commerce.profitabilityBase(store, windows),
         latestOrderHistoryAttempt?.status === 'SUCCEEDED'
           ? Promise.resolve(latestOrderHistoryAttempt)
-          : this.repository.getLatestSuccessfulOrderHistorySync(storeId),
+          : memoizeRequestRead(`analytics:order-history:${storeId}`, () =>
+              this.repository.getLatestSuccessfulOrderHistorySync(storeId),
+            ),
       ]);
 
     const storeCurrencyAds = advertising.currencies.find(
@@ -245,7 +248,9 @@ export class AnalyticsWorkspace {
   }
 
   private async loadStore(storeId: string): Promise<StoreContext> {
-    const store = await this.repository.getStoreContext(storeId);
+    const store = await memoizeRequestRead(`analytics:store-context:${storeId}`, () =>
+      this.repository.getStoreContext(storeId),
+    );
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
     return store;
   }
