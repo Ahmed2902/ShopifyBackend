@@ -31,17 +31,24 @@ const cases = [
   { name: 'products source', path: `/v1/stores/${store}/analytics/products?days=30&page=1&limit=50&fresh=true`, p95BudgetMs: listSourceBudget },
   { name: 'product ads warm', path: `/v1/stores/${store}/analytics/product-ads?days=30&page=1&limit=50`, p95BudgetMs: warmBudget, concurrent: true },
   { name: 'product ads source', path: `/v1/stores/${store}/analytics/product-ads?days=30&page=1&limit=50&fresh=true`, p95BudgetMs: listSourceBudget },
+  { name: 'collections warm', path: `/v1/stores/${store}/analytics/collections?days=30&page=1&limit=50`, p95BudgetMs: warmBudget, concurrent: true },
+  { name: 'collections source', path: `/v1/stores/${store}/analytics/collections?days=30&page=1&limit=50&fresh=true`, p95BudgetMs: listSourceBudget },
+  { name: 'customers warm', path: `/v1/stores/${store}/analytics/customers?days=30`, p95BudgetMs: warmBudget, concurrent: true },
+  { name: 'customers source', path: `/v1/stores/${store}/analytics/customers?days=30&fresh=true`, p95BudgetMs: heavySourceBudget },
   { name: 'inventory warm', path: `/v1/stores/${store}/analytics/inventory?days=30&page=1&limit=50`, p95BudgetMs: warmBudget, concurrent: true },
   { name: 'inventory source', path: `/v1/stores/${store}/analytics/inventory?days=30&page=1&limit=50&fresh=true`, p95BudgetMs: listSourceBudget },
   { name: 'advertising warm', path: `/v1/stores/${store}/analytics/advertising?days=30`, p95BudgetMs: warmBudget, concurrent: true },
   { name: 'advertising source', path: `/v1/stores/${store}/analytics/advertising?days=30&fresh=true`, p95BudgetMs: heavySourceBudget },
   { name: 'campaigns warm', path: `/v1/stores/${store}/analytics/campaigns?days=30&page=1&limit=50`, p95BudgetMs: warmBudget, concurrent: true },
   { name: 'campaigns source', path: `/v1/stores/${store}/analytics/campaigns?days=30&page=1&limit=50&fresh=true`, p95BudgetMs: listSourceBudget },
+  { name: 'ad sets warm', path: `/v1/stores/${store}/analytics/adsets?days=30&page=1&limit=50`, p95BudgetMs: warmBudget, concurrent: true },
+  { name: 'ad sets source', path: `/v1/stores/${store}/analytics/adsets?days=30&page=1&limit=50&fresh=true`, p95BudgetMs: listSourceBudget },
   { name: 'ads warm', path: `/v1/stores/${store}/analytics/ads?days=30&page=1&limit=50`, p95BudgetMs: warmBudget, concurrent: true },
   { name: 'ads source', path: `/v1/stores/${store}/analytics/ads?days=30&page=1&limit=50&fresh=true`, p95BudgetMs: listSourceBudget },
   { name: 'creatives warm', path: `/v1/stores/${store}/analytics/creatives?days=30&page=1&limit=50`, p95BudgetMs: warmBudget, concurrent: true },
   { name: 'creatives source', path: `/v1/stores/${store}/analytics/creatives?days=30&page=1&limit=50&fresh=true`, p95BudgetMs: listSourceBudget },
-  { name: 'report', path: `/v1/stores/${store}/analytics/report?days=30`, p95BudgetMs: heavySourceBudget, concurrent: true },
+  { name: 'report warm', path: `/v1/stores/${store}/analytics/report?days=30`, p95BudgetMs: warmBudget, concurrent: true },
+  { name: 'report source', path: `/v1/stores/${store}/analytics/report?days=30&fresh=true`, p95BudgetMs: heavySourceBudget },
   { name: 'intelligence warm', path: `/v1/stores/${store}/intelligence/snapshot`, p95BudgetMs: warmBudget, concurrent: true },
   { name: 'intelligence source', path: `/v1/stores/${store}/intelligence/snapshot?fresh=true`, p95BudgetMs: 1_500 },
   { name: 'tiktok monitor warm', path: `/v1/stores/${store}/analytics/tiktok-monitor?days=30&level=campaigns&page=1&limit=50`, p95BudgetMs: 400, concurrent: true },
@@ -168,7 +175,7 @@ console.log('\nInterpretation:');
 console.log('- warm cases measure the normal unchanged-store read path and should mostly hit generation caches');
 console.log('- source cases use fresh=true to advance the generation and measure source-query recomputation');
 console.log('- p50/p95/p99 expose tail latency; concurrent warm cases also report throughput and concurrent tail latency');
-console.log('- run with LOG_REQUEST_PERFORMANCE=true to correlate HTTP latency with DB wall time, Redis time, cache outcomes and query budgets');
+console.log('- run with LOG_REQUEST_PERFORMANCE=true to correlate HTTP latency with DB wall time, Redis/provider spans, cache outcomes and query budgets');
 console.log('- BENCHMARK_ENFORCE_BUDGETS=true makes any sequential p95 budget violation fail the command');
 
 if (violations.length > 0) {
