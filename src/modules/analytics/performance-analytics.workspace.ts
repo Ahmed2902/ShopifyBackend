@@ -1,4 +1,5 @@
 import { AppError } from '../../errors/app-error.js';
+import { memoizeRequestRead } from '../../lib/request-read-cache.js';
 import { resolveAnalyticsWindows } from './analytics.dates.js';
 import { AnalyticsRepository } from './analytics.repository.js';
 import type { AnalyticsRangeQuery } from './analytics.schema.js';
@@ -13,7 +14,9 @@ export class PerformanceAnalyticsWorkspace {
   }
 
   async daily(storeId: string, query: AnalyticsRangeQuery, now = new Date()) {
-    const store = await this.repository.getStoreContext(storeId);
+    const store = await memoizeRequestRead(`analytics:store-context:${storeId}`, () =>
+      this.repository.getStoreContext(storeId),
+    );
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
     const windows = resolveAnalyticsWindows(query, store.ianaTimezone, now);
     const trend = await this.trend.current(store, windows);

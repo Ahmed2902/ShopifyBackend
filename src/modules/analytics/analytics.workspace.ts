@@ -1,4 +1,5 @@
 import { AppError } from '../../errors/app-error.js';
+import { memoizeRequestRead } from '../../lib/request-read-cache.js';
 import { AdvertisingAnalyticsReadRepository } from './advertising-analytics.read.repository.js';
 import { AdvertisingAnalyticsService } from './advertising-analytics.service.js';
 import { resolveAnalyticsWindows } from './analytics.dates.js';
@@ -14,12 +15,6 @@ import { CommerceAnalyticsService } from './commerce-analytics.service.js';
 type StoreContext = NonNullable<Awaited<ReturnType<AnalyticsRepository['getStoreContext']>>>;
 type OrderHistorySync = NonNullable<StoreContext['shopifyConnection']>['syncRuns'][number];
 
-/**
- * Stable analytics read side for Stride.
- *
- * Workspaces compose source-domain facts for cross-domain analytical use-cases without
- * creating a second write model or coupling backend contracts to the current UI layout.
- */
 export class AnalyticsWorkspace {
   private readonly commerce: CommerceAnalyticsService;
   private readonly advertisingService: AdvertisingAnalyticsService;
@@ -46,7 +41,9 @@ export class AnalyticsWorkspace {
         this.commerce.profitabilityBase(store, windows),
         latestOrderHistoryAttempt?.status === 'SUCCEEDED'
           ? Promise.resolve(latestOrderHistoryAttempt)
-          : this.repository.getLatestSuccessfulOrderHistorySync(storeId),
+          : memoizeRequestRead(`analytics:order-history:${storeId}`, () =>
+              this.repository.getLatestSuccessfulOrderHistorySync(storeId),
+            ),
       ]);
 
     const storeCurrencyAds = advertising.currencies.find(
@@ -245,7 +242,9 @@ export class AnalyticsWorkspace {
   }
 
   private async loadStore(storeId: string): Promise<StoreContext> {
-    const store = await this.repository.getStoreContext(storeId);
+    const store = await memoizeRequestRead(`analytics:store-context:${storeId}`, () =>
+      this.repository.getStoreContext(storeId),
+    );
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
     return store;
   }

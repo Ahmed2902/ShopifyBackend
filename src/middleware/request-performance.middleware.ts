@@ -39,6 +39,7 @@ export const requestPerformanceMiddleware: RequestHandler = (req, res, next) => 
     slowestQueries: [],
     spans: {},
     cacheOutcomes: { hit: 0, miss: 0, bypass: 0, error: 0, fresh: 0 },
+    memoizedReads: new Map(),
   };
 
   runWithRequestPerformanceContext(context, () => {
@@ -96,8 +97,6 @@ export const requestPerformanceMiddleware: RequestHandler = (req, res, next) => 
 
     res.once('finish', () => record(false));
     res.once('close', () => {
-      // A normal completed response emits finish before close. The guard avoids double logging,
-      // while an early disconnect still records the DB work and elapsed time spent before abort.
       record(!res.writableFinished);
     });
 
