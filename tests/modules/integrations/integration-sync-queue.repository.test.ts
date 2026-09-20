@@ -63,7 +63,7 @@ describeDatabase('IntegrationRepository manual sync queue', () => {
     const staleBefore = new Date(Date.now() - 30 * 60_000);
     await expect(
       repository.listClaimableShopifySyncRunIds('CatalogInventory', 10, staleBefore),
-    ).resolves.toContain(left.syncRun.id);
+    ).resolves.toContainEqual({ id: left.syncRun.id });
 
     const first = await repository.claimShopifySyncRun(
       left.syncRun.id,
@@ -101,7 +101,7 @@ describeDatabase('IntegrationRepository manual sync queue', () => {
     const staleBefore = new Date(Date.now() - 30 * 60_000);
     await expect(
       repository.listClaimableShopifySyncRunIds('CatalogInventory', 10, staleBefore),
-    ).resolves.toContain(queued.syncRun.id);
+    ).resolves.toContainEqual({ id: queued.syncRun.id });
 
     const reclaimed = await repository.claimShopifySyncRun(
       queued.syncRun.id,
