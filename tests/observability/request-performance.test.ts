@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { memoizeRequestRead } from '../../src/lib/request-read-cache.js';
 import {
   getPrismaQueryWallTimeMs,
   measureRequestPerformanceSpan,
@@ -19,6 +20,7 @@ function context(): RequestPerformanceContext {
     slowestQueries: [],
     spans: {},
     cacheOutcomes: { hit: 0, miss: 0, bypass: 0, error: 0, fresh: 0, coalesced: 0 },
+    memoizedReads: new Map(),
   };
 }
 
@@ -78,6 +80,30 @@ describe('request performance context', () => {
     expect(value.spans['shopify.admin_api.http']?.durationMs).toBeGreaterThanOrEqual(0);
     expect(value.spans['meta.graph_api.http']?.count).toBe(1);
     expect(value.spans['meta.graph_api.http']?.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('coalesces identical request reads and evicts rejected promises', async () => {
+    const value = context();
+    const loader = vi.fn(async () => 'value');
+
+    const [first, second] = await runWithRequestPerformanceContext(value, () =>
+      Promise.all([
+        memoizeRequestRead('store:1', loader),
+        memoizeRequestRead('store:1', loader),
+      ]),
+    );
+
+    expect(first).toBe('value');
+    expect(second).toBe('value');
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    const rejection = vi.fn(async () => {
+      throw new Error('temporary');
+    });
+    await expect(
+      runWithRequestPerformanceContext(value, () => memoizeRequestRead('store:2', rejection)),
+    ).rejects.toThrow('temporary');
+    expect(value.memoizedReads.has('store:2')).toBe(false);
   });
 
   it('uses union wall time so overlapping parallel queries are not double counted', () => {
