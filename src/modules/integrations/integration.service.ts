@@ -5,6 +5,19 @@ import { IntegrationRepository } from './integration.repository.js';
 import type { IntegrationProviderName } from './integration.schema.js';
 import { toErrorMessage } from './integration.utils.js';
 
+function storeIdFromSyncRun(run: {
+  shopifyConnection?: { storeId: string } | null;
+  metaConnection?: { storeId: string } | null;
+  tiktokConnection?: { storeId: string } | null;
+}) {
+  return (
+    run.shopifyConnection?.storeId ??
+    run.metaConnection?.storeId ??
+    run.tiktokConnection?.storeId ??
+    null
+  );
+}
+
 export class IntegrationService {
   constructor(private readonly repository: IntegrationRepository) {}
 
@@ -51,8 +64,38 @@ export class IntegrationService {
     return this.repository.claimShopifySyncRun(syncRunId, resourceType, staleBefore);
   }
 
-  renewShopifySyncRunLease(syncRunId: string, now = new Date()) {
-    return this.repository.renewShopifySyncRunLease(syncRunId, now);
+  renewShopifySyncRunLease(syncRunId: string, leaseToken: string, now = new Date()) {
+    return this.repository.renewShopifySyncRunLease(syncRunId, leaseToken, now);
+  }
+
+  async completeClaimedShopifySyncRun(
+    syncRunId: string,
+    leaseToken: string,
+    stats: { recordsRead?: number; recordsWritten?: number; partial?: boolean } = {},
+  ) {
+    const completed = await this.repository.completeClaimedShopifySyncRun(syncRunId, leaseToken, {
+      recordsRead: stats.recordsRead ?? 0,
+      recordsWritten: stats.recordsWritten ?? 0,
+      partial: stats.partial ?? false,
+    });
+    if (!completed) return null;
+
+    const storeId = storeIdFromSyncRun(completed);
+    if (storeId) await invalidateStoreDecisionCaches(storeId);
+    return completed;
+  }
+
+  async failClaimedShopifySyncRun(syncRunId: string, leaseToken: string, error: unknown) {
+    const failed = await this.repository.failClaimedShopifySyncRun(
+      syncRunId,
+      leaseToken,
+      toErrorMessage(error),
+    );
+    if (!failed) return null;
+
+    const storeId = storeIdFromSyncRun(failed);
+    if (storeId) await invalidateStoreDecisionCaches(storeId);
+    return failed;
   }
 
   attachProviderOperation(syncRunId: string, providerOperationId: string) {
@@ -68,12 +111,7 @@ export class IntegrationService {
       recordsWritten: stats.recordsWritten ?? 0,
       partial: stats.partial ?? false,
     });
-    const storeId =
-      completed.shopifyConnection?.storeId ??
-      completed.metaConnection?.storeId ??
-      completed.tiktokConnection?.storeId ??
-      null;
-
+    const storeId = storeIdFromSyncRun(completed);
     if (storeId) await invalidateStoreDecisionCaches(storeId);
     return completed;
   }
