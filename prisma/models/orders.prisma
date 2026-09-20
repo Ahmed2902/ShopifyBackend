@@ -102,6 +102,7 @@ model OrderLineItem {
 
   @@unique([orderId, shopifyLineItemId])
   @@index([variantId, orderId])
+  @@index([productId, orderId])
   @@index([shopifyVariantId])
 }
 
