@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   getPrismaQueryWallTimeMs,
+  recordCacheOutcome,
   recordPrismaQuery,
+  recordRequestPerformanceSpan,
   runWithRequestPerformanceContext,
   type RequestPerformanceContext,
 } from '../../src/observability/request-performance.js';
@@ -14,6 +16,8 @@ function context(): RequestPerformanceContext {
     queryDurationMs: 0,
     queryIntervals: [],
     slowestQueries: [],
+    spans: {},
+    cacheOutcomes: { hit: 0, miss: 0, bypass: 0, error: 0, fresh: 0 },
   };
 }
 
@@ -39,6 +43,21 @@ describe('request performance context', () => {
     expect(value.slowestQueries.map((sample) => sample.durationMs)).toEqual([7, 6, 5, 4, 3]);
   });
 
+  it('records named spans and cache outcomes inside the request context', () => {
+    const value = context();
+
+    runWithRequestPerformanceContext(value, () => {
+      recordRequestPerformanceSpan('redis.http', 12.5);
+      recordRequestPerformanceSpan('redis.http', 7.5);
+      recordCacheOutcome('hit');
+      recordCacheOutcome('miss');
+      recordCacheOutcome('hit');
+    });
+
+    expect(value.spans['redis.http']).toEqual({ count: 2, durationMs: 20 });
+    expect(value.cacheOutcomes).toMatchObject({ hit: 2, miss: 1 });
+  });
+
   it('uses union wall time so overlapping parallel queries are not double counted', () => {
     const value = context();
     value.queryIntervals.push(
@@ -61,7 +80,11 @@ describe('request performance context', () => {
       startedAtMs: 0,
       endedAtMs: 10,
     });
+    recordRequestPerformanceSpan('redis.http', 10);
+    recordCacheOutcome('hit');
 
     expect(value.queryCount).toBe(0);
+    expect(value.spans).toEqual({});
+    expect(value.cacheOutcomes.hit).toBe(0);
   });
 });
