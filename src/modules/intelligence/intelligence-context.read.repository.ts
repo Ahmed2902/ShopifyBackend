@@ -13,6 +13,8 @@ type RawIntelligenceContext = {
   iana_timezone: string;
   inventory_mode: InventoryIntelligenceMode;
   inventory_reviewed_at: Date | null;
+  inventory_restock_lead_time_days: number;
+  inventory_low_stock_threshold: number;
   shopify_status: ConnectionStatus | null;
   shopify_scopes: string[] | null;
   shopify_last_synced_at: Date | null;
@@ -44,6 +46,8 @@ export class IntelligenceContextReadRepository {
         store."ianaTimezone" AS iana_timezone,
         store."inventoryIntelligenceMode" AS inventory_mode,
         store."inventoryReviewedAt" AS inventory_reviewed_at,
+        store."inventoryRestockLeadTimeDays" AS inventory_restock_lead_time_days,
+        store."inventoryLowStockThreshold" AS inventory_low_stock_threshold,
         shopify."status" AS shopify_status,
         shopify."scopes" AS shopify_scopes,
         shopify."lastSyncedAt" AS shopify_last_synced_at,
@@ -100,6 +104,8 @@ export class IntelligenceContextReadRepository {
       ianaTimezone: row.iana_timezone,
       inventoryIntelligenceMode: row.inventory_mode,
       inventoryReviewedAt: row.inventory_reviewed_at,
+      inventoryRestockLeadTimeDays: row.inventory_restock_lead_time_days,
+      inventoryLowStockThreshold: row.inventory_low_stock_threshold,
       shopifyConnection:
         row.shopify_status === null
           ? null
