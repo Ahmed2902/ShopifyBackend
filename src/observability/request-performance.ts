@@ -11,6 +11,13 @@ interface PrismaQueryInterval {
   endedAtMs: number;
 }
 
+export type CacheOutcome = 'hit' | 'miss' | 'bypass' | 'error' | 'fresh';
+
+export interface RequestPerformanceSpan {
+  count: number;
+  durationMs: number;
+}
+
 export interface RequestPerformanceContext {
   requestId: string;
   startedAtMs: number;
@@ -18,6 +25,8 @@ export interface RequestPerformanceContext {
   queryDurationMs: number;
   queryIntervals: PrismaQueryInterval[];
   slowestQueries: PrismaQuerySample[];
+  spans: Record<string, RequestPerformanceSpan>;
+  cacheOutcomes: Record<CacheOutcome, number>;
 }
 
 type RecordedPrismaQuery = PrismaQuerySample & PrismaQueryInterval;
@@ -51,6 +60,25 @@ export function recordPrismaQuery(sample: RecordedPrismaQuery): void {
   if (context.slowestQueries.length > MAX_SLOW_QUERY_SAMPLES) {
     context.slowestQueries.length = MAX_SLOW_QUERY_SAMPLES;
   }
+}
+
+export function recordRequestPerformanceSpan(name: string, durationMs: number): void {
+  const context = requestStorage.getStore();
+  if (!context || !Number.isFinite(durationMs) || durationMs < 0) return;
+  const current = context.spans[name] ?? { count: 0, durationMs: 0 };
+  current.count += 1;
+  current.durationMs += durationMs;
+  context.spans[name] = current;
+}
+
+export function recordCacheOutcome(outcome: CacheOutcome): void {
+  const context = requestStorage.getStore();
+  if (!context) return;
+  context.cacheOutcomes[outcome] += 1;
+}
+
+export function getRequestPerformanceContext(): RequestPerformanceContext | undefined {
+  return requestStorage.getStore();
 }
 
 /**
