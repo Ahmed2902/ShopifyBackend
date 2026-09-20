@@ -116,7 +116,7 @@ export class ShopifyService {
   }
 
   async enqueueCatalogAndInventorySync(storeId: string) {
-    const { connection } = await this.loadSyncTarget(storeId);
+    const { connection } = await this.loadPersistedSyncTarget(storeId);
     const queued = await this.integrationService.enqueueExclusiveSyncRun({
       provider: 'SHOPIFY',
       connectionId: connection.id,
@@ -464,7 +464,7 @@ export class ShopifyService {
     }
   }
 
-  private async loadSyncTarget(storeId: string) {
+  private async loadPersistedSyncTarget(storeId: string) {
     const store = await this.repository.findConnectionForSync(storeId);
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
     const connection = store.shopifyConnection;
@@ -478,7 +478,11 @@ export class ShopifyService {
         'SHOPIFY_CONNECTION_INACTIVE',
       );
     }
+    return { store, connection };
+  }
 
+  private async loadSyncTarget(storeId: string) {
+    const { store, connection } = await this.loadPersistedSyncTarget(storeId);
     return {
       connection,
       syncContextBase: {
