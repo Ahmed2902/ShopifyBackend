@@ -92,10 +92,10 @@ model TikTokConnection {
   refreshTokenCiphertext String?
   refreshTokenExpiresAt  DateTime?
   scopes                 String[]         @default([])
-  apiVersion             String
-  lastSyncedAt           DateTime?
-  createdAt              DateTime         @default(now())
-  updatedAt              DateTime         @updatedAt
+  apiVersion              String
+  lastSyncedAt            DateTime?
+  createdAt               DateTime         @default(now())
+  updatedAt               DateTime         @updatedAt
 
   store             Store                   @relation(fields: [storeId], references: [id], onDelete: Restrict)
   advertisers       TikTokAdvertiser[]
@@ -132,7 +132,7 @@ model SyncRun {
   payloads          ExternalPayload[]
 
   @@index([provider, resourceType, createdAt])
-  @@index([provider, resourceType, status, leaseExpiresAt, createdAt])
+  @@index([provider, resourceType, status, leaseExpiresAt, createdAt], map: "SyncRun_queue_claim_idx")
   @@index([providerOperationId])
   @@index([shopifyConnectionId, createdAt])
   @@index([metaConnectionId, createdAt])
@@ -159,10 +159,10 @@ model WebhookDelivery {
   payload              Json
   updatedAt            DateTime             @updatedAt
 
-  shopifyConnection ShopifyConnection?  @relation(fields: [shopifyConnectionId], references: [id], onDelete: SetNull)
-  metaConnection    MetaConnection?     @relation(fields: [metaConnectionId], references: [id], onDelete: SetNull)
-  tiktokConnection  TikTokConnection?   @relation(fields: [tiktokConnectionId], references: [id], onDelete: SetNull)
-  payloads          ExternalPayload[]
+  shopifyConnection  ShopifyConnection?  @relation(fields: [shopifyConnectionId], references: [id], onDelete: SetNull)
+  metaConnection     MetaConnection?     @relation(fields: [metaConnectionId], references: [id], onDelete: SetNull)
+  tiktokConnection   TikTokConnection?   @relation(fields: [tiktokConnectionId], references: [id], onDelete: SetNull)
+  payloads           ExternalPayload[]
   shopifyDataRequest ShopifyDataRequest?
 
   @@unique([provider, externalDeliveryId])
