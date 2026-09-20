@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { shopifyDisconnectService } from './shopify-disconnect.service.js';
 import { shopifyOrderBackfillParamsSchema } from './order/shopify-order.schema.js';
 import { shopifyCallbackSchema, shopifyInstallSchema } from './shopify.schema.js';
+import { shopifySyncRunParamsSchema } from './shopify-sync.schema.js';
 import { shopifyService, type ShopifyService } from './shopify.service.js';
 import {
   buildShopifySuccessRedirect,
@@ -73,7 +74,13 @@ export class ShopifyController {
   };
 
   sync = async (req: Request, res: Response) => {
-    const result = await this.service.syncCatalogAndInventory(req.context.storeId!);
+    const result = await this.service.enqueueCatalogAndInventorySync(req.context.storeId!);
+    res.status(202).json(result);
+  };
+
+  getSync = async (req: Request, res: Response) => {
+    const { syncRunId } = shopifySyncRunParamsSchema.parse(req.params);
+    const result = await this.service.getCatalogAndInventorySync(req.context.storeId!, syncRunId);
     res.status(200).json(result);
   };
 
