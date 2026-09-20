@@ -18,7 +18,7 @@ function context(): RequestPerformanceContext {
     queryIntervals: [],
     slowestQueries: [],
     spans: {},
-    cacheOutcomes: { hit: 0, miss: 0, bypass: 0, error: 0, fresh: 0 },
+    cacheOutcomes: { hit: 0, miss: 0, bypass: 0, error: 0, fresh: 0, coalesced: 0 },
   };
 }
 
@@ -52,11 +52,12 @@ describe('request performance context', () => {
       recordRequestPerformanceSpan('redis.http', 7.5);
       recordCacheOutcome('hit');
       recordCacheOutcome('miss');
+      recordCacheOutcome('coalesced');
       recordCacheOutcome('hit');
     });
 
     expect(value.spans['redis.http']).toEqual({ count: 2, durationMs: 20 });
-    expect(value.cacheOutcomes).toMatchObject({ hit: 2, miss: 1 });
+    expect(value.cacheOutcomes).toMatchObject({ hit: 2, miss: 1, coalesced: 1 });
   });
 
   it('measures async provider work and records the span even when it fails', async () => {
