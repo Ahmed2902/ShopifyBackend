@@ -10,6 +10,8 @@ const addCollectionProductsSchema = z.object({
   productIds: z.array(z.string().uuid()).min(1).max(250),
 });
 
+const collectionIdSchema = z.string().uuid();
+
 export class ShopifyCollectionController {
   create = async (req: Request, res: Response) => {
     const { title } = createCollectionSchema.parse(req.body);
@@ -18,10 +20,11 @@ export class ShopifyCollectionController {
   };
 
   addProducts = async (req: Request, res: Response) => {
+    const collectionId = collectionIdSchema.parse(req.params.collectionId);
     const { productIds } = addCollectionProductsSchema.parse(req.body);
     const result = await shopifyCollectionService.addProducts(
       req.context.storeId!,
-      req.params.collectionId!,
+      collectionId,
       [...new Set(productIds)],
     );
     res.status(200).json(result);
