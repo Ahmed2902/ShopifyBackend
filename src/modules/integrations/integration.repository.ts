@@ -25,6 +25,14 @@ function syncRunConnectionFilter(
   return { provider, tiktokConnectionId: connectionId };
 }
 
+function queueKey(provider: IntegrationProviderName, connectionId: string, resourceType: string) {
+  return `${provider}:${connectionId}:${resourceType}`;
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}
+
 export class IntegrationRepository {
   findSummary(storeId: string) {
     return prisma.store.findUnique({
@@ -96,49 +104,42 @@ export class IntegrationRepository {
     mode: string | null;
     apiVersion: string;
   }) {
-    const lockKey = `${input.provider}:${input.connectionId}:${input.resourceType}`;
-    return prisma.$transaction(async (tx) => {
-      // Put the void-returning advisory lock in FROM so Prisma only has to deserialize an integer.
-      // The xact lock is held until this transaction commits/rolls back.
-      await tx.$queryRaw<Array<{ locked: number }>>(Prisma.sql`
-        SELECT 1 AS locked
-        FROM pg_advisory_xact_lock(hashtext(${lockKey}))
-      `);
+    const activeQueueKey = queueKey(input.provider, input.connectionId, input.resourceType);
 
-      const existing = await tx.syncRun.findFirst({
-        where: {
-          ...syncRunConnectionFilter(input.provider, input.connectionId),
-          resourceType: input.resourceType,
-          status: { in: ['PENDING', 'RUNNING'] },
-        },
-        orderBy: { createdAt: 'desc' },
-      });
-      if (existing) return { syncRun: existing, created: false } as const;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const syncRun = await prisma.syncRun.create({
+          data: {
+            provider: input.provider,
+            resourceType: input.resourceType,
+            mode: input.mode,
+            apiVersion: input.apiVersion,
+            status: 'PENDING',
+            activeQueueKey,
+            ...syncRunConnectionData(input.provider, input.connectionId),
+          },
+        });
+        return { syncRun, created: true } as const;
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) throw error;
+        const existing = await prisma.syncRun.findUnique({ where: { activeQueueKey } });
+        if (existing) return { syncRun: existing, created: false } as const;
+      }
+    }
 
-      const syncRun = await tx.syncRun.create({
-        data: {
-          provider: input.provider,
-          resourceType: input.resourceType,
-          mode: input.mode,
-          apiVersion: input.apiVersion,
-          status: 'PENDING',
-          startedAt: null,
-          ...syncRunConnectionData(input.provider, input.connectionId),
-        },
-      });
-      return { syncRun, created: true } as const;
-    });
+    throw new Error('Unable to enqueue sync after resolving a concurrent queue race');
   }
 
-  listClaimableShopifySyncRunIds(resourceType: string, limit: number, staleBefore: Date) {
+  listClaimableShopifySyncRunIds(resourceType: string, limit: number, expiredAt: Date) {
     return prisma.syncRun.findMany({
       where: {
         provider: 'SHOPIFY',
         resourceType,
         shopifyConnectionId: { not: null },
+        activeQueueKey: { not: null },
         OR: [
           { status: 'PENDING' },
-          { status: 'RUNNING', startedAt: { lte: staleBefore } },
+          { status: 'RUNNING', leaseExpiresAt: { lte: expiredAt } },
         ],
       },
       orderBy: { createdAt: 'asc' },
@@ -147,7 +148,12 @@ export class IntegrationRepository {
     });
   }
 
-  async claimShopifySyncRun(syncRunId: string, resourceType: string, staleBefore: Date) {
+  async claimShopifySyncRun(
+    syncRunId: string,
+    resourceType: string,
+    expiredAt: Date,
+    leaseExpiresAt: Date,
+  ) {
     const startedAt = new Date();
     const claimed = await prisma.syncRun.updateMany({
       where: {
@@ -155,14 +161,16 @@ export class IntegrationRepository {
         provider: 'SHOPIFY',
         resourceType,
         shopifyConnectionId: { not: null },
+        activeQueueKey: { not: null },
         OR: [
           { status: 'PENDING' },
-          { status: 'RUNNING', startedAt: { lte: staleBefore } },
+          { status: 'RUNNING', leaseExpiresAt: { lte: expiredAt } },
         ],
       },
       data: {
         status: 'RUNNING',
         startedAt,
+        leaseExpiresAt,
         finishedAt: null,
         lastError: null,
       },
@@ -174,8 +182,21 @@ export class IntegrationRepository {
       select: {
         id: true,
         startedAt: true,
+        leaseExpiresAt: true,
         shopifyConnection: { select: { storeId: true } },
       },
+    });
+  }
+
+  renewShopifySyncRunLease(syncRunId: string, leaseExpiresAt: Date) {
+    return prisma.syncRun.updateMany({
+      where: {
+        id: syncRunId,
+        provider: 'SHOPIFY',
+        status: 'RUNNING',
+        activeQueueKey: { not: null },
+      },
+      data: { leaseExpiresAt },
     });
   }
 
@@ -196,6 +217,8 @@ export class IntegrationRepository {
         status: input.partial ? 'PARTIAL' : 'SUCCEEDED',
         recordsRead: input.recordsRead,
         recordsWritten: input.recordsWritten,
+        activeQueueKey: null,
+        leaseExpiresAt: null,
         finishedAt: new Date(),
         lastError: null,
       },
@@ -210,7 +233,13 @@ export class IntegrationRepository {
   failSyncRun(syncRunId: string, lastError: string) {
     return prisma.syncRun.update({
       where: { id: syncRunId },
-      data: { status: 'FAILED', finishedAt: new Date(), lastError },
+      data: {
+        status: 'FAILED',
+        activeQueueKey: null,
+        leaseExpiresAt: null,
+        finishedAt: new Date(),
+        lastError,
+      },
     });
   }
 
