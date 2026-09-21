@@ -2,6 +2,8 @@ import type { Request, Response } from 'express';
 import { shopifyDisconnectService } from './shopify-disconnect.service.js';
 import { shopifyOrderBackfillParamsSchema } from './order/shopify-order.schema.js';
 import { shopifyCallbackSchema, shopifyInstallSchema } from './shopify.schema.js';
+import { shopifySyncQueueService, type ShopifySyncQueueService } from './shopify-sync-queue.service.js';
+import { shopifySyncRunParamsSchema } from './shopify-sync.schema.js';
 import { shopifyService, type ShopifyService } from './shopify.service.js';
 import {
   buildShopifySuccessRedirect,
@@ -13,7 +15,10 @@ import {
 } from './shopify.utils.js';
 
 export class ShopifyController {
-  constructor(private readonly service: ShopifyService) {}
+  constructor(
+    private readonly service: ShopifyService,
+    private readonly syncQueue?: Pick<ShopifySyncQueueService, 'enqueue' | 'get'>,
+  ) {}
 
   install = async (req: Request, res: Response) => {
     const { shop } = shopifyInstallSchema.parse(req.body);
@@ -73,7 +78,17 @@ export class ShopifyController {
   };
 
   sync = async (req: Request, res: Response) => {
-    const result = await this.service.syncCatalogAndInventory(req.context.storeId!);
+    const result = this.syncQueue
+      ? await this.syncQueue.enqueue(req.context.storeId!)
+      : await this.service.enqueueCatalogAndInventorySync(req.context.storeId!);
+    res.status(202).json(result);
+  };
+
+  getSync = async (req: Request, res: Response) => {
+    const { syncRunId } = shopifySyncRunParamsSchema.parse(req.params);
+    const result = this.syncQueue
+      ? await this.syncQueue.get(req.context.storeId!, syncRunId)
+      : await this.service.getCatalogAndInventorySync(req.context.storeId!, syncRunId);
     res.status(200).json(result);
   };
 
@@ -89,4 +104,4 @@ export class ShopifyController {
   };
 }
 
-export const shopifyController = new ShopifyController(shopifyService);
+export const shopifyController = new ShopifyController(shopifyService, shopifySyncQueueService);
