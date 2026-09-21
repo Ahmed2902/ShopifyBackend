@@ -59,8 +59,9 @@ async function optionalSection<T>(
  * required; secondary previews and chart-ready read models fail independently so a secondary
  * analytical issue cannot hide the merchant's core commerce KPIs. Customer segmentation,
  * top-product economics and first-party acquisition-source evidence are composed here as well,
- * keeping Home dense without adding browser request waterfalls. The complete response participates
- * in the Store-generation dashboard cache.
+ * keeping Home dense without adding browser request waterfalls. Acquisition evidence deliberately
+ * stays session/purchase based; source-level revenue is not synthesized from non-additive touches.
+ * The complete response participates in the Store-generation dashboard cache.
  */
 export class DashboardWorkspace {
   constructor(
