@@ -23,8 +23,9 @@ const DEFAULT_LOCAL_PAYLOAD_MAX_ENTRIES = 128;
 const VERSIONED_GET_SCRIPT = [
   "local version = redis.call('GET', KEYS[1]) or '0'",
   "local known = ARGV[3] or ''",
-  "if known == tostring(version) then return { tostring(version), 1, '' } end",
-  "local value = redis.call('GET', ARGV[1] .. version .. ':' .. ARGV[2]) or ''",
+  "local payloadKey = ARGV[1] .. version .. ':' .. ARGV[2]",
+  "if known == tostring(version) and redis.call('EXISTS', payloadKey) == 1 then return { tostring(version), 1, '' } end",
+  "local value = redis.call('GET', payloadKey) or ''",
   "return { tostring(version), 0, value }",
 ].join('\n');
 
@@ -106,10 +107,10 @@ export class RedisJsonCache {
   }
 
   /**
-   * Redis remains authoritative for the generation on every read. When the local process already
-   * holds an unexpired payload for that exact generation, Redis returns only a tiny version-match
-   * marker. Local reuse never extends beyond the shared Redis TTL, so TTL expiry remains a fallback
-   * freshness boundary even if an invalidation hook is missed.
+   * Redis remains authoritative for the generation and payload existence on every read. When the
+   * local process already holds an unexpired payload for that exact generation, Redis returns only
+   * a tiny marker after confirming the backing versioned key still exists. Local reuse therefore
+   * cannot outlive Redis expiry even when the payload was first learned partway through its TTL.
    */
   async getVersioned<T>(scope: string, key: string): Promise<VersionedRead<T> | null> {
     const localKey = this.localKey(scope, key);
