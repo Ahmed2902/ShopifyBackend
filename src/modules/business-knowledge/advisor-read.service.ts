@@ -86,7 +86,9 @@ function items(value: unknown): unknown[] {
   if (Array.isArray(object.items)) return object.items;
   const evidence = object.evidence;
   if (evidence && typeof evidence === 'object') {
-    const hierarchy = (evidence as Record<string, unknown>).hierarchy;
+    const evidenceObject = evidence as Record<string, unknown>;
+    if (Array.isArray(evidenceObject.items)) return evidenceObject.items;
+    const hierarchy = evidenceObject.hierarchy;
     if (hierarchy && typeof hierarchy === 'object') {
       const hierarchyItems = (hierarchy as Record<string, unknown>).items;
       if (Array.isArray(hierarchyItems)) return hierarchyItems;
@@ -96,11 +98,8 @@ function items(value: unknown): unknown[] {
 }
 
 /**
- * The complete read facade used by advisor integrations.
- *
- * It exposes the existing Stride read models in one place but intentionally performs no new metric
- * calculation. This is the boundary MCP uses so protocol code never reaches Prisma or provider
- * repositories directly.
+ * Complete protocol-independent read facade for advisor integrations.
+ * No metric is recalculated here: every result comes from an existing Stride read model.
  */
 export class AdvisorReadService {
   constructor(
@@ -123,10 +122,7 @@ export class AdvisorReadService {
   }
 
   catalog() {
-    return {
-      ...this.knowledge.catalog(),
-      paidMediaProviders: this.paidMedia.capabilities(),
-    };
+    return { ...this.knowledge.catalog(), paidMediaProviders: this.paidMedia.capabilities() };
   }
 
   overview(storeId: string, days = 30) {
@@ -134,8 +130,10 @@ export class AdvisorReadService {
   }
 
   products(storeId: string, input: { days?: number; page?: number; limit?: number } = {}) {
-    const days = normalizedDays(input.days);
-    return this.analytics.products(storeId, listQuery(days, input.page ?? 1, input.limit ?? 50));
+    return this.analytics.products(
+      storeId,
+      listQuery(normalizedDays(input.days), input.page ?? 1, input.limit ?? 50),
+    );
   }
 
   product(storeId: string, productId: string, days = 30) {
@@ -143,8 +141,10 @@ export class AdvisorReadService {
   }
 
   collections(storeId: string, input: { days?: number; page?: number; limit?: number } = {}) {
-    const days = normalizedDays(input.days);
-    return this.analytics.collections(storeId, listQuery(days, input.page ?? 1, input.limit ?? 50));
+    return this.analytics.collections(
+      storeId,
+      listQuery(normalizedDays(input.days), input.page ?? 1, input.limit ?? 50),
+    );
   }
 
   customers(storeId: string, days = 30) {
@@ -152,8 +152,10 @@ export class AdvisorReadService {
   }
 
   inventory(storeId: string, input: { days?: number; page?: number; limit?: number } = {}) {
-    const days = normalizedDays(input.days);
-    return this.analytics.inventory(storeId, listQuery(days, input.page ?? 1, input.limit ?? 50));
+    return this.analytics.inventory(
+      storeId,
+      listQuery(normalizedDays(input.days), input.page ?? 1, input.limit ?? 50),
+    );
   }
 
   paidMediaOverview(storeId: string, provider: PaidMediaProvider, days = 30) {
@@ -233,7 +235,7 @@ export class AdvisorReadService {
 
   attributionMappings(
     storeId: string,
-    targetType: 'AD' | 'CAMPAIGN',
+    targetType: 'PRODUCT' | 'COLLECTION',
     input: { days?: number; page?: number; limit?: number } = {},
   ) {
     return this.attribution.mappingEvidence(
@@ -257,11 +259,7 @@ export class AdvisorReadService {
   async recommendations(storeId: string, options: { fresh?: boolean } = {}) {
     const snapshot = await this.intelligence.read(storeId, options);
     const recommendations = await recommendationLifecycleService.attach(storeId, snapshot.recommendations);
-    return {
-      evaluatedAt: snapshot.evaluatedAt,
-      dataQuality: snapshot.dataQuality,
-      recommendations,
-    };
+    return { evaluatedAt: snapshot.evaluatedAt, dataQuality: snapshot.dataQuality, recommendations };
   }
 
   report(storeId: string, input: { days?: number; fresh?: boolean } = {}) {
@@ -275,12 +273,7 @@ export class AdvisorReadService {
 
   async search(
     storeId: string,
-    input: {
-      query: string;
-      entityTypes?: AdvisorEntityType[];
-      days?: number;
-      limit?: number;
-    },
+    input: { query: string; entityTypes?: AdvisorEntityType[]; days?: number; limit?: number },
   ) {
     const query = input.query.trim().toLocaleLowerCase();
     const limit = Math.min(Math.max(Math.trunc(input.limit ?? 20), 1), 50);
