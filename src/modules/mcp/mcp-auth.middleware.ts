@@ -1,4 +1,4 @@
-import type { RequestHandler } from 'express';
+import type { RequestHandler, Response } from 'express';
 import { MCP_READ_SCOPE, mcpIssuer, verifyMcpAccessToken } from './mcp-oauth.utils.js';
 
 function challenge() {
@@ -6,7 +6,7 @@ function challenge() {
   return `Bearer resource_metadata="${metadata}", scope="${MCP_READ_SCOPE}"`;
 }
 
-function unauthorized(res: Parameters<RequestHandler>[1], message: string) {
+function unauthorized(res: Response, message: string) {
   res.setHeader('WWW-Authenticate', challenge());
   res.status(401).json({
     jsonrpc: '2.0',
