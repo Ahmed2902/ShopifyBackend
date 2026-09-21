@@ -1,6 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
-import { randomUUID } from 'node:crypto';
 import { env } from '../../config/env.js';
 import { AppError } from '../../errors/app-error.js';
 import { mcpOAuthRepository, type McpOAuthRepository } from './mcp-oauth.repository.js';
@@ -26,9 +26,14 @@ interface ClientMetadata {
   redirectUris: string[];
 }
 
+const MAX_CLIENT_METADATA_BYTES = 64 * 1024;
+
 function privateIp(address: string) {
-  if (address === '::1') return true;
-  if (address.startsWith('fc') || address.startsWith('fd') || address.startsWith('fe80:')) return true;
+  const normalized = address.toLowerCase();
+  if (normalized === '::1') return true;
+  if (normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe80:')) {
+    return true;
+  }
   const parts = address.split('.').map(Number);
   if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) return false;
   return (
@@ -42,17 +47,66 @@ function privateIp(address: string) {
 
 async function assertSafeMetadataUrl(url: URL) {
   if (url.protocol !== 'https:') {
-    if (env.NODE_ENV !== 'production' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1')) {
+    if (
+      env.NODE_ENV !== 'production' &&
+      (url.hostname === 'localhost' || url.hostname === '127.0.0.1')
+    ) {
       return;
     }
     throw new AppError('MCP client metadata URL must use HTTPS', 400, 'MCP_INVALID_CLIENT');
   }
   if (isIP(url.hostname) && privateIp(url.hostname)) {
-    throw new AppError('Private MCP client metadata addresses are not allowed', 400, 'MCP_INVALID_CLIENT');
+    throw new AppError(
+      'Private MCP client metadata addresses are not allowed',
+      400,
+      'MCP_INVALID_CLIENT',
+    );
   }
-  const addresses = await lookup(url.hostname, { all: true });
-  if (addresses.some((entry) => privateIp(entry.address))) {
-    throw new AppError('Private MCP client metadata addresses are not allowed', 400, 'MCP_INVALID_CLIENT');
+  try {
+    const addresses = await lookup(url.hostname, { all: true });
+    if (addresses.some((entry) => privateIp(entry.address))) {
+      throw new AppError(
+        'Private MCP client metadata addresses are not allowed',
+        400,
+        'MCP_INVALID_CLIENT',
+      );
+    }
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new AppError('Unable to resolve MCP client metadata host', 400, 'MCP_INVALID_CLIENT');
+  }
+}
+
+async function readBoundedJson(response: Response): Promise<Record<string, unknown>> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new AppError('Empty MCP client metadata response', 400, 'MCP_INVALID_CLIENT');
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > MAX_CLIENT_METADATA_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw new AppError('MCP client metadata is too large', 400, 'MCP_INVALID_CLIENT');
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('object required');
+    return parsed as Record<string, unknown>;
+  } catch {
+    throw new AppError('Invalid MCP client metadata document', 400, 'MCP_INVALID_CLIENT');
   }
 }
 
@@ -84,10 +138,29 @@ export class McpOAuthService {
     };
   }
 
-  async registerClient(input: { client_name?: string; redirect_uris?: string[] }) {
+  async registerClient(input: {
+    client_name?: string;
+    redirect_uris?: string[];
+    grant_types?: string[];
+    response_types?: string[];
+  }) {
     const redirectUris = input.redirect_uris ?? [];
     if (redirectUris.length === 0 || redirectUris.length > 20) {
       throw new AppError('redirect_uris is required', 400, 'MCP_INVALID_CLIENT_METADATA');
+    }
+    const unsupportedGrant = input.grant_types?.find(
+      (grant) => grant !== 'authorization_code' && grant !== 'refresh_token',
+    );
+    if (unsupportedGrant) {
+      throw new AppError(`Unsupported grant type: ${unsupportedGrant}`, 400, 'MCP_INVALID_CLIENT_METADATA');
+    }
+    const unsupportedResponse = input.response_types?.find((type) => type !== 'code');
+    if (unsupportedResponse) {
+      throw new AppError(
+        `Unsupported response type: ${unsupportedResponse}`,
+        400,
+        'MCP_INVALID_CLIENT_METADATA',
+      );
     }
     for (const value of redirectUris) this.validateRedirectUri(value);
     const clientId = `urn:stride:mcp:client:${randomUUID()}`;
@@ -121,11 +194,19 @@ export class McpOAuthService {
     }
     const resource = input.resource ?? mcpResource();
     if (resource !== mcpResource()) {
-      throw new AppError('OAuth resource does not match the Stride MCP resource', 400, 'MCP_INVALID_RESOURCE');
+      throw new AppError(
+        'OAuth resource does not match the Stride MCP resource',
+        400,
+        'MCP_INVALID_RESOURCE',
+      );
     }
     const client = await this.resolveClient(input.clientId);
     if (!client.redirectUris.includes(input.redirectUri)) {
-      throw new AppError('redirect_uri is not registered for this MCP client', 400, 'MCP_INVALID_REDIRECT_URI');
+      throw new AppError(
+        'redirect_uri is not registered for this MCP client',
+        400,
+        'MCP_INVALID_REDIRECT_URI',
+      );
     }
     const scopes = parseScopes(input.scope);
     const request = await this.repository.createAuthorizationRequest({
@@ -182,8 +263,6 @@ export class McpOAuthService {
 
   async deny(userId: string, requestId: string) {
     const request = await this.requirePendingRequest(requestId);
-    // Reading the request through an authenticated endpoint proves the user is signed in; no store
-    // access is needed to decline it.
     void userId;
     await this.repository.deleteAuthorizationRequest(request.id);
     const redirect = new URL(request.redirectUri);
@@ -304,28 +383,38 @@ export class McpOAuthService {
       throw new AppError('Unknown MCP client_id', 400, 'MCP_INVALID_CLIENT');
     }
     await assertSafeMetadataUrl(url);
-    const response = await fetch(url, {
-      headers: { Accept: 'application/json' },
-      redirect: 'error',
-      signal: AbortSignal.timeout(3_000),
-    });
-    if (!response.ok) throw new AppError('Unable to load MCP client metadata', 400, 'MCP_INVALID_CLIENT');
-    const contentLength = Number(response.headers.get('content-length') ?? '0');
-    if (contentLength > 64 * 1024) {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: { Accept: 'application/json' },
+        redirect: 'error',
+        signal: AbortSignal.timeout(3_000),
+      });
+    } catch {
+      throw new AppError('Unable to load MCP client metadata', 400, 'MCP_INVALID_CLIENT');
+    }
+    if (!response.ok) {
+      throw new AppError('Unable to load MCP client metadata', 400, 'MCP_INVALID_CLIENT');
+    }
+    const advertisedLength = Number(response.headers.get('content-length') ?? '0');
+    if (Number.isFinite(advertisedLength) && advertisedLength > MAX_CLIENT_METADATA_BYTES) {
       throw new AppError('MCP client metadata is too large', 400, 'MCP_INVALID_CLIENT');
     }
-    const metadata = (await response.json()) as Record<string, unknown>;
+    const metadata = await readBoundedJson(response);
     if (metadata.client_id !== clientId || !Array.isArray(metadata.redirect_uris)) {
       throw new AppError('Invalid MCP client metadata document', 400, 'MCP_INVALID_CLIENT');
     }
-    const redirectUris = metadata.redirect_uris.filter((value): value is string => typeof value === 'string');
+    const redirectUris = metadata.redirect_uris.filter(
+      (value): value is string => typeof value === 'string',
+    );
     if (redirectUris.length === 0 || redirectUris.length !== metadata.redirect_uris.length) {
       throw new AppError('Invalid MCP redirect metadata', 400, 'MCP_INVALID_CLIENT');
     }
     for (const redirectUri of redirectUris) this.validateRedirectUri(redirectUri);
     return {
       clientId,
-      clientName: typeof metadata.client_name === 'string' ? metadata.client_name.slice(0, 120) : url.hostname,
+      clientName:
+        typeof metadata.client_name === 'string' ? metadata.client_name.slice(0, 120) : url.hostname,
       redirectUris,
     };
   }
@@ -337,9 +426,14 @@ export class McpOAuthService {
     } catch {
       throw new AppError('Invalid MCP redirect URI', 400, 'MCP_INVALID_REDIRECT_URI');
     }
-    const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1';
+    const loopback =
+      url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1';
     if (url.protocol !== 'https:' && !loopback) {
-      throw new AppError('MCP redirect URI must use HTTPS or loopback', 400, 'MCP_INVALID_REDIRECT_URI');
+      throw new AppError(
+        'MCP redirect URI must use HTTPS or loopback',
+        400,
+        'MCP_INVALID_REDIRECT_URI',
+      );
     }
     if (url.username || url.password || url.hash) {
       throw new AppError('Invalid MCP redirect URI', 400, 'MCP_INVALID_REDIRECT_URI');
