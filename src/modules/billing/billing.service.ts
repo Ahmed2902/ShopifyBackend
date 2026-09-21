@@ -1,5 +1,6 @@
 import { env } from '../../config/env.js';
 import { AppError } from '../../errors/app-error.js';
+import { InFlightCoalescer } from '../../lib/in-flight-coalescer.js';
 import { logger } from '../../lib/logger.js';
 import { prisma } from '../../lib/prisma.js';
 import {
@@ -52,6 +53,8 @@ function dateOrNull(value: string | null | undefined) {
 }
 
 export class BillingService {
+  private readonly verificationReads = new InFlightCoalescer(250);
+
   constructor(private readonly appPricing: ShopifyAppPricingClient = shopifyAppPricingClient) {}
 
   async ensureSubscription(storeId: string, now = new Date()) {
@@ -93,6 +96,15 @@ export class BillingService {
     return subscription;
   }
 
+  async readLocal(storeId: string, now = new Date()) {
+    const subscription = await this.ensureSubscription(storeId, now);
+    return this.presentSubscription(
+      subscription,
+      now,
+      this.appPricing.isEnabled() && this.verificationIsStale(subscription, now),
+    );
+  }
+
   async read(
     storeId: string,
     now = new Date(),
@@ -102,15 +114,15 @@ export class BillingService {
     let verificationStale = false;
 
     if (this.appPricing.isEnabled()) {
-      const shouldVerify =
-        options.fresh === true ||
-        !subscription.lastVerifiedAt ||
-        now.getTime() - subscription.lastVerifiedAt.getTime() >=
-          env.SHOPIFY_BILLING_VERIFY_TTL_SECONDS * 1000;
+      const shouldVerify = options.fresh === true || this.verificationIsStale(subscription, now);
 
       if (shouldVerify) {
         try {
-          subscription = await this.syncShopifySubscription(storeId, subscription, now);
+          subscription = await this.verifyShopifySubscription(
+            storeId,
+            now,
+            options.fresh === true,
+          );
         } catch (error) {
           if (options.failOnVerificationError || !subscription.lastVerifiedAt) throw error;
           verificationStale = true;
@@ -126,49 +138,7 @@ export class BillingService {
       }
     }
 
-    const internalTrialActive =
-      subscription.provider === 'INTERNAL' &&
-      subscription.status === 'TRIALING' &&
-      subscription.trialEndsAt > now;
-    const shopifyTrialActive =
-      subscription.provider === 'SHOPIFY' &&
-      subscription.status === 'ACTIVE' &&
-      subscription.trialEndsAt > now;
-    const trialActive = internalTrialActive || shopifyTrialActive;
-    const paidActive = subscription.status === 'ACTIVE';
-    const effectivePlan: V1BillingPlan = trialActive ? 'PRO' : subscription.selectedPlan;
-    const plan = planCatalog[effectivePlan];
-
-    return {
-      status: subscription.status,
-      provider: subscription.provider,
-      selectedPlan: subscription.selectedPlan,
-      effectivePlan,
-      essentialsAdProvider: subscription.essentialsAdProvider,
-      trial: {
-        active: trialActive,
-        startedAt: subscription.trialStartedAt,
-        endsAt: subscription.trialEndsAt,
-        days: V1_TRIAL_DAYS,
-      },
-      accessActive: trialActive || paidActive,
-      currentPeriodEndsAt: subscription.currentPeriodEndsAt,
-      cancelAtEndOfCycle: subscription.cancelAtEndOfCycle,
-      shopifyPlanHandle: subscription.shopifyPlanHandle,
-      plans: Object.values(planCatalog),
-      verification: {
-        source: this.appPricing.isEnabled() ? 'SHOPIFY_PARTNER_API' : 'INTERNAL',
-        lastVerifiedAt: subscription.lastVerifiedAt,
-        stale: verificationStale,
-      },
-      entitlements: {
-        maxAdChannels: plan.maxAdChannels,
-        recommendationLimit: plan.recommendationLimit,
-        sessionExplorer: plan.sessionExplorer,
-        visitorJourneys: plan.visitorJourneys,
-        advancedAttribution: plan.advancedAttribution,
-      },
-    };
+    return this.presentSubscription(subscription, now, verificationStale);
   }
 
   async portal(storeId: string) {
@@ -260,7 +230,25 @@ export class BillingService {
   }
 
   async requireActive(storeId: string) {
-    const billing = await this.read(storeId);
+    const now = new Date();
+    let billing = await this.readLocal(storeId, now);
+
+    if (this.appPricing.isEnabled()) {
+      const hasNeverVerified = !billing.verification.lastVerifiedAt;
+      const inactiveNeedsRefresh = !billing.accessActive && billing.verification.stale;
+
+      if (hasNeverVerified || inactiveNeedsRefresh) {
+        // This verification is correctness-critical: a never-verified or currently inactive local
+        // record cannot safely grant/deny access without checking Shopify once.
+        billing = await this.read(storeId, now, {
+          fresh: true,
+          failOnVerificationError: true,
+        });
+      }
+      // Active stale records intentionally remain local-only on the request path. The persistent
+      // BillingReconciliation worker refreshes them, which survives serverless response teardown.
+    }
+
     if (!billing.accessActive) {
       const portal = await this.portal(storeId);
       throw new AppError(
@@ -338,6 +326,75 @@ export class BillingService {
     return billing;
   }
 
+  private verificationIsStale(
+    subscription: Awaited<ReturnType<BillingService['ensureSubscription']>>,
+    now: Date,
+  ) {
+    return (
+      !subscription.lastVerifiedAt ||
+      now.getTime() - subscription.lastVerifiedAt.getTime() >=
+        env.SHOPIFY_BILLING_VERIFY_TTL_SECONDS * 1000
+    );
+  }
+
+  private presentSubscription(
+    subscription: Awaited<ReturnType<BillingService['ensureSubscription']>>,
+    now: Date,
+    verificationStale: boolean,
+  ) {
+    const internalTrialActive =
+      subscription.provider === 'INTERNAL' &&
+      subscription.status === 'TRIALING' &&
+      subscription.trialEndsAt > now;
+    const shopifyTrialActive =
+      subscription.provider === 'SHOPIFY' &&
+      subscription.status === 'ACTIVE' &&
+      subscription.trialEndsAt > now;
+    const trialActive = internalTrialActive || shopifyTrialActive;
+    const paidActive = subscription.status === 'ACTIVE';
+    const effectivePlan: V1BillingPlan = trialActive ? 'PRO' : subscription.selectedPlan;
+    const plan = planCatalog[effectivePlan];
+
+    return {
+      status: subscription.status,
+      provider: subscription.provider,
+      selectedPlan: subscription.selectedPlan,
+      effectivePlan,
+      essentialsAdProvider: subscription.essentialsAdProvider,
+      trial: {
+        active: trialActive,
+        startedAt: subscription.trialStartedAt,
+        endsAt: subscription.trialEndsAt,
+        days: V1_TRIAL_DAYS,
+      },
+      accessActive: trialActive || paidActive,
+      currentPeriodEndsAt: subscription.currentPeriodEndsAt,
+      cancelAtEndOfCycle: subscription.cancelAtEndOfCycle,
+      shopifyPlanHandle: subscription.shopifyPlanHandle,
+      plans: Object.values(planCatalog),
+      verification: {
+        source: this.appPricing.isEnabled() ? 'SHOPIFY_PARTNER_API' : 'INTERNAL',
+        lastVerifiedAt: subscription.lastVerifiedAt,
+        stale: verificationStale,
+      },
+      entitlements: {
+        maxAdChannels: plan.maxAdChannels,
+        recommendationLimit: plan.recommendationLimit,
+        sessionExplorer: plan.sessionExplorer,
+        visitorJourneys: plan.visitorJourneys,
+        advancedAttribution: plan.advancedAttribution,
+      },
+    };
+  }
+
+  private verifyShopifySubscription(storeId: string, now: Date, force: boolean) {
+    return this.verificationReads.run(storeId, async () => {
+      const current = await this.ensureSubscription(storeId, now);
+      if (!force && !this.verificationIsStale(current, now)) return current;
+      return this.syncShopifySubscription(storeId, current, now);
+    });
+  }
+
   private async connectedProviders(storeId: string): Promise<V1AdProvider[]> {
     const store = await prisma.store.findUnique({
       where: { id: storeId },
@@ -393,7 +450,8 @@ export class BillingService {
           provider: 'SHOPIFY',
           status: current.provider === 'SHOPIFY' && current.status === 'ACTIVE' ? 'CANCELED' : 'EXPIRED',
           currentPeriodEndsAt: null,
-          canceledAt: current.provider === 'SHOPIFY' && current.status === 'ACTIVE' ? now : current.canceledAt,
+          canceledAt:
+            current.provider === 'SHOPIFY' && current.status === 'ACTIVE' ? now : current.canceledAt,
           shopifyAppSubscriptionId: null,
           shopifyPlanHandle: null,
           cancelAtEndOfCycle: false,
@@ -404,8 +462,8 @@ export class BillingService {
 
     const selectedPlan = this.planFromRemote(remote);
     const trialEndsAt = dateOrNull(remote.trialEndsAt) ?? now;
-    const currentPeriodEndsAt = dateOrNull(remote.currentBillingCycle?.endTime) ??
-      (trialEndsAt > now ? trialEndsAt : null);
+    const currentPeriodEndsAt =
+      dateOrNull(remote.currentBillingCycle?.endTime) ?? (trialEndsAt > now ? trialEndsAt : null);
 
     return prisma.storeSubscription.update({
       where: { storeId },
