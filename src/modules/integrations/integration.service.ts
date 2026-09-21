@@ -41,6 +41,63 @@ export class IntegrationService {
     return this.repository.createSyncRun({ ...input, mode: input.mode ?? null });
   }
 
+  enqueueExclusiveSyncRun(input: {
+    provider: IntegrationProviderName;
+    connectionId: string;
+    resourceType: string;
+    mode?: string;
+    apiVersion: string;
+  }) {
+    return this.repository.enqueueExclusiveSyncRun({ ...input, mode: input.mode ?? null });
+  }
+
+  async listClaimableShopifySyncRunIds(resourceType: string, limit: number, staleBefore: Date) {
+    const rows = await this.repository.listClaimableShopifySyncRunIds(
+      resourceType,
+      limit,
+      staleBefore,
+    );
+    return rows.map((row) => row.id);
+  }
+
+  claimShopifySyncRun(syncRunId: string, resourceType: string, staleBefore: Date) {
+    return this.repository.claimShopifySyncRun(syncRunId, resourceType, staleBefore);
+  }
+
+  renewShopifySyncRunLease(syncRunId: string, leaseToken: string, now = new Date()) {
+    return this.repository.renewShopifySyncRunLease(syncRunId, leaseToken, now);
+  }
+
+  async completeClaimedShopifySyncRun(
+    syncRunId: string,
+    leaseToken: string,
+    stats: { recordsRead?: number; recordsWritten?: number; partial?: boolean } = {},
+  ) {
+    const completed = await this.repository.completeClaimedShopifySyncRun(syncRunId, leaseToken, {
+      recordsRead: stats.recordsRead ?? 0,
+      recordsWritten: stats.recordsWritten ?? 0,
+      partial: stats.partial ?? false,
+    });
+    if (!completed) return null;
+
+    const storeId = storeIdFromSyncRun(completed);
+    if (storeId) await invalidateStoreDecisionCaches(storeId);
+    return completed;
+  }
+
+  async failClaimedShopifySyncRun(syncRunId: string, leaseToken: string, error: unknown) {
+    const failed = await this.repository.failClaimedShopifySyncRun(
+      syncRunId,
+      leaseToken,
+      toErrorMessage(error),
+    );
+    if (!failed) return null;
+
+    const storeId = storeIdFromSyncRun(failed);
+    if (storeId) await invalidateStoreDecisionCaches(storeId);
+    return failed;
+  }
+
   attachProviderOperation(syncRunId: string, providerOperationId: string) {
     return this.repository.attachProviderOperation(syncRunId, providerOperationId);
   }

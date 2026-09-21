@@ -20,6 +20,8 @@ const CATALOG_INVENTORY_RESOURCE = 'CatalogInventory';
 const ORDER_HISTORY_RESOURCE = 'OrdersRefunds';
 const RECONCILIATION_RESOURCE = 'StoreReconciliation';
 const FALLBACK_RECONCILIATION_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+const MANUAL_SYNC_CLAIM_STALE_MS = 30 * 60_000;
+const MANUAL_SYNC_LEASE_HEARTBEAT_MS = 5 * 60_000;
 
 export class ShopifyService {
   private readonly apiService: ShopifyApiService;
@@ -113,8 +115,108 @@ export class ShopifyService {
     return this.webhookService.processDueDeliveries(limit);
   }
 
+  async enqueueCatalogAndInventorySync(storeId: string) {
+    const { connection } = await this.loadPersistedSyncTarget(storeId);
+    const queued = await this.integrationService.enqueueExclusiveSyncRun({
+      provider: 'SHOPIFY',
+      connectionId: connection.id,
+      resourceType: CATALOG_INVENTORY_RESOURCE,
+      mode: 'MANUAL',
+      apiVersion: connection.apiVersion,
+    });
+
+    return {
+      syncRunId: queued.syncRun.id,
+      status: queued.syncRun.status,
+      resourceType: CATALOG_INVENTORY_RESOURCE,
+      deduplicated: !queued.created,
+    };
+  }
+
+  async getCatalogAndInventorySync(storeId: string, syncRunId: string) {
+    const syncRun = await this.integrationService.getShopifySyncRun(
+      storeId,
+      syncRunId,
+      CATALOG_INVENTORY_RESOURCE,
+    );
+    if (!syncRun) {
+      throw new AppError('Shopify catalog sync was not found', 404, 'SYNC_RUN_NOT_FOUND');
+    }
+
+    return {
+      syncRunId: syncRun.id,
+      status: syncRun.status,
+      resourceType: CATALOG_INVENTORY_RESOURCE,
+      recordsRead: syncRun.recordsRead,
+      recordsWritten: syncRun.recordsWritten,
+      startedAt: syncRun.startedAt,
+      finishedAt: syncRun.finishedAt,
+      lastError: syncRun.lastError,
+    };
+  }
+
+  async processManualSyncQueue(
+    limit = 2,
+  ): Promise<{ claimed: number; succeeded: number; failed: number }> {
+    const staleBefore = new Date(Date.now() - MANUAL_SYNC_CLAIM_STALE_MS);
+    const ids = await this.integrationService.listClaimableShopifySyncRunIds(
+      CATALOG_INVENTORY_RESOURCE,
+      limit,
+      staleBefore,
+    );
+    let claimed = 0;
+    let succeeded = 0;
+    let failed = 0;
+
+    for (const syncRunId of ids) {
+      const claim = await this.integrationService.claimShopifySyncRun(
+        syncRunId,
+        CATALOG_INVENTORY_RESOURCE,
+        staleBefore,
+      );
+      const storeId = claim?.shopifyConnection?.storeId;
+      const leaseToken = claim?.leaseToken;
+      if (!claim || !storeId || !leaseToken) continue;
+      claimed += 1;
+
+      let leaseLost = false;
+      const heartbeat = setInterval(() => {
+        void this.integrationService
+          .renewShopifySyncRunLease(syncRunId, leaseToken)
+          .then((renewed) => {
+            if (renewed.count === 0) {
+              leaseLost = true;
+              logger.warn({ syncRunId, storeId }, 'Manual Shopify sync lease was lost');
+            }
+          })
+          .catch((error) => {
+            logger.warn(
+              { err: error, syncRunId, storeId },
+              'Failed to renew manual Shopify sync lease',
+            );
+          });
+      }, MANUAL_SYNC_LEASE_HEARTBEAT_MS);
+      heartbeat.unref();
+
+      try {
+        await this.executeCatalogAndInventorySync(storeId, syncRunId, leaseToken, () => leaseLost);
+        succeeded += 1;
+      } catch {
+        failed += 1;
+      } finally {
+        clearInterval(heartbeat);
+      }
+    }
+
+    return { claimed, succeeded, failed };
+  }
+
+  /**
+   * Synchronous entry point retained for internal callers/tests. Browser-triggered manual syncs use
+   * the queue worker so provider/database latency never holds the HTTP request open.
+   */
   async syncCatalogAndInventory(storeId: string) {
-    const { connection, syncContextBase } = await this.loadSyncTarget(storeId);
+    const { connection } = await this.loadSyncTarget(storeId);
     const syncRun = await this.integrationService.startSyncRun({
       provider: 'SHOPIFY',
       connectionId: connection.id,
@@ -122,25 +224,7 @@ export class ShopifyService {
       mode: 'MANUAL',
       apiVersion: connection.apiVersion,
     });
-    const syncContext: ShopifySyncContext = { ...syncContextBase, syncRunId: syncRun.id };
-
-    try {
-      const result = await this.syncCatalogInventorySnapshot(
-        syncContext,
-        connection.lastSyncedAt ? 'MANUAL_RECONCILIATION' : 'INITIAL_SYNC',
-      );
-      await this.repository.markConnectionSynced(connection.id);
-      await this.integrationService.completeSyncRun(syncRun.id, result);
-      return {
-        syncRunId: syncRun.id,
-        status: 'SUCCEEDED' as const,
-        resourceType: CATALOG_INVENTORY_RESOURCE,
-        ...result,
-      };
-    } catch (error) {
-      await this.integrationService.failSyncRun(syncRun.id, error).catch(() => undefined);
-      throw error;
-    }
+    return this.executeCatalogAndInventorySync(storeId, syncRun.id);
   }
 
   async refreshStoreData(storeId: string) {
@@ -336,7 +420,51 @@ export class ShopifyService {
     }
   }
 
-  private async loadSyncTarget(storeId: string) {
+  private async executeCatalogAndInventorySync(
+    storeId: string,
+    syncRunId: string,
+    leaseToken?: string,
+    leaseWasLost: () => boolean = () => false,
+  ) {
+    try {
+      const { connection, syncContextBase } = await this.loadSyncTarget(storeId);
+      const syncContext: ShopifySyncContext = { ...syncContextBase, syncRunId };
+      const result = await this.syncCatalogInventorySnapshot(
+        syncContext,
+        connection.lastSyncedAt ? 'MANUAL_RECONCILIATION' : 'INITIAL_SYNC',
+      );
+
+      if (leaseToken && leaseWasLost()) {
+        throw new AppError('Manual Shopify sync lease was lost', 409, 'SYNC_LEASE_LOST');
+      }
+
+      await this.repository.markConnectionSynced(connection.id);
+      const completed = leaseToken
+        ? await this.integrationService.completeClaimedShopifySyncRun(syncRunId, leaseToken, result)
+        : await this.integrationService.completeSyncRun(syncRunId, result);
+      if (leaseToken && !completed) {
+        throw new AppError('Manual Shopify sync lease was lost', 409, 'SYNC_LEASE_LOST');
+      }
+
+      return {
+        syncRunId,
+        status: 'SUCCEEDED' as const,
+        resourceType: CATALOG_INVENTORY_RESOURCE,
+        ...result,
+      };
+    } catch (error) {
+      if (leaseToken) {
+        await this.integrationService
+          .failClaimedShopifySyncRun(syncRunId, leaseToken, error)
+          .catch(() => undefined);
+      } else {
+        await this.integrationService.failSyncRun(syncRunId, error).catch(() => undefined);
+      }
+      throw error;
+    }
+  }
+
+  private async loadPersistedSyncTarget(storeId: string) {
     const store = await this.repository.findConnectionForSync(storeId);
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
     const connection = store.shopifyConnection;
@@ -350,7 +478,11 @@ export class ShopifyService {
         'SHOPIFY_CONNECTION_INACTIVE',
       );
     }
+    return { store, connection };
+  }
 
+  private async loadSyncTarget(storeId: string) {
+    const { store, connection } = await this.loadPersistedSyncTarget(storeId);
     return {
       connection,
       syncContextBase: {

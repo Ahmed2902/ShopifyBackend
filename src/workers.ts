@@ -11,6 +11,15 @@ import { reconciliationService } from './modules/reconciliation/reconciliation.s
 import { shopifyService } from './modules/shopify/shopify.service.js';
 import { tiktokWebhookService } from './modules/tiktok/webhook/tiktok-webhook.service.js';
 
+const shopifyManualSyncWorker = new PollingWorker(
+  1_000,
+  async () => {
+    const result = await shopifyService.processManualSyncQueue(2);
+    if (result.claimed > 0) logger.info(result, 'Processed manual Shopify sync queue batch');
+  },
+  'Manual Shopify sync worker failed',
+);
+
 const shopifyWebhookWorker = new PollingWorker(
   1_000,
   async () => {
@@ -119,6 +128,7 @@ const pixelRetentionWorker = new PollingWorker(
 );
 
 const workers = [
+  shopifyManualSyncWorker,
   shopifyWebhookWorker,
   tiktokWebhookWorker,
   authEmailWorker,

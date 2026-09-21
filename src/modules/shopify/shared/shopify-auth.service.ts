@@ -124,7 +124,13 @@ export class ShopifyAuthService {
     }
 
     const tokenSet = this.toPlainTokenSet(refreshed);
-    await this.repository.updateConnectionTokens(connection.id, this.encryptTokenSet(tokenSet));
+    const encryptedTokenSet = this.encryptTokenSet(tokenSet);
+    await this.repository.updateConnectionTokens(connection.id, encryptedTokenSet);
+
+    // Keep the caller's credential snapshot aligned with the persisted rotation. This prevents a
+    // second access-token resolution in the same sync flow from treating the just-refreshed
+    // snapshot as expired again, while the database remains the source of truth for future reads.
+    Object.assign(connection, encryptedTokenSet);
     return tokenSet.accessToken;
   }
 

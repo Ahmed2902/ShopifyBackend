@@ -48,5 +48,6 @@ shopifyStoreRouter.post(
   shopifyCollectionController.addProducts,
 );
 shopifyStoreRouter.post('/sync', ownerOrAdmin, shopifyController.sync);
+shopifyStoreRouter.get('/sync/:syncRunId', ownerOrAdmin, shopifyController.getSync);
 shopifyStoreRouter.post('/orders/backfill', ownerOrAdmin, shopifyController.startOrderBackfill);
 shopifyStoreRouter.get('/orders/backfill/:syncRunId', ownerOrAdmin, shopifyController.getOrderBackfill);

@@ -1,6 +1,9 @@
-import type { Prisma } from '../../generated/prisma/client.js';
+import { randomUUID } from 'node:crypto';
+import { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
 import { INTEGRATION_PROVIDERS, type IntegrationProviderName } from './integration.schema.js';
+
+const QUEUED_SYNC_LEASE_MS = 30 * 60_000;
 
 function syncRunConnectionData(
   provider: IntegrationProviderName,
@@ -25,7 +28,15 @@ function syncRunConnectionFilter(
   return { provider, tiktokConnectionId: connectionId };
 }
 
-const syncRunStoreInclude = {
+function queueKey(provider: IntegrationProviderName, connectionId: string, resourceType: string) {
+  return `${provider}:${connectionId}:${resourceType}`;
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}
+
+const owningStoreInclude = {
   shopifyConnection: { select: { storeId: true } },
   metaConnection: { select: { storeId: true } },
   tiktokConnection: { select: { storeId: true } },
@@ -95,6 +106,166 @@ export class IntegrationRepository {
     });
   }
 
+  async enqueueExclusiveSyncRun(input: {
+    provider: IntegrationProviderName;
+    connectionId: string;
+    resourceType: string;
+    mode: string | null;
+    apiVersion: string;
+  }) {
+    const activeQueueKey = queueKey(input.provider, input.connectionId, input.resourceType);
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const syncRun = await prisma.syncRun.create({
+          data: {
+            provider: input.provider,
+            resourceType: input.resourceType,
+            mode: input.mode,
+            apiVersion: input.apiVersion,
+            status: 'PENDING',
+            activeQueueKey,
+            ...syncRunConnectionData(input.provider, input.connectionId),
+          },
+        });
+        return { syncRun, created: true } as const;
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) throw error;
+        const existing = await prisma.syncRun.findUnique({ where: { activeQueueKey } });
+        if (existing) return { syncRun: existing, created: false } as const;
+      }
+    }
+
+    throw new Error('Unable to enqueue sync after resolving a concurrent queue race');
+  }
+
+  listClaimableShopifySyncRunIds(resourceType: string, limit: number, staleBefore: Date) {
+    const now = new Date();
+    return prisma.syncRun.findMany({
+      where: {
+        provider: 'SHOPIFY',
+        resourceType,
+        shopifyConnectionId: { not: null },
+        activeQueueKey: { not: null },
+        OR: [
+          { status: 'PENDING' },
+          { status: 'RUNNING', leaseExpiresAt: { lte: now } },
+          { status: 'RUNNING', leaseExpiresAt: null, startedAt: { lte: staleBefore } },
+        ],
+      },
+      orderBy: { createdAt: 'asc' },
+      take: limit,
+      select: { id: true },
+    });
+  }
+
+  async claimShopifySyncRun(syncRunId: string, resourceType: string, staleBefore: Date) {
+    const startedAt = new Date();
+    const leaseExpiresAt = new Date(startedAt.getTime() + QUEUED_SYNC_LEASE_MS);
+    const leaseToken = randomUUID();
+    const claimed = await prisma.syncRun.updateMany({
+      where: {
+        id: syncRunId,
+        provider: 'SHOPIFY',
+        resourceType,
+        shopifyConnectionId: { not: null },
+        activeQueueKey: { not: null },
+        OR: [
+          { status: 'PENDING' },
+          { status: 'RUNNING', leaseExpiresAt: { lte: startedAt } },
+          { status: 'RUNNING', leaseExpiresAt: null, startedAt: { lte: staleBefore } },
+        ],
+      },
+      data: {
+        status: 'RUNNING',
+        startedAt,
+        leaseExpiresAt,
+        leaseToken,
+        finishedAt: null,
+        lastError: null,
+      },
+    });
+    if (claimed.count === 0) return null;
+
+    return prisma.syncRun.findUnique({
+      where: { id: syncRunId },
+      select: {
+        id: true,
+        startedAt: true,
+        leaseExpiresAt: true,
+        leaseToken: true,
+        shopifyConnection: { select: { storeId: true } },
+      },
+    });
+  }
+
+  renewShopifySyncRunLease(syncRunId: string, leaseToken: string, now = new Date()) {
+    return prisma.syncRun.updateMany({
+      where: {
+        id: syncRunId,
+        provider: 'SHOPIFY',
+        status: 'RUNNING',
+        activeQueueKey: { not: null },
+        leaseToken,
+      },
+      data: { leaseExpiresAt: new Date(now.getTime() + QUEUED_SYNC_LEASE_MS) },
+    });
+  }
+
+  async completeClaimedShopifySyncRun(
+    syncRunId: string,
+    leaseToken: string,
+    input: { recordsRead: number; recordsWritten: number; partial: boolean },
+  ) {
+    return prisma.$transaction(async (tx) => {
+      const completed = await tx.syncRun.updateMany({
+        where: {
+          id: syncRunId,
+          provider: 'SHOPIFY',
+          status: 'RUNNING',
+          activeQueueKey: { not: null },
+          leaseToken,
+        },
+        data: {
+          status: input.partial ? 'PARTIAL' : 'SUCCEEDED',
+          recordsRead: input.recordsRead,
+          recordsWritten: input.recordsWritten,
+          activeQueueKey: null,
+          leaseExpiresAt: null,
+          leaseToken: null,
+          finishedAt: new Date(),
+          lastError: null,
+        },
+      });
+      if (completed.count === 0) return null;
+      return tx.syncRun.findUnique({ where: { id: syncRunId }, include: owningStoreInclude });
+    });
+  }
+
+  async failClaimedShopifySyncRun(syncRunId: string, leaseToken: string, lastError: string) {
+    return prisma.$transaction(async (tx) => {
+      const failed = await tx.syncRun.updateMany({
+        where: {
+          id: syncRunId,
+          provider: 'SHOPIFY',
+          status: 'RUNNING',
+          activeQueueKey: { not: null },
+          leaseToken,
+        },
+        data: {
+          status: 'FAILED',
+          activeQueueKey: null,
+          leaseExpiresAt: null,
+          leaseToken: null,
+          finishedAt: new Date(),
+          lastError,
+        },
+      });
+      if (failed.count === 0) return null;
+      return tx.syncRun.findUnique({ where: { id: syncRunId }, include: owningStoreInclude });
+    });
+  }
+
   attachProviderOperation(syncRunId: string, providerOperationId: string) {
     return prisma.syncRun.update({
       where: { id: syncRunId },
@@ -112,18 +283,28 @@ export class IntegrationRepository {
         status: input.partial ? 'PARTIAL' : 'SUCCEEDED',
         recordsRead: input.recordsRead,
         recordsWritten: input.recordsWritten,
+        activeQueueKey: null,
+        leaseExpiresAt: null,
+        leaseToken: null,
         finishedAt: new Date(),
         lastError: null,
       },
-      include: syncRunStoreInclude,
+      include: owningStoreInclude,
     });
   }
 
   failSyncRun(syncRunId: string, lastError: string) {
     return prisma.syncRun.update({
       where: { id: syncRunId },
-      data: { status: 'FAILED', finishedAt: new Date(), lastError },
-      include: syncRunStoreInclude,
+      data: {
+        status: 'FAILED',
+        activeQueueKey: null,
+        leaseExpiresAt: null,
+        leaseToken: null,
+        finishedAt: new Date(),
+        lastError,
+      },
+      include: owningStoreInclude,
     });
   }
 
@@ -142,6 +323,7 @@ export class IntegrationRepository {
         recordsRead: true,
         recordsWritten: true,
         lastError: true,
+        startedAt: true,
         finishedAt: true,
         apiVersion: true,
         shopifyConnectionId: true,
