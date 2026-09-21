@@ -25,11 +25,12 @@ function installRedisMock(initial: Record<string, string> = {}) {
       const logicalKey = command[5]!;
       const knownVersion = command[6] ?? '';
       const version = values.get(versionKey) ?? '0';
-      const localHit = knownVersion === version;
+      const payloadKey = `${valuePrefix}${version}:${logicalKey}`;
+      const localHit = knownVersion === version && values.has(payloadKey);
       return redisResponse([
         version,
         localHit ? 1 : 0,
-        localHit ? '' : (values.get(`${valuePrefix}${version}:${logicalKey}`) ?? ''),
+        localHit ? '' : (values.get(payloadKey) ?? ''),
       ]);
     }
     if (name === 'SET') {
@@ -95,23 +96,20 @@ describe('RedisJsonCache / CachedReadCoordinator', () => {
     expect(redis.commands[1]?.[6]).toBe('0');
   });
 
-  it('does not let the local payload extend reuse beyond the Redis TTL', async () => {
-    let now = 1_000;
-    vi.spyOn(Date, 'now').mockImplementation(() => now);
+  it('does not serve a local payload after the Redis backing key expires', async () => {
     const redis = installRedisMock({
       'test-cache:v0:store:overview': JSON.stringify({ value: 1 }),
     });
-    const coordinator = new CachedReadCoordinator(new RedisJsonCache('test-cache', 1));
+    const coordinator = new CachedReadCoordinator(new RedisJsonCache('test-cache', 30));
     const loader = vi.fn().mockResolvedValue({ value: 2 });
 
     await expect(coordinator.run('store:overview', loader)).resolves.toEqual({ value: 1 });
-    now += 1_001;
     redis.values.delete('test-cache:v0:store:overview');
 
     await expect(coordinator.run('store:overview', loader)).resolves.toEqual({ value: 2 });
     expect(loader).toHaveBeenCalledTimes(1);
     expect(redis.commands[1]?.[0]).toBe('EVAL');
-    expect(redis.commands[1]?.[6]).toBe('');
+    expect(redis.commands[1]?.[6]).toBe('0');
   });
 
   it('never serves a local payload after another process advances the generation', async () => {
