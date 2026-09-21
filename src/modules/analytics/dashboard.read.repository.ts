@@ -26,6 +26,14 @@ type RawInventoryPreviewRow = {
   inventory_mode: string;
 };
 
+type RawTopProductRow = {
+  product_id: string;
+  product_title: string;
+  order_count: bigint | number | null;
+  net_units: bigint | number | null;
+  net_revenue: Prisma.Decimal | string | number | null;
+};
+
 export type DashboardRecentOrder = {
   id: string;
   name: string;
@@ -50,6 +58,13 @@ export type DashboardInventoryPreview = {
   }>;
 };
 
+export type DashboardTopProduct = {
+  product: { id: string; title: string };
+  orderCount: number;
+  netUnits: number;
+  netRevenue: number;
+};
+
 export type DashboardInventoryInput = {
   storeId: string;
   days: number;
@@ -58,6 +73,8 @@ export type DashboardInventoryInput = {
   now: Date;
   limit?: number;
 };
+
+export type DashboardTopProductsInput = DashboardInventoryInput;
 
 /** Compact reads used only by the Overview dashboard surface. */
 export class DashboardReadRepository {
@@ -105,6 +122,86 @@ export class DashboardReadRepository {
       currencyCode: row.currency_code,
       currentTotalAmount: Number(row.current_total_amount ?? 0),
       currentQuantity: Number(row.current_quantity ?? 0),
+    }));
+  }
+
+  async getTopProducts(input: DashboardTopProductsInput): Promise<DashboardTopProduct[]> {
+    const limit = input.limit ?? 5;
+    const from = input.from ?? null;
+    const to = input.to ?? null;
+    const rows = await prisma.$queryRaw<RawTopProductRow[]>(Prisma.sql`
+      WITH config AS (
+        SELECT
+          s."id" AS store_id,
+          s."ianaTimezone" AS time_zone,
+          s."currencyCode" AS currency_code,
+          CASE
+            WHEN ${from}::text IS NOT NULL THEN ${from}::date
+            ELSE ((${input.now}::timestamptz AT TIME ZONE s."ianaTimezone")::date - ${input.days}::int)
+          END AS from_date,
+          CASE
+            WHEN ${to}::text IS NOT NULL THEN ${to}::date
+            ELSE ((${input.now}::timestamptz AT TIME ZONE s."ianaTimezone")::date - 1)
+          END AS to_date
+        FROM "Store" s
+        WHERE s."id" = ${input.storeId}::uuid
+      ),
+      scoped_lines AS MATERIALIZED (
+        SELECT
+          li."id",
+          li."orderId",
+          li."productId",
+          li."quantity",
+          COALESCE(li."discountedTotal", 0) AS product_revenue
+        FROM "OrderLineItem" li
+        INNER JOIN "Order" o ON o."id" = li."orderId"
+        CROSS JOIN config
+        WHERE li."productId" IS NOT NULL
+          AND o."storeId" = config.store_id
+          AND o."isTest" = FALSE
+          AND o."cancelledAt" IS NULL
+          AND o."currencyCode" = config.currency_code
+          AND COALESCE(o."processedAt", o."shopifyCreatedAt") >= (config.from_date::timestamp AT TIME ZONE config.time_zone)
+          AND COALESCE(o."processedAt", o."shopifyCreatedAt") < ((config.to_date + 1)::timestamp AT TIME ZONE config.time_zone)
+      ),
+      refunds AS (
+        SELECT
+          rli."orderLineItemId" AS order_line_item_id,
+          COALESCE(SUM(rli."quantity"), 0) AS refunded_units,
+          COALESCE(SUM(rli."subtotal"), 0) AS refund_value
+        FROM "RefundLineItem" rli
+        INNER JOIN scoped_lines scoped ON scoped."id" = rli."orderLineItemId"
+        GROUP BY rli."orderLineItemId"
+      ),
+      product_rollup AS (
+        SELECT
+          scoped."productId" AS product_id,
+          COUNT(DISTINCT scoped."orderId") AS order_count,
+          GREATEST(COALESCE(SUM(scoped."quantity" - COALESCE(refunds.refunded_units, 0)), 0), 0) AS net_units,
+          GREATEST(COALESCE(SUM(scoped.product_revenue - COALESCE(refunds.refund_value, 0)), 0), 0) AS net_revenue
+        FROM scoped_lines scoped
+        LEFT JOIN refunds ON refunds.order_line_item_id = scoped."id"
+        GROUP BY scoped."productId"
+      )
+      SELECT
+        rollup.product_id,
+        product."title" AS product_title,
+        rollup.order_count,
+        rollup.net_units,
+        rollup.net_revenue
+      FROM product_rollup rollup
+      INNER JOIN "Product" product ON product."id" = rollup.product_id
+      WHERE product."storeId" = ${input.storeId}::uuid
+        AND product."deletedAt" IS NULL
+      ORDER BY rollup.net_revenue DESC, rollup.net_units DESC, product."title" ASC
+      LIMIT ${limit}
+    `);
+
+    return rows.map((row) => ({
+      product: { id: row.product_id, title: row.product_title },
+      orderCount: Number(row.order_count ?? 0),
+      netUnits: Number(row.net_units ?? 0),
+      netRevenue: Number(row.net_revenue ?? 0),
     }));
   }
 
