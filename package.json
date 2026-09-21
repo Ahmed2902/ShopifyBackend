@@ -31,6 +31,8 @@
     "dev:meta-fixtures:write": "tsx scripts/meta-fixture-seed.ts --write",
     "dev:meta-fixtures:cleanup": "tsx scripts/meta-fixture-seed.ts --cleanup",
     "perf:analytics": "node scripts/benchmark-analytics.mjs",
+    "perf:pool-budget": "node scripts/check-db-pool-budget.mjs",
+    "perf:pool-budget:check": "node scripts/check-db-pool-budget.mjs --self-test",
     "smoke:v1-release": "node scripts/v1-release-smoke.mjs",
     "smoke:v1-release:check": "node --check scripts/v1-release-smoke.mjs",
     "db:up": "docker compose up -d postgres",
@@ -42,7 +44,7 @@
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:migrate:status": "prisma migrate status",
     "prisma:migrate:check": "prisma migrate diff --exit-code --from-config-datasource --to-schema prisma",
-    "ci": "npm run prisma:validate && npm run lint && npm run typecheck && npm run test && npm run smoke:v1-release:check"
+    "ci": "npm run prisma:validate && npm run lint && npm run typecheck && npm run test && npm run smoke:v1-release:check && npm run perf:pool-budget:check"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.0.0",
