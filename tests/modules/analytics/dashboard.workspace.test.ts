@@ -13,6 +13,14 @@ function buildAnalytics(overrides: Partial<AnalyticsWorkspace> = {}) {
   return {
     overview: vi.fn().mockResolvedValue({ marker: 'overview' }),
     customers: vi.fn().mockResolvedValue({ marker: 'customers' }),
+    products: vi.fn().mockResolvedValue({
+      items: [
+        {
+          product: { id: 'product-1', title: 'Core Tee' },
+          current: { orderCount: 8, netUnits: 10, netProductRevenue: 900 },
+        },
+      ],
+    }),
     ...overrides,
   } as unknown as AnalyticsWorkspace;
 }
@@ -54,6 +62,7 @@ describe('DashboardWorkspace', () => {
   it('keeps the primary overview available when every secondary section fails', async () => {
     const analytics = buildAnalytics({
       customers: vi.fn().mockRejectedValue(new Error('customers unavailable')),
+      products: vi.fn().mockRejectedValue(new Error('products unavailable')),
     });
     const intelligence = buildIntelligence({
       read: vi.fn().mockRejectedValue(new Error('intelligence unavailable')),
@@ -84,11 +93,12 @@ describe('DashboardWorkspace', () => {
       recentOrders: { available: false, data: null },
       performance: { available: false, data: null },
       customers: { available: false, data: null },
+      topProducts: { available: false, data: null },
       acquisitionSources: { available: false, data: null },
     });
   });
 
-  it('uses compact dashboard reads, includes customer/source context, and propagates explicit freshness', async () => {
+  it('uses compact dashboard reads, includes customer/product/source context, and propagates explicit freshness', async () => {
     const recommendations = Array.from({ length: 5 }, (_, index) => ({
       ruleId: `rule-${index}`,
       severity: index < 2 ? 'HIGH' : 'LOW',
@@ -140,6 +150,11 @@ describe('DashboardWorkspace', () => {
     expect(intelligence.read).toHaveBeenCalledWith(storeId, { fresh: true });
     expect(performance.daily).toHaveBeenCalledWith(storeId, { days: 30 }, now);
     expect(analytics.customers).toHaveBeenCalledWith(storeId, { days: 30 }, now);
+    expect(analytics.products).toHaveBeenCalledWith(
+      storeId,
+      { days: 30, page: 1, limit: 6 },
+      now,
+    );
     expect(attribution.sources).toHaveBeenCalledWith(
       storeId,
       { days: 30, page: 1, limit: 8 },
@@ -164,13 +179,24 @@ describe('DashboardWorkspace', () => {
       available: true,
       data: { marker: 'customers' },
     });
+    expect(result.sections.topProducts).toEqual({
+      available: true,
+      data: [
+        {
+          product: { id: 'product-1', title: 'Core Tee' },
+          orderCount: 8,
+          netUnits: 10,
+          netRevenue: 900,
+        },
+      ],
+    });
     expect(result.sections.acquisitionSources).toEqual({
       available: true,
       data: { marker: 'sources' },
     });
   });
 
-  it('passes explicit custom ranges through to customer and acquisition reads', async () => {
+  it('passes explicit custom ranges through to customer, product and acquisition reads', async () => {
     const analytics = buildAnalytics();
     const attribution = buildAttribution();
     const query = { days: 30, from: '2026-08-01', to: '2026-08-14' };
@@ -184,6 +210,11 @@ describe('DashboardWorkspace', () => {
     ).read(storeId, query, now);
 
     expect(analytics.customers).toHaveBeenCalledWith(storeId, query, now);
+    expect(analytics.products).toHaveBeenCalledWith(
+      storeId,
+      { ...query, page: 1, limit: 6 },
+      now,
+    );
     expect(attribution.sources).toHaveBeenCalledWith(
       storeId,
       { ...query, page: 1, limit: 8 },
