@@ -28,6 +28,12 @@ export type McpHeaders = {
 
 type RpcError = { code: number; message: string; data?: unknown };
 
+class ProtocolRpcError extends Error {
+  constructor(readonly rpcCode: number, message: string, readonly data?: unknown) {
+    super(message);
+  }
+}
+
 function rpcResult(id: JsonRpcId, result: unknown) {
   return { jsonrpc: '2.0' as const, id, result };
 }
@@ -56,15 +62,18 @@ function clientProtocolVersion(params: Record<string, unknown>) {
 
 function completeResult(result: Record<string, unknown>, modern: boolean) {
   if (!modern) return result;
-  return { resultType: 'complete', ...result, _meta: { ...SERVER_META, ...asRecord(result._meta) } };
+  return {
+    resultType: 'complete',
+    ...result,
+    _meta: { ...SERVER_META, ...asRecord(result._meta) },
+  };
 }
 
 function toolPayload(data: unknown, modern: boolean) {
-  const structuredContent = { data };
   return completeResult(
     {
       content: [{ type: 'text', text: JSON.stringify(data) }],
-      structuredContent,
+      structuredContent: { data },
       isError: false,
     },
     modern,
@@ -113,13 +122,18 @@ export class McpProtocolService {
 
   async handle(storeId: string, request: McpRpcRequest, headers: McpHeaders) {
     if (request.jsonrpc !== '2.0' || typeof request.method !== 'string') {
-      return { status: 400, body: rpcError(request.id ?? null, { code: -32600, message: 'Invalid Request' }) };
+      return {
+        status: 400,
+        body: rpcError(request.id ?? null, { code: -32600, message: 'Invalid Request' }),
+      };
     }
 
     const modern = headers.protocolVersion === MCP_MODERN_VERSION || request.method === 'server/discover';
     if (modern) {
       const validationError = this.validateModernEnvelope(request, headers);
-      if (validationError) return { status: 400, body: rpcError(request.id ?? null, validationError) };
+      if (validationError) {
+        return { status: 400, body: rpcError(request.id ?? null, validationError) };
+      }
     } else if (headers.protocolVersion && headers.protocolVersion !== MCP_LEGACY_VERSION) {
       return {
         status: 400,
@@ -131,7 +145,6 @@ export class McpProtocolService {
     }
 
     if (request.id === undefined) {
-      // Legacy initialized/cancel notifications are acknowledged without a JSON-RPC response.
       return { status: 202, body: null };
     }
 
@@ -149,11 +162,24 @@ export class McpProtocolService {
           }),
         };
       }
+      if (error instanceof ProtocolRpcError) {
+        return {
+          status: 200,
+          body: rpcError(request.id, {
+            code: error.rpcCode,
+            message: error.message,
+            ...(error.data === undefined ? {} : { data: error.data }),
+          }),
+        };
+      }
       const message = error instanceof Error ? error.message : 'Stride MCP tool failed';
       if (request.method === 'tools/call') {
-        return { status: 200, body: rpcResult(request.id, toolError(message, modern)) };
+        return { status: 200, body: rpcResult(request.id, toolError(message.slice(0, 1000), modern)) };
       }
-      return { status: 200, body: rpcError(request.id, { code: -32603, message: message.slice(0, 1000) }) };
+      return {
+        status: 200,
+        body: rpcError(request.id, { code: -32603, message: message.slice(0, 1000) }),
+      };
     }
   }
 
@@ -166,8 +192,8 @@ export class McpProtocolService {
     }
     const params = asRecord(request.params);
     const bodyVersion = clientProtocolVersion(params);
-    if (bodyVersion && bodyVersion !== headers.protocolVersion) {
-      return { code: -32020, message: 'Protocol version header/body mismatch' };
+    if (bodyVersion !== headers.protocolVersion) {
+      return { code: -32020, message: 'Protocol version header/body mismatch or missing body metadata' };
     }
     const expectedName = principalName(request.method, params);
     if (expectedName && headers.name !== expectedName) {
@@ -183,7 +209,7 @@ export class McpProtocolService {
     const params = asRecord(request.params);
     switch (request.method) {
       case 'server/discover':
-        if (!modern) throw new Error('server/discover requires modern MCP');
+        if (!modern) throw new ProtocolRpcError(-32601, 'server/discover requires modern MCP');
         return completeResult(
           {
             supportedVersions: [MCP_MODERN_VERSION, MCP_LEGACY_VERSION],
@@ -195,6 +221,7 @@ export class McpProtocolService {
           true,
         );
       case 'initialize':
+        if (modern) throw new ProtocolRpcError(-32601, 'initialize is not defined by modern MCP');
         return {
           protocolVersion: MCP_LEGACY_VERSION,
           capabilities: { tools: {}, resources: {} },
@@ -202,7 +229,7 @@ export class McpProtocolService {
           instructions: INSTRUCTIONS,
         };
       case 'ping':
-        if (modern) throw new Error('ping is not defined by modern MCP');
+        if (modern) throw new ProtocolRpcError(-32601, 'ping is not defined by modern MCP');
         return {};
       case 'tools/list':
         return completeResult(
@@ -214,7 +241,9 @@ export class McpProtocolService {
         );
       case 'tools/call': {
         const name = typeof params.name === 'string' ? params.name : '';
-        if (!name) throw new ZodError([]);
+        if (!name || !MCP_TOOLS.some((tool) => tool.name === name)) {
+          throw new ProtocolRpcError(-32602, 'Unknown or missing Stride MCP tool name');
+        }
         const data = await this.tools.call(storeId, name, params.arguments);
         return toolPayload(data, modern);
       }
@@ -226,19 +255,23 @@ export class McpProtocolService {
           },
           modern,
         );
+      case 'resources/templates/list':
+        return completeResult(
+          {
+            resourceTemplates: [],
+            ...(modern ? { ttlMs: 3_600_000, cacheScope: 'public' } : {}),
+          },
+          modern,
+        );
       case 'resources/read': {
         const uri = typeof params.uri === 'string' ? params.uri : '';
-        if (!uri) throw new Error('uri is required');
+        if (!uri || !RESOURCES.some((entry) => entry.uri === uri)) {
+          throw new ProtocolRpcError(-32602, 'Unknown or missing Stride resource URI');
+        }
         const data = await this.readResource(storeId, uri);
         return completeResult(
           {
-            contents: [
-              {
-                uri,
-                mimeType: 'application/json',
-                text: JSON.stringify(data),
-              },
-            ],
+            contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(data) }],
             ...(modern
               ? {
                   ttlMs: uri === 'stride://knowledge/catalog' ? 3_600_000 : 0,
@@ -250,7 +283,7 @@ export class McpProtocolService {
         );
       }
       default:
-        throw Object.assign(new Error(`Method not found: ${request.method}`), { rpcCode: -32601 });
+        throw new ProtocolRpcError(-32601, `Method not found: ${request.method}`);
     }
   }
 
@@ -258,7 +291,7 @@ export class McpProtocolService {
     if (uri === 'stride://knowledge/catalog') return this.reads.catalog();
     if (uri === 'stride://store/context') return this.reads.context(storeId);
     if (uri === 'stride://store/snapshot') return this.reads.snapshot(storeId, { days: 30 });
-    throw new Error(`Unknown Stride resource: ${uri}`);
+    throw new ProtocolRpcError(-32602, `Unknown Stride resource: ${uri}`);
   }
 }
 
