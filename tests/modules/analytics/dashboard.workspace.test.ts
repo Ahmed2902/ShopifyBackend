@@ -29,6 +29,7 @@ function buildIntelligence(overrides: Partial<IntelligenceSnapshotReadService> =
 function buildRead(overrides: Partial<DashboardReadRepository> = {}) {
   return {
     getInventoryPreview: vi.fn().mockResolvedValue({ inventoryMode: 'DISABLED', items: [] }),
+    getTopProducts: vi.fn().mockResolvedValue([]),
     getRecentOrders: vi.fn().mockResolvedValue([]),
     ...overrides,
   } as unknown as DashboardReadRepository;
@@ -48,6 +49,7 @@ describe('DashboardWorkspace', () => {
     });
     const read = buildRead({
       getInventoryPreview: vi.fn().mockRejectedValue(new Error('inventory unavailable')),
+      getTopProducts: vi.fn().mockRejectedValue(new Error('products unavailable')),
       getRecentOrders: vi.fn().mockRejectedValue(new Error('orders unavailable')),
     });
     const performance = buildPerformance({
@@ -64,6 +66,7 @@ describe('DashboardWorkspace', () => {
     expect(result.overview).toEqual({ marker: 'overview' });
     expect(result.sections).toEqual({
       inventory: { available: false, data: null },
+      topProducts: { available: false, data: null },
       intelligence: { available: false, data: null },
       recentOrders: { available: false, data: null },
       performance: { available: false, data: null },
@@ -98,6 +101,14 @@ describe('DashboardWorkspace', () => {
           },
         ],
       }),
+      getTopProducts: vi.fn().mockResolvedValue([
+        {
+          product: { id: 'product-1', title: 'Core Tee' },
+          orderCount: 12,
+          netUnits: 18,
+          netRevenue: 1_450,
+        },
+      ]),
     });
     const performance = buildPerformance();
 
@@ -116,11 +127,30 @@ describe('DashboardWorkspace', () => {
       now,
       limit: 8,
     });
+    expect(read.getTopProducts).toHaveBeenCalledWith({
+      storeId,
+      days: 30,
+      from: undefined,
+      to: undefined,
+      now,
+      limit: 5,
+    });
     expect(intelligence.read).toHaveBeenCalledWith(storeId, { fresh: true });
     expect(performance.daily).toHaveBeenCalledWith(storeId, { days: 30 }, now);
     expect(result.sections.inventory).toMatchObject({
       available: true,
       data: { inventoryMode: 'TRUSTED' },
+    });
+    expect(result.sections.topProducts).toEqual({
+      available: true,
+      data: [
+        {
+          product: { id: 'product-1', title: 'Core Tee' },
+          orderCount: 12,
+          netUnits: 18,
+          netRevenue: 1_450,
+        },
+      ],
     });
     expect(result.sections.intelligence).toMatchObject({
       available: true,
