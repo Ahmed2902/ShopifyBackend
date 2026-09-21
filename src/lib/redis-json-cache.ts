@@ -16,11 +16,17 @@ type VersionedRead<T> = {
   value: T | null;
 };
 
+type LocalPayload = { version: string; value: unknown; expiresAtMs: number };
+
 const DEFAULT_TIMEOUT_MS = 300;
+const DEFAULT_LOCAL_PAYLOAD_MAX_ENTRIES = 128;
 const VERSIONED_GET_SCRIPT = [
   "local version = redis.call('GET', KEYS[1]) or '0'",
-  "local value = redis.call('GET', ARGV[1] .. version .. ':' .. ARGV[2])",
-  'return { tostring(version), value }',
+  "local known = ARGV[3] or ''",
+  "local payloadKey = ARGV[1] .. version .. ':' .. ARGV[2]",
+  "if known == tostring(version) and redis.call('EXISTS', payloadKey) == 1 then return { tostring(version), 1, '' } end",
+  "local value = redis.call('GET', payloadKey) or ''",
+  "return { tostring(version), 0, value }",
 ].join('\n');
 
 async function redisCommand(parts: string[], timeoutMs: number): Promise<RedisCommandResult> {
@@ -46,14 +52,48 @@ async function redisCommand(parts: string[], timeoutMs: number): Promise<RedisCo
 }
 
 export class RedisJsonCache {
+  private readonly localPayloads = new Map<string, LocalPayload>();
+
   constructor(
     private readonly namespace: string,
     private readonly ttlSeconds: number,
     private readonly timeoutMs = DEFAULT_TIMEOUT_MS,
+    private readonly localPayloadMaxEntries = DEFAULT_LOCAL_PAYLOAD_MAX_ENTRIES,
   ) {}
 
   private key(key: string) {
     return `${this.namespace}:${key}`;
+  }
+
+  private localKey(scope: string, key: string): string {
+    return `${scope}\u0000${key}`;
+  }
+
+  private currentLocalPayload(scope: string, key: string): LocalPayload | null {
+    const localKey = this.localKey(scope, key);
+    const payload = this.localPayloads.get(localKey);
+    if (!payload) return null;
+    if (payload.expiresAtMs <= Date.now()) {
+      this.localPayloads.delete(localKey);
+      return null;
+    }
+    return payload;
+  }
+
+  rememberVersioned<T>(scope: string, key: string, version: string, value: T): void {
+    if (this.localPayloadMaxEntries <= 0) return;
+    const localKey = this.localKey(scope, key);
+    this.localPayloads.delete(localKey);
+    this.localPayloads.set(localKey, {
+      version,
+      value,
+      expiresAtMs: Date.now() + this.ttlSeconds * 1_000,
+    });
+    while (this.localPayloads.size > this.localPayloadMaxEntries) {
+      const oldest = this.localPayloads.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.localPayloads.delete(oldest);
+    }
   }
 
   async get<T>(key: string): Promise<T | null> {
@@ -66,7 +106,17 @@ export class RedisJsonCache {
     }
   }
 
+  /**
+   * Redis remains authoritative for the generation and payload existence on every read. When the
+   * local process already holds an unexpired payload for that exact generation, Redis returns only
+   * a tiny marker after confirming the backing versioned key still exists. Local reuse therefore
+   * cannot outlive Redis expiry even when the payload was first learned partway through its TTL.
+   */
   async getVersioned<T>(scope: string, key: string): Promise<VersionedRead<T> | null> {
+    const localKey = this.localKey(scope, key);
+    const local = this.currentLocalPayload(scope, key);
+    const knownVersion = local?.version ?? '';
+
     const command = await redisCommand(
       [
         'EVAL',
@@ -75,20 +125,31 @@ export class RedisJsonCache {
         this.key(`version:${scope}`),
         `${this.namespace}:v`,
         key,
+        knownVersion,
       ],
       this.timeoutMs,
     );
-    if (!command.ok || !Array.isArray(command.result) || command.result.length !== 2) return null;
+    if (!command.ok || !Array.isArray(command.result) || command.result.length !== 3) return null;
 
-    const [rawVersion, rawValue] = command.result;
+    const [rawVersion, rawLocalHit, rawValue] = command.result;
     if (typeof rawVersion !== 'string' && typeof rawVersion !== 'number') return null;
-    if (rawValue !== null && typeof rawValue !== 'string') return null;
+    const version = String(rawVersion);
 
-    if (rawValue === null) return { version: String(rawVersion), value: null };
+    if ((rawLocalHit === 1 || rawLocalHit === '1') && local?.version === version) {
+      this.localPayloads.delete(localKey);
+      this.localPayloads.set(localKey, local);
+      recordRequestPerformanceSpan('redis.local_payload_hit', 0);
+      return { version, value: local.value as T };
+    }
+
+    recordRequestPerformanceSpan('redis.local_payload_miss', 0);
+    if (typeof rawValue !== 'string' || rawValue.length === 0) return { version, value: null };
     try {
-      return { version: String(rawVersion), value: JSON.parse(rawValue) as T };
+      const value = JSON.parse(rawValue) as T;
+      this.rememberVersioned(scope, key, version, value);
+      return { version, value };
     } catch {
-      return { version: String(rawVersion), value: null };
+      return { version, value: null };
     }
   }
 
@@ -100,7 +161,7 @@ export class RedisJsonCache {
         this.timeoutMs,
       );
     } catch {
-      // Cache writes are fail-open; source truth has already been computed.
+      // JSON serialization failures or Redis failures must not break the source read.
     }
   }
 
@@ -170,6 +231,7 @@ export class CachedReadCoordinator {
             async () => {
               const value = await loader();
               await this.cache.set(versionedKey, value);
+              this.cache.rememberVersioned(versionScope, key, resolved.version, value);
               return value;
             },
             { onJoin: () => recordCacheOutcome('coalesced') },
@@ -189,6 +251,7 @@ export class CachedReadCoordinator {
           async () => {
             const value = await loader();
             await this.cache.set(versionedKey, value);
+            this.cache.rememberVersioned(versionScope, key, version, value);
             return value;
           },
           { onJoin: () => recordCacheOutcome('coalesced') },
