@@ -1,6 +1,7 @@
 import { logger } from './lib/logger.js';
 import { PollingWorker } from './lib/polling-worker.js';
 import { authEmailDeliveryService } from './modules/auth/auth.email-delivery.js';
+import { billingReconciliationService } from './modules/billing/billing-reconciliation.service.js';
 import { pixelAttributionService } from './modules/pixel/attribution/pixel-attribution.service.js';
 import { pixelBehaviorService } from './modules/pixel/behavior/pixel-behavior.service.js';
 import { pixelJourneyService } from './modules/pixel/journey/pixel-journey.service.js';
@@ -35,6 +36,15 @@ const authEmailWorker = new PollingWorker(
     if (result.claimed > 0) logger.info(result, 'Processed auth email delivery batch');
   },
   'Auth email delivery worker failed',
+);
+
+const billingReconciliationWorker = new PollingWorker(
+  60_000,
+  async () => {
+    const result = await billingReconciliationService.processDue(10);
+    if (result.selected > 0) logger.info(result, 'Reconciled stale Shopify billing state');
+  },
+  'Shopify billing reconciliation worker failed',
 );
 
 const reconciliationWorker = new PollingWorker(
@@ -112,6 +122,7 @@ const workers = [
   shopifyWebhookWorker,
   tiktokWebhookWorker,
   authEmailWorker,
+  billingReconciliationWorker,
   reconciliationWorker,
   pixelJourneyWorker,
   pixelBehaviorWorker,

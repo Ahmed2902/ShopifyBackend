@@ -6,10 +6,14 @@ const subscriptionRepository = vi.hoisted(() => ({
   create: vi.fn(),
   update: vi.fn(),
 }));
+const storeRepository = vi.hoisted(() => ({
+  findUnique: vi.fn(),
+}));
 
 vi.mock('../../../src/lib/prisma.js', () => ({
   prisma: {
     storeSubscription: subscriptionRepository,
+    store: storeRepository,
   },
 }));
 
@@ -30,13 +34,28 @@ function internalTrial(overrides: Record<string, unknown> = {}) {
     trialStartedAt: startedAt,
     trialEndsAt,
     currentPeriodEndsAt: null,
+    canceledAt: null,
     cancelAtEndOfCycle: false,
+    shopifyAppSubscriptionId: null,
     shopifyPlanHandle: null,
     lastVerifiedAt: null,
     createdAt: startedAt,
     updatedAt: startedAt,
     ...overrides,
   };
+}
+
+function shopifyActive(overrides: Record<string, unknown> = {}) {
+  return internalTrial({
+    provider: 'SHOPIFY',
+    status: 'ACTIVE',
+    trialStartedAt: new Date('2026-08-01T00:00:00.000Z'),
+    trialEndsAt: new Date('2026-08-15T00:00:00.000Z'),
+    currentPeriodEndsAt: new Date('2026-10-01T00:00:00.000Z'),
+    shopifyAppSubscriptionId: 'gid://shopify/AppSubscription/1',
+    shopifyPlanHandle: 'essentials',
+    ...overrides,
+  });
 }
 
 const internalPricing = {
@@ -97,5 +116,75 @@ describe('BillingService internal trial expiry', () => {
     });
 
     expect(subscriptionRepository.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('BillingService request-path Shopify verification', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    storeRepository.findUnique.mockResolvedValue({ shopifyShopId: 'gid://shopify/Shop/1' });
+  });
+
+  it('returns stale active local access without starting provider work in the request', async () => {
+    const stale = shopifyActive({ lastVerifiedAt: new Date('2026-09-19T07:00:00.000Z') });
+    subscriptionRepository.findUnique.mockResolvedValue(stale);
+
+    const activeSubscription = vi.fn();
+    const shopifyPricing = {
+      isEnabled: vi.fn(() => true),
+      activeSubscription,
+      planSelectionUrl: vi.fn(() => 'https://admin.shopify.com/example'),
+      planHandles: vi.fn(() => ({ ESSENTIALS: 'essentials', PRO: 'pro' })),
+    } as unknown as ShopifyAppPricingClient;
+    const service = new BillingService(shopifyPricing);
+
+    const results = await Promise.all([
+      service.requireActive(storeId),
+      service.requireActive(storeId),
+      service.requireActive(storeId),
+    ]);
+
+    expect(results.every((result) => result.accessActive)).toBe(true);
+    expect(results.every((result) => result.verification.stale)).toBe(true);
+    expect(activeSubscription).not.toHaveBeenCalled();
+    expect(subscriptionRepository.update).not.toHaveBeenCalled();
+  });
+
+  it('still blocks for first verification when Shopify has never been verified locally', async () => {
+    const neverVerified = shopifyActive({ lastVerifiedAt: null });
+    const verifiedAt = new Date('2026-09-20T08:00:00.000Z');
+    const verified = shopifyActive({ lastVerifiedAt: verifiedAt });
+    subscriptionRepository.findUnique.mockResolvedValue(neverVerified);
+    subscriptionRepository.update.mockResolvedValue(verified);
+
+    const activeSubscription = vi.fn().mockResolvedValue({
+      shop: { id: 'gid://shopify/Shop/1', myshopifyDomain: 'example.myshopify.com' },
+      billingPeriod: 'EVERY_30_DAYS',
+      cancelAtEndOfCycle: false,
+      trialEndsAt: null,
+      currentBillingCycle: {
+        startTime: '2026-09-01T00:00:00.000Z',
+        endTime: '2026-10-01T00:00:00.000Z',
+      },
+      items: [
+        {
+          handle: 'essentials',
+          description: 'Essentials',
+          price: { __typename: 'FlatRatePrice', active: true, currency: 'USD', amount: '49' },
+        },
+      ],
+      legacySubscriptionId: 'gid://shopify/AppSubscription/1',
+    });
+    const shopifyPricing = {
+      isEnabled: vi.fn(() => true),
+      activeSubscription,
+      planSelectionUrl: vi.fn(() => 'https://admin.shopify.com/example'),
+      planHandles: vi.fn(() => ({ ESSENTIALS: 'essentials', PRO: 'pro' })),
+    } as unknown as ShopifyAppPricingClient;
+
+    const result = await new BillingService(shopifyPricing).requireActive(storeId);
+
+    expect(activeSubscription).toHaveBeenCalledTimes(1);
+    expect(result.accessActive).toBe(true);
   });
 });
