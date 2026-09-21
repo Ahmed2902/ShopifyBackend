@@ -1,4 +1,5 @@
 import { AppError } from '../../../errors/app-error.js';
+import { measureRequestPerformanceSpan } from '../../../observability/request-performance.js';
 import type { ShopifyRepository } from '../shopify.repository.js';
 import { SHOP_QUERY } from '../shopify.queries.js';
 import { shopifyGraphqlResponseSchema, shopifyProfileSchema } from '../shopify.schema.js';
@@ -20,8 +21,6 @@ type ProviderGraphqlError = { message: string; extensions?: { code?: string } };
 function providerErrors(errors: ProviderGraphqlError[]) {
   return errors.slice(0, 5).map((error) => ({
     code: error.extensions?.code ?? null,
-    // Shopify GraphQL errors are useful for permission/schema diagnosis, but keep the public
-    // payload bounded and never echo the query, variables, token or response envelope.
     message: error.message.slice(0, MAX_PROVIDER_ERROR_MESSAGE),
   }));
 }
@@ -29,7 +28,8 @@ function providerErrors(errors: ProviderGraphqlError[]) {
 function unitCostAccessDenied(errors: ProviderGraphqlError[], query: string) {
   if (!UNIT_COST_SELECTION.test(query)) return false;
   return errors.some((error) => {
-    const accessDenied = error.extensions?.code === 'ACCESS_DENIED' || /access denied/i.test(error.message);
+    const accessDenied =
+      error.extensions?.code === 'ACCESS_DENIED' || /access denied/i.test(error.message);
     return accessDenied && /unit\s*cost|unitCost|product costs?/i.test(error.message);
   });
 }
@@ -56,7 +56,11 @@ export class ShopifyApiService {
     });
     const parsed = shopifyProfileSchema.safeParse(data.shop);
     if (!parsed.success) {
-      throw new AppError('Shopify shop query returned an unexpected shape', 502, 'SHOPIFY_BAD_RESPONSE');
+      throw new AppError(
+        'Shopify shop query returned an unexpected shape',
+        502,
+        'SHOPIFY_BAD_RESPONSE',
+      );
     }
     return parsed.data;
   }
@@ -76,16 +80,18 @@ export class ShopifyApiService {
     for (let attempt = 0; attempt < SHOPIFY_REQUEST_ATTEMPTS; attempt += 1) {
       let response: Response;
       try {
-        response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            'X-Shopify-Access-Token': input.accessToken,
-          },
-          body: JSON.stringify({ query, variables: input.variables ?? {} }),
-          signal: AbortSignal.timeout(SHOPIFY_REQUEST_TIMEOUT_MS),
-        });
+        response = await measureRequestPerformanceSpan('shopify.admin_api.http', () =>
+          fetch(url, {
+            method: 'POST',
+            headers: {
+              Accept: 'application/json',
+              'Content-Type': 'application/json',
+              'X-Shopify-Access-Token': input.accessToken,
+            },
+            body: JSON.stringify({ query, variables: input.variables ?? {} }),
+            signal: AbortSignal.timeout(SHOPIFY_REQUEST_TIMEOUT_MS),
+          }),
+        );
       } catch {
         if (attempt < SHOPIFY_REQUEST_ATTEMPTS - 1) {
           await sleep(500 * 2 ** attempt);
@@ -96,7 +102,9 @@ export class ShopifyApiService {
 
       if (response.status === 401 || response.status === 403) {
         if (input.connectionId) {
-          await this.repository.markConnectionReauthRequired(input.connectionId).catch(() => undefined);
+          await this.repository
+            .markConnectionReauthRequired(input.connectionId)
+            .catch(() => undefined);
         }
         throw new AppError(
           'Shopify rejected the stored credential',
@@ -125,9 +133,15 @@ export class ShopifyApiService {
         throw new AppError('Shopify Admin API request failed', 502, 'SHOPIFY_API_FAILED');
       }
 
-      const envelope = shopifyGraphqlResponseSchema.safeParse(await this.parseJsonResponse(response));
+      const envelope = shopifyGraphqlResponseSchema.safeParse(
+        await this.parseJsonResponse(response),
+      );
       if (!envelope.success) {
-        throw new AppError('Shopify GraphQL response had an unexpected shape', 502, 'SHOPIFY_BAD_RESPONSE');
+        throw new AppError(
+          'Shopify GraphQL response had an unexpected shape',
+          502,
+          'SHOPIFY_BAD_RESPONSE',
+        );
       }
 
       if (envelope.data.errors?.length) {
@@ -138,12 +152,6 @@ export class ShopifyApiService {
           continue;
         }
 
-        // unitCost is useful for contribution-profit coverage, but Shopify can deny that single
-        // field when the installing merchant lacks product-cost permission. It must not prevent
-        // products, variants and inventory from syncing. Retry the same query without that
-        // optional field; cost coverage then correctly remains incomplete instead of the whole
-        // integration failing. Reset the transient-attempt budget because discovering the
-        // deterministic field denial can itself happen after earlier timeout/throttle retries.
         if (!costFallbackUsed && unitCostAccessDenied(rawErrors, query)) {
           query = removeUnitCostSelection(query);
           costFallbackUsed = true;
@@ -166,7 +174,11 @@ export class ShopifyApiService {
       }
 
       if (envelope.data.data === undefined) {
-        throw new AppError('Shopify GraphQL response did not include data', 502, 'SHOPIFY_BAD_RESPONSE');
+        throw new AppError(
+          'Shopify GraphQL response did not include data',
+          502,
+          'SHOPIFY_BAD_RESPONSE',
+        );
       }
 
       return envelope.data.data as TData;
@@ -179,7 +191,11 @@ export class ShopifyApiService {
     try {
       return await response.json();
     } catch {
-      throw new AppError('Shopify returned an invalid JSON response', 502, 'SHOPIFY_BAD_RESPONSE');
+      throw new AppError(
+        'Shopify returned an invalid JSON response',
+        502,
+        'SHOPIFY_BAD_RESPONSE',
+      );
     }
   }
 }

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { InFlightCoalescer } from '../../src/lib/in-flight-coalescer.js';
 
 describe('InFlightCoalescer', () => {
-  it('shares one loader promise for concurrent requests with the same key', async () => {
+  it('shares one loader promise for concurrent requests and reports the follower join', async () => {
     let release!: (value: number) => void;
     const loader = vi.fn(
       () =>
@@ -10,12 +10,14 @@ describe('InFlightCoalescer', () => {
           release = resolve;
         }),
     );
+    const onJoin = vi.fn();
     const coalescer = new InFlightCoalescer();
 
-    const first = coalescer.run('store-1:overview', loader);
-    const second = coalescer.run('store-1:overview', loader);
+    const first = coalescer.run('store-1:overview', loader, { onJoin });
+    const second = coalescer.run('store-1:overview', loader, { onJoin });
 
     expect(loader).toHaveBeenCalledTimes(1);
+    expect(onJoin).toHaveBeenCalledTimes(1);
     expect(coalescer.size).toBe(1);
 
     release(42);
@@ -45,9 +47,11 @@ describe('InFlightCoalescer', () => {
     const coalescer = new InFlightCoalescer(1);
     const first = coalescer.run('first', () => blocker);
     const secondLoader = vi.fn().mockResolvedValue('second');
+    const onJoin = vi.fn();
 
-    await expect(coalescer.run('second', secondLoader)).resolves.toBe('second');
+    await expect(coalescer.run('second', secondLoader, { onJoin })).resolves.toBe('second');
     expect(secondLoader).toHaveBeenCalledTimes(1);
+    expect(onJoin).not.toHaveBeenCalled();
     expect(coalescer.size).toBe(1);
 
     release();

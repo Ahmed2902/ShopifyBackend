@@ -1,5 +1,6 @@
 import { env } from '../../../config/env.js';
 import { AppError } from '../../../errors/app-error.js';
+import { measureRequestPerformanceSpan } from '../../../observability/request-performance.js';
 import type {
   TikTokApiContext,
   TikTokApiEnvelope,
@@ -138,12 +139,14 @@ export class TikTokApiService {
     let lastError: unknown;
     for (let attempt = 0; attempt < (retry ? MAX_RETRIES : 1); attempt += 1) {
       try {
-        const response = await fetch(url, {
-          method,
-          headers,
-          body: method === 'POST' ? JSON.stringify(options.body ?? {}) : undefined,
-          signal: AbortSignal.timeout(30_000),
-        });
+        const response = await measureRequestPerformanceSpan('tiktok.business_api.http', () =>
+          fetch(url, {
+            method,
+            headers,
+            body: method === 'POST' ? JSON.stringify(options.body ?? {}) : undefined,
+            signal: AbortSignal.timeout(30_000),
+          }),
+        );
 
         const payload = (await response.json().catch(() => null)) as TikTokApiEnvelope<T> | null;
         if (!payload || typeof payload.code !== 'number') {
@@ -396,8 +399,6 @@ export class TikTokApiService {
     const smartEndpoint = SMART_PLUS_ENDPOINTS[endpoint];
     if (!smartEndpoint) return regular;
 
-    // Smart+ is part of the same logical snapshot. If this provider call fails, fail the
-    // whole sync instead of treating Smart+ as an empty successful snapshot and tombstoning it.
     const smart = await this.paginateEndpoint(context, smartEndpoint, query, listKeys, pageSize);
 
     const merged = new Map<string, TikTokObject>();

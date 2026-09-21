@@ -2,6 +2,7 @@ import { env } from '../../../config/env.js';
 import { metaCallbackUrl } from '../../../config/public-urls.js';
 import { AppError } from '../../../errors/app-error.js';
 import { invalidateStoreDecisionCaches } from '../../../lib/store-decision-cache.js';
+import { measureRequestPerformanceSpan } from '../../../observability/request-performance.js';
 import type { MetaRepository } from '../meta.repository.js';
 import {
   metaAdAccountSchema,
@@ -94,9 +95,11 @@ export class MetaApiService {
   async inspectAccessToken(accessToken: string): Promise<MetaTokenInspection> {
     const url = this.graphUrl('/debug_token');
     url.searchParams.set('input_token', accessToken);
-    const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${env.META_APP_ID}|${env.META_APP_SECRET}` },
-    });
+    const response = await measureRequestPerformanceSpan('meta.graph_api.http', () =>
+      fetch(url, {
+        headers: { Authorization: `Bearer ${env.META_APP_ID}|${env.META_APP_SECRET}` },
+      }),
+    );
     const body = await this.parseResponseBody(response);
     if (!response.ok) throw this.toProviderError(body, response.status);
 
@@ -123,10 +126,15 @@ export class MetaApiService {
   }
 
   listBusinesses(context: MetaApiContext): Promise<MetaBusinessAsset[]> {
-    return this.collectGraphPages(context, '/me/businesses', { fields: 'id,name', limit: '100' }, (item) => {
-      const parsed = metaBusinessSchema.safeParse(item);
-      return parsed.success ? parsed.data : null;
-    });
+    return this.collectGraphPages(
+      context,
+      '/me/businesses',
+      { fields: 'id,name', limit: '100' },
+      (item) => {
+        const parsed = metaBusinessSchema.safeParse(item);
+        return parsed.success ? parsed.data : null;
+      },
+    );
   }
 
   listAdAccounts(context: MetaApiContext): Promise<MetaAdAccountAsset[]> {
@@ -138,7 +146,10 @@ export class MetaApiService {
     );
   }
 
-  async getAdAccount(context: MetaApiContext, adAccountId: string): Promise<MetaAdAccountAsset> {
+  async getAdAccount(
+    context: MetaApiContext,
+    adAccountId: string,
+  ): Promise<MetaAdAccountAsset> {
     const account = parseAdAccount(
       await this.requestGraph(context, `/${adAccountId}`, { fields: AD_ACCOUNT_FIELDS }),
     );
@@ -160,9 +171,11 @@ export class MetaApiService {
 
       let response: Response;
       try {
-        response = await fetch(url, {
-          headers: { Authorization: `Bearer ${context.accessToken}` },
-        });
+        response = await measureRequestPerformanceSpan('meta.graph_api.http', () =>
+          fetch(url, {
+            headers: { Authorization: `Bearer ${context.accessToken}` },
+          }),
+        );
       } catch {
         if (attempt === MAX_ATTEMPTS) {
           throw new AppError('Meta API network request failed', 502, 'META_REQUEST_FAILED');
@@ -177,9 +190,9 @@ export class MetaApiService {
 
       const code = graph.success ? graph.data.error.code : undefined;
       if (code === 190) {
-        await this.repository.markConnectionReauthRequired(context.connectionId).catch(() => undefined);
-        // Provider-side expiry can happen after a dashboard generation was cached as ACTIVE.
-        // Advance that Store generation as soon as we persist REAUTH_REQUIRED.
+        await this.repository
+          .markConnectionReauthRequired(context.connectionId)
+          .catch(() => undefined);
         await invalidateStoreDecisionCaches(context.storeId);
         throw new AppError(
           'Meta access token requires reauthorization',
@@ -233,7 +246,11 @@ export class MetaApiService {
       const next = typeof cursors?.after === 'string' ? cursors.after : null;
       if (!paging?.next || !next) return items;
       if (seenCursors.has(next)) {
-        throw new AppError('Meta pagination returned a repeated cursor', 502, 'META_BAD_PAGINATION');
+        throw new AppError(
+          'Meta pagination returned a repeated cursor',
+          502,
+          'META_BAD_PAGINATION',
+        );
       }
       seenCursors.add(next);
       after = next;
@@ -243,7 +260,7 @@ export class MetaApiService {
   private async requestToken(params: Record<string, string>): Promise<MetaTokenExchange> {
     const url = this.graphUrl('/oauth/access_token');
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
-    const response = await fetch(url);
+    const response = await measureRequestPerformanceSpan('meta.graph_api.http', () => fetch(url));
     const body = await this.parseResponseBody(response);
     if (!response.ok) throw this.toProviderError(body, response.status);
 
