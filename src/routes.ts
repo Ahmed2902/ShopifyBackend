@@ -4,6 +4,7 @@ import { authRouter } from './modules/auth/auth.routes.js';
 import { billingRouter } from './modules/billing/billing.routes.js';
 import { intelligenceRouter } from './modules/intelligence/intelligence.routes.js';
 import { integrationRouter } from './modules/integrations/integration.routes.js';
+import { mcpOAuthRouter } from './modules/mcp/mcp-oauth.routes.js';
 import { metaRouter, metaStoreRouter } from './modules/meta/meta.routes.js';
 import { pixelPublicRouter, pixelStoreRouter } from './modules/pixel/pixel.routes.js';
 import { shopifyRouter, shopifyStoreRouter } from './modules/shopify/shopify.routes.js';
@@ -22,6 +23,7 @@ router.get('/', (_req, res) => {
     service: 'stride-api',
     status: 'ok',
     api: '/v1',
+    mcp: '/mcp',
     health: {
       live: '/health/live',
       ready: '/health/ready',
@@ -29,6 +31,7 @@ router.get('/', (_req, res) => {
   });
 });
 
+router.use(mcpOAuthRouter);
 router.use('/health', healthRouter);
 router.use('/v1/auth', authRouter);
 router.use('/v1/pixel', pixelPublicRouter);
