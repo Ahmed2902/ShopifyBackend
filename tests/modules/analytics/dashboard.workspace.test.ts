@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { IntelligenceSnapshotReadService } from '../../../src/modules/intelligence/intelligence-snapshot.read.service.js';
+import type { PixelAttributionService } from '../../../src/modules/pixel/attribution/pixel-attribution.service.js';
 import type { AnalyticsWorkspace } from '../../../src/modules/analytics/analytics.workspace.js';
 import type { DashboardReadRepository } from '../../../src/modules/analytics/dashboard.read.repository.js';
 import { DashboardWorkspace } from '../../../src/modules/analytics/dashboard.workspace.js';
@@ -11,6 +12,7 @@ const now = new Date('2026-09-07T12:00:00.000Z');
 function buildAnalytics(overrides: Partial<AnalyticsWorkspace> = {}) {
   return {
     overview: vi.fn().mockResolvedValue({ marker: 'overview' }),
+    customers: vi.fn().mockResolvedValue({ marker: 'customers' }),
     ...overrides,
   } as unknown as AnalyticsWorkspace;
 }
@@ -41,8 +43,18 @@ function buildPerformance(overrides: Partial<PerformanceAnalyticsWorkspace> = {}
   } as unknown as PerformanceAnalyticsWorkspace;
 }
 
+function buildAttribution(overrides: Partial<PixelAttributionService> = {}) {
+  return {
+    sources: vi.fn().mockResolvedValue({ marker: 'sources' }),
+    ...overrides,
+  } as unknown as PixelAttributionService;
+}
+
 describe('DashboardWorkspace', () => {
   it('keeps the primary overview available when every secondary section fails', async () => {
+    const analytics = buildAnalytics({
+      customers: vi.fn().mockRejectedValue(new Error('customers unavailable')),
+    });
     const intelligence = buildIntelligence({
       read: vi.fn().mockRejectedValue(new Error('intelligence unavailable')),
     });
@@ -53,12 +65,16 @@ describe('DashboardWorkspace', () => {
     const performance = buildPerformance({
       daily: vi.fn().mockRejectedValue(new Error('performance unavailable')),
     });
+    const attribution = buildAttribution({
+      sources: vi.fn().mockRejectedValue(new Error('attribution unavailable')),
+    });
 
     const result = await new DashboardWorkspace(
-      buildAnalytics(),
+      analytics,
       intelligence,
       read,
       performance,
+      attribution,
     ).read(storeId, { days: 30 }, now);
 
     expect(result.overview).toEqual({ marker: 'overview' });
@@ -67,15 +83,18 @@ describe('DashboardWorkspace', () => {
       intelligence: { available: false, data: null },
       recentOrders: { available: false, data: null },
       performance: { available: false, data: null },
+      customers: { available: false, data: null },
+      acquisitionSources: { available: false, data: null },
     });
   });
 
-  it('uses compact dashboard reads, includes the trend, and propagates explicit freshness', async () => {
+  it('uses compact dashboard reads, includes customer/source context, and propagates explicit freshness', async () => {
     const recommendations = Array.from({ length: 5 }, (_, index) => ({
       ruleId: `rule-${index}`,
       severity: index < 2 ? 'HIGH' : 'LOW',
       title: `Recommendation ${index}`,
     }));
+    const analytics = buildAnalytics();
     const intelligence = buildIntelligence({
       read: vi.fn().mockResolvedValue({
         evaluatedAt: now,
@@ -100,12 +119,14 @@ describe('DashboardWorkspace', () => {
       }),
     });
     const performance = buildPerformance();
+    const attribution = buildAttribution();
 
     const result = await new DashboardWorkspace(
-      buildAnalytics(),
+      analytics,
       intelligence,
       read,
       performance,
+      attribution,
     ).read(storeId, { days: 30 }, now, { fresh: true });
 
     expect(read.getInventoryPreview).toHaveBeenCalledWith({
@@ -118,6 +139,12 @@ describe('DashboardWorkspace', () => {
     });
     expect(intelligence.read).toHaveBeenCalledWith(storeId, { fresh: true });
     expect(performance.daily).toHaveBeenCalledWith(storeId, { days: 30 }, now);
+    expect(analytics.customers).toHaveBeenCalledWith(storeId, { days: 30 }, now);
+    expect(attribution.sources).toHaveBeenCalledWith(
+      storeId,
+      { days: 30, page: 1, limit: 8 },
+      now,
+    );
     expect(result.sections.inventory).toMatchObject({
       available: true,
       data: { inventoryMode: 'TRUSTED' },
@@ -133,5 +160,34 @@ describe('DashboardWorkspace', () => {
       available: true,
       data: { marker: 'performance' },
     });
+    expect(result.sections.customers).toEqual({
+      available: true,
+      data: { marker: 'customers' },
+    });
+    expect(result.sections.acquisitionSources).toEqual({
+      available: true,
+      data: { marker: 'sources' },
+    });
+  });
+
+  it('passes explicit custom ranges through to customer and acquisition reads', async () => {
+    const analytics = buildAnalytics();
+    const attribution = buildAttribution();
+    const query = { days: 30, from: '2026-08-01', to: '2026-08-14' };
+
+    await new DashboardWorkspace(
+      analytics,
+      buildIntelligence(),
+      buildRead(),
+      buildPerformance(),
+      attribution,
+    ).read(storeId, query, now);
+
+    expect(analytics.customers).toHaveBeenCalledWith(storeId, query, now);
+    expect(attribution.sources).toHaveBeenCalledWith(
+      storeId,
+      { ...query, page: 1, limit: 8 },
+      now,
+    );
   });
 });
