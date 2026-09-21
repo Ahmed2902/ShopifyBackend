@@ -57,10 +57,10 @@ async function optionalSection<T>(
  *
  * One request owns the complete dashboard interaction budget. The primary analytical overview is
  * required; secondary previews and chart-ready read models fail independently so a secondary
- * analytical issue cannot hide the merchant's core commerce KPIs. Customer segmentation and
- * first-party acquisition-source evidence are composed here as well, keeping Home dense without
- * adding browser request waterfalls. The complete response participates in the Store-generation
- * dashboard cache.
+ * analytical issue cannot hide the merchant's core commerce KPIs. Customer segmentation,
+ * top-product economics and first-party acquisition-source evidence are composed here as well,
+ * keeping Home dense without adding browser request waterfalls. The complete response participates
+ * in the Store-generation dashboard cache.
  */
 export class DashboardWorkspace {
   constructor(
@@ -85,6 +85,7 @@ export class DashboardWorkspace {
       recentOrders,
       performance,
       customers,
+      topProducts,
       acquisitionSources,
     ] = await Promise.all([
       this.analytics.overview(storeId, query, now),
@@ -108,6 +109,19 @@ export class DashboardWorkspace {
       ),
       optionalSection(storeId, 'performance', () => this.performance.daily(storeId, query, now)),
       optionalSection(storeId, 'customers', () => this.analytics.customers(storeId, query, now)),
+      optionalSection(storeId, 'topProducts', async () => {
+        const result = await this.analytics.products(
+          storeId,
+          { ...query, page: 1, limit: 6 },
+          now,
+        );
+        return result.items.map((row) => ({
+          product: { id: row.product.id, title: row.product.title },
+          orderCount: row.current.orderCount,
+          netUnits: row.current.netUnits,
+          netRevenue: row.current.netProductRevenue,
+        }));
+      }),
       optionalSection(storeId, 'acquisitionSources', () =>
         this.attribution.sources(
           storeId,
@@ -129,6 +143,7 @@ export class DashboardWorkspace {
         recentOrders,
         performance,
         customers,
+        topProducts,
         acquisitionSources,
       },
     };
