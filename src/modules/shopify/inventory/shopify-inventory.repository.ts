@@ -1,6 +1,7 @@
 import type { Prisma } from '../../../generated/prisma/client.js';
 import { prisma } from '../../../lib/prisma.js';
 import type { ShopifyInventoryLevel, ShopifyLocation } from '../shopify.schema.js';
+import { bulkReplaceInventoryLevels } from '../shared/shopify-bulk-write.js';
 import type { ShopifyInventorySnapshotSource } from '../shopify.types.js';
 
 const DB_WRITE_CONCURRENCY = 12;
@@ -144,56 +145,27 @@ export class ShopifyInventoryRepository {
       };
     });
 
-    const existing = await prisma.inventoryLevelCurrent.findMany({
-      where: {
-        inventoryItemId: { in: [...new Set(rows.map((row) => row.inventoryItemId))] },
-        locationId: { in: [...new Set(rows.map((row) => row.locationId))] },
-      },
-      select: { id: true, inventoryItemId: true, locationId: true },
-    });
-    const existingMap = new Map(
-      existing.map((row) => [`${row.inventoryItemId}:${row.locationId}`, row.id]),
-    );
-
-    const newRows = rows.filter(
-      (row) => !existingMap.has(`${row.inventoryItemId}:${row.locationId}`),
-    );
-    if (newRows.length > 0) {
-      await prisma.inventoryLevelCurrent.createMany({
-        data: newRows.map((row) => ({
+    await prisma.$transaction(async (tx) => {
+      await bulkReplaceInventoryLevels(
+        tx,
+        rows.map((row) => ({
           inventoryItemId: row.inventoryItemId,
           locationId: row.locationId,
           ...row.quantities,
           sourceUpdatedAt: row.sourceUpdatedAt,
-          lastReconciledAt: reconciledAt,
         })),
-        skipDuplicates: true,
-      });
-    }
+        reconciledAt,
+      );
 
-    const updates = rows.filter((row) =>
-      existingMap.has(`${row.inventoryItemId}:${row.locationId}`),
-    );
-    await runBatched(updates, (row) =>
-      prisma.inventoryLevelCurrent.update({
-        where: { id: existingMap.get(`${row.inventoryItemId}:${row.locationId}`)! },
-        data: {
+      await tx.inventorySnapshot.createMany({
+        data: rows.map((row) => ({
+          inventoryItemId: row.inventoryItemId,
+          locationId: row.locationId,
           ...row.quantities,
-          sourceUpdatedAt: row.sourceUpdatedAt,
-          lastReconciledAt: reconciledAt,
-        },
-        select: { id: true },
-      }),
-    );
-
-    await prisma.inventorySnapshot.createMany({
-      data: rows.map((row) => ({
-        inventoryItemId: row.inventoryItemId,
-        locationId: row.locationId,
-        ...row.quantities,
-        observedAt: row.observedAt,
-        source,
-      })),
+          observedAt: row.observedAt,
+          source,
+        })),
+      });
     });
 
     return true;
