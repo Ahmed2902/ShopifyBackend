@@ -53,10 +53,10 @@ async function optionalSection<T>(
  * Browser-facing Overview composition.
  *
  * One request owns the complete dashboard interaction budget. The primary analytical overview is
- * required; secondary previews and the chart-ready performance series fail independently so a
- * secondary analytical issue cannot hide the merchant's core commerce KPIs. The complete response
- * participates in the Store-generation dashboard cache, avoiding a second browser request solely
- * for the trend chart.
+ * required; inventory, top-product, recent-order, intelligence, and performance previews fail
+ * independently so a secondary analytical issue cannot hide the merchant's core commerce KPIs.
+ * The complete response participates in the Store-generation dashboard cache, avoiding extra
+ * browser requests solely for dashboard summaries and trend charts.
  */
 export class DashboardWorkspace {
   constructor(
