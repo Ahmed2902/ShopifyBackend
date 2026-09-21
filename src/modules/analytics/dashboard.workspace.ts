@@ -9,6 +9,7 @@ import {
   DashboardReadRepository,
   type DashboardInventoryPreview,
   type DashboardRecentOrder,
+  type DashboardTopProduct,
 } from './dashboard.read.repository.js';
 import {
   performanceAnalyticsWorkspace,
@@ -72,7 +73,7 @@ export class DashboardWorkspace {
     now = new Date(),
     options: { fresh?: boolean } = {},
   ) {
-    const [overview, inventory, intelligence, recentOrders, performance] = await Promise.all([
+    const [overview, inventory, topProducts, intelligence, recentOrders, performance] = await Promise.all([
       this.analytics.overview(storeId, query, now),
       optionalSection<DashboardInventoryPreview>(storeId, 'inventory', () =>
         this.readRepository.getInventoryPreview({
@@ -82,6 +83,16 @@ export class DashboardWorkspace {
           to: query.to,
           now,
           limit: 8,
+        }),
+      ),
+      optionalSection<DashboardTopProduct[]>(storeId, 'topProducts', () =>
+        this.readRepository.getTopProducts({
+          storeId,
+          days: query.days,
+          from: query.from,
+          to: query.to,
+          now,
+          limit: 5,
         }),
       ),
       optionalSection(storeId, 'intelligence', async () =>
@@ -99,6 +110,7 @@ export class DashboardWorkspace {
       overview,
       sections: {
         inventory,
+        topProducts,
         intelligence,
         recentOrders,
         performance,
