@@ -1,4 +1,5 @@
 import { AppError } from '../../errors/app-error.js';
+import { logger } from '../../lib/logger.js';
 import { dashboardWorkspace, type DashboardWorkspace } from '../analytics/dashboard.workspace.js';
 import { productAdsWorkspace, type ProductAdsWorkspace } from '../analytics/product-ads.workspace.js';
 import {
@@ -12,14 +13,19 @@ import { knowledgeCatalog } from './business-knowledge.catalog.js';
 type StoreReader = Pick<StoreRepository, 'findById'>;
 type Section<T> = { available: true; data: T } | { available: false; data: null; error: string };
 
-async function section<T>(loader: () => Promise<T>): Promise<Section<T>> {
+async function section<T>(
+  storeId: string,
+  sectionName: string,
+  loader: () => Promise<T>,
+): Promise<Section<T>> {
   try {
     return { available: true, data: await loader() };
   } catch (error) {
+    logger.warn({ err: error, storeId, section: sectionName }, 'Advisor knowledge section unavailable');
     return {
       available: false,
       data: null,
-      error: error instanceof Error ? error.message : 'Knowledge section unavailable',
+      error: 'Knowledge section unavailable',
     };
   }
 }
@@ -100,9 +106,11 @@ export class BusinessKnowledgeService {
     const [context, dashboard, intelligence, storefront, productAds] = await Promise.all([
       this.context(storeId),
       this.dashboard.read(storeId, range, generatedAt, { fresh: options.fresh ?? false }),
-      section(() => this.intelligence.read(storeId, { fresh: options.fresh ?? false })),
-      section(() => this.storefront.overview(storeId, range)),
-      section(() =>
+      section(storeId, 'intelligence', () =>
+        this.intelligence.read(storeId, { fresh: options.fresh ?? false }),
+      ),
+      section(storeId, 'storefront', () => this.storefront.overview(storeId, range, generatedAt)),
+      section(storeId, 'productAds', () =>
         this.productAds.list(
           storeId,
           { ...range, page: 1, limit: productLimit },
