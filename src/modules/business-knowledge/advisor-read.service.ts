@@ -47,7 +47,7 @@ export type AdvisorEntityType =
   | 'PRODUCT'
   | 'COLLECTION'
   | 'CAMPAIGN'
-  | 'AD_SET'
+  | 'GROUP'
   | 'AD'
   | 'CREATIVE'
   | 'LANDING_PAGE'
@@ -398,7 +398,7 @@ export class AdvisorReadService {
             'PRODUCT',
             'COLLECTION',
             'CAMPAIGN',
-            'AD_SET',
+            'GROUP',
             'AD',
             'CREATIVE',
             'LANDING_PAGE',
@@ -424,7 +424,7 @@ export class AdvisorReadService {
     }
     for (const [type, level] of [
       ['CAMPAIGN', 'CAMPAIGN'],
-      ['AD_SET', 'AD_SET'],
+      ['GROUP', 'GROUP'],
       ['AD', 'AD'],
       ['CREATIVE', 'CREATIVE'],
     ] as const) {
