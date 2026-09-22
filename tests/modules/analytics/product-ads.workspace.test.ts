@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { AdvertisingAnalyticsRepository } from '../../../src/modules/analytics/advertising-analytics.repository.js';
 import type { AnalyticsRepository } from '../../../src/modules/analytics/analytics.repository.js';
 import type { ProductAdsRepository } from '../../../src/modules/analytics/product-ads.repository.js';
 import { ProductAdsWorkspace } from '../../../src/modules/analytics/product-ads.workspace.js';
@@ -125,5 +126,31 @@ describe('ProductAdsWorkspace', () => {
     expect(result.mappings).toHaveLength(1);
     expect(result.mappings[0]?.ad).toMatchObject({ id: 'ad-1', name: 'Ad 1' });
     expect(result.mappings[0]?.variants).toHaveLength(2);
+  });
+
+  it('uses the injected canonical advertising repository instead of the commerce repository for paid facts', async () => {
+    const commerce = analyticsRepository();
+    const canonicalGetMetaRows = vi.fn().mockResolvedValue([
+      metaRow('2026-09-02', 125),
+      metaRow('2026-08-26', 40),
+    ]);
+    const advertising = {
+      getMetaRows: canonicalGetMetaRows,
+    } as unknown as AdvertisingAnalyticsRepository;
+    const workspace = new ProductAdsWorkspace(commerce, productAdsRepository(), advertising);
+
+    const result = await workspace.list(storeId, { days: 7, page: 1, limit: 50 }, now);
+
+    expect(commerce.getMetaRows).not.toHaveBeenCalled();
+    expect(canonicalGetMetaRows).toHaveBeenCalledWith(
+      storeId,
+      ['act_1'],
+      expect.any(Date),
+      expect.any(Date),
+    );
+    expect(result.items[0]).toMatchObject({
+      current: { advertising: { spend: 125 } },
+      comparison: { advertising: { spend: 40 } },
+    });
   });
 });

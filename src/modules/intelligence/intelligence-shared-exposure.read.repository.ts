@@ -3,31 +3,28 @@ import { prisma } from '../../lib/prisma.js';
 const SHARED_COLLECTION_MEMBER_LIMIT = 50;
 
 /**
- * Shared-ad targeting evidence for the intelligence snapshot.
- *
- * This read is deliberately bounded by the same selected Meta accounts and evidence window as
- * `getMetaEvidenceRows`, but it does not depend on that query finishing first. PostgreSQL proves
- * that an ad was observed in the window through the `insights.some` relation, allowing this query
- * to run in parallel with the rest of the snapshot evidence reads.
+ * Shared-ad targeting evidence from canonical ads/mappings. The returned shape intentionally keeps
+ * the current Meta compatibility field names while storage identity is provider-neutral.
  */
 export class IntelligenceSharedExposureReadRepository {
-  getTargets(input: {
+  async getTargets(input: {
     storeId: string;
     selectedAccountIds: string[];
     from: Date;
     to: Date;
   }) {
-    if (input.selectedAccountIds.length === 0) return Promise.resolve([]);
+    if (input.selectedAccountIds.length === 0) return [];
 
-    return prisma.metaAd.findMany({
+    const rows = await prisma.advertisingAd.findMany({
       where: {
         deletedAt: null,
         targetScope: { in: ['MULTI_PRODUCT', 'COLLECTION'] },
-        adAccount: {
+        account: {
           storeId: input.storeId,
-          metaAccountId: { in: input.selectedAccountIds },
+          provider: 'META',
+          providerEntityId: { in: input.selectedAccountIds },
         },
-        insights: {
+        metrics: {
           some: {
             level: 'AD',
             date: { gte: input.from, lte: input.to },
@@ -36,11 +33,11 @@ export class IntelligenceSharedExposureReadRepository {
       },
       select: {
         id: true,
-        metaAdId: true,
+        providerEntityId: true,
         name: true,
         targetScope: true,
         targetScopeConfidence: true,
-        adAccount: { select: { currency: true } },
+        account: { select: { currency: true } },
         productMappings: {
           where: { validUntil: null },
           select: {
@@ -90,8 +87,21 @@ export class IntelligenceSharedExposureReadRepository {
           },
         },
       },
-      orderBy: [{ metaUpdatedAt: 'desc' }, { name: 'asc' }],
+      orderBy: [{ providerUpdatedAt: 'desc' }, { name: 'asc' }],
     });
+
+    return rows.map((row) => ({
+      id: row.id,
+      metaAdId: row.providerEntityId,
+      name: row.name,
+      targetScope: row.targetScope,
+      targetScopeConfidence: row.targetScopeConfidence,
+      // Meta accounts always carry currency once configured. Keep the established non-null
+      // intelligence contract while canonical persistence remains nullable for future providers.
+      adAccount: { currency: row.account.currency ?? '' },
+      productMappings: row.productMappings,
+      collectionMappings: row.collectionMappings,
+    }));
   }
 }
 

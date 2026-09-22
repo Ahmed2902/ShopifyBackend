@@ -1,4 +1,5 @@
 import { storeDate } from '../intelligence/intelligence.dates.js';
+import type { AdvertisingAnalyticsRepository } from './advertising-analytics.repository.js';
 import { aggregateMeta, aggregateOrders, orderDate } from './analytics.metrics.js';
 import type { AnalyticsRepository } from './analytics.repository.js';
 import type { AnalyticsWindows } from './analytics.shared.js';
@@ -32,7 +33,7 @@ function groupOrders(rows: OrderRow[], timeZone: string): Map<string, OrderRow[]
 function groupMeta(rows: MetaRow[]): Map<string, MetaRow[]> {
   const groups = new Map<string, MetaRow[]>();
   for (const row of rows) {
-    // Meta Insights `date` is already a provider reporting-date value. Keep that calendar date
+    // Advertising `date` is already the provider reporting-date value. Keep that calendar date
     // intact rather than pretending it is an instant in the merchant timezone.
     const date = row.date.toISOString().slice(0, 10);
     const values = groups.get(date) ?? [];
@@ -47,13 +48,16 @@ function blendedMer(netOrderValue: number, spend: number): number | null {
 }
 
 export class OverviewTrendService {
-  constructor(private readonly repository: AnalyticsRepository) {}
+  constructor(
+    private readonly repository: AnalyticsRepository,
+    private readonly advertisingRepository: AdvertisingAnalyticsRepository = repository,
+  ) {}
 
   async current(store: StoreContext, windows: AnalyticsWindows) {
     const selectedAccounts = store.metaConnection?.selectedAdAccountIds ?? [];
     const [orders, metaRows] = await Promise.all([
       this.repository.getOrders(store.id, windows.current.instantFrom, windows.current.instantTo),
-      this.repository.getMetaRows(
+      this.advertisingRepository.getMetaRows(
         store.id,
         selectedAccounts,
         windows.current.metaFrom,
@@ -62,7 +66,7 @@ export class OverviewTrendService {
     ]);
 
     // A performance series has a single currency axis, so every advertising metric exposed by this
-    // resource is explicitly scoped to Meta rows that use the Shopify store currency. Other Meta
+    // resource is explicitly scoped to provider rows that use the Shopify store currency. Other
     // currencies are reported as exclusions instead of being silently converted or mixed.
     const storeCurrencyMetaRows = metaRows.filter((row) => row.accountCurrency === store.currencyCode);
     const excludedMetaCurrencies = [

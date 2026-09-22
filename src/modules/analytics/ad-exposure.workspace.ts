@@ -1,4 +1,5 @@
 import { AppError } from '../../errors/app-error.js';
+import type { AdvertisingAnalyticsRepository } from './advertising-analytics.repository.js';
 import { resolveAnalyticsWindows } from './analytics.dates.js';
 import {
   aggregateMeta,
@@ -9,6 +10,7 @@ import {
 import { AnalyticsRepository } from './analytics.repository.js';
 import type { AnalyticsListQuery, AnalyticsRangeQuery } from './analytics.schema.js';
 import { pagination, splitCommerce, splitMeta, windowResponse } from './analytics.shared.js';
+import { CanonicalAnalyticsRepository } from './canonical-analytics.repository.js';
 import {
   AD_EXPOSURE_DETAIL_MEMBER_LIMIT,
   AD_EXPOSURE_LIST_MEMBER_LIMIT,
@@ -147,6 +149,7 @@ export class AdExposureWorkspace {
   constructor(
     private readonly analyticsRepository: AnalyticsRepository = new AnalyticsRepository(),
     private readonly repository: AdExposureRepository = new AdExposureRepository(),
+    private readonly advertisingRepository: AdvertisingAnalyticsRepository = analyticsRepository,
   ) {}
 
   async list(storeId: string, query: AnalyticsListQuery, now = new Date()) {
@@ -209,7 +212,7 @@ export class AdExposureWorkspace {
     const adIds = ads.map((ad) => ad.id);
     const productIds = [...new Set(ads.flatMap(targetProductIds))];
     const [metaRows, commerceRows, inventoryRows] = await Promise.all([
-      this.analyticsRepository.getMetaRows(
+      this.advertisingRepository.getMetaRows(
         storeId,
         context.selectedAccountIds,
         context.windows.comparison.metaFrom,
@@ -460,4 +463,8 @@ export class AdExposureWorkspace {
   }
 }
 
-export const adExposureWorkspace = new AdExposureWorkspace();
+export const adExposureWorkspace = new AdExposureWorkspace(
+  new AnalyticsRepository(),
+  new AdExposureRepository(),
+  new CanonicalAnalyticsRepository(),
+);

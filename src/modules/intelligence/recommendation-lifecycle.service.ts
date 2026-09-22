@@ -84,26 +84,39 @@ async function loadEntityNames(storeId: string, recommendations: RankedRecommend
 
   const [campaigns, adSets, ads, creatives, products, collections] = await Promise.all([
     ids.campaigns.size
-      ? prisma.metaCampaign.findMany({
-          where: { id: { in: [...ids.campaigns] }, adAccount: { storeId } },
+      ? prisma.advertisingCampaign.findMany({
+          where: {
+            id: { in: [...ids.campaigns] },
+            account: { storeId, provider: 'META' },
+          },
           select: { id: true, name: true },
         })
       : Promise.resolve([]),
     ids.adSets.size
-      ? prisma.metaAdSet.findMany({
-          where: { id: { in: [...ids.adSets] }, adAccount: { storeId } },
+      ? prisma.advertisingGroup.findMany({
+          where: {
+            id: { in: [...ids.adSets] },
+            kind: 'AD_SET',
+            account: { storeId, provider: 'META' },
+          },
           select: { id: true, name: true },
         })
       : Promise.resolve([]),
     ids.ads.size
-      ? prisma.metaAd.findMany({
-          where: { id: { in: [...ids.ads] }, adAccount: { storeId } },
+      ? prisma.advertisingAd.findMany({
+          where: {
+            id: { in: [...ids.ads] },
+            account: { storeId, provider: 'META' },
+          },
           select: { id: true, name: true },
         })
       : Promise.resolve([]),
     ids.creatives.size
-      ? prisma.metaCreative.findMany({
-          where: { id: { in: [...ids.creatives] }, adAccount: { storeId } },
+      ? prisma.advertisingCreative.findMany({
+          where: {
+            id: { in: [...ids.creatives] },
+            account: { storeId, provider: 'META' },
+          },
           select: { id: true, name: true, title: true },
         })
       : Promise.resolve([]),

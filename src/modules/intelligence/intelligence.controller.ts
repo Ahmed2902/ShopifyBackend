@@ -10,7 +10,8 @@ import {
   intelligenceSnapshotReadService,
   type IntelligenceSnapshotReadService,
 } from './intelligence-snapshot.read.service.js';
-import { intelligenceService, type IntelligenceService } from './intelligence.service.js';
+import { intelligenceRuntimeService } from './intelligence.runtime.js';
+import type { IntelligenceService } from './intelligence.service.js';
 
 function recommendationLimit(res: Response) {
   return Math.max(
@@ -72,6 +73,6 @@ export class IntelligenceController {
 }
 
 export const intelligenceController = new IntelligenceController(
-  intelligenceService,
+  intelligenceRuntimeService,
   intelligenceSnapshotReadService,
 );

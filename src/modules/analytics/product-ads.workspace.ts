@@ -1,9 +1,11 @@
 import { AppError } from '../../errors/app-error.js';
+import type { AdvertisingAnalyticsRepository } from './advertising-analytics.repository.js';
 import { resolveAnalyticsWindows } from './analytics.dates.js';
 import { commerceRowDate, percentChange } from './analytics.metrics.js';
 import { AnalyticsRepository } from './analytics.repository.js';
 import type { AnalyticsListQuery, AnalyticsRangeQuery } from './analytics.schema.js';
 import { pagination, splitCommerce, splitMeta, windowResponse } from './analytics.shared.js';
+import { CanonicalAnalyticsRepository } from './canonical-analytics.repository.js';
 import {
   buildProductAdsPeriod,
   emptyProductAdsPeriodProduct,
@@ -19,6 +21,7 @@ export class ProductAdsWorkspace {
   constructor(
     private readonly analyticsRepository: AnalyticsRepository = new AnalyticsRepository(),
     private readonly productAdsRepository: ProductAdsRepository = new ProductAdsRepository(),
+    private readonly advertisingRepository: AdvertisingAnalyticsRepository = analyticsRepository,
   ) {}
 
   async list(storeId: string, query: AnalyticsListQuery, now = new Date()) {
@@ -98,7 +101,7 @@ export class ProductAdsWorkspace {
         windows.comparison.instantFrom,
         windows.current.instantTo,
       ),
-      this.analyticsRepository.getMetaRows(
+      this.advertisingRepository.getMetaRows(
         storeId,
         selectedAccountIds,
         windows.comparison.metaFrom,
@@ -238,4 +241,8 @@ export class ProductAdsWorkspace {
   }
 }
 
-export const productAdsWorkspace = new ProductAdsWorkspace();
+export const productAdsWorkspace = new ProductAdsWorkspace(
+  new AnalyticsRepository(),
+  new ProductAdsRepository(),
+  new CanonicalAnalyticsRepository(),
+);

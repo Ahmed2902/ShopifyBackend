@@ -7,20 +7,20 @@ export const AD_EXPOSURE_DETAIL_MEMBER_LIMIT = 100;
 function buildAdSelect(collectionMemberLimit: number) {
   return {
     id: true,
-    metaAdId: true,
+    providerEntityId: true,
     name: true,
-    configuredStatus: true,
+    status: true,
     effectiveStatus: true,
     targetScope: true,
     targetScopeConfidence: true,
     targetScopeEvidence: true,
-    adAccount: { select: { metaAccountId: true, currency: true } },
-    campaign: { select: { id: true, metaCampaignId: true, name: true } },
-    adSet: { select: { id: true, metaAdSetId: true, name: true } },
+    account: { select: { providerEntityId: true, currency: true } },
+    campaign: { select: { id: true, providerEntityId: true, name: true } },
+    group: { select: { id: true, providerEntityId: true, name: true } },
     creative: {
       select: {
         id: true,
-        metaCreativeId: true,
+        providerEntityId: true,
         name: true,
         title: true,
         thumbnailUrl: true,
@@ -31,7 +31,7 @@ function buildAdSelect(collectionMemberLimit: number) {
         validUntil: null,
         product: { deletedAt: null },
         OR: [
-          { granularity: { not: 'VARIANT' } },
+          { granularity: { not: 'VARIANT' as const } },
           { variant: { is: { deletedAt: null } } },
         ],
       },
@@ -104,7 +104,7 @@ function buildAdSelect(collectionMemberLimit: number) {
             products: {
               where: { product: { deletedAt: null } },
               take: collectionMemberLimit,
-              orderBy: [{ position: 'asc' }, { productId: 'asc' }],
+              orderBy: [{ position: 'asc' as const }, { productId: 'asc' as const }],
               select: {
                 position: true,
                 product: {
@@ -122,12 +122,12 @@ function buildAdSelect(collectionMemberLimit: number) {
         },
       },
     },
-  } satisfies Prisma.MetaAdSelect;
+  } satisfies Prisma.AdvertisingAdSelect;
 }
 
 const adListSelect = buildAdSelect(AD_EXPOSURE_LIST_MEMBER_LIMIT);
 const adDetailSelect = buildAdSelect(AD_EXPOSURE_DETAIL_MEMBER_LIMIT);
-type AdExposureRow = Prisma.MetaAdGetPayload<{ select: typeof adListSelect }>;
+type CanonicalAdExposureRow = Prisma.AdvertisingAdGetPayload<{ select: typeof adListSelect }>;
 
 function optionSelectorEntries(value: unknown): Array<[string, string[]]> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -141,7 +141,9 @@ function optionSelectorEntries(value: unknown): Array<[string, string[]]> | null
   return entries.length > 0 ? entries : null;
 }
 
-function productOptionMappingIsCurrent(mapping: AdExposureRow['productMappings'][number]): boolean {
+function productOptionMappingIsCurrent(
+  mapping: CanonicalAdExposureRow['productMappings'][number],
+): boolean {
   if (mapping.granularity !== 'PRODUCT_OPTION') return true;
   const entries = optionSelectorEntries(mapping.optionSelector);
   if (!entries) return false;
@@ -152,10 +154,42 @@ function productOptionMappingIsCurrent(mapping: AdExposureRow['productMappings']
   );
 }
 
-function normalizeCurrentTargets(row: AdExposureRow): AdExposureRow {
+function compatibilityRow(row: CanonicalAdExposureRow) {
+  if (!row.group) return null;
   return {
-    ...row,
+    id: row.id,
+    metaAdId: row.providerEntityId,
+    name: row.name,
+    configuredStatus: row.status,
+    effectiveStatus: row.effectiveStatus,
+    targetScope: row.targetScope,
+    targetScopeConfidence: row.targetScopeConfidence,
+    targetScopeEvidence: row.targetScopeEvidence,
+    adAccount: {
+      metaAccountId: row.account.providerEntityId,
+      currency: row.account.currency,
+    },
+    campaign: {
+      id: row.campaign.id,
+      metaCampaignId: row.campaign.providerEntityId,
+      name: row.campaign.name,
+    },
+    adSet: {
+      id: row.group.id,
+      metaAdSetId: row.group.providerEntityId,
+      name: row.group.name,
+    },
+    creative: row.creative
+      ? {
+          id: row.creative.id,
+          metaCreativeId: row.creative.providerEntityId,
+          name: row.creative.name,
+          title: row.creative.title,
+          thumbnailUrl: row.creative.thumbnailUrl,
+        }
+      : null,
     productMappings: row.productMappings.filter(productOptionMappingIsCurrent),
+    collectionMappings: row.collectionMappings,
   };
 }
 
@@ -164,32 +198,48 @@ export class AdExposureRepository {
     if (selectedAccountIds.length === 0) return { total: 0, items: [] };
     const where = {
       deletedAt: null,
-      adAccount: { storeId, metaAccountId: { in: selectedAccountIds } },
+      groupId: { not: null as string | null },
+      account: {
+        storeId,
+        provider: 'META' as const,
+        providerEntityId: { in: selectedAccountIds },
+      },
     };
-    const [total, items] = await Promise.all([
-      prisma.metaAd.count({ where }),
-      prisma.metaAd.findMany({
+    const [total, rows] = await Promise.all([
+      prisma.advertisingAd.count({ where }),
+      prisma.advertisingAd.findMany({
         where,
         select: adListSelect,
-        orderBy: [{ metaUpdatedAt: 'desc' }, { name: 'asc' }],
+        orderBy: [{ providerUpdatedAt: 'desc' }, { name: 'asc' }],
         skip: (page - 1) * limit,
         take: limit,
       }),
     ]);
-    return { total, items: items.map(normalizeCurrentTargets) };
+    return {
+      total,
+      items: rows.flatMap((row) => {
+        const item = compatibilityRow(row);
+        return item ? [item] : [];
+      }),
+    };
   }
 
   async getAd(storeId: string, selectedAccountIds: string[], adId: string) {
     if (selectedAccountIds.length === 0) return null;
-    const row = await prisma.metaAd.findFirst({
+    const row = await prisma.advertisingAd.findFirst({
       where: {
         id: adId,
         deletedAt: null,
-        adAccount: { storeId, metaAccountId: { in: selectedAccountIds } },
+        groupId: { not: null },
+        account: {
+          storeId,
+          provider: 'META',
+          providerEntityId: { in: selectedAccountIds },
+        },
       },
       select: adDetailSelect,
     });
-    return row ? normalizeCurrentTargets(row) : null;
+    return row ? compatibilityRow(row) : null;
   }
 
   getInventoryForProducts(storeId: string, productIds: string[]) {

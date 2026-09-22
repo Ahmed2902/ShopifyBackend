@@ -11,6 +11,10 @@ import {
   type AdvertisingOverviewAggregateRow,
   type AdvertisingOverviewPeriod,
 } from './advertising-analytics.read.repository.js';
+import type {
+  AdvertisingAnalyticsRepository,
+  AdvertisingMetaFilter,
+} from './advertising-analytics.repository.js';
 import {
   AdvertisingEntityAnalyticsReadRepository,
   type AdvertisingEntityAggregateRow,
@@ -20,14 +24,15 @@ import {
 import type { AnalyticsRepository } from './analytics.repository.js';
 import { inRange, pagination, splitMeta, windowResponse } from './analytics.shared.js';
 import type { AnalyticsWindows } from './analytics.shared.js';
+import { CanonicalCreativeVideoRetentionService } from './canonical-creative-video-retention.service.js';
 import { CreativeAdvertisingReadRepository } from './creative-advertising.read.repository.js';
-import { CreativeVideoRetentionService } from './creative-video-retention.service.js';
+import type { CreativeVideoRetentionService } from './creative-video-retention.service.js';
 
 type StoreContext = NonNullable<Awaited<ReturnType<AnalyticsRepository['getStoreContext']>>>;
 type CreativeMetaRow = Awaited<ReturnType<CreativeAdvertisingReadRepository['getRows']>>[number];
 
 type MetaKind = 'CAMPAIGN' | 'ADSET' | 'AD';
-type MetaFilter = Parameters<AnalyticsRepository['getMetaRows']>[4];
+type MetaFilter = AdvertisingMetaFilter;
 
 function filter(kind: MetaKind, ids: string[]): MetaFilter {
   if (kind === 'CAMPAIGN') return { campaignIds: ids };
@@ -98,11 +103,11 @@ function entityRow(
 
 export class AdvertisingAnalyticsService {
   constructor(
-    private readonly repository: AnalyticsRepository,
+    private readonly repository: AdvertisingAnalyticsRepository,
     private readonly readRepository: AdvertisingAnalyticsReadRepository =
       new AdvertisingAnalyticsReadRepository(),
     private readonly videoRetentionService: CreativeVideoRetentionService =
-      new CreativeVideoRetentionService(),
+      new CanonicalCreativeVideoRetentionService(),
     private readonly creativeReadRepository: CreativeAdvertisingReadRepository =
       new CreativeAdvertisingReadRepository(),
     private readonly entityReadRepository: AdvertisingEntityAnalyticsReadRepository =

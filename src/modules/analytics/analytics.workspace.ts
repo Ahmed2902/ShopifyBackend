@@ -1,12 +1,14 @@
 import { AppError } from '../../errors/app-error.js';
 import { memoizeRequestRead } from '../../lib/request-read-cache.js';
 import { AdvertisingAnalyticsReadRepository } from './advertising-analytics.read.repository.js';
+import type { AdvertisingAnalyticsRepository } from './advertising-analytics.repository.js';
 import { AdvertisingAnalyticsService } from './advertising-analytics.service.js';
 import { resolveAnalyticsWindows } from './analytics.dates.js';
 import { metricChanges, percentChange } from './analytics.metrics.js';
 import { AnalyticsRepository } from './analytics.repository.js';
 import type { AnalyticsListQuery, AnalyticsRangeQuery } from './analytics.schema.js';
 import { windowResponse } from './analytics.shared.js';
+import { CanonicalAnalyticsRepository } from './canonical-analytics.repository.js';
 import { collectionAnalyticsReadService } from './collection-analytics.read.service.js';
 import type { CollectionAnalyticsReadService } from './collection-analytics.read.service.js';
 import { CommerceAnalyticsReadRepository } from './commerce-analytics.read.repository.js';
@@ -31,9 +33,13 @@ export class AnalyticsWorkspace {
       new AdvertisingAnalyticsReadRepository(),
     commerceReadRepository?: CommerceAnalyticsReadRepository,
     private readonly collectionReadService?: CollectionAnalyticsReadService,
+    advertisingRepository: AdvertisingAnalyticsRepository = repository,
   ) {
     this.commerce = new CommerceAnalyticsService(repository, commerceReadRepository);
-    this.advertisingService = new AdvertisingAnalyticsService(repository, advertisingReadRepository);
+    this.advertisingService = new AdvertisingAnalyticsService(
+      advertisingRepository,
+      advertisingReadRepository,
+    );
   }
 
   async overview(storeId: string, query: AnalyticsRangeQuery, now = new Date()) {
@@ -261,4 +267,5 @@ export const analyticsWorkspace = new AnalyticsWorkspace(
   new AdvertisingAnalyticsReadRepository(),
   new CommerceAnalyticsReadRepository(),
   collectionAnalyticsReadService,
+  new CanonicalAnalyticsRepository(),
 );
