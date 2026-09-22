@@ -12,6 +12,26 @@ import {
 } from './analytics.schema.js';
 import { CanonicalAnalyticsRepository } from './canonical-analytics.repository.js';
 
+type StoreContext = NonNullable<Awaited<ReturnType<AnalyticsRepository['getStoreContext']>>>;
+
+export function scopeSelectedMetaAccount(store: StoreContext, accountId: string): StoreContext {
+  const configuredAccountIds = store.metaConnection?.selectedAdAccountIds ?? [];
+  if (!store.metaConnection || !configuredAccountIds.includes(accountId)) {
+    throw new AppError(
+      'Meta ad account is not selected for this store',
+      400,
+      'META_AD_ACCOUNT_NOT_SELECTED',
+    );
+  }
+  return {
+    ...store,
+    metaConnection: {
+      ...store.metaConnection,
+      selectedAdAccountIds: [accountId],
+    },
+  };
+}
+
 class AccountScopedAnalyticsRepository extends AnalyticsRepository {
   constructor(private readonly accountId: string) {
     super();
@@ -19,22 +39,7 @@ class AccountScopedAnalyticsRepository extends AnalyticsRepository {
 
   override async getStoreContext(storeId: string) {
     const store = await super.getStoreContext(storeId);
-    if (!store) return store;
-    const configuredAccountIds = store.metaConnection?.selectedAdAccountIds ?? [];
-    if (!store.metaConnection || !configuredAccountIds.includes(this.accountId)) {
-      throw new AppError(
-        'Meta ad account is not selected for this store',
-        400,
-        'META_AD_ACCOUNT_NOT_SELECTED',
-      );
-    }
-    return {
-      ...store,
-      metaConnection: {
-        ...store.metaConnection,
-        selectedAdAccountIds: [this.accountId],
-      },
-    };
+    return store ? scopeSelectedMetaAccount(store, this.accountId) : store;
   }
 }
 
