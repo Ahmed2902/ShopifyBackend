@@ -104,6 +104,24 @@ describe('AdvisorReadService', () => {
     });
   });
 
+  it('clamps provider lookback windows to the advisor read boundary', async () => {
+    const { value, meta } = createService();
+
+    await value.paidMediaList('store-1', 'META', 'AD', { days: 999 });
+    await value.paidMediaList('store-1', 'META', 'AD', { days: 0 });
+
+    expect(meta.list).toHaveBeenNthCalledWith(1, 'store-1', 'AD', {
+      days: 365,
+      page: undefined,
+      limit: undefined,
+    });
+    expect(meta.list).toHaveBeenNthCalledWith(2, 'store-1', 'AD', {
+      days: 1,
+      page: undefined,
+      limit: undefined,
+    });
+  });
+
   it('keeps search scoped when the advisor already knows the entity type', async () => {
     const { value, analytics, meta } = createService();
     await value.search('store-1', { query: 'Hero', entityTypes: ['PRODUCT'] });
