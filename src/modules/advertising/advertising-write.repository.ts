@@ -113,7 +113,7 @@ export class AdvertisingWriteRepository {
       accountId: string;
       campaignId: string;
       providerEntityId: string;
-      kind: 'AD_SET' | 'AD_GROUP';
+      kind: 'AD_SET' | 'AD_GROUP' | 'ASSET_GROUP';
       name: string;
       status?: string | null;
       effectiveStatus?: string | null;
