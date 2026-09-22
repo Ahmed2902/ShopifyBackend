@@ -10,18 +10,25 @@ describe('advertising provider registry', () => {
   it('keeps the supported provider list and capabilities provider-neutral', () => {
     const registry = new AdvertisingProviderRegistry([
       new MetaAdvertisingEvidenceProvider({} as never),
-      new TikTokAdvertisingEvidenceProvider({} as never),
+      new TikTokAdvertisingEvidenceProvider({} as never, {} as never),
     ]);
 
     expect(registry.supportedProviders()).toEqual(ADVERTISING_PROVIDERS);
     expect(registry.capabilities().map((item) => item.provider)).toEqual(ADVERTISING_PROVIDERS);
+    expect(registry.capabilities().flatMap((item) => item.levels)).not.toContain('AD_SET');
+    expect(registry.capabilities()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ provider: 'META', groupKinds: ['AD_SET'], groupLabel: 'Ad Set' }),
+        expect.objectContaining({ provider: 'TIKTOK', groupKinds: ['AD_GROUP'], groupLabel: 'Ad Group' }),
+      ]),
+    );
   });
 
-  it('preserves Meta behavior through the normalized provider boundary', async () => {
+  it('preserves Meta behavior through the normalized GROUP boundary', async () => {
     const analytics = {
       advertising: vi.fn().mockResolvedValue({ currencies: [{ currency: 'USD' }] }),
       campaigns: vi.fn(),
-      adSets: vi.fn(),
+      adSets: vi.fn().mockResolvedValue({ items: [] }),
       ads: vi.fn(),
       creatives: vi.fn(),
       campaign: vi.fn(),
@@ -32,33 +39,45 @@ describe('advertising provider registry', () => {
     const provider = new MetaAdvertisingEvidenceProvider(analytics as never);
 
     const result = await provider.overview('store-1', { days: 45 });
+    await provider.list('store-1', 'GROUP', { days: 7, page: 2, limit: 25 });
 
     expect(analytics.advertising).toHaveBeenCalledWith('store-1', { days: 45 });
+    expect(analytics.adSets).toHaveBeenCalledWith('store-1', { days: 7, page: 2, limit: 25 });
     expect(result).toMatchObject({ provider: 'META' });
     expect(result.capabilities.attributionModel).toBe('PROVIDER_REPORTED');
   });
 
-  it('normalizes TikTok ad groups as AD_SET while keeping unsupported creative reads explicit', async () => {
-    const monitor = {
-      read: vi.fn().mockResolvedValue({
-        connection: { configured: true },
-        window: { days: 14 },
-        counts: { campaigns: 1, groups: 2, ads: 3 },
-        summary: { currencies: [] },
-        hierarchy: { items: [] },
-      }),
+  it('uses canonical TikTok runtime reads and keeps unsupported creative reads explicit', async () => {
+    const canonicalReads = {
+      list: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+      overview: vi.fn(),
+      detail: vi.fn(),
     };
-    const provider = new TikTokAdvertisingEvidenceProvider(monitor as never);
+    const tiktokRepository = {
+      findConnectionForStore: vi.fn().mockResolvedValue({ selectedAdvertiserIds: ['adv-1'] }),
+    };
+    const provider = new TikTokAdvertisingEvidenceProvider(
+      canonicalReads as never,
+      tiktokRepository as never,
+    );
 
-    await provider.list('store-1', 'AD_SET', { days: 14, page: 2, limit: 25 });
-    const creatives = await provider.list('store-1', 'CREATIVE');
-
-    expect(monitor.read).toHaveBeenCalledWith('store-1', {
+    await provider.list('store-1', 'GROUP', {
+      accountId: '11111111-1111-4111-8111-111111111111',
       days: 14,
-      level: 'groups',
       page: 2,
       limit: 25,
-      fresh: false,
+    });
+    const creatives = await provider.list('store-1', 'CREATIVE');
+
+    expect(canonicalReads.list).toHaveBeenCalledWith({
+      storeId: 'store-1',
+      provider: 'TIKTOK',
+      selectedAccountExternalIds: ['adv-1'],
+      accountId: '11111111-1111-4111-8111-111111111111',
+      days: 14,
+      level: 'GROUP',
+      page: 2,
+      limit: 25,
     });
     expect(creatives).toMatchObject({ provider: 'TIKTOK', unsupported: true, level: 'CREATIVE' });
   });
