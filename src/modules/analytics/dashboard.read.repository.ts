@@ -26,6 +26,20 @@ type RawInventoryPreviewRow = {
   inventory_mode: string;
 };
 
+type RawTopProductRow = {
+  product_id: string;
+  product_title: string;
+  order_count: bigint | number | null;
+  net_units: bigint | number | null;
+  net_revenue: Prisma.Decimal | string | number | null;
+};
+
+type RawAdPlatformSessionRow = {
+  platform: string;
+  period: 'CURRENT' | 'COMPARISON';
+  session_count: bigint | number | null;
+};
+
 export type DashboardRecentOrder = {
   id: string;
   name: string;
@@ -50,7 +64,26 @@ export type DashboardInventoryPreview = {
   }>;
 };
 
-export type DashboardInventoryInput = {
+export type DashboardTopProduct = {
+  product: { id: string; title: string };
+  orderCount: number;
+  netUnits: number;
+  netRevenue: number;
+};
+
+export type DashboardAdPlatform = 'FACEBOOK' | 'INSTAGRAM' | 'META' | 'GOOGLE' | 'TIKTOK';
+
+export type DashboardAdPlatformSessions = {
+  methodology: 'FIRST_TOUCH_PAID_PLATFORM';
+  items: Array<{
+    platform: DashboardAdPlatform;
+    currentSessions: number;
+    comparisonSessions: number;
+    change: number | null;
+  }>;
+};
+
+export type DashboardRangeInput = {
   storeId: string;
   days: number;
   from?: string;
@@ -58,6 +91,19 @@ export type DashboardInventoryInput = {
   now: Date;
   limit?: number;
 };
+
+export type DashboardInventoryInput = DashboardRangeInput;
+export type DashboardTopProductsInput = DashboardRangeInput;
+export type DashboardAdPlatformSessionsInput = Omit<DashboardRangeInput, 'limit'>;
+
+function percentChange(current: number, comparison: number) {
+  if (comparison === 0) return current === 0 ? 0 : null;
+  return (current - comparison) / Math.abs(comparison);
+}
+
+function isDashboardAdPlatform(value: string): value is DashboardAdPlatform {
+  return ['FACEBOOK', 'INSTAGRAM', 'META', 'GOOGLE', 'TIKTOK'].includes(value);
+}
 
 /** Compact reads used only by the Overview dashboard surface. */
 export class DashboardReadRepository {
@@ -106,6 +152,209 @@ export class DashboardReadRepository {
       currentTotalAmount: Number(row.current_total_amount ?? 0),
       currentQuantity: Number(row.current_quantity ?? 0),
     }));
+  }
+
+  async getTopProducts(input: DashboardTopProductsInput): Promise<DashboardTopProduct[]> {
+    const limit = input.limit ?? 6;
+    const from = input.from ?? null;
+    const to = input.to ?? null;
+    const rows = await prisma.$queryRaw<RawTopProductRow[]>(Prisma.sql`
+      WITH config AS (
+        SELECT
+          s."id" AS store_id,
+          s."ianaTimezone" AS time_zone,
+          s."currencyCode" AS currency_code,
+          CASE
+            WHEN ${from}::text IS NOT NULL THEN ${from}::date
+            ELSE ((${input.now}::timestamptz AT TIME ZONE s."ianaTimezone")::date - ${input.days}::int)
+          END AS from_date,
+          CASE
+            WHEN ${to}::text IS NOT NULL THEN ${to}::date
+            ELSE ((${input.now}::timestamptz AT TIME ZONE s."ianaTimezone")::date - 1)
+          END AS to_date
+        FROM "Store" s
+        WHERE s."id" = ${input.storeId}::uuid
+      ),
+      scoped_lines AS MATERIALIZED (
+        SELECT
+          line."id",
+          line."orderId",
+          line."productId",
+          line."quantity",
+          COALESCE(line."discountedTotal", 0) AS product_revenue
+        FROM "OrderLineItem" line
+        INNER JOIN "Order" o ON o."id" = line."orderId"
+        CROSS JOIN config
+        WHERE line."productId" IS NOT NULL
+          AND o."storeId" = config.store_id
+          AND o."isTest" = FALSE
+          AND o."cancelledAt" IS NULL
+          AND o."currencyCode" = config.currency_code
+          AND COALESCE(o."processedAt", o."shopifyCreatedAt") >= (config.from_date::timestamp AT TIME ZONE config.time_zone)
+          AND COALESCE(o."processedAt", o."shopifyCreatedAt") < ((config.to_date + 1)::timestamp AT TIME ZONE config.time_zone)
+      ),
+      refunds AS (
+        SELECT
+          refund_line."orderLineItemId" AS order_line_item_id,
+          COALESCE(SUM(refund_line."quantity"), 0) AS refunded_units,
+          COALESCE(SUM(refund_line."subtotal"), 0) AS refund_value
+        FROM "RefundLineItem" refund_line
+        INNER JOIN scoped_lines scoped ON scoped."id" = refund_line."orderLineItemId"
+        GROUP BY refund_line."orderLineItemId"
+      ),
+      product_rollup AS (
+        SELECT
+          scoped."productId" AS product_id,
+          COUNT(DISTINCT scoped."orderId") AS order_count,
+          GREATEST(COALESCE(SUM(scoped."quantity" - COALESCE(refunds.refunded_units, 0)), 0), 0) AS net_units,
+          GREATEST(COALESCE(SUM(scoped.product_revenue - COALESCE(refunds.refund_value, 0)), 0), 0) AS net_revenue
+        FROM scoped_lines scoped
+        LEFT JOIN refunds ON refunds.order_line_item_id = scoped."id"
+        GROUP BY scoped."productId"
+      )
+      SELECT
+        rollup.product_id,
+        product."title" AS product_title,
+        rollup.order_count,
+        rollup.net_units,
+        rollup.net_revenue
+      FROM product_rollup rollup
+      INNER JOIN "Product" product ON product."id" = rollup.product_id
+      WHERE product."storeId" = ${input.storeId}::uuid
+        AND product."deletedAt" IS NULL
+      ORDER BY rollup.net_revenue DESC, rollup.net_units DESC, product."title" ASC
+      LIMIT ${limit}
+    `);
+
+    return rows.map((row) => ({
+      product: { id: row.product_id, title: row.product_title },
+      orderCount: Number(row.order_count ?? 0),
+      netUnits: Number(row.net_units ?? 0),
+      netRevenue: Number(row.net_revenue ?? 0),
+    }));
+  }
+
+  async getAdPlatformSessions(
+    input: DashboardAdPlatformSessionsInput,
+  ): Promise<DashboardAdPlatformSessions> {
+    const from = input.from ?? null;
+    const to = input.to ?? null;
+    const rows = await prisma.$queryRaw<RawAdPlatformSessionRow[]>(Prisma.sql`
+      WITH base_config AS (
+        SELECT
+          s."id" AS store_id,
+          s."ianaTimezone" AS time_zone,
+          CASE
+            WHEN ${from}::text IS NOT NULL THEN ${from}::date
+            ELSE ((${input.now}::timestamptz AT TIME ZONE s."ianaTimezone")::date - ${input.days}::int)
+          END AS current_from,
+          CASE
+            WHEN ${to}::text IS NOT NULL THEN ${to}::date
+            ELSE ((${input.now}::timestamptz AT TIME ZONE s."ianaTimezone")::date - 1)
+          END AS current_to
+        FROM "Store" s
+        WHERE s."id" = ${input.storeId}::uuid
+      ),
+      config AS (
+        SELECT
+          store_id,
+          time_zone,
+          current_from,
+          current_to,
+          current_from - ((current_to - current_from) + 1) AS comparison_from,
+          current_from - 1 AS comparison_to
+        FROM base_config
+      ),
+      first_touch AS MATERIALIZED (
+        SELECT
+          session."id" AS session_id,
+          session."startedAt" AS started_at,
+          touch."source"::text AS source,
+          LOWER(COALESCE(touch."utmSource", '')) AS utm_source,
+          LOWER(COALESCE(touch."utmMedium", '')) AS utm_medium,
+          LOWER(COALESCE(touch."referrerUrl", '')) AS referrer_url
+        FROM "StorefrontSession" session
+        INNER JOIN "StorefrontSessionTouch" touch
+          ON touch."sessionId" = session."id"
+         AND touch."ordinal" = 1
+        CROSS JOIN config
+        WHERE session."storeId" = config.store_id
+          AND session."eventCount" > 0
+          AND session."startedAt" >= (config.comparison_from::timestamp AT TIME ZONE config.time_zone)
+          AND session."startedAt" < ((config.current_to + 1)::timestamp AT TIME ZONE config.time_zone)
+      ),
+      classified AS (
+        SELECT
+          first_touch.session_id,
+          first_touch.started_at,
+          CASE
+            WHEN first_touch.source = 'META' THEN
+              CASE
+                WHEN first_touch.utm_source IN ('instagram', 'ig', 'instagram.com')
+                  OR first_touch.referrer_url LIKE '%instagram.com%'
+                  THEN 'INSTAGRAM'
+                WHEN first_touch.utm_source IN ('facebook', 'fb', 'facebook.com', 'fb.com')
+                  OR first_touch.referrer_url LIKE '%facebook.com%'
+                  OR first_touch.referrer_url LIKE '%fb.com%'
+                  THEN 'FACEBOOK'
+                ELSE 'META'
+              END
+            WHEN first_touch.source = 'GOOGLE' THEN 'GOOGLE'
+            WHEN first_touch.source = 'TIKTOK' THEN 'TIKTOK'
+            WHEN first_touch.source = 'UTM'
+              AND (
+                first_touch.utm_medium IN ('cpc', 'ppc', 'paid_social', 'paid-social', 'paidsocial')
+                OR first_touch.utm_medium LIKE '%paid%'
+              )
+              THEN CASE
+                WHEN first_touch.utm_source IN ('instagram', 'ig', 'instagram.com') THEN 'INSTAGRAM'
+                WHEN first_touch.utm_source IN ('facebook', 'fb', 'facebook.com', 'fb.com') THEN 'FACEBOOK'
+                WHEN first_touch.utm_source IN ('meta', 'meta.com') THEN 'META'
+                WHEN first_touch.utm_source IN ('google', 'googleads', 'google_ads', 'adwords') THEN 'GOOGLE'
+                WHEN first_touch.utm_source IN ('tiktok', 'tik_tok', 'tiktok.com') THEN 'TIKTOK'
+                ELSE NULL
+              END
+            ELSE NULL
+          END AS platform
+        FROM first_touch
+      )
+      SELECT
+        classified.platform,
+        CASE
+          WHEN classified.started_at >= (config.current_from::timestamp AT TIME ZONE config.time_zone)
+            THEN 'CURRENT'
+          ELSE 'COMPARISON'
+        END AS period,
+        COUNT(DISTINCT classified.session_id) AS session_count
+      FROM classified
+      CROSS JOIN config
+      WHERE classified.platform IS NOT NULL
+      GROUP BY classified.platform, period
+      ORDER BY period ASC, session_count DESC, classified.platform ASC
+    `);
+
+    const byPlatform = new Map<DashboardAdPlatform, { current: number; comparison: number }>();
+    for (const row of rows) {
+      if (!isDashboardAdPlatform(row.platform)) continue;
+      const value = byPlatform.get(row.platform) ?? { current: 0, comparison: 0 };
+      if (row.period === 'CURRENT') value.current = Number(row.session_count ?? 0);
+      else value.comparison = Number(row.session_count ?? 0);
+      byPlatform.set(row.platform, value);
+    }
+
+    return {
+      methodology: 'FIRST_TOUCH_PAID_PLATFORM',
+      items: [...byPlatform.entries()]
+        .map(([platform, value]) => ({
+          platform,
+          currentSessions: value.current,
+          comparisonSessions: value.comparison,
+          change: percentChange(value.current, value.comparison),
+        }))
+        .sort((left, right) =>
+          right.currentSessions - left.currentSessions || left.platform.localeCompare(right.platform),
+        ),
+    };
   }
 
   async getInventoryPreview(input: DashboardInventoryInput): Promise<DashboardInventoryPreview> {
