@@ -9,6 +9,7 @@ describe('PixelBehaviorOverviewReadService', () => {
     const currentTo = new Date('2026-09-21T03:59:59.999Z');
     const comparisonFrom = new Date('2026-08-11T04:00:00.000Z');
     const comparisonTo = new Date('2026-09-01T03:59:59.999Z');
+    const snapshotAt = new Date('2026-09-22T08:00:00.000Z');
     const behavior = {
       overview: vi.fn().mockResolvedValue({
         window: {
@@ -43,9 +44,9 @@ describe('PixelBehaviorOverviewReadService', () => {
     };
     const service = new PixelBehaviorOverviewReadService(behavior as never, checkout as never);
 
-    const result = await service.read(storeId, { days: 21 });
+    const result = await service.read(storeId, { days: 21 }, snapshotAt);
 
-    expect(behavior.overview).toHaveBeenCalledWith(storeId, { days: 21 });
+    expect(behavior.overview).toHaveBeenCalledWith(storeId, { days: 21 }, snapshotAt);
     expect(checkout.getOverlapCounts).toHaveBeenCalledWith({
       storeId,
       currentFrom,
