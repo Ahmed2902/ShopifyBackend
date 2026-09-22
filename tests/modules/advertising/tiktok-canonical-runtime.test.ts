@@ -27,7 +27,6 @@ async function createHierarchy(input: {
   provider: 'TIKTOK' | 'META';
   accountExternalId: string;
   suffix: string;
-  deletedAd?: boolean;
 }) {
   const account = await prisma.advertisingAccount.create({
     data: {
@@ -62,7 +61,6 @@ async function createHierarchy(input: {
       groupId: group.id,
       providerEntityId: `ad-${input.suffix}`,
       name: `Ad ${input.suffix}`,
-      deletedAt: input.deletedAd ? new Date('2026-09-20T00:00:00.000Z') : null,
     },
   });
   return { account, campaign, group, ad };
@@ -133,16 +131,19 @@ describeDatabase('TikTok canonical paid-media runtime', () => {
       accountExternalId: 'adv-selected',
       suffix: 'meta',
     });
-    await createHierarchy({
-      storeId: store.id,
-      provider: 'TIKTOK',
-      accountExternalId: 'adv-selected',
-      suffix: 'soft-deleted',
-      deletedAd: true,
+    await prisma.advertisingAd.create({
+      data: {
+        accountId: selected.account.id,
+        campaignId: selected.campaign.id,
+        groupId: selected.group.id,
+        providerEntityId: 'ad-soft-deleted',
+        name: 'Soft-deleted TikTok ad',
+        deletedAt: new Date('2026-09-20T00:00:00.000Z'),
+      },
     });
 
-    await addMetric({ ...selected, accountId: selected.account.id, campaignId: selected.campaign.id, groupId: selected.group.id, adId: selected.ad.id, suffix: 'usd', currency: 'USD', spend: 25 });
-    await addMetric({ ...selected, accountId: selected.account.id, campaignId: selected.campaign.id, groupId: selected.group.id, adId: selected.ad.id, suffix: 'eur', currency: 'EUR', spend: 7, conversions: 2, conversionValue: 18 });
+    await addMetric({ accountId: selected.account.id, campaignId: selected.campaign.id, groupId: selected.group.id, adId: selected.ad.id, suffix: 'usd', currency: 'USD', spend: 25 });
+    await addMetric({ accountId: selected.account.id, campaignId: selected.campaign.id, groupId: selected.group.id, adId: selected.ad.id, suffix: 'eur', currency: 'EUR', spend: 7, conversions: 2, conversionValue: 18 });
     await addMetric({ accountId: unselected.account.id, campaignId: unselected.campaign.id, groupId: unselected.group.id, adId: unselected.ad.id, suffix: 'unselected', currency: 'USD', spend: 9999 });
     await addMetric({ accountId: crossStore.account.id, campaignId: crossStore.campaign.id, groupId: crossStore.group.id, adId: crossStore.ad.id, suffix: 'cross-store', currency: 'USD', spend: 8888 });
     await addMetric({ accountId: crossProvider.account.id, campaignId: crossProvider.campaign.id, groupId: crossProvider.group.id, adId: crossProvider.ad.id, suffix: 'cross-provider', currency: 'USD', spend: 7777 });
@@ -156,7 +157,7 @@ describeDatabase('TikTok canonical paid-media runtime', () => {
     });
 
     expect(overview.accounts.map((account) => account.id)).toEqual([selected.account.id]);
-    expect(overview.counts).toMatchObject({ campaigns: 2, groups: 2, ads: 1 });
+    expect(overview.counts).toMatchObject({ campaigns: 1, groups: 1, ads: 1 });
     expect(overview.metrics).toEqual([
       expect.objectContaining({ currency: 'EUR', spend: '7', conversions: '2', conversionValue: '18' }),
       expect.objectContaining({ currency: 'USD', spend: '25', conversions: null, conversionValue: null }),
