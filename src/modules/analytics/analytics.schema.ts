@@ -22,6 +22,7 @@ export const analyticsRangeQuerySchema = z
     from: dateSchema.optional(),
     to: dateSchema.optional(),
     days: z.coerce.number().int().min(1).max(365).default(30),
+    accountId: z.string().trim().min(1).max(128).optional(),
   })
   .refine((value) => Boolean(value.from) === Boolean(value.to), {
     message: 'from and to must be provided together',
