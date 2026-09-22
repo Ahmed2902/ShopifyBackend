@@ -18,63 +18,82 @@ export class TikTokInsightsRepository {
     return connection?.selectedAdvertiserIds ?? [];
   }
 
-  upsertInsight(input: Prisma.TikTokInsightDailyUncheckedCreateInput) {
+  private async upsertInsightTx(
+    tx: Prisma.TransactionClient,
+    input: Prisma.TikTokInsightDailyUncheckedCreateInput,
+  ) {
     const { insightKey, id: _id, createdAt: _createdAt, ...update } = input;
+    const native = await tx.tikTokInsightDaily.upsert({
+      where: { insightKey },
+      create: input,
+      update,
+    });
+    await advertisingWriteRepository.upsertDailyMetric(tx, {
+      id: native.id,
+      metricKey: `TIKTOK:${native.insightKey}`,
+      accountId: native.advertiserDbId,
+      campaignId: native.campaignId,
+      groupId: native.adGroupId,
+      adId: native.adId,
+      creativeIdSnapshot: null,
+      level: metricLevel(native.level),
+      date: native.date,
+      currency: native.accountCurrency,
+      spend: native.spend.toString(),
+      impressions: native.impressions,
+      reach: native.reach,
+      clicks: native.clicks,
+      conversions: native.conversions?.toString() ?? null,
+      conversionValue: native.conversionValue?.toString() ?? null,
+      ctr: native.ctr?.toString() ?? null,
+      cpc: native.cpc?.toString() ?? null,
+      cpm: native.cpm?.toString() ?? null,
+      frequency: native.frequency?.toString() ?? null,
+      cpa: native.costPerConversion?.toString() ?? null,
+      roas: native.roas?.toString() ?? null,
+      providerMetrics: {
+        resultCount: native.resultCount,
+        costPerResult: native.costPerResult,
+        videoPlayActions: native.videoPlayActions,
+        videoWatched2s: native.videoWatched2s,
+        videoWatched6s: native.videoWatched6s,
+        videoViewsP25: native.videoViewsP25,
+        videoViewsP50: native.videoViewsP50,
+        videoViewsP75: native.videoViewsP75,
+        videoViewsP100: native.videoViewsP100,
+        likes: native.likes,
+        comments: native.comments,
+        shares: native.shares,
+        follows: native.follows,
+        profileVisits: native.profileVisits,
+        objectiveType: native.objectiveType,
+        optimizationGoal: native.optimizationGoal,
+        attributionWindow: native.attributionWindow,
+        dimensions: native.dimensionsJson,
+        metrics: native.metricsJson,
+      },
+      breakdownJson: native.dimensionsJson,
+      rawJson: native.rawJson,
+      syncedAt: native.syncedAt,
+    });
+    return native;
+  }
+
+  upsertInsight(input: Prisma.TikTokInsightDailyUncheckedCreateInput) {
+    return prisma.$transaction((tx) => this.upsertInsightTx(tx, input));
+  }
+
+  /**
+   * Bounded batch write used by report ingestion. Native and canonical facts are committed in the
+   * same transaction so a failed canonical projection cannot leave the native row ahead of the
+   * production read model (or vice versa).
+   */
+  upsertInsights(inputs: Prisma.TikTokInsightDailyUncheckedCreateInput[]) {
+    if (inputs.length === 0) return Promise.resolve([]);
     return prisma.$transaction(async (tx) => {
-      const native = await tx.tikTokInsightDaily.upsert({
-        where: { insightKey },
-        create: input,
-        update,
-      });
-      await advertisingWriteRepository.upsertDailyMetric(tx, {
-        id: native.id,
-        metricKey: `TIKTOK:${native.insightKey}`,
-        accountId: native.advertiserDbId,
-        campaignId: native.campaignId,
-        groupId: native.adGroupId,
-        adId: native.adId,
-        creativeIdSnapshot: null,
-        level: metricLevel(native.level),
-        date: native.date,
-        currency: native.accountCurrency,
-        spend: native.spend.toString(),
-        impressions: native.impressions,
-        reach: native.reach,
-        clicks: native.clicks,
-        conversions: native.conversions?.toString() ?? null,
-        conversionValue: native.conversionValue?.toString() ?? null,
-        ctr: native.ctr?.toString() ?? null,
-        cpc: native.cpc?.toString() ?? null,
-        cpm: native.cpm?.toString() ?? null,
-        frequency: native.frequency?.toString() ?? null,
-        cpa: native.costPerConversion?.toString() ?? null,
-        roas: native.roas?.toString() ?? null,
-        providerMetrics: {
-          resultCount: native.resultCount,
-          costPerResult: native.costPerResult,
-          videoPlayActions: native.videoPlayActions,
-          videoWatched2s: native.videoWatched2s,
-          videoWatched6s: native.videoWatched6s,
-          videoViewsP25: native.videoViewsP25,
-          videoViewsP50: native.videoViewsP50,
-          videoViewsP75: native.videoViewsP75,
-          videoViewsP100: native.videoViewsP100,
-          likes: native.likes,
-          comments: native.comments,
-          shares: native.shares,
-          follows: native.follows,
-          profileVisits: native.profileVisits,
-          objectiveType: native.objectiveType,
-          optimizationGoal: native.optimizationGoal,
-          attributionWindow: native.attributionWindow,
-          dimensions: native.dimensionsJson,
-          metrics: native.metricsJson,
-        },
-        breakdownJson: native.dimensionsJson,
-        rawJson: native.rawJson,
-        syncedAt: native.syncedAt,
-      });
-      return native;
+      const written = [];
+      for (const input of inputs) written.push(await this.upsertInsightTx(tx, input));
+      return written;
     });
   }
 
