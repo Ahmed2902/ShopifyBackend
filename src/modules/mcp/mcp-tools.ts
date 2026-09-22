@@ -59,7 +59,7 @@ const advisorEntityTypes = [
   'PRODUCT',
   'COLLECTION',
   'CAMPAIGN',
-  'AD_SET',
+  'GROUP',
   'AD',
   'CREATIVE',
   'LANDING_PAGE',
@@ -67,7 +67,7 @@ const advisorEntityTypes = [
   'RECOMMENDATION',
 ] as const;
 
-const paidMediaSearchTypes = new Set(['CAMPAIGN', 'AD_SET', 'AD', 'CREATIVE']);
+const paidMediaSearchTypes = new Set(['CAMPAIGN', 'GROUP', 'AD', 'CREATIVE']);
 const paidMediaProviders: readonly V1AdProvider[] = ['META', 'TIKTOK'];
 
 function providerAccessBlock(error: unknown): error is AppError {
@@ -141,12 +141,12 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
     name: 'stride_get_paid_media',
     title: 'Read paid-media intelligence',
     description:
-      'Read provider-reported paid-media evidence through Stride’s normalized provider layer while preserving the store plan’s selected advertising-channel entitlement. `overview`, `list`, and `detail` support Meta/TikTok according to returned capabilities. Meta-only `ad_exposure_list` and `ad_exposure_detail` add deterministic Shopify target mapping, mapping confidence/precision, current inventory context, and explicit shared-spend limitations. TikTok has exact campaign/ad-group/ad drill-down but no claimed creative parity. Provider conversion/value metrics are not Shopify purchase truth.',
+      'Read provider-reported paid-media evidence through Stride’s normalized provider layer while preserving the store plan’s selected advertising-channel entitlement. `overview`, `list`, and `detail` support Meta/TikTok according to returned capabilities. The generic hierarchy is Campaign → Group → Ad; provider-specific labels such as Meta Ad Set and TikTok Ad Group are returned by capabilities. Meta-only `ad_exposure_list` and `ad_exposure_detail` add deterministic Shopify target mapping, mapping confidence/precision, current inventory context, and explicit shared-spend limitations. TikTok has canonical campaign/group/ad drill-down but no claimed creative parity. Provider conversion/value metrics are not Shopify purchase truth.',
     inputSchema: schema(
       {
         provider: { enum: ['META', 'TIKTOK'] },
         action: { enum: ['overview', 'list', 'detail', 'ad_exposure_list', 'ad_exposure_detail'] },
-        level: { enum: ['CAMPAIGN', 'AD_SET', 'AD', 'CREATIVE'], description: 'Required for action=list or detail.' },
+        level: { enum: ['CAMPAIGN', 'GROUP', 'AD', 'CREATIVE'], description: 'Required for action=list or detail.' },
         entityId: { type: 'string', description: 'Stride internal entity id. Required for detail or ad_exposure_detail.' },
         ...paginationProperties,
       },
@@ -257,7 +257,7 @@ const paidMediaInput = z
   .object({
     provider: z.enum(['META', 'TIKTOK']),
     action: z.enum(['overview', 'list', 'detail', 'ad_exposure_list', 'ad_exposure_detail']),
-    level: z.enum(['CAMPAIGN', 'AD_SET', 'AD', 'CREATIVE']).optional(),
+    level: z.enum(['CAMPAIGN', 'GROUP', 'AD', 'CREATIVE']).optional(),
     entityId: z.string().min(1).max(256).optional(),
     days,
     page,
@@ -394,7 +394,7 @@ export class McpToolExecutor {
       case 'stride_get_paid_media': {
         const input = paidMediaInput.parse(args);
         let detailEntityId: string | undefined;
-        let level: 'CAMPAIGN' | 'AD_SET' | 'AD' | 'CREATIVE' | undefined;
+        let level: 'CAMPAIGN' | 'GROUP' | 'AD' | 'CREATIVE' | undefined;
 
         if (input.action === 'ad_exposure_list' || input.action === 'ad_exposure_detail') {
           requireMeta(input.provider, input.action);
