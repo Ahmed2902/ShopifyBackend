@@ -8,8 +8,14 @@ import {
 } from './analytics.schema.js';
 import { dashboardWorkspace, type DashboardWorkspace } from './dashboard.workspace.js';
 
-function cacheKey(storeId: string, query: AnalyticsRangeQuery): string {
-  return [storeId, query.from ?? '', query.to ?? '', String(query.days)].join(':');
+export function dashboardCacheKey(storeId: string, query: AnalyticsRangeQuery): string {
+  return [
+    storeId,
+    query.from ?? '',
+    query.to ?? '',
+    String(query.days),
+    query.accountId ?? '',
+  ].join(':');
 }
 
 export class DashboardController {
@@ -20,7 +26,7 @@ export class DashboardController {
     const query = analyticsRangeQuerySchema.parse(req.query);
     const { fresh } = analyticsReadControlSchema.parse(req.query);
     const payload = await dashboardCachedReads.run(
-      cacheKey(storeId, query),
+      dashboardCacheKey(storeId, query),
       async () => toJsonSafe(await this.workspace.read(storeId, query, new Date(), { fresh })),
       {
         fresh,
