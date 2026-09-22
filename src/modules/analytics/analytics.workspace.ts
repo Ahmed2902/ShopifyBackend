@@ -37,8 +37,7 @@ export class AnalyticsWorkspace {
   }
 
   async overview(storeId: string, query: AnalyticsRangeQuery, now = new Date()) {
-    const store = await this.loadStore(storeId);
-    const windows = resolveAnalyticsWindows(query, store.ianaTimezone, now);
+    const { store, windows } = await this.context(storeId, query, now);
     const latestOrderHistoryAttempt = store.shopifyConnection?.syncRuns[0] ?? null;
     const [commerce, advertising, profitabilityBase, latestSuccessfulOrderHistory] =
       await Promise.all([
