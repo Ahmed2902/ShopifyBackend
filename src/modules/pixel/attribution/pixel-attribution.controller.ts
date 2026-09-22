@@ -29,33 +29,27 @@ export class PixelAttributionController {
   constructor(private readonly service: PixelAttributionService = pixelAttributionService) {}
 
   sources = async (req: Request, res: Response) => {
-    res.status(200).json(
-      await this.service.sources(req.context.storeId!, attributionQuery(req.query)),
-    );
+    const query = attributionQuery(req.query);
+    res.status(200).json(await this.service.sources(req.context.storeId!, query));
   };
 
   metaAds = async (req: Request, res: Response) => {
-    res.status(200).json(
-      await this.service.metaAds(req.context.storeId!, attributionQuery(req.query)),
-    );
+    const query = attributionQuery(req.query);
+    res.status(200).json(await this.service.metaAds(req.context.storeId!, query));
   };
 
   paths = async (req: Request, res: Response) => {
-    res.status(200).json(
-      await this.service.paths(req.context.storeId!, attributionQuery(req.query)),
-    );
+    const query = attributionQuery(req.query);
+    res.status(200).json(await this.service.paths(req.context.storeId!, query));
   };
 
   mappingEvidence = async (req: Request, res: Response) => {
+    const query = attributionQuery(req.query);
     const { targetType } = pixelMappingEvidenceQuerySchema.parse({
       targetType: req.query.targetType,
     });
     res.status(200).json(
-      await this.service.mappingEvidence(
-        req.context.storeId!,
-        targetType,
-        attributionQuery(req.query),
-      ),
+      await this.service.mappingEvidence(req.context.storeId!, targetType, query),
     );
   };
 }
