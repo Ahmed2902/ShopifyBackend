@@ -14,6 +14,18 @@ export class PerformanceAnalyticsWorkspace {
   }
 
   async daily(storeId: string, query: AnalyticsRangeQuery, now = new Date()) {
+    // Shopify commerce in this read is store-scoped. Comparing it with one selected Meta account
+    // would make the cross-channel MER/trend look account-specific when the commerce numerator is
+    // still the whole store, so fail closed instead of silently ignoring `accountId` or fabricating
+    // an account-attributed commerce series.
+    if (query.accountId) {
+      throw new AppError(
+        'Account-scoped cross-channel performance is not supported because Shopify commerce remains store-scoped',
+        400,
+        'ACCOUNT_SCOPED_PERFORMANCE_UNSUPPORTED',
+      );
+    }
+
     const store = await memoizeRequestRead(`analytics:store-context:${storeId}`, () =>
       this.repository.getStoreContext(storeId),
     );
