@@ -55,11 +55,17 @@ export class AnalyticsWorkspace {
     const storeCurrencyAds = advertising.currencies.find(
       (item) => item.currency === store.currencyCode,
     );
+    const sameCurrencyAdSpendAvailable = Boolean(storeCurrencyAds);
     const currentSpend = storeCurrencyAds?.current.spend ?? 0;
     const comparisonSpend = storeCurrencyAds?.comparison.spend ?? 0;
-    const currentMer = currentSpend > 0 ? commerce.current.netOrderValue / currentSpend : null;
+    const currentMer =
+      sameCurrencyAdSpendAvailable && currentSpend > 0
+        ? commerce.current.netOrderValue / currentSpend
+        : null;
     const comparisonMer =
-      comparisonSpend > 0 ? commerce.comparison.netOrderValue / comparisonSpend : null;
+      sameCurrencyAdSpendAvailable && comparisonSpend > 0
+        ? commerce.comparison.netOrderValue / comparisonSpend
+        : null;
 
     const currentProfitability = {
       netProductRevenue: profitabilityBase.current.netProductRevenue,
@@ -68,7 +74,7 @@ export class AnalyticsWorkspace {
       contributionBeforeAds: profitabilityBase.current.contributionBeforeAds,
       adSpend: currentSpend,
       contributionAfterAds:
-        profitabilityBase.current.contributionBeforeAds === null
+        !sameCurrencyAdSpendAvailable || profitabilityBase.current.contributionBeforeAds === null
           ? null
           : profitabilityBase.current.contributionBeforeAds - currentSpend,
     };
@@ -79,7 +85,7 @@ export class AnalyticsWorkspace {
       contributionBeforeAds: profitabilityBase.comparison.contributionBeforeAds,
       adSpend: comparisonSpend,
       contributionAfterAds:
-        profitabilityBase.comparison.contributionBeforeAds === null
+        !sameCurrencyAdSpendAvailable || profitabilityBase.comparison.contributionBeforeAds === null
           ? null
           : profitabilityBase.comparison.contributionBeforeAds - comparisonSpend,
     };
@@ -99,6 +105,7 @@ export class AnalyticsWorkspace {
         current: currentProfitability,
         comparison: comparisonProfitability,
         change: metricChanges(currentProfitability, comparisonProfitability),
+        sameCurrencyAdSpendAvailable,
         excludedMetaCurrencies: advertising.currencies
           .map((item) => item.currency)
           .filter((currency) => currency !== store.currencyCode),
@@ -109,8 +116,11 @@ export class AnalyticsWorkspace {
         comparison: { mer: comparisonMer, metaSpend: comparisonSpend },
         change: {
           mer: percentChange(currentMer, comparisonMer),
-          metaSpend: percentChange(currentSpend, comparisonSpend),
+          metaSpend: sameCurrencyAdSpendAvailable
+            ? percentChange(currentSpend, comparisonSpend)
+            : null,
         },
+        sameCurrencySpendAvailable: sameCurrencyAdSpendAvailable,
       },
       availability: this.availability(
         store,
