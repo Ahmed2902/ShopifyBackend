@@ -145,9 +145,11 @@ describe('DashboardWorkspace', () => {
       now,
       limit: 8,
     });
+    expect(read.getRecentOrders).toHaveBeenCalledWith(storeId, 6);
     expect(intelligence.read).toHaveBeenCalledWith(storeId, { fresh: true });
     expect(performance.daily).toHaveBeenCalledWith(storeId, { days: 30 }, now);
     expect(analytics.customers).toHaveBeenCalledWith(storeId, { days: 30 }, now);
+    expect(read.getTopProducts).toHaveBeenCalledTimes(1);
     expect(read.getTopProducts).toHaveBeenCalledWith({
       storeId,
       days: 30,
@@ -156,6 +158,7 @@ describe('DashboardWorkspace', () => {
       now,
       limit: 6,
     });
+    expect(read.getAdPlatformSessions).toHaveBeenCalledTimes(1);
     expect(read.getAdPlatformSessions).toHaveBeenCalledWith({
       storeId,
       days: 30,
