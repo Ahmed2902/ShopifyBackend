@@ -267,6 +267,30 @@ export class PixelBehaviorRepository {
     });
   }
 
+  aggregateProduct(storeId: string, productId: string, fromDate: Date, toDate: Date) {
+    return prisma.storefrontBehaviorDaily.aggregate({
+      where: {
+        storeId,
+        dimension: 'PRODUCT',
+        productId,
+        bucketDate: { gte: fromDate, lte: toDate },
+      },
+      _sum: BEHAVIOR_SUM_FIELDS,
+    });
+  }
+
+  aggregateCollection(storeId: string, collectionId: string, fromDate: Date, toDate: Date) {
+    return prisma.storefrontBehaviorDaily.aggregate({
+      where: {
+        storeId,
+        dimension: 'COLLECTION',
+        collectionId,
+        bucketDate: { gte: fromDate, lte: toDate },
+      },
+      _sum: BEHAVIOR_SUM_FIELDS,
+    });
+  }
+
   groupDimension(
     storeId: string,
     dimension: Exclude<StorefrontBehaviorDimension, 'STORE'>,
