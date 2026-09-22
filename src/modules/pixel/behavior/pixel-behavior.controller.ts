@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { z } from 'zod';
 import {
   analyticsListQuerySchema,
   analyticsRangeQuerySchema,
@@ -11,13 +12,20 @@ import {
   pixelCheckoutPurchaseReadRepository,
   type PixelCheckoutPurchaseReadRepository,
 } from './pixel-checkout-purchase.read.repository.js';
+import {
+  pixelBehaviorDetailService,
+  type PixelBehaviorDetailService,
+} from './pixel-behavior-detail.service.js';
 import { pixelBehaviorService, type PixelBehaviorService } from './pixel-behavior.service.js';
+
+const entityIdSchema = z.string().uuid();
 
 export class PixelBehaviorController {
   constructor(
     private readonly service: PixelBehaviorService = pixelBehaviorService,
     private readonly checkoutPurchaseReadRepository: PixelCheckoutPurchaseReadRepository =
       pixelCheckoutPurchaseReadRepository,
+    private readonly detailService: PixelBehaviorDetailService = pixelBehaviorDetailService,
   ) {}
 
   overview = async (req: Request, res: Response) => {
@@ -75,11 +83,31 @@ export class PixelBehaviorController {
     );
   };
 
+  product = async (req: Request, res: Response) => {
+    res.status(200).json(
+      await this.detailService.product(
+        req.context.storeId!,
+        entityIdSchema.parse(req.params.productId),
+        analyticsRangeQuerySchema.parse(req.query),
+      ),
+    );
+  };
+
   collections = async (req: Request, res: Response) => {
     res.status(200).json(
       await this.service.collections(
         req.context.storeId!,
         analyticsListQuerySchema.parse(req.query),
+      ),
+    );
+  };
+
+  collection = async (req: Request, res: Response) => {
+    res.status(200).json(
+      await this.detailService.collection(
+        req.context.storeId!,
+        entityIdSchema.parse(req.params.collectionId),
+        analyticsRangeQuerySchema.parse(req.query),
       ),
     );
   };
