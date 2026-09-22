@@ -1,14 +1,16 @@
 import { analyticsWorkspace, type AnalyticsWorkspace } from '../analytics/analytics.workspace.js';
+import { TikTokRepository } from '../tiktok/tiktok.repository.js';
 import {
-  tiktokMonitorEntityReadService,
-  type TikTokMonitorEntityReadService,
-} from '../analytics/tiktok-monitor-entity.read.service.js';
-import { tiktokMonitorService, type TikTokMonitorService } from '../analytics/tiktok-monitor.service.js';
-import type { AdvertisingPlatform } from './advertising.types.js';
+  canonicalPaidMediaReadService,
+  type CanonicalPaidMediaReadService,
+} from './canonical-paid-media.read.service.js';
+import type { AdvertisingDeliveryGroupKind, AdvertisingPlatform } from './advertising.types.js';
 
-export type PaidMediaLevel = 'CAMPAIGN' | 'AD_SET' | 'AD' | 'CREATIVE';
+export type PaidMediaLevel = 'CAMPAIGN' | 'GROUP' | 'AD' | 'CREATIVE';
 
 export interface PaidMediaReadQuery {
+  /** Canonical AdvertisingAccount.id. When supplied it must belong to this store/provider selection. */
+  accountId?: string;
   days?: number;
   page?: number;
   limit?: number;
@@ -17,6 +19,8 @@ export interface PaidMediaReadQuery {
 export interface PaidMediaProviderCapabilities {
   provider: AdvertisingPlatform;
   levels: PaidMediaLevel[];
+  groupKinds: AdvertisingDeliveryGroupKind[];
+  groupLabel: 'Ad Set' | 'Ad Group' | 'Ad Group / Asset Group';
   supportsCreativeAnalytics: boolean;
   supportsVideoRetention: boolean;
   attributionModel: 'PROVIDER_REPORTED';
@@ -25,10 +29,12 @@ export interface PaidMediaProviderCapabilities {
 }
 
 /**
- * Provider-neutral paid-media read boundary.
+ * Minimal provider-neutral paid-media application boundary.
  *
- * Provider-specific persistence remains below this layer; consumers above it should use this
- * contract rather than reaching directly into Meta/TikTok tables.
+ * Consumer vocabulary is Account -> Campaign -> Group -> Ad -> Creative/Asset. Provider-specific
+ * labels and structural kinds are capabilities/presentation metadata and never leak into the level
+ * selector. Ingestion may retain native provider tables for rollback, but runtime reads should use
+ * canonical Advertising* persistence whenever that provider has completed canonical cutover.
  */
 export interface AdvertisingEvidenceProvider {
   readonly provider: AdvertisingPlatform;
@@ -40,6 +46,7 @@ export interface AdvertisingEvidenceProvider {
 
 function bounded(query: PaidMediaReadQuery = {}) {
   return {
+    accountId: query.accountId,
     days: Math.min(Math.max(Math.trunc(query.days ?? 30), 1), 365),
     page: Math.max(Math.trunc(query.page ?? 1), 1),
     limit: Math.min(Math.max(Math.trunc(query.limit ?? 50), 1), 100),
@@ -54,7 +61,9 @@ export class MetaAdvertisingEvidenceProvider implements AdvertisingEvidenceProvi
   capabilities(): PaidMediaProviderCapabilities {
     return {
       provider: this.provider,
-      levels: ['CAMPAIGN', 'AD_SET', 'AD', 'CREATIVE'],
+      levels: ['CAMPAIGN', 'GROUP', 'AD', 'CREATIVE'],
+      groupKinds: ['AD_SET'],
+      groupLabel: 'Ad Set',
       supportsCreativeAnalytics: true,
       supportsVideoRetention: true,
       attributionModel: 'PROVIDER_REPORTED',
@@ -81,7 +90,7 @@ export class MetaAdvertisingEvidenceProvider implements AdvertisingEvidenceProvi
     const evidence =
       level === 'CAMPAIGN'
         ? await this.analytics.campaigns(storeId, range)
-        : level === 'AD_SET'
+        : level === 'GROUP'
           ? await this.analytics.adSets(storeId, range)
           : level === 'AD'
             ? await this.analytics.ads(storeId, range)
@@ -100,7 +109,7 @@ export class MetaAdvertisingEvidenceProvider implements AdvertisingEvidenceProvi
     const evidence =
       level === 'CAMPAIGN'
         ? await this.analytics.campaign(storeId, entityId, { days })
-        : level === 'AD_SET'
+        : level === 'GROUP'
           ? await this.analytics.adSet(storeId, entityId, { days })
           : level === 'AD'
             ? await this.analytics.ad(storeId, entityId, { days })
@@ -114,14 +123,16 @@ export class TikTokAdvertisingEvidenceProvider implements AdvertisingEvidencePro
   readonly provider = 'TIKTOK' as const;
 
   constructor(
-    private readonly monitor: TikTokMonitorService = tiktokMonitorService,
-    private readonly entityReads: TikTokMonitorEntityReadService = tiktokMonitorEntityReadService,
+    private readonly canonicalReads: CanonicalPaidMediaReadService = canonicalPaidMediaReadService,
+    private readonly tiktokRepository: TikTokRepository = new TikTokRepository(),
   ) {}
 
   capabilities(): PaidMediaProviderCapabilities {
     return {
       provider: this.provider,
-      levels: ['CAMPAIGN', 'AD_SET', 'AD'],
+      levels: ['CAMPAIGN', 'GROUP', 'AD'],
+      groupKinds: ['AD_GROUP'],
+      groupLabel: 'Ad Group',
       supportsCreativeAnalytics: false,
       supportsVideoRetention: false,
       attributionModel: 'PROVIDER_REPORTED',
@@ -129,32 +140,29 @@ export class TikTokAdvertisingEvidenceProvider implements AdvertisingEvidencePro
       limitations: [
         'TikTok conversion/value metrics are provider-reported attribution and are not Shopify purchase truth.',
         'Only merchant-selected TikTok advertisers are included.',
-        'TikTok monitor supports a maximum 90-day reporting window.',
-        'TikTok monitor currently exposes campaigns, ad groups and ads; creative-level normalized analytics are not yet available.',
+        'TikTok canonical reads support a maximum 90-day reporting window.',
+        'TikTok native tables remain ingestion/rollback evidence; production hierarchy and metric reads use canonical Advertising* tables.',
+        'TikTok creative-level normalized analytics are not exposed until trustworthy first-class creative evidence is available.',
       ],
     };
   }
 
+  private async selectedAdvertiserIds(storeId: string) {
+    const connection = await this.tiktokRepository.findConnectionForStore(storeId);
+    return connection?.selectedAdvertiserIds ?? [];
+  }
+
   async overview(storeId: string, query: PaidMediaReadQuery = {}) {
     const normalized = bounded(query);
-    const days = Math.min(normalized.days, 90);
-    const result = await this.monitor.read(storeId, {
-      days,
-      level: 'campaigns',
-      page: 1,
-      limit: 1,
-      fresh: false,
-    });
-    return {
+    const selectedAccountExternalIds = await this.selectedAdvertiserIds(storeId);
+    const evidence = await this.canonicalReads.overview({
+      storeId,
       provider: this.provider,
-      capabilities: this.capabilities(),
-      evidence: {
-        connection: result.connection,
-        window: result.window,
-        counts: result.counts,
-        summary: result.summary,
-      },
-    };
+      selectedAccountExternalIds,
+      accountId: normalized.accountId,
+      days: Math.min(normalized.days, 90),
+    });
+    return { provider: this.provider, capabilities: this.capabilities(), evidence };
   }
 
   async list(storeId: string, level: PaidMediaLevel, query: PaidMediaReadQuery = {}) {
@@ -167,13 +175,18 @@ export class TikTokAdvertisingEvidenceProvider implements AdvertisingEvidencePro
         reason: 'TikTok creative-level normalized analytics are not available in Stride yet.',
       };
     }
+
     const normalized = bounded(query);
-    const evidence = await this.monitor.read(storeId, {
+    const selectedAccountExternalIds = await this.selectedAdvertiserIds(storeId);
+    const evidence = await this.canonicalReads.list({
+      storeId,
+      provider: this.provider,
+      selectedAccountExternalIds,
+      accountId: normalized.accountId,
+      level,
       days: Math.min(normalized.days, 90),
-      level: level === 'CAMPAIGN' ? 'campaigns' : level === 'AD_SET' ? 'groups' : 'ads',
       page: normalized.page,
       limit: normalized.limit,
-      fresh: false,
     });
     return { provider: this.provider, level, capabilities: this.capabilities(), evidence };
   }
@@ -195,10 +208,15 @@ export class TikTokAdvertisingEvidenceProvider implements AdvertisingEvidencePro
     }
 
     const normalized = bounded(query);
-    const evidence = await this.entityReads.read(storeId, {
-      days: Math.min(normalized.days, 90),
-      level: level === 'CAMPAIGN' ? 'campaigns' : level === 'AD_SET' ? 'groups' : 'ads',
+    const selectedAccountExternalIds = await this.selectedAdvertiserIds(storeId);
+    const evidence = await this.canonicalReads.detail({
+      storeId,
+      provider: this.provider,
+      selectedAccountExternalIds,
+      accountId: normalized.accountId,
+      level,
       entityId,
+      days: Math.min(normalized.days, 90),
     });
     return {
       provider: this.provider,
