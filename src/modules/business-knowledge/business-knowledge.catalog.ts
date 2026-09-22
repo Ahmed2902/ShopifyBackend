@@ -144,6 +144,12 @@ export const BUSINESS_KNOWLEDGE_CATALOG: readonly KnowledgeCapability[] = [
   },
 ] as const;
 
-export function knowledgeCatalog() {
-  return BUSINESS_KNOWLEDGE_CATALOG.map((entry) => ({ ...entry }));
+export function knowledgeCatalog(): KnowledgeCapability[] {
+  return BUSINESS_KNOWLEDGE_CATALOG.map((entry) => ({
+    ...entry,
+    sourceOfTruth: [...entry.sourceOfTruth],
+    entityTypes: [...entry.entityTypes],
+    questions: [...entry.questions],
+    caveats: [...entry.caveats],
+  }));
 }
