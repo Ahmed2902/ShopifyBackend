@@ -53,9 +53,24 @@ function createService() {
     }),
     detail: vi.fn(),
   };
+  const tiktok = {
+    provider: 'TIKTOK',
+    capabilities: vi.fn().mockReturnValue({ provider: 'TIKTOK' }),
+    overview: vi.fn(),
+    list: vi.fn().mockResolvedValue({
+      evidence: {
+        hierarchy: {
+          total: 1,
+          totalPages: 1,
+          items: [{ id: 'tt-campaign-1', externalId: 'tt-100', name: 'TikTok Prospecting' }],
+        },
+      },
+    }),
+    detail: vi.fn(),
+  };
   const paidMedia = {
-    capabilities: vi.fn().mockReturnValue([{ provider: 'META' }]),
-    get: vi.fn().mockReturnValue(meta),
+    capabilities: vi.fn().mockReturnValue([{ provider: 'META' }, { provider: 'TIKTOK' }]),
+    get: vi.fn().mockImplementation((provider: string) => (provider === 'TIKTOK' ? tiktok : meta)),
   };
 
   return {
@@ -71,6 +86,7 @@ function createService() {
     ),
     analytics,
     meta,
+    tiktok,
   };
 }
 
@@ -90,6 +106,8 @@ describe('AdvisorReadService', () => {
       name: 'Hero Hoodie',
       provider: 'SHOPIFY',
     });
+    expect(result.truncated).toBe(false);
+    expect(result.scan.exhaustive).toBe(true);
     expect(result.privacy).toContain('customer PII');
   });
 
@@ -123,10 +141,76 @@ describe('AdvisorReadService', () => {
   });
 
   it('keeps search scoped when the advisor already knows the entity type', async () => {
-    const { value, analytics, meta } = createService();
+    const { value, analytics, meta, tiktok } = createService();
     await value.search('store-1', { query: 'Hero', entityTypes: ['PRODUCT'] });
 
     expect(analytics.products).toHaveBeenCalledTimes(1);
     expect(meta.list).not.toHaveBeenCalled();
+    expect(tiktok.list).not.toHaveBeenCalled();
+  });
+
+  it('searches every capable paid-media provider instead of silently excluding TikTok', async () => {
+    const { value, meta, tiktok } = createService();
+
+    const result = await value.search('store-1', {
+      query: 'TikTok Prospecting',
+      entityTypes: ['CAMPAIGN'],
+    });
+
+    expect(meta.list).toHaveBeenCalled();
+    expect(tiktok.list).toHaveBeenCalled();
+    expect(result.items).toEqual([
+      expect.objectContaining({ provider: 'TIKTOK', id: 'tt-campaign-1', name: 'TikTok Prospecting' }),
+    ]);
+    expect(result.paidMediaProvidersSearched).toEqual(['META', 'TIKTOK']);
+  });
+
+  it('continues through bounded pages and can find a result outside page one', async () => {
+    const { value, analytics } = createService();
+    const pageOne = Array.from({ length: 100 }, (_, index) => ({
+      product: { id: `product-${index}`, title: `Other ${index}` },
+    }));
+    vi.mocked(analytics.products).mockImplementation(async (_storeId, input) =>
+      input.page === 1
+        ? { items: pageOne, total: 101, totalPages: 2 }
+        : {
+            items: [{ product: { id: 'product-needle', title: 'Needle Product' } }],
+            total: 101,
+            totalPages: 2,
+          },
+    );
+
+    const result = await value.search('store-1', {
+      query: 'Needle Product',
+      entityTypes: ['PRODUCT'],
+    });
+
+    expect(analytics.products).toHaveBeenCalledTimes(2);
+    expect(result.items).toEqual([
+      expect.objectContaining({ id: 'product-needle', name: 'Needle Product' }),
+    ]);
+    expect(result.truncated).toBe(false);
+    expect(result.scan.exhaustive).toBe(true);
+  });
+
+  it('marks search as truncated when the bounded scan cannot prove exhaustiveness', async () => {
+    const { value, analytics } = createService();
+    vi.mocked(analytics.products).mockImplementation(async (_storeId, input) => ({
+      items: Array.from({ length: 100 }, (_, index) => ({
+        product: { id: `product-${input.page}-${index}`, title: `Product ${input.page}-${index}` },
+      })),
+      total: 900,
+      totalPages: 9,
+    }));
+
+    const result = await value.search('store-1', {
+      query: 'not-present',
+      entityTypes: ['PRODUCT'],
+    });
+
+    expect(analytics.products).toHaveBeenCalledTimes(5);
+    expect(result.items).toEqual([]);
+    expect(result.truncated).toBe(true);
+    expect(result.scan.exhaustive).toBe(false);
   });
 });
