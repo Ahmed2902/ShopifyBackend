@@ -1,4 +1,8 @@
 import { analyticsWorkspace, type AnalyticsWorkspace } from '../analytics/analytics.workspace.js';
+import {
+  tiktokMonitorEntityReadService,
+  type TikTokMonitorEntityReadService,
+} from '../analytics/tiktok-monitor-entity.read.service.js';
 import { tiktokMonitorService, type TikTokMonitorService } from '../analytics/tiktok-monitor.service.js';
 
 export type PaidMediaProvider = 'META' | 'TIKTOK';
@@ -103,7 +107,10 @@ export class MetaPaidMediaEvidenceProvider implements PaidMediaEvidenceProvider 
 export class TikTokPaidMediaEvidenceProvider implements PaidMediaEvidenceProvider {
   readonly provider = 'TIKTOK' as const;
 
-  constructor(private readonly monitor: TikTokMonitorService = tiktokMonitorService) {}
+  constructor(
+    private readonly monitor: TikTokMonitorService = tiktokMonitorService,
+    private readonly entityReads: TikTokMonitorEntityReadService = tiktokMonitorEntityReadService,
+  ) {}
 
   capabilities(): PaidMediaProviderCapabilities {
     return {
@@ -115,6 +122,8 @@ export class TikTokPaidMediaEvidenceProvider implements PaidMediaEvidenceProvide
       currencyPolicy: 'SEPARATE_BY_PROVIDER_CURRENCY',
       limitations: [
         'TikTok conversion/value metrics are provider-reported attribution and are not Shopify purchase truth.',
+        'Only merchant-selected TikTok advertisers are included.',
+        'TikTok monitor supports a maximum 90-day reporting window.',
         'TikTok monitor currently exposes campaigns, ad groups and ads; creative-level normalized analytics are not yet available.',
       ],
     };
@@ -169,21 +178,30 @@ export class TikTokPaidMediaEvidenceProvider implements PaidMediaEvidenceProvide
     entityId: string,
     query: PaidMediaReadQuery = {},
   ) {
-    const listed = (await this.list(storeId, level, { ...query, page: 1, limit: 100 })) as {
-      unsupported?: boolean;
-      reason?: string;
-      evidence?: { hierarchy?: { items?: Array<{ id: string }> } };
-    };
-    if (listed.unsupported) return listed;
-    const item = listed.evidence?.hierarchy?.items?.find((candidate) => candidate.id === entityId) ?? null;
+    if (level === 'CREATIVE') {
+      return {
+        provider: this.provider,
+        level,
+        capabilities: this.capabilities(),
+        unsupported: true,
+        reason: 'TikTok creative-level normalized analytics are not available in Stride yet.',
+      };
+    }
+
+    const normalized = bounded(query);
+    const evidence = await this.entityReads.read(storeId, {
+      days: Math.min(normalized.days, 90),
+      level: level === 'CAMPAIGN' ? 'campaigns' : level === 'AD_SET' ? 'groups' : 'ads',
+      entityId,
+    });
     return {
       provider: this.provider,
       level,
       capabilities: this.capabilities(),
-      evidence: item,
-      limitations: item
+      evidence,
+      limitations: evidence.item
         ? []
-        : ['TikTok monitor pagination does not currently provide a direct entity-detail read; the requested entity was not present in the bounded page.'],
+        : ['No matching entity is available within the connected store and merchant-selected TikTok advertisers.'],
     };
   }
 }
