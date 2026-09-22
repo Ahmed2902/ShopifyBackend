@@ -36,9 +36,11 @@ pixelStoreRouter.get(
 pixelStoreRouter.get('/analytics/overview', pixelBehaviorController.overview);
 pixelStoreRouter.get('/analytics/products', pixelBehaviorController.products);
 pixelStoreRouter.get('/analytics/products/batch', pixelBehaviorController.productBatch);
+pixelStoreRouter.get('/analytics/products/:productId/sources', pixelBehaviorController.productSources);
 pixelStoreRouter.get('/analytics/products/:productId', pixelBehaviorController.product);
 pixelStoreRouter.get('/analytics/collections', pixelBehaviorController.collections);
 pixelStoreRouter.get('/analytics/collections/batch', pixelBehaviorController.collectionBatch);
+pixelStoreRouter.get('/analytics/collections/:collectionId/sources', pixelBehaviorController.collectionSources);
 pixelStoreRouter.get('/analytics/collections/:collectionId', pixelBehaviorController.collection);
 pixelStoreRouter.get('/analytics/landing-pages', pixelBehaviorController.landingPages);
 pixelStoreRouter.get('/attribution/sources', pixelAttributionController.sources);
