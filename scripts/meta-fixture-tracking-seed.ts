@@ -53,6 +53,16 @@ if (metaAccountId !== confirmedAccountId) {
   throw new Error('META_FIXTURE_CONFIRM_AD_ACCOUNT_ID must exactly match META_FIXTURE_AD_ACCOUNT_ID');
 }
 
+const store = await prisma.store.findUnique({ where: { id: storeId } });
+if (!store) throw new Error(`Store ${storeId} does not exist`);
+
+const connection = await prisma.metaConnection.findUnique({ where: { storeId } });
+if (!connection) throw new Error(`No Meta connection exists for store ${storeId}`);
+if (connection.status !== 'ACTIVE') throw new Error(`Meta connection is ${connection.status}, expected ACTIVE`);
+if (!connection.selectedAdAccountIds.includes(metaAccountId)) {
+  throw new Error(`${metaAccountId} is not selected on the store Meta connection`);
+}
+
 const account = await prisma.metaAdAccount.findUnique({
   where: { storeId_metaAccountId: { storeId, metaAccountId } },
 });
