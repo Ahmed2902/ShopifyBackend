@@ -72,6 +72,16 @@ const creatives = await prisma.metaCreative.findMany({
   where: {
     adAccountId: account.id,
     metaCreativeId: { startsWith: PREFIX },
+    deletedAt: null,
+    // A provider hierarchy sync soft-deletes fixture ads/creatives because their synthetic IDs
+    // cannot exist at Meta. Do not mutate stale fixture rows that the tracking read path excludes;
+    // require at least one currently visible fixture ad and force the operator to reseed otherwise.
+    ads: {
+      some: {
+        metaAdId: { startsWith: PREFIX },
+        deletedAt: null,
+      },
+    },
   },
   orderBy: { metaCreativeId: 'asc' },
   select: {
@@ -83,7 +93,9 @@ const creatives = await prisma.metaCreative.findMany({
 });
 
 if (creatives.length === 0) {
-  throw new Error('No Stride Meta fixture creatives exist. Run dev:meta-fixtures:write first.');
+  throw new Error(
+    'No active Stride Meta fixture creatives exist. Run dev:meta-fixtures:write first to restore the fixture hierarchy.',
+  );
 }
 
 const preview = creatives.map((creative, index) => {
