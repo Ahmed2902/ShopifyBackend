@@ -9,6 +9,7 @@ function validDate(value: string): boolean {
 }
 
 const dateSchema = z.string().refine(validDate, 'Expected a valid YYYY-MM-DD date');
+const adAccountIdSchema = z.string().trim().min(1).max(255);
 
 export const analyticsReadControlSchema = z.object({
   fresh: z
@@ -34,9 +35,19 @@ export const analyticsListQuerySchema = analyticsRangeQuerySchema.and(
   }),
 );
 
+export const advertisingRangeQuerySchema = analyticsRangeQuerySchema.and(
+  z.object({ adAccountId: adAccountIdSchema.optional() }),
+);
+
+export const advertisingListQuerySchema = analyticsListQuerySchema.and(
+  z.object({ adAccountId: adAccountIdSchema.optional() }),
+);
+
 export const analyticsEntityParamsSchema = z.object({
   entityId: z.string().uuid(),
 });
 
 export type AnalyticsRangeQuery = z.infer<typeof analyticsRangeQuerySchema>;
 export type AnalyticsListQuery = z.infer<typeof analyticsListQuerySchema>;
+export type AdvertisingRangeQuery = z.infer<typeof advertisingRangeQuerySchema>;
+export type AdvertisingListQuery = z.infer<typeof advertisingListQuerySchema>;
