@@ -13,6 +13,7 @@ type RawCollectionMetricRow = {
   title: string | null;
   handle: string | null;
   image_url: string | null;
+  sort_order: string | null;
   product_count: bigint | number | null;
   period: CollectionPeriod | null;
   order_count: bigint | number | null;
@@ -76,6 +77,7 @@ export class CollectionAnalyticsReadService {
           c."title",
           c."handle",
           c."imageUrl",
+          c."sortOrder",
           COUNT(membership."productId") AS product_count
         FROM "Collection" c
         LEFT JOIN "ProductCollection" membership ON membership."collectionId" = c."id"
@@ -158,6 +160,7 @@ export class CollectionAnalyticsReadService {
           page."title",
           page."handle",
           page."imageUrl" AS image_url,
+          page."sortOrder" AS sort_order,
           page.product_count,
           periods.period,
           COALESCE(aggregate.order_count, 0) AS order_count,
@@ -178,6 +181,7 @@ export class CollectionAnalyticsReadService {
         metrics.title,
         metrics.handle,
         metrics.image_url,
+        metrics.sort_order,
         metrics.product_count,
         metrics.period,
         metrics.order_count,
@@ -200,6 +204,7 @@ export class CollectionAnalyticsReadService {
           title: string;
           handle: string | null;
           imageUrl: string | null;
+          sortOrder: string | null;
           productCount: number;
         };
         current?: RawCollectionMetricRow;
@@ -216,6 +221,7 @@ export class CollectionAnalyticsReadService {
           title: row.title,
           handle: row.handle,
           imageUrl: row.image_url,
+          sortOrder: row.sort_order,
           productCount: numeric(row.product_count),
         },
       };
