@@ -9,6 +9,10 @@ import {
   pixelBehaviorInsightChangePoints,
 } from './pixel-behavior-insights.js';
 import {
+  pixelBehaviorBatchReadService,
+  type PixelBehaviorBatchReadService,
+} from './pixel-behavior-batch.read.service.js';
+import {
   pixelCheckoutPurchaseReadRepository,
   type PixelCheckoutPurchaseReadRepository,
 } from './pixel-checkout-purchase.read.repository.js';
@@ -19,6 +23,14 @@ import {
 import { pixelBehaviorService, type PixelBehaviorService } from './pixel-behavior.service.js';
 
 const entityIdSchema = z.string().uuid();
+const entityIdsSchema = z.string().transform((value, context) => {
+  const ids = [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))];
+  if (ids.length === 0 || ids.length > 100 || ids.some((id) => !z.string().uuid().safeParse(id).success)) {
+    context.addIssue({ code: 'custom', message: 'ids must contain 1 to 100 comma-separated UUIDs' });
+    return z.NEVER;
+  }
+  return ids;
+});
 
 export class PixelBehaviorController {
   constructor(
@@ -26,6 +38,7 @@ export class PixelBehaviorController {
     private readonly checkoutPurchaseReadRepository: PixelCheckoutPurchaseReadRepository =
       pixelCheckoutPurchaseReadRepository,
     private readonly detailService: PixelBehaviorDetailService = pixelBehaviorDetailService,
+    private readonly batchReadService: PixelBehaviorBatchReadService = pixelBehaviorBatchReadService,
   ) {}
 
   overview = async (req: Request, res: Response) => {
@@ -83,6 +96,16 @@ export class PixelBehaviorController {
     );
   };
 
+  productBatch = async (req: Request, res: Response) => {
+    res.status(200).json(
+      await this.batchReadService.products(
+        req.context.storeId!,
+        entityIdsSchema.parse(req.query.ids),
+        analyticsRangeQuerySchema.parse(req.query),
+      ),
+    );
+  };
+
   product = async (req: Request, res: Response) => {
     res.status(200).json(
       await this.detailService.product(
@@ -98,6 +121,16 @@ export class PixelBehaviorController {
       await this.service.collections(
         req.context.storeId!,
         analyticsListQuerySchema.parse(req.query),
+      ),
+    );
+  };
+
+  collectionBatch = async (req: Request, res: Response) => {
+    res.status(200).json(
+      await this.batchReadService.collections(
+        req.context.storeId!,
+        entityIdsSchema.parse(req.query.ids),
+        analyticsRangeQuerySchema.parse(req.query),
       ),
     );
   };
