@@ -241,4 +241,21 @@ describe('DashboardWorkspace', () => {
       now,
     });
   });
+
+  it('keeps daily cross-channel performance unavailable for one selected Meta account', async () => {
+    const analytics = buildAnalytics();
+    const performance = buildPerformance();
+    const query = { days: 30, accountId: 'act_101' };
+
+    const result = await new DashboardWorkspace(
+      analytics,
+      buildIntelligence(),
+      buildRead(),
+      performance,
+    ).read(storeId, query, now);
+
+    expect(analytics.overview).toHaveBeenCalledWith(storeId, query, now);
+    expect(performance.daily).not.toHaveBeenCalled();
+    expect(result.sections.performance).toEqual({ available: false, data: null });
+  });
 });
