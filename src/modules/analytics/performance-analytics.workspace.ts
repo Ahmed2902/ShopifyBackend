@@ -19,6 +19,14 @@ export class PerformanceAnalyticsWorkspace {
   }
 
   async daily(storeId: string, query: AnalyticsRangeQuery, now = new Date()) {
+    if (query.accountId) {
+      throw new AppError(
+        'Account-scoped cross-channel performance is not supported because Shopify commerce remains store-scoped',
+        400,
+        'ACCOUNT_SCOPED_PERFORMANCE_UNSUPPORTED',
+      );
+    }
+
     const store = await memoizeRequestRead(`analytics:store-context:${storeId}`, () =>
       this.repository.getStoreContext(storeId),
     );
