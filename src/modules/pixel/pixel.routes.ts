@@ -35,7 +35,9 @@ pixelStoreRouter.get(
 
 pixelStoreRouter.get('/analytics/overview', pixelBehaviorController.overview);
 pixelStoreRouter.get('/analytics/products', pixelBehaviorController.products);
+pixelStoreRouter.get('/analytics/products/:productId', pixelBehaviorController.product);
 pixelStoreRouter.get('/analytics/collections', pixelBehaviorController.collections);
+pixelStoreRouter.get('/analytics/collections/:collectionId', pixelBehaviorController.collection);
 pixelStoreRouter.get('/analytics/landing-pages', pixelBehaviorController.landingPages);
 pixelStoreRouter.get('/attribution/sources', pixelAttributionController.sources);
 pixelStoreRouter.get('/attribution/meta-ads', pixelAttributionController.metaAds);
