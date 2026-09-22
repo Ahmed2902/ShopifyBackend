@@ -210,10 +210,30 @@ export class AnalyticsWorkspace {
   }
 
   private async context(storeId: string, query: AnalyticsRangeQuery, now: Date) {
-    const store = await this.loadStore(storeId);
+    const baseStore = await this.loadStore(storeId);
+    const store = this.scopeMetaAccount(baseStore, query.accountId);
     return {
       store,
       windows: resolveAnalyticsWindows(query, store.ianaTimezone, now),
+    };
+  }
+
+  private scopeMetaAccount(store: StoreContext, accountId?: string): StoreContext {
+    if (!accountId) return store;
+    const selected = store.metaConnection?.selectedAdAccountIds ?? [];
+    if (!store.metaConnection || !selected.includes(accountId)) {
+      throw new AppError(
+        'Meta ad account is not selected for this store',
+        400,
+        'META_AD_ACCOUNT_NOT_SELECTED',
+      );
+    }
+    return {
+      ...store,
+      metaConnection: {
+        ...store.metaConnection,
+        selectedAdAccountIds: [accountId],
+      },
     };
   }
 
