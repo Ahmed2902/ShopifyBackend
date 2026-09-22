@@ -105,4 +105,24 @@ describe('PerformanceAnalyticsWorkspace', () => {
       expect.any(Date),
     );
   });
+
+  it('rejects account-scoped performance instead of mixing store commerce with one Meta account', async () => {
+    const repository = repositoryMock();
+    const workspace = new PerformanceAnalyticsWorkspace(repository);
+
+    await expect(
+      workspace.daily(
+        storeId,
+        { days: 30, accountId: 'act_101' },
+        new Date('2026-09-04T12:00:00.000Z'),
+      ),
+    ).rejects.toMatchObject({
+      code: 'ACCOUNT_SCOPED_PERFORMANCE_UNSUPPORTED',
+      statusCode: 400,
+    });
+
+    expect(repository.getStoreContext).not.toHaveBeenCalled();
+    expect(repository.getOrders).not.toHaveBeenCalled();
+    expect(repository.getMetaRows).not.toHaveBeenCalled();
+  });
 });
