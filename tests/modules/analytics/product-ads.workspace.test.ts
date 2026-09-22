@@ -65,7 +65,7 @@ function mapping(variantId: string) {
   };
 }
 
-function analyticsRepository() {
+function analyticsRepository(selectedAdAccountIds = ['act_1']) {
   return {
     getStoreContext: vi.fn().mockResolvedValue({
       id: storeId,
@@ -73,7 +73,7 @@ function analyticsRepository() {
       ianaTimezone: 'UTC',
       inventoryIntelligenceMode: 'DISABLED',
       shopifyConnection: { status: 'ACTIVE', scopes: ['read_orders'], lastSyncedAt: now },
-      metaConnection: { status: 'ACTIVE', selectedAdAccountIds: ['act_1'] },
+      metaConnection: { status: 'ACTIVE', selectedAdAccountIds },
     }),
     getCommerceRows: vi.fn().mockResolvedValue([]),
     getMetaRows: vi.fn().mockResolvedValue([
@@ -115,6 +115,41 @@ describe('ProductAdsWorkspace', () => {
     });
     expect(result.summary.current.mappingCoverage).toBe(1);
     expect(result.summary.comparison.mappingCoverage).toBe(1);
+  });
+
+  it('scopes Meta rows and mapping evidence to the requested selected account', async () => {
+    const analytics = analyticsRepository(['act_1', 'act_2']);
+    const mappings = productAdsRepository();
+    const workspace = new ProductAdsWorkspace(analytics, mappings);
+
+    await workspace.list(
+      storeId,
+      { days: 7, page: 1, limit: 50, accountId: 'act_2' },
+      now,
+    );
+
+    expect(analytics.getMetaRows).toHaveBeenCalledWith(
+      storeId,
+      ['act_2'],
+      expect.any(Date),
+      expect.any(Date),
+    );
+    expect(mappings.getActiveMappings).toHaveBeenCalledWith(storeId, ['act_2']);
+  });
+
+  it('rejects a product-ads account scope that is not selected for the store', async () => {
+    const workspace = new ProductAdsWorkspace(
+      analyticsRepository(['act_1', 'act_2']),
+      productAdsRepository(),
+    );
+
+    await expect(
+      workspace.list(
+        storeId,
+        { days: 7, page: 1, limit: 50, accountId: 'act_not_selected' },
+        now,
+      ),
+    ).rejects.toMatchObject({ code: 'META_AD_ACCOUNT_NOT_SELECTED', statusCode: 400 });
   });
 
   it('exposes exact ad mapping evidence once while preserving same-product variants', async () => {
