@@ -37,6 +37,14 @@ interface AdvisorSearchResult {
   evidence: unknown;
 }
 
+interface BoundedSearchRead {
+  rows: AdvisorSearchResult[];
+  incomplete: boolean;
+}
+
+const SEARCH_PAGE_SIZE = 100;
+const SEARCH_MAX_PAGES_PER_SOURCE = 5;
+
 function listQuery(days: number, page = 1, limit = 50) {
   return { days, page, limit };
 }
@@ -95,6 +103,54 @@ function items(value: unknown): unknown[] {
     }
   }
   return [];
+}
+
+function paginationContainers(value: unknown): Record<string, unknown>[] {
+  if (!value || typeof value !== 'object') return [];
+  const object = value as Record<string, unknown>;
+  const containers: Record<string, unknown>[] = [object];
+  for (const key of ['pagination', 'evidence']) {
+    const nested = object[key];
+    if (nested && typeof nested === 'object') containers.push(nested as Record<string, unknown>);
+  }
+  const evidence = object.evidence;
+  if (evidence && typeof evidence === 'object') {
+    const hierarchy = (evidence as Record<string, unknown>).hierarchy;
+    if (hierarchy && typeof hierarchy === 'object') containers.push(hierarchy as Record<string, unknown>);
+  }
+  return containers;
+}
+
+function finiteInteger(value: unknown): number | null {
+  const number = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.trunc(number) : null;
+}
+
+function sourceHasMore(value: unknown, page: number, pageSize: number, rowCount: number): boolean {
+  for (const container of paginationContainers(value)) {
+    const totalPages = finiteInteger(container.totalPages);
+    if (totalPages !== null) return page < totalPages;
+    const total = finiteInteger(container.total);
+    if (total !== null) return page * pageSize < total;
+  }
+  // Without pagination metadata, a short page proves exhaustion; a full page does not.
+  return rowCount >= pageSize;
+}
+
+async function boundedSearchPages(
+  loader: (page: number) => Promise<unknown>,
+  mapper: (row: unknown) => AdvisorSearchResult,
+): Promise<BoundedSearchRead> {
+  const rows: AdvisorSearchResult[] = [];
+  for (let page = 1; page <= SEARCH_MAX_PAGES_PER_SOURCE; page += 1) {
+    const value = await loader(page);
+    const pageRows = items(value);
+    rows.push(...pageRows.map(mapper));
+    const hasMore = sourceHasMore(value, page, SEARCH_PAGE_SIZE, pageRows.length);
+    if (!hasMore) return { rows, incomplete: false };
+    if (page === SEARCH_MAX_PAGES_PER_SOURCE) return { rows, incomplete: true };
+  }
+  return { rows, incomplete: true };
 }
 
 /**
@@ -273,29 +329,38 @@ export class AdvisorReadService {
 
   async search(
     storeId: string,
-    input: { query: string; entityTypes?: AdvisorEntityType[]; days?: number; limit?: number },
+    input: {
+      query: string;
+      entityTypes?: AdvisorEntityType[];
+      days?: number;
+      limit?: number;
+      paidMediaProviders?: PaidMediaProvider[];
+    },
   ) {
     const query = input.query.trim().toLocaleLowerCase();
     const limit = Math.min(Math.max(Math.trunc(input.limit ?? 20), 1), 50);
     const days = normalizedDays(input.days);
+    const searchableProviders = new Set<PaidMediaProvider>(input.paidMediaProviders ?? ['META', 'TIKTOK']);
     const requested = new Set<AdvisorEntityType>(
       input.entityTypes?.length
         ? input.entityTypes
         : ['PRODUCT', 'COLLECTION', 'CAMPAIGN', 'AD_SET', 'AD', 'CREATIVE', 'RECOMMENDATION'],
     );
-    const reads: Array<Promise<AdvisorSearchResult[]>> = [];
+    const reads: Array<Promise<BoundedSearchRead>> = [];
 
     if (requested.has('PRODUCT')) {
       reads.push(
-        this.products(storeId, { days, page: 1, limit: 100 }).then((value) =>
-          items(value).map((row) => resultFromRow('PRODUCT', row, 'SHOPIFY')),
+        boundedSearchPages(
+          (page) => this.products(storeId, { days, page, limit: SEARCH_PAGE_SIZE }),
+          (row) => resultFromRow('PRODUCT', row, 'SHOPIFY'),
         ),
       );
     }
     if (requested.has('COLLECTION')) {
       reads.push(
-        this.collections(storeId, { days, page: 1, limit: 100 }).then((value) =>
-          items(value).map((row) => resultFromRow('COLLECTION', row, 'SHOPIFY')),
+        boundedSearchPages(
+          (page) => this.collections(storeId, { days, page, limit: SEARCH_PAGE_SIZE }),
+          (row) => resultFromRow('COLLECTION', row, 'SHOPIFY'),
         ),
       );
     }
@@ -306,32 +371,52 @@ export class AdvisorReadService {
       ['CREATIVE', 'CREATIVE'],
     ] as const) {
       if (!requested.has(type)) continue;
-      reads.push(
-        this.paidMediaList(storeId, 'META', level, { days, page: 1, limit: 100 }).then((value) =>
-          items(value).map((row) => resultFromRow(type, row, 'META')),
-        ),
-      );
+      if (searchableProviders.has('META')) {
+        reads.push(
+          boundedSearchPages(
+            (page) => this.paidMediaList(storeId, 'META', level, { days, page, limit: SEARCH_PAGE_SIZE }),
+            (row) => resultFromRow(type, row, 'META'),
+          ),
+        );
+      }
+      if (level !== 'CREATIVE' && searchableProviders.has('TIKTOK')) {
+        reads.push(
+          boundedSearchPages(
+            (page) => this.paidMediaList(storeId, 'TIKTOK', level, { days, page, limit: SEARCH_PAGE_SIZE }),
+            (row) => resultFromRow(type, row, 'TIKTOK'),
+          ),
+        );
+      }
     }
     if (requested.has('RECOMMENDATION')) {
       reads.push(
-        this.recommendations(storeId).then((value) =>
-          value.recommendations.map((row) => resultFromRow('RECOMMENDATION', row, 'STRIDE')),
-        ),
+        this.recommendations(storeId).then((value) => ({
+          rows: value.recommendations.map((row) => resultFromRow('RECOMMENDATION', row, 'STRIDE')),
+          incomplete: false,
+        })),
       );
     }
 
-    const candidates = (await Promise.all(reads)).flat();
+    const sourceResults = await Promise.all(reads);
+    const candidates = sourceResults.flatMap((result) => result.rows);
     const matches = candidates.filter((candidate) => {
       if (!query) return true;
       const haystack = `${candidate.name} ${candidate.id ?? ''} ${candidate.externalId ?? ''} ${JSON.stringify(candidate.evidence)}`.toLocaleLowerCase();
       return haystack.includes(query);
     });
+    const boundedScanIncomplete = sourceResults.some((result) => result.incomplete);
 
     return {
       query: input.query,
       searchedEntityTypes: [...requested],
+      paidMediaProvidersSearched: [...searchableProviders],
       totalMatches: matches.length,
-      truncated: matches.length > limit,
+      truncated: boundedScanIncomplete || matches.length > limit,
+      scan: {
+        maxPagesPerSource: SEARCH_MAX_PAGES_PER_SOURCE,
+        pageSize: SEARCH_PAGE_SIZE,
+        exhaustive: !boundedScanIncomplete,
+      },
       items: matches.slice(0, limit),
       privacy: 'Business entities and aggregate evidence only; customer PII is not part of advisor search.',
     };
