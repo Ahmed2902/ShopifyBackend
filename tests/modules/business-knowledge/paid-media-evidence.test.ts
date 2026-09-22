@@ -27,27 +27,32 @@ describe('paid media evidence providers', () => {
     expect(result.capabilities.limitations.join(' ')).toContain('not Shopify purchase truth');
   });
 
-  it('maps TikTok ad groups to the normalized AD_SET level without inventing creative support', async () => {
-    const monitor = {
-      read: vi.fn().mockResolvedValue({
-        connection: { configured: true },
-        window: { days: 14 },
-        counts: { campaigns: 1, groups: 2, ads: 3 },
-        summary: { currencies: [] },
-        hierarchy: { items: [] },
-      }),
+  it('maps TikTok ad groups through the normalized GROUP level without inventing creative support', async () => {
+    const canonicalReads = {
+      overview: vi.fn(),
+      list: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+      detail: vi.fn(),
     };
-    const provider = new TikTokPaidMediaEvidenceProvider(monitor as never);
+    const tiktokRepository = {
+      findConnectionForStore: vi.fn().mockResolvedValue({ selectedAdvertiserIds: ['adv-1'] }),
+    };
+    const provider = new TikTokPaidMediaEvidenceProvider(
+      canonicalReads as never,
+      tiktokRepository as never,
+    );
 
-    await provider.list('store-1', 'AD_SET', { days: 14, page: 2, limit: 25 });
+    await provider.list('store-1', 'GROUP', { days: 14, page: 2, limit: 25 });
     const creatives = await provider.list('store-1', 'CREATIVE');
 
-    expect(monitor.read).toHaveBeenCalledWith('store-1', {
+    expect(canonicalReads.list).toHaveBeenCalledWith({
+      storeId: 'store-1',
+      provider: 'TIKTOK',
+      selectedAccountExternalIds: ['adv-1'],
+      accountId: undefined,
       days: 14,
-      level: 'groups',
+      level: 'GROUP',
       page: 2,
       limit: 25,
-      fresh: false,
     });
     expect(creatives).toMatchObject({ unsupported: true, level: 'CREATIVE' });
   });
@@ -55,7 +60,7 @@ describe('paid media evidence providers', () => {
   it('exposes a provider-neutral registry while preserving provider-specific capabilities', () => {
     const registry = new PaidMediaEvidenceRegistry([
       new MetaPaidMediaEvidenceProvider({} as never),
-      new TikTokPaidMediaEvidenceProvider({} as never),
+      new TikTokPaidMediaEvidenceProvider({} as never, {} as never),
     ]);
     const capabilities = registry.capabilities();
 
