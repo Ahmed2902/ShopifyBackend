@@ -3,16 +3,14 @@ import {
   intelligenceSnapshotReadService,
   type IntelligenceSnapshotReadService,
 } from '../intelligence/intelligence-snapshot.read.service.js';
-import {
-  pixelAttributionService,
-  type PixelAttributionService,
-} from '../pixel/attribution/pixel-attribution.service.js';
 import type { AnalyticsRangeQuery } from './analytics.schema.js';
 import { analyticsWorkspace, type AnalyticsWorkspace } from './analytics.workspace.js';
 import {
   DashboardReadRepository,
+  type DashboardAdPlatformSessions,
   type DashboardInventoryPreview,
   type DashboardRecentOrder,
+  type DashboardTopProduct,
 } from './dashboard.read.repository.js';
 import {
   performanceAnalyticsWorkspace,
@@ -58,10 +56,10 @@ async function optionalSection<T>(
  * One request owns the complete dashboard interaction budget. The primary analytical overview is
  * required; secondary previews and chart-ready read models fail independently so a secondary
  * analytical issue cannot hide the merchant's core commerce KPIs. Customer segmentation,
- * top-product economics and first-party acquisition-source evidence are composed here as well,
- * keeping Home dense without adding browser request waterfalls. Acquisition evidence deliberately
- * stays session/purchase based; source-level revenue is not synthesized from non-additive touches.
- * The complete response participates in the Store-generation dashboard cache.
+ * globally ranked top-product economics and first-touch paid-platform sessions are composed here
+ * as compact dashboard reads, keeping Home dense without browser request waterfalls. Facebook and
+ * Instagram are split only when first-touch UTM/referrer evidence identifies the Meta surface;
+ * otherwise the session remains under Meta instead of being guessed.
  */
 export class DashboardWorkspace {
   constructor(
@@ -70,7 +68,6 @@ export class DashboardWorkspace {
       intelligenceSnapshotReadService,
     private readonly readRepository: DashboardReadRepository = new DashboardReadRepository(),
     private readonly performance: PerformanceAnalyticsWorkspace = performanceAnalyticsWorkspace,
-    private readonly attribution: PixelAttributionService = pixelAttributionService,
   ) {}
 
   async read(
@@ -110,29 +107,24 @@ export class DashboardWorkspace {
       ),
       optionalSection(storeId, 'performance', () => this.performance.daily(storeId, query, now)),
       optionalSection(storeId, 'customers', () => this.analytics.customers(storeId, query, now)),
-      optionalSection(storeId, 'topProducts', async () => {
-        const result = await this.analytics.products(
+      optionalSection<DashboardTopProduct[]>(storeId, 'topProducts', () =>
+        this.readRepository.getTopProducts({
           storeId,
-          { ...query, page: 1, limit: 6 },
+          days: query.days,
+          from: query.from,
+          to: query.to,
           now,
-        );
-        return result.items.map((row) => ({
-          product: { id: row.product.id, title: row.product.title },
-          orderCount: row.current.orderCount,
-          netUnits: row.current.netUnits,
-          netRevenue: row.current.netProductRevenue,
-        }));
-      }),
-      optionalSection(storeId, 'acquisitionSources', () =>
-        this.attribution.sources(
+          limit: 6,
+        }),
+      ),
+      optionalSection<DashboardAdPlatformSessions>(storeId, 'acquisitionSources', () =>
+        this.readRepository.getAdPlatformSessions({
           storeId,
-          {
-            ...query,
-            page: 1,
-            limit: 8,
-          },
+          days: query.days,
+          from: query.from,
+          to: query.to,
           now,
-        ),
+        }),
       ),
     ]);
 
