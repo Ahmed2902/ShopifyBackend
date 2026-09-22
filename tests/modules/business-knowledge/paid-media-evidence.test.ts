@@ -37,7 +37,8 @@ describe('paid media evidence providers', () => {
         hierarchy: { items: [] },
       }),
     };
-    const provider = new TikTokPaidMediaEvidenceProvider(monitor as never);
+    const entityReads = { read: vi.fn() };
+    const provider = new TikTokPaidMediaEvidenceProvider(monitor as never, entityReads as never);
 
     await provider.list('store-1', 'AD_SET', { days: 14, page: 2, limit: 25 });
     const creatives = await provider.list('store-1', 'CREATIVE');
@@ -52,10 +53,35 @@ describe('paid media evidence providers', () => {
     expect(creatives).toMatchObject({ unsupported: true, level: 'CREATIVE' });
   });
 
+  it('uses an exact TikTok entity read and preserves the effective capped reporting window', async () => {
+    const monitor = { read: vi.fn() };
+    const entityReads = {
+      read: vi.fn().mockResolvedValue({
+        connection: { configured: true },
+        window: { days: 90, from: '2026-06-25', to: '2026-09-22' },
+        item: { id: 'campaign-250', metric: { spend: '10' } },
+      }),
+    };
+    const provider = new TikTokPaidMediaEvidenceProvider(monitor as never, entityReads as never);
+
+    const result = await provider.detail('store-1', 'CAMPAIGN', 'campaign-250', { days: 365 });
+
+    expect(entityReads.read).toHaveBeenCalledWith('store-1', {
+      days: 90,
+      level: 'campaigns',
+      entityId: 'campaign-250',
+    });
+    expect(result.evidence).toMatchObject({
+      window: { days: 90 },
+      item: { id: 'campaign-250' },
+    });
+    expect(result.limitations).toEqual([]);
+  });
+
   it('exposes a provider-neutral registry while preserving provider-specific capabilities', () => {
     const registry = new PaidMediaEvidenceRegistry([
       new MetaPaidMediaEvidenceProvider({} as never),
-      new TikTokPaidMediaEvidenceProvider({} as never),
+      new TikTokPaidMediaEvidenceProvider({} as never, {} as never),
     ]);
     const capabilities = registry.capabilities();
 
