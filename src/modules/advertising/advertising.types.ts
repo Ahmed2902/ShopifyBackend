@@ -1,6 +1,12 @@
 import type { AdProviderName } from '../integrations/integration.schema.js';
 
-export type AdvertisingPlatform = AdProviderName;
+/**
+ * Canonical paid-media providers supported by the shared Advertising* model.
+ * This is intentionally broader than the providers currently enabled in product/runtime routing.
+ * Adding Google Ads should activate the integration/provider adapter, not rewrite shared types.
+ */
+export type AdvertisingPlatform = 'META' | 'TIKTOK' | 'GOOGLE_ADS';
+export type EnabledAdvertisingPlatform = AdProviderName;
 export type AdProvider = AdvertisingPlatform;
 export type AdvertisingDeliveryGroupKind = 'AD_SET' | 'AD_GROUP' | 'ASSET_GROUP';
 
