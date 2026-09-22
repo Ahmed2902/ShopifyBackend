@@ -109,6 +109,11 @@ describe('BusinessKnowledgeService', () => {
         'DATA_QUALITY',
       ]),
     );
+
+    const first = catalog.domains[0]!;
+    first.sourceOfTruth.push('mutated by caller');
+    const fresh = value.catalog();
+    expect(fresh.domains[0]!.sourceOfTruth).not.toContain('mutated by caller');
   });
 
   it('composes existing Stride evidence without recalculating provider or commerce truth', async () => {
@@ -121,13 +126,15 @@ describe('BusinessKnowledgeService', () => {
       expect.any(Date),
       { fresh: true },
     );
+    const generatedAt = dashboard.read.mock.calls[0]![2] as Date;
     expect(intelligence.read).toHaveBeenCalledWith(store.id, { fresh: true });
-    expect(storefront.overview).toHaveBeenCalledWith(store.id, { days: 45 });
+    expect(storefront.overview).toHaveBeenCalledWith(store.id, { days: 45 }, generatedAt);
     expect(productAds.list).toHaveBeenCalledWith(
       store.id,
       { days: 45, page: 1, limit: 5 },
-      expect.any(Date),
+      generatedAt,
     );
+    expect(snapshot.generatedAt).toBe(generatedAt);
 
     expect(snapshot.overview.currency).toBe('USD');
     expect(snapshot.overview.methodology.advertising).toBe(
@@ -143,10 +150,10 @@ describe('BusinessKnowledgeService', () => {
     expect(snapshot.advisorGuidance.evidenceRules.join(' ')).toContain('Shopify truth');
   });
 
-  it('keeps optional advisor domains explicitly unavailable instead of inventing fallback facts', async () => {
+  it('keeps optional advisor domains explicitly unavailable without exposing internal errors', async () => {
     const { value } = service({
-      storefront: { overview: vi.fn().mockRejectedValue(new Error('Pixel rollup unavailable')) },
-      productAds: { list: vi.fn().mockRejectedValue(new Error('Mapping read unavailable')) },
+      storefront: { overview: vi.fn().mockRejectedValue(new Error('postgres://secret-host/internal')) },
+      productAds: { list: vi.fn().mockRejectedValue(new Error('Redis token leaked here')) },
     });
 
     const snapshot = await value.snapshot(store.id);
@@ -154,13 +161,15 @@ describe('BusinessKnowledgeService', () => {
     expect(snapshot.storefront).toEqual({
       available: false,
       data: null,
-      error: 'Pixel rollup unavailable',
+      error: 'Knowledge section unavailable',
     });
     expect(snapshot.productAds).toEqual({
       available: false,
       data: null,
-      error: 'Mapping read unavailable',
+      error: 'Knowledge section unavailable',
     });
+    expect(JSON.stringify(snapshot)).not.toContain('secret-host');
+    expect(JSON.stringify(snapshot)).not.toContain('Redis token');
   });
 
   it('does not expose raw customer PII in business context', async () => {
