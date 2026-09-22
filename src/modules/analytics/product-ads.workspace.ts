@@ -16,6 +16,27 @@ import {
 import { ProductAdsRepository } from './product-ads.repository.js';
 
 type MappingRow = Awaited<ReturnType<ProductAdsRepository['getActiveMappings']>>[number];
+type ProductAdsPair = NonNullable<ReturnType<ProductAdsWorkspace['periodPair']>>;
+
+function compareProductAdsPairs(left: ProductAdsPair, right: ProductAdsPair) {
+  const spend = right.current.advertising.spend - left.current.advertising.spend;
+  if (spend !== 0) return spend;
+  const revenue = right.current.commerce.netProductRevenue - left.current.commerce.netProductRevenue;
+  if (revenue !== 0) return revenue;
+  return left.product.title.localeCompare(right.product.title);
+}
+
+function insertRankedPair(items: ProductAdsPair[], item: ProductAdsPair, maxItems: number) {
+  let low = 0;
+  let high = items.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (compareProductAdsPairs(item, items[middle]!) < 0) high = middle;
+    else low = middle + 1;
+  }
+  items.splice(low, 0, item);
+  if (items.length > maxItems) items.pop();
+}
 
 export class ProductAdsWorkspace {
   constructor(
@@ -31,20 +52,21 @@ export class ProductAdsWorkspace {
       ...dataset.comparison.products.keys(),
     ]);
 
-    const items = [...ids]
-      .map((productId) => this.periodPair(productId, dataset.current, dataset.comparison))
-      .filter((item) => item !== null)
-      .sort((left, right) => {
-        const spend = right.current.advertising.spend - left.current.advertising.spend;
-        if (spend !== 0) return spend;
-        const revenue =
-          right.current.commerce.netProductRevenue - left.current.commerce.netProductRevenue;
-        if (revenue !== 0) return revenue;
-        return left.product.title.localeCompare(right.product.title);
-      });
-
-    const start = (query.page - 1) * query.limit;
-    const pageItems = items.slice(start, start + query.limit);
+    // The previous implementation materialized and sorted every Product × Ads pair before slicing
+    // the requested page. Keep only the prefix needed to answer this page. Exact accounting and
+    // ordering remain unchanged, while pair materialization is bounded by page * limit instead of
+    // the full matching product cardinality.
+    const pageStart = (query.page - 1) * query.limit;
+    const pageEnd = pageStart + query.limit;
+    const ranked: ProductAdsPair[] = [];
+    let total = 0;
+    for (const productId of ids) {
+      const item = this.periodPair(productId, dataset.current, dataset.comparison);
+      if (!item) continue;
+      total += 1;
+      insertRankedPair(ranked, item, pageEnd);
+    }
+    const pageItems = ranked.slice(pageStart, pageEnd);
 
     return {
       window: windowResponse(dataset.windows),
@@ -53,7 +75,7 @@ export class ProductAdsWorkspace {
       mappingPolicy: this.mappingPolicy(),
       summary: this.summary(dataset.current.totals, dataset.comparison.totals),
       items: pageItems,
-      pagination: pagination(query.page, query.limit, items.length),
+      pagination: pagination(query.page, query.limit, total),
     };
   }
 
