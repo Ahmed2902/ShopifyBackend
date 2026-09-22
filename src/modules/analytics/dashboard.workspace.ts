@@ -105,7 +105,12 @@ export class DashboardWorkspace {
       optionalSection<DashboardRecentOrder[]>(storeId, 'recentOrders', () =>
         this.readRepository.getRecentOrders(storeId, 6),
       ),
-      optionalSection(storeId, 'performance', () => this.performance.daily(storeId, query, now)),
+      // Daily performance joins store-wide Shopify commerce to Meta spend. When one Meta account is
+      // requested, returning this section would imply account-attributed commerce/MER that Stride
+      // does not have, so keep the section unavailable instead of silently showing all-account data.
+      query.accountId
+        ? Promise.resolve({ available: false, data: null } as Section<never>)
+        : optionalSection(storeId, 'performance', () => this.performance.daily(storeId, query, now)),
       optionalSection(storeId, 'customers', () => this.analytics.customers(storeId, query, now)),
       optionalSection<DashboardTopProduct[]>(storeId, 'topProducts', () =>
         this.readRepository.getTopProducts({
