@@ -69,8 +69,11 @@ export class AnalyticsController {
     const storeId = req.context.storeId!;
     const query = analyticsListQuerySchema.parse(req.query);
     const { fresh } = analyticsReadControlSchema.parse(req.query);
-    const payload = await this.cached(storeId, analyticsCacheKey(storeId, 'products', query), fresh, async () =>
-      toJsonSafe(await this.workspace.products(storeId, query)),
+    const payload = await this.cached(
+      storeId,
+      analyticsCacheKey(storeId, 'products', query),
+      fresh,
+      async () => toJsonSafe(await this.workspace.products(storeId, query)),
     );
     res.status(200).json(payload);
   };
@@ -80,8 +83,11 @@ export class AnalyticsController {
     const id = entityId(req, 'productId');
     const query = analyticsRangeQuerySchema.parse(req.query);
     const { fresh } = analyticsReadControlSchema.parse(req.query);
-    const payload = await this.cached(storeId, analyticsCacheKey(storeId, 'product', query, id), fresh, async () =>
-      toJsonSafe(await this.workspace.product(storeId, id, query)),
+    const payload = await this.cached(
+      storeId,
+      analyticsCacheKey(storeId, 'product', query, id),
+      fresh,
+      async () => toJsonSafe(await this.workspace.product(storeId, id, query)),
     );
     res.status(200).json(payload);
   };
@@ -90,8 +96,11 @@ export class AnalyticsController {
     const storeId = req.context.storeId!;
     const query = analyticsListQuerySchema.parse(req.query);
     const { fresh } = analyticsReadControlSchema.parse(req.query);
-    const payload = await this.cached(storeId, analyticsCacheKey(storeId, 'product-ads', query), fresh, async () =>
-      toJsonSafe(await this.productAdsWorkspace.list(storeId, query)),
+    const payload = await this.cached(
+      storeId,
+      analyticsCacheKey(storeId, 'product-ads', query),
+      fresh,
+      async () => toJsonSafe(await this.productAdsWorkspace.list(storeId, query)),
     );
     res.status(200).json(payload);
   };
@@ -101,8 +110,11 @@ export class AnalyticsController {
     const id = entityId(req, 'productId');
     const query = analyticsRangeQuerySchema.parse(req.query);
     const { fresh } = analyticsReadControlSchema.parse(req.query);
-    const payload = await this.cached(storeId, analyticsCacheKey(storeId, 'product-ads-product', query, id), fresh, async () =>
-      toJsonSafe(await this.productAdsWorkspace.detail(storeId, id, query)),
+    const payload = await this.cached(
+      storeId,
+      analyticsCacheKey(storeId, 'product-ads-product', query, id),
+      fresh,
+      async () => toJsonSafe(await this.productAdsWorkspace.detail(storeId, id, query)),
     );
     res.status(200).json(payload);
   };
@@ -111,8 +123,11 @@ export class AnalyticsController {
     const storeId = req.context.storeId!;
     const query = analyticsListQuerySchema.parse(req.query);
     const { fresh } = analyticsReadControlSchema.parse(req.query);
-    const payload = await this.cached(storeId, analyticsCacheKey(storeId, 'collections', query), fresh, async () =>
-      toJsonSafe(await this.workspace.collections(storeId, query)),
+    const payload = await this.cached(
+      storeId,
+      analyticsCacheKey(storeId, 'collections', query),
+      fresh,
+      async () => toJsonSafe(await this.workspace.collections(storeId, query)),
     );
     res.status(200).json(payload);
   };
@@ -121,8 +136,11 @@ export class AnalyticsController {
     const storeId = req.context.storeId!;
     const query = analyticsRangeQuerySchema.parse(req.query);
     const { fresh } = analyticsReadControlSchema.parse(req.query);
-    const payload = await this.cached(storeId, analyticsCacheKey(storeId, 'customers', query), fresh, async () =>
-      toJsonSafe(await this.workspace.customers(storeId, query)),
+    const payload = await this.cached(
+      storeId,
+      analyticsCacheKey(storeId, 'customers', query),
+      fresh,
+      async () => toJsonSafe(await this.workspace.customers(storeId, query)),
     );
     res.status(200).json(payload);
   };
@@ -131,8 +149,11 @@ export class AnalyticsController {
     const storeId = req.context.storeId!;
     const query = analyticsListQuerySchema.parse(req.query);
     const { fresh } = analyticsReadControlSchema.parse(req.query);
-    const payload = await this.cached(storeId, analyticsCacheKey(storeId, 'inventory', query), fresh, async () =>
-      toJsonSafe(await this.workspace.inventory(storeId, query)),
+    const payload = await this.cached(
+      storeId,
+      analyticsCacheKey(storeId, 'inventory', query),
+      fresh,
+      async () => toJsonSafe(await this.workspace.inventory(storeId, query)),
     );
     res.status(200).json(payload);
   };
@@ -141,8 +162,11 @@ export class AnalyticsController {
     const storeId = req.context.storeId!;
     const query = analyticsRangeQuerySchema.parse(req.query);
     const { fresh } = analyticsReadControlSchema.parse(req.query);
-    const payload = await this.cached(storeId, analyticsCacheKey(storeId, 'advertising', query), fresh, async () =>
-      toJsonSafe(await this.workspace.advertising(storeId, query)),
+    const payload = await this.cached(
+      storeId,
+      analyticsCacheKey(storeId, 'advertising', query),
+      fresh,
+      async () => toJsonSafe(await this.workspace.advertising(storeId, query)),
     );
     res.status(200).json(payload);
   };
@@ -151,8 +175,11 @@ export class AnalyticsController {
     const storeId = req.context.storeId!;
     const query = analyticsListQuerySchema.parse(req.query);
     const { fresh } = analyticsReadControlSchema.parse(req.query);
-    const payload = await this.cached(storeId, analyticsCacheKey(storeId, 'campaigns', query), fresh, async () =>
-      toJsonSafe(await this.workspace.campaigns(storeId, query)),
+    const payload = await this.cached(
+      storeId,
+      analyticsCacheKey(storeId, 'campaigns', query),
+      fresh,
+      async () => toJsonSafe(await this.workspace.campaigns(storeId, query)),
     );
     res.status(200).json(payload);
   };
@@ -162,8 +189,11 @@ export class AnalyticsController {
     const id = entityId(req, 'campaignId');
     const query = analyticsRangeQuerySchema.parse(req.query);
     const { fresh } = analyticsReadControlSchema.parse(req.query);
-    const payload = await this.cached(storeId, analyticsCacheKey(storeId, 'campaign', query, id), fresh, async () =>
-      toJsonSafe(await this.workspace.campaign(storeId, id, query)),
+    const payload = await this.cached(
+      storeId,
+      analyticsCacheKey(storeId, 'campaign', query, id),
+      fresh,
+      async () => toJsonSafe(await this.workspace.campaign(storeId, id, query)),
     );
     res.status(200).json(payload);
   };
@@ -172,8 +202,11 @@ export class AnalyticsController {
     const storeId = req.context.storeId!;
     const query = analyticsListQuerySchema.parse(req.query);
     const { fresh } = analyticsReadControlSchema.parse(req.query);
-    const payload = await this.cached(storeId, analyticsCacheKey(storeId, 'adsets', query), fresh, async () =>
-      toJsonSafe(await this.workspace.adSets(storeId, query)),
+    const payload = await this.cached(
+      storeId,
+      analyticsCacheKey(storeId, 'adsets', query),
+      fresh,
+      async () => toJsonSafe(await this.workspace.adSets(storeId, query)),
     );
     res.status(200).json(payload);
   };
@@ -183,8 +216,11 @@ export class AnalyticsController {
     const id = entityId(req, 'adSetId');
     const query = analyticsRangeQuerySchema.parse(req.query);
     const { fresh } = analyticsReadControlSchema.parse(req.query);
-    const payload = await this.cached(storeId, analyticsCacheKey(storeId, 'adset', query, id), fresh, async () =>
-      toJsonSafe(await this.workspace.adSet(storeId, id, query)),
+    const payload = await this.cached(
+      storeId,
+      analyticsCacheKey(storeId, 'adset', query, id),
+      fresh,
+      async () => toJsonSafe(await this.workspace.adSet(storeId, id, query)),
     );
     res.status(200).json(payload);
   };
@@ -193,8 +229,11 @@ export class AnalyticsController {
     const storeId = req.context.storeId!;
     const query = analyticsListQuerySchema.parse(req.query);
     const { fresh } = analyticsReadControlSchema.parse(req.query);
-    const payload = await this.cached(storeId, analyticsCacheKey(storeId, 'ads', query), fresh, async () =>
-      toJsonSafe(await this.workspace.ads(storeId, query)),
+    const payload = await this.cached(
+      storeId,
+      analyticsCacheKey(storeId, 'ads', query),
+      fresh,
+      async () => toJsonSafe(await this.workspace.ads(storeId, query)),
     );
     res.status(200).json(payload);
   };
@@ -204,8 +243,11 @@ export class AnalyticsController {
     const id = entityId(req, 'adId');
     const query = analyticsRangeQuerySchema.parse(req.query);
     const { fresh } = analyticsReadControlSchema.parse(req.query);
-    const payload = await this.cached(storeId, analyticsCacheKey(storeId, 'ad', query, id), fresh, async () =>
-      toJsonSafe(await this.workspace.ad(storeId, id, query)),
+    const payload = await this.cached(
+      storeId,
+      analyticsCacheKey(storeId, 'ad', query, id),
+      fresh,
+      async () => toJsonSafe(await this.workspace.ad(storeId, id, query)),
     );
     res.status(200).json(payload);
   };
@@ -214,8 +256,11 @@ export class AnalyticsController {
     const storeId = req.context.storeId!;
     const query = analyticsListQuerySchema.parse(req.query);
     const { fresh } = analyticsReadControlSchema.parse(req.query);
-    const payload = await this.cached(storeId, analyticsCacheKey(storeId, 'creatives', query), fresh, async () =>
-      toJsonSafe(await this.workspace.creatives(storeId, query)),
+    const payload = await this.cached(
+      storeId,
+      analyticsCacheKey(storeId, 'creatives', query),
+      fresh,
+      async () => toJsonSafe(await this.workspace.creatives(storeId, query)),
     );
     res.status(200).json(payload);
   };
@@ -225,8 +270,11 @@ export class AnalyticsController {
     const id = entityId(req, 'creativeId');
     const query = analyticsRangeQuerySchema.parse(req.query);
     const { fresh } = analyticsReadControlSchema.parse(req.query);
-    const payload = await this.cached(storeId, analyticsCacheKey(storeId, 'creative', query, id), fresh, async () =>
-      toJsonSafe(await this.workspace.creative(storeId, id, query)),
+    const payload = await this.cached(
+      storeId,
+      analyticsCacheKey(storeId, 'creative', query, id),
+      fresh,
+      async () => toJsonSafe(await this.workspace.creative(storeId, id, query)),
     );
     res.status(200).json(payload);
   };
