@@ -1,0 +1,58 @@
+model McpOAuthClient {
+  id          String   @id @default(uuid()) @db.Uuid
+  clientId    String   @unique
+  clientName  String
+  redirectUris String[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model McpAuthorizationRequest {
+  id                  String   @id @default(uuid()) @db.Uuid
+  clientId            String
+  clientName          String
+  redirectUri         String
+  state               String?
+  scopes              String[]
+  resource            String
+  codeChallenge       String
+  codeChallengeMethod String   @default("S256")
+  expiresAt           DateTime
+  createdAt           DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
+model McpAuthorizationCode {
+  id            String    @id @default(uuid()) @db.Uuid
+  codeHash      String    @unique
+  userId        String    @db.Uuid
+  storeId       String    @db.Uuid
+  clientId      String
+  redirectUri   String
+  scopes        String[]
+  resource      String
+  codeChallenge String
+  expiresAt     DateTime
+  usedAt        DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([expiresAt])
+  @@index([userId, storeId, createdAt])
+}
+
+model McpRefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  tokenHash String    @unique
+  userId    String    @db.Uuid
+  storeId   String    @db.Uuid
+  clientId  String
+  scopes    String[]
+  resource  String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, storeId, createdAt])
+  @@index([expiresAt, revokedAt])
+}

@@ -11,6 +11,7 @@ describe('application foundation', () => {
       service: 'stride-api',
       status: 'ok',
       api: '/v1',
+      mcp: '/mcp',
       health: {
         live: '/health/live',
         ready: '/health/ready',

@@ -135,6 +135,7 @@ export function rateLimit(options: RateLimitOptions): RequestHandler {
 const AUTH_COOKIE_PATHS = new Set(['/auth/csrf', '/auth/refresh', '/auth/logout']);
 const isWebhook = (req: Request) => req.path.endsWith('/webhooks');
 const isPixelIngress = (req: Request) => req.originalUrl.startsWith('/v1/pixel/events');
+const skipInTest = () => env.NODE_ENV === 'test';
 
 export const apiRateLimit = rateLimit({
   name: 'api',
@@ -198,6 +199,26 @@ export const csrfRateLimit = rateLimit({
   key: sourceIdentity,
 });
 
-//3shan bokraaaaa ehna hna hateeenn buckets bdl redis
-//el oauth bayz msh fahm leehh
-//ui el login wel dashboard msh gy m3aha el akhdar el feh dah 3ayz ashelo w akhleh zy systemly
+export const mcpRateLimit = rateLimit({
+  name: 'mcp',
+  max: 600,
+  windowMs: 5 * 60_000,
+  key: sourceIdentity,
+  skip: skipInTest,
+});
+
+export const mcpOAuthRateLimit = rateLimit({
+  name: 'mcp-oauth',
+  max: 120,
+  windowMs: 15 * 60_000,
+  key: sourceIdentity,
+  skip: skipInTest,
+});
+
+export const mcpClientRegistrationRateLimit = rateLimit({
+  name: 'mcp-client-registration',
+  max: 20,
+  windowMs: 15 * 60_000,
+  key: sourceIdentity,
+  skip: skipInTest,
+});
