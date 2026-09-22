@@ -61,7 +61,7 @@ describe('Meta advertising account scope', () => {
     expect(advertisingRead.getOverviewMeta).toHaveBeenCalledWith(storeId, ['act_202']);
   });
 
-  it('applies the same account scope to overview spend, MER, and availability reads', async () => {
+  it('applies the same account scope and keeps missing same-currency evidence unavailable', async () => {
     const repository = buildRepository();
     const advertisingRead = buildAdvertisingRead();
     const workspace = new AnalyticsWorkspace(repository, advertisingRead, buildCommerceRead());
@@ -77,6 +77,13 @@ describe('Meta advertising account scope', () => {
     );
     expect(advertisingRead.getOverviewMeta).toHaveBeenCalledWith(storeId, ['act_202']);
     expect(result.availability.meta.selectedAdAccounts).toBe(1);
+    expect(result.profitability.sameCurrencyAdSpendAvailable).toBe(false);
+    expect(result.profitability.current.contributionAfterAds).toBeNull();
+    expect(result.profitability.comparison.contributionAfterAds).toBeNull();
+    expect(result.blended.sameCurrencySpendAvailable).toBe(false);
+    expect(result.blended.current.mer).toBeNull();
+    expect(result.blended.comparison.mer).toBeNull();
+    expect(result.blended.change.metaSpend).toBeNull();
   });
 
   it('rejects an account that is not selected for the store', async () => {
