@@ -1,5 +1,6 @@
 import type { Prisma } from '../../../generated/prisma/client.js';
 import { prisma } from '../../../lib/prisma.js';
+import { advertisingWriteRepository } from '../../advertising/advertising-write.repository.js';
 
 const json = (value: unknown): Prisma.InputJsonValue => value as Prisma.InputJsonValue;
 const optionalJson = (value: unknown): Prisma.InputJsonValue | undefined =>
@@ -54,21 +55,56 @@ export class TikTokAdsRepository {
       deletedAt: null,
       rawJson: json(input.raw),
     };
-    return prisma.tikTokCampaign.upsert({
-      where: { advertiserDbId_tiktokCampaignId: { advertiserDbId: input.advertiserDbId, tiktokCampaignId: input.tiktokCampaignId } },
-      create: { advertiserDbId: input.advertiserDbId, tiktokCampaignId: input.tiktokCampaignId, ...data },
-      update: data,
+    return prisma.$transaction(async (tx) => {
+      const native = await tx.tikTokCampaign.upsert({
+        where: { advertiserDbId_tiktokCampaignId: { advertiserDbId: input.advertiserDbId, tiktokCampaignId: input.tiktokCampaignId } },
+        create: { advertiserDbId: input.advertiserDbId, tiktokCampaignId: input.tiktokCampaignId, ...data },
+        update: data,
+      });
+      await advertisingWriteRepository.upsertCampaign(tx, {
+        id: native.id,
+        accountId: input.advertiserDbId,
+        providerEntityId: input.tiktokCampaignId,
+        name: input.name,
+        status: input.operationStatus,
+        effectiveStatus: input.secondaryStatus,
+        objective: input.objectiveType,
+        campaignType: input.campaignType,
+        budgetAmount: input.budget,
+        budgetMode: input.budgetMode,
+        bidStrategy: input.deepBidType,
+        providerData: {
+          roasBid: input.roasBid,
+          isSmartPerformance: input.isSmartPerformance,
+        },
+        rawJson: input.raw,
+        providerCreatedAt: input.tiktokCreatedAt,
+        providerUpdatedAt: input.tiktokUpdatedAt,
+        deletedAt: null,
+      });
+      return native;
     });
   }
 
   tombstoneMissingCampaigns(advertiserDbId: string, activeIds: string[]) {
-    return prisma.tikTokCampaign.updateMany({
-      where: {
-        advertiserDbId,
-        deletedAt: null,
-        ...(activeIds.length > 0 ? { tiktokCampaignId: { notIn: activeIds } } : {}),
-      },
-      data: { deletedAt: new Date() },
+    return prisma.$transaction(async (tx) => {
+      const now = new Date();
+      const externalFilter = activeIds.length > 0 ? { providerEntityId: { notIn: activeIds } } : {};
+      const [native] = await Promise.all([
+        tx.tikTokCampaign.updateMany({
+          where: {
+            advertiserDbId,
+            deletedAt: null,
+            ...(activeIds.length > 0 ? { tiktokCampaignId: { notIn: activeIds } } : {}),
+          },
+          data: { deletedAt: now },
+        }),
+        tx.advertisingCampaign.updateMany({
+          where: { accountId: advertiserDbId, deletedAt: null, ...externalFilter },
+          data: { deletedAt: now },
+        }),
+      ]);
+      return native;
     });
   }
 
@@ -137,21 +173,73 @@ export class TikTokAdsRepository {
       deletedAt: null,
       rawJson: json(input.raw),
     };
-    return prisma.tikTokAdGroup.upsert({
-      where: { advertiserDbId_tiktokAdGroupId: { advertiserDbId: input.advertiserDbId, tiktokAdGroupId: input.tiktokAdGroupId } },
-      create: { advertiserDbId: input.advertiserDbId, tiktokAdGroupId: input.tiktokAdGroupId, ...data },
-      update: data,
+    return prisma.$transaction(async (tx) => {
+      const native = await tx.tikTokAdGroup.upsert({
+        where: { advertiserDbId_tiktokAdGroupId: { advertiserDbId: input.advertiserDbId, tiktokAdGroupId: input.tiktokAdGroupId } },
+        create: { advertiserDbId: input.advertiserDbId, tiktokAdGroupId: input.tiktokAdGroupId, ...data },
+        update: data,
+      });
+      await advertisingWriteRepository.upsertGroup(tx, {
+        id: native.id,
+        accountId: input.advertiserDbId,
+        campaignId: input.campaignId,
+        providerEntityId: input.tiktokAdGroupId,
+        kind: 'AD_GROUP',
+        name: input.name,
+        status: input.operationStatus,
+        effectiveStatus: input.secondaryStatus,
+        optimizationGoal: input.optimizationGoal,
+        billingEvent: input.billingEvent,
+        bidStrategy: input.bidType,
+        bidAmount: input.bidPrice,
+        budgetAmount: input.budget,
+        budgetMode: input.budgetMode,
+        targeting: input.targeting,
+        startsAt: input.scheduleStartTime,
+        endsAt: input.scheduleEndTime,
+        providerData: {
+          placementType: input.placementType,
+          placements: input.placements,
+          promotionType: input.promotionType,
+          optimizationEvent: input.optimizationEvent,
+          deepBidType: input.deepBidType,
+          roasBid: input.roasBid,
+          scheduleType: input.scheduleType,
+          dayparting: input.dayparting,
+          pixelId: input.pixelId,
+          catalogId: input.catalogId,
+          productSetId: input.productSetId,
+          productSource: input.productSource,
+          attribution: input.attribution,
+        },
+        rawJson: input.raw,
+        providerCreatedAt: input.tiktokCreatedAt,
+        providerUpdatedAt: input.tiktokUpdatedAt,
+        deletedAt: null,
+      });
+      return native;
     });
   }
 
   tombstoneMissingAdGroups(advertiserDbId: string, activeIds: string[]) {
-    return prisma.tikTokAdGroup.updateMany({
-      where: {
-        advertiserDbId,
-        deletedAt: null,
-        ...(activeIds.length > 0 ? { tiktokAdGroupId: { notIn: activeIds } } : {}),
-      },
-      data: { deletedAt: new Date() },
+    return prisma.$transaction(async (tx) => {
+      const now = new Date();
+      const externalFilter = activeIds.length > 0 ? { providerEntityId: { notIn: activeIds } } : {};
+      const [native] = await Promise.all([
+        tx.tikTokAdGroup.updateMany({
+          where: {
+            advertiserDbId,
+            deletedAt: null,
+            ...(activeIds.length > 0 ? { tiktokAdGroupId: { notIn: activeIds } } : {}),
+          },
+          data: { deletedAt: now },
+        }),
+        tx.advertisingGroup.updateMany({
+          where: { accountId: advertiserDbId, kind: 'AD_GROUP', deletedAt: null, ...externalFilter },
+          data: { deletedAt: now },
+        }),
+      ]);
+      return native;
     });
   }
 
@@ -212,21 +300,72 @@ export class TikTokAdsRepository {
       deletedAt: null,
       rawJson: json(input.raw),
     };
-    return prisma.tikTokAd.upsert({
-      where: { advertiserDbId_tiktokAdId: { advertiserDbId: input.advertiserDbId, tiktokAdId: input.tiktokAdId } },
-      create: { advertiserDbId: input.advertiserDbId, tiktokAdId: input.tiktokAdId, ...data },
-      update: data,
+    return prisma.$transaction(async (tx) => {
+      const native = await tx.tikTokAd.upsert({
+        where: { advertiserDbId_tiktokAdId: { advertiserDbId: input.advertiserDbId, tiktokAdId: input.tiktokAdId } },
+        create: { advertiserDbId: input.advertiserDbId, tiktokAdId: input.tiktokAdId, ...data },
+        update: data,
+      });
+      await advertisingWriteRepository.upsertAd(tx, {
+        id: native.id,
+        accountId: input.advertiserDbId,
+        campaignId: input.campaignId,
+        groupId: input.adGroupId,
+        creativeId: null,
+        providerEntityId: input.tiktokAdId,
+        name: input.name,
+        status: input.operationStatus,
+        effectiveStatus: input.secondaryStatus,
+        format: input.adFormat,
+        landingPageUrl: input.landingPageUrl,
+        targetScope: native.targetScope,
+        targetScopeConfidence: native.targetScopeConfidence,
+        targetScopeEvidence: native.targetScopeEvidence,
+        providerData: {
+          creativeMaterialMode: input.creativeMaterialMode,
+          identityId: input.identityId,
+          identityType: input.identityType,
+          sparkAdPostId: input.sparkAdPostId,
+          videoId: input.videoId,
+          imageIds: input.imageIds,
+          thumbnailUrl: input.thumbnailUrl,
+          adText: input.adText,
+          displayName: input.displayName,
+          callToAction: input.callToAction,
+          trackingPixelId: input.trackingPixelId,
+          catalogId: input.catalogId,
+          productSetId: input.productSetId,
+          tracking: input.tracking,
+          creativeJson: input.creativeJson,
+        },
+        rawJson: input.raw,
+        providerCreatedAt: input.tiktokCreatedAt,
+        providerUpdatedAt: input.tiktokUpdatedAt,
+        deletedAt: null,
+      });
+      return native;
     });
   }
 
   tombstoneMissingAds(advertiserDbId: string, activeIds: string[]) {
-    return prisma.tikTokAd.updateMany({
-      where: {
-        advertiserDbId,
-        deletedAt: null,
-        ...(activeIds.length > 0 ? { tiktokAdId: { notIn: activeIds } } : {}),
-      },
-      data: { deletedAt: new Date() },
+    return prisma.$transaction(async (tx) => {
+      const now = new Date();
+      const externalFilter = activeIds.length > 0 ? { providerEntityId: { notIn: activeIds } } : {};
+      const [native] = await Promise.all([
+        tx.tikTokAd.updateMany({
+          where: {
+            advertiserDbId,
+            deletedAt: null,
+            ...(activeIds.length > 0 ? { tiktokAdId: { notIn: activeIds } } : {}),
+          },
+          data: { deletedAt: now },
+        }),
+        tx.advertisingAd.updateMany({
+          where: { accountId: advertiserDbId, deletedAt: null, ...externalFilter },
+          data: { deletedAt: now },
+        }),
+      ]);
+      return native;
     });
   }
 

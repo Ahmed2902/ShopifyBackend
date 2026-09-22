@@ -1,5 +1,6 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
+import { advertisingWriteRepository } from '../advertising/advertising-write.repository.js';
 
 const json = (value: unknown): Prisma.InputJsonValue => value as Prisma.InputJsonValue;
 
@@ -113,10 +114,34 @@ export class TikTokRepository {
       lastSyncedAt: new Date(),
       rawJson: json(input.raw),
     };
-    return prisma.tikTokAdvertiser.upsert({
-      where: { storeId_advertiserId: { storeId: input.storeId, advertiserId: input.advertiserId } },
-      create: { storeId: input.storeId, advertiserId: input.advertiserId, ...data },
-      update: data,
+    return prisma.$transaction(async (tx) => {
+      const nativeAccount = await tx.tikTokAdvertiser.upsert({
+        where: { storeId_advertiserId: { storeId: input.storeId, advertiserId: input.advertiserId } },
+        create: { storeId: input.storeId, advertiserId: input.advertiserId, ...data },
+        update: data,
+      });
+
+      await advertisingWriteRepository.upsertAccount(tx, {
+        id: nativeAccount.id,
+        storeId: input.storeId,
+        provider: 'TIKTOK',
+        providerEntityId: input.advertiserId,
+        name: input.name,
+        status: input.status,
+        currency: input.currency,
+        timezone: input.timezone,
+        providerData: {
+          countryCode: input.countryCode,
+          industry: input.industry,
+          company: input.company,
+          balance: input.balance,
+        },
+        rawJson: input.raw,
+        lastSyncedAt: nativeAccount.lastSyncedAt,
+        createdAt: nativeAccount.createdAt,
+        updatedAt: nativeAccount.updatedAt,
+      });
+      return nativeAccount;
     });
   }
 }

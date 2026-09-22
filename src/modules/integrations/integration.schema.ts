@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
-export const INTEGRATION_PROVIDERS = ['SHOPIFY', 'META', 'TIKTOK'] as const;
+/**
+ * Advertising integrations supported by Stride's normalized paid-media layer.
+ * Keep this list as the single runtime source for ad-provider validation.
+ */
+export const ADVERTISING_PROVIDERS = ['META', 'TIKTOK'] as const;
+export type AdProviderName = (typeof ADVERTISING_PROVIDERS)[number];
+
+export const INTEGRATION_PROVIDERS = ['SHOPIFY', ...ADVERTISING_PROVIDERS] as const;
 
 export const syncRunQuerySchema = z.object({
   provider: z.enum(INTEGRATION_PROVIDERS).optional(),

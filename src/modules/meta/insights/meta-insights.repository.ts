@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { Prisma, type MetaInsightActionKind } from '../../../generated/prisma/client.js';
 import { AppError } from '../../../errors/app-error.js';
 import { prisma } from '../../../lib/prisma.js';
+import { advertisingWriteRepository } from '../../advertising/advertising-write.repository.js';
 import type { MetaInsightActionRow, MetaInsightRow } from './meta-insights.schema.js';
 
 function stableHash(parts: Array<string | null | undefined>): string {
@@ -34,6 +35,47 @@ function sumActionValues(rows: MetaInsightActionRow[]): bigint {
     total += BigInt(raw.split('.')[0]!);
   }
   return total;
+}
+
+const PURCHASE_ACTION_PRIORITY = [
+  'offsite_conversion.fb_pixel_purchase',
+  'omni_purchase',
+  'purchase',
+] as const;
+
+function purchaseRank(actionType: string): number {
+  const exact = PURCHASE_ACTION_PRIORITY.indexOf(
+    actionType as (typeof PURCHASE_ACTION_PRIORITY)[number],
+  );
+  if (exact >= 0) return exact;
+  return actionType.toLowerCase().includes('purchase') ? PURCHASE_ACTION_PRIORITY.length : 100;
+}
+
+function selectedPurchaseMetric(rows: MetaInsightActionRow[]): number {
+  const candidates = rows.filter((row) => purchaseRank(row.action_type) < 100);
+  if (candidates.length === 0) return 0;
+  const bestRank = Math.min(...candidates.map((row) => purchaseRank(row.action_type)));
+  const selectedType = candidates.find((row) => purchaseRank(row.action_type) === bestRank)?.action_type;
+  if (!selectedType) return 0;
+  return candidates
+    .filter((row) => row.action_type === selectedType)
+    .reduce((sum, row) => sum + Number(decimalMetric(row.value) ?? 0), 0);
+}
+
+function selectedPurchaseRoas(row: MetaInsightRow): number | null {
+  for (const rows of [row.website_purchase_roas, row.purchase_roas]) {
+    const candidates = rows.filter((item) => purchaseRank(item.action_type) < 100);
+    if (candidates.length === 0) continue;
+    const bestRank = Math.min(...candidates.map((item) => purchaseRank(item.action_type)));
+    const selectedType = candidates.find((item) => purchaseRank(item.action_type) === bestRank)?.action_type;
+    if (!selectedType) continue;
+    const values = candidates
+      .filter((item) => item.action_type === selectedType)
+      .map((item) => Number(decimalMetric(item.value) ?? 0))
+      .filter((value) => value > 0);
+    if (values.length > 0) return Math.max(...values);
+  }
+  return null;
 }
 
 const actionCollections: Array<{
@@ -187,6 +229,12 @@ export class MetaInsightsRepository {
       syncedAt: new Date(),
     };
 
+    const purchases = selectedPurchaseMetric(input.row.actions);
+    const directPurchaseValue = selectedPurchaseMetric(input.row.action_values);
+    const fallbackRoas = selectedPurchaseRoas(input.row);
+    const spend = Number(mutableData.spend);
+    const purchaseValue = directPurchaseValue > 0 ? directPurchaseValue : spend * (fallbackRoas ?? 0);
+
     return prisma.$transaction(async (tx) => {
       const insight = await tx.metaInsightDaily.upsert({
         where: { insightKey },
@@ -202,7 +250,7 @@ export class MetaInsightsRepository {
         // Existing snapshot/tracking provenance is never rewritten here. A null snapshot may only
         // be finalized below when this row was explicitly enrolled in tracking on its reporting day.
         update: mutableData,
-        select: { id: true },
+        select: { id: true, creativeIdSnapshot: true },
       });
 
       if (input.creativeIdSnapshot) {
@@ -240,18 +288,82 @@ export class MetaInsightsRepository {
         }
       }
       if (actions.length > 0) await tx.metaInsightAction.createMany({ data: actions });
+
+      const canonicalCreativeId = input.creativeIdSnapshot ?? insight.creativeIdSnapshot;
+      await advertisingWriteRepository.upsertDailyMetric(tx, {
+        id: insight.id,
+        metricKey: `META:${insightKey}`,
+        accountId: input.adAccountId,
+        campaignId: input.campaignId,
+        groupId: input.adSetId,
+        adId: input.adId,
+        creativeIdSnapshot: canonicalCreativeId,
+        level: 'AD',
+        date,
+        currency: input.row.account_currency,
+        spend: mutableData.spend,
+        impressions: mutableData.impressions,
+        reach: mutableData.reach,
+        clicks: mutableData.clicks,
+        conversions: purchases,
+        conversionValue: purchaseValue,
+        ctr: mutableData.ctr,
+        cpc: mutableData.cpc,
+        cpm: mutableData.cpm,
+        frequency: mutableData.frequency,
+        cpa: purchases > 0 ? spend / purchases : null,
+        roas: spend > 0 ? purchaseValue / spend : fallbackRoas,
+        providerMetrics: {
+          socialSpend: mutableData.socialSpend,
+          uniqueClicks: mutableData.uniqueClicks,
+          outboundClicks: mutableData.outboundClicks,
+          uniqueOutboundClicks: mutableData.uniqueOutboundClicks,
+          inlineLinkClicks: mutableData.inlineLinkClicks,
+          inlinePostEngagement: mutableData.inlinePostEngagement,
+          estimatedAdRecallers: mutableData.estimatedAdRecallers,
+          estimatedAdRecallRate: mutableData.estimatedAdRecallRate,
+          cpp: mutableData.cpp,
+          objective: mutableData.objective,
+          optimizationGoal: mutableData.optimizationGoal,
+          attributionSetting: mutableData.attributionSetting,
+          actionReportTime: mutableData.actionReportTime,
+          websiteCtr: input.row.website_ctr,
+          actions: input.row.actions,
+          uniqueActions: input.row.unique_actions,
+          actionValues: input.row.action_values,
+          conversions: input.row.conversions,
+          conversionValues: input.row.conversion_values,
+          purchaseRoas: input.row.purchase_roas,
+          websitePurchaseRoas: input.row.website_purchase_roas,
+          videoMetrics,
+        },
+        rawJson: input.row,
+        syncedAt: mutableData.syncedAt,
+      });
       return insightKey;
     });
   }
 
   deleteMissingRange(adAccountId: string, since: Date, until: Date, insightKeys: string[]) {
-    return prisma.metaInsightDaily.deleteMany({
-      where: {
-        adAccountId,
-        level: 'AD',
-        date: { gte: since, lte: until },
-        insightKey: { notIn: insightKeys },
-      },
+    const canonicalKeys = insightKeys.map((key) => `META:${key}`);
+    return prisma.$transaction(async (tx) => {
+      const native = await tx.metaInsightDaily.deleteMany({
+        where: {
+          adAccountId,
+          level: 'AD',
+          date: { gte: since, lte: until },
+          insightKey: { notIn: insightKeys },
+        },
+      });
+      await tx.advertisingDailyMetric.deleteMany({
+        where: {
+          accountId: adAccountId,
+          level: 'AD',
+          date: { gte: since, lte: until },
+          metricKey: { notIn: canonicalKeys },
+        },
+      });
+      return native;
     });
   }
 

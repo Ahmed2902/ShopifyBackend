@@ -181,6 +181,7 @@ model Store {
   shopifyConnection               ShopifyConnection?
   metaConnection                  MetaConnection?
   tiktokConnection                TikTokConnection?
+  advertisingAccounts             AdvertisingAccount[]
   pixelInstallation               PixelInstallation?
   shopifyDataRequests             ShopifyDataRequest[]
   shopifyOrderRedactions          ShopifyOrderRedaction[]

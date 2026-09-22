@@ -1,5 +1,6 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
+import { advertisingWriteRepository } from '../advertising/advertising-write.repository.js';
 import { enqueueMetaHierarchyPixelRepairs } from '../pixel/pixel-source-invalidation.js';
 import type { MetaAdAccountAsset } from './meta.types.js';
 
@@ -128,7 +129,7 @@ export class MetaRepository {
           spendCapMinor: account.spendCapMinor,
           rawJson: account.raw as Prisma.InputJsonValue,
         };
-        await tx.metaAdAccount.upsert({
+        const nativeAccount = await tx.metaAdAccount.upsert({
           where: {
             storeId_metaAccountId: {
               storeId: input.storeId,
@@ -141,6 +142,28 @@ export class MetaRepository {
             ...data,
           },
           update: data,
+        });
+
+        await advertisingWriteRepository.upsertAccount(tx, {
+          id: nativeAccount.id,
+          storeId: input.storeId,
+          provider: 'META',
+          providerEntityId: account.id,
+          name: account.name,
+          status: data.status,
+          currency: account.currency,
+          timezone: account.timezoneName,
+          providerData: {
+            timezoneId: account.timezoneId,
+            timezoneOffsetHours: account.timezoneOffsetHoursUtc,
+            amountSpentMinor: account.amountSpentMinor,
+            balanceMinor: account.balanceMinor,
+            spendCapMinor: account.spendCapMinor,
+          },
+          rawJson: account.raw,
+          lastSyncedAt: nativeAccount.lastSyncedAt,
+          createdAt: nativeAccount.createdAt,
+          updatedAt: nativeAccount.updatedAt,
         });
       }
 

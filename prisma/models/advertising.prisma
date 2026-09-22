@@ -1,0 +1,297 @@
+enum AdvertisingProvider {
+  META
+  TIKTOK
+  GOOGLE_ADS
+}
+
+enum AdvertisingGroupKind {
+  AD_SET
+  AD_GROUP
+  ASSET_GROUP
+}
+
+enum AdvertisingMetricLevel {
+  ACCOUNT
+  CAMPAIGN
+  GROUP
+  AD
+  CREATIVE
+  ASSET_GROUP
+}
+
+enum AdvertisingTargetScope {
+  STORE
+  COLLECTION
+  PRODUCT
+  PRODUCT_OPTION
+  VARIANT
+  MULTI_PRODUCT
+  UNKNOWN
+}
+
+/// Canonical paid-media account used by Stride above provider ingestion.
+/// Provider-specific account payloads remain available in providerData/rawJson.
+model AdvertisingAccount {
+  id               String              @id @default(uuid()) @db.Uuid
+  storeId          String              @db.Uuid
+  provider         AdvertisingProvider
+  providerEntityId String
+  name             String
+  status           String?
+  currency         String?
+  timezone         String?
+  providerData     Json?
+  rawJson          Json?
+  lastSyncedAt     DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  store      Store                        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  campaigns AdvertisingCampaign[]
+  groups    AdvertisingGroup[]
+  ads       AdvertisingAd[]
+  creatives AdvertisingCreative[]
+  metrics   AdvertisingDailyMetric[]
+
+  @@unique([storeId, provider, providerEntityId])
+  @@index([storeId, provider])
+  @@index([provider, status])
+}
+
+model AdvertisingCampaign {
+  id                String   @id @default(uuid()) @db.Uuid
+  accountId         String   @db.Uuid
+  providerEntityId  String
+  name              String
+  status            String?
+  effectiveStatus   String?
+  objective         String?
+  campaignType      String?
+  budgetAmount      Decimal? @db.Decimal(20, 6)
+  budgetMode        String?
+  bidStrategy       String?
+  startsAt          DateTime?
+  endsAt            DateTime?
+  providerData      Json?
+  rawJson           Json?
+  providerCreatedAt DateTime?
+  providerUpdatedAt DateTime?
+  deletedAt         DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  account AdvertisingAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  groups  AdvertisingGroup[]
+  ads     AdvertisingAd[]
+  metrics AdvertisingDailyMetric[]
+
+  @@unique([accountId, providerEntityId])
+  @@index([accountId, effectiveStatus])
+  @@index([deletedAt])
+}
+
+model AdvertisingGroup {
+  id                String               @id @default(uuid()) @db.Uuid
+  accountId         String               @db.Uuid
+  campaignId        String               @db.Uuid
+  providerEntityId  String
+  kind              AdvertisingGroupKind
+  name              String
+  status            String?
+  effectiveStatus   String?
+  optimizationGoal  String?
+  billingEvent      String?
+  bidStrategy       String?
+  bidAmount         Decimal?             @db.Decimal(20, 6)
+  budgetAmount      Decimal?             @db.Decimal(20, 6)
+  budgetMode        String?
+  targeting         Json?
+  startsAt          DateTime?
+  endsAt            DateTime?
+  providerData      Json?
+  rawJson           Json?
+  providerCreatedAt DateTime?
+  providerUpdatedAt DateTime?
+  deletedAt         DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  account  AdvertisingAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  campaign AdvertisingCampaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  ads      AdvertisingAd[]
+  metrics  AdvertisingDailyMetric[]
+
+  @@unique([accountId, providerEntityId])
+  @@index([campaignId, effectiveStatus])
+  @@index([accountId, kind])
+  @@index([deletedAt])
+}
+
+/// Provider-neutral creative representation. Providers without a stable first-class creative
+/// entity may leave ad.creativeId null and keep native creative material in ad.providerData.
+model AdvertisingCreative {
+  id                String   @id @default(uuid()) @db.Uuid
+  accountId         String   @db.Uuid
+  providerEntityId  String
+  name              String?
+  title             String?
+  body              String?
+  callToActionType  String?
+  imageUrl          String?
+  thumbnailUrl      String?
+  videoId           String?
+  linkUrl           String?
+  providerData      Json?
+  rawJson           Json?
+  providerCreatedAt DateTime?
+  providerUpdatedAt DateTime?
+  deletedAt         DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  account AdvertisingAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  ads     AdvertisingAd[]
+  metrics AdvertisingDailyMetric[]
+
+  @@unique([accountId, providerEntityId])
+  @@index([accountId, videoId])
+  @@index([deletedAt])
+}
+
+model AdvertisingAd {
+  id                    String                 @id @default(uuid()) @db.Uuid
+  accountId             String                 @db.Uuid
+  campaignId            String                 @db.Uuid
+  groupId               String?                @db.Uuid
+  creativeId            String?                @db.Uuid
+  providerEntityId      String
+  name                  String
+  status                String?
+  effectiveStatus       String?
+  format                String?
+  landingPageUrl        String?
+  targetScope           AdvertisingTargetScope @default(UNKNOWN)
+  targetScopeConfidence Decimal?               @db.Decimal(5, 4)
+  targetScopeEvidence   Json?
+  providerData          Json?
+  rawJson               Json?
+  providerCreatedAt     DateTime?
+  providerUpdatedAt     DateTime?
+  deletedAt             DateTime?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+
+  account            AdvertisingAccount             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  campaign           AdvertisingCampaign            @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  group              AdvertisingGroup?              @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  creative           AdvertisingCreative?           @relation(fields: [creativeId], references: [id], onDelete: SetNull)
+  metrics            AdvertisingDailyMetric[]
+  productMappings    AdvertisingProductMapping[]
+  collectionMappings AdvertisingCollectionMapping[]
+
+  @@unique([accountId, providerEntityId])
+  @@index([campaignId])
+  @@index([groupId, effectiveStatus])
+  @@index([creativeId])
+  @@index([targetScope])
+  @@index([deletedAt])
+}
+
+/// Canonical cross-provider daily fact table. conversion/value fields are normalized provider
+/// attribution, never Shopify commerce truth. Detailed/native conversion payloads stay in providerMetrics.
+model AdvertisingDailyMetric {
+  id                 String                 @id @default(uuid()) @db.Uuid
+  metricKey          String                 @unique
+  accountId          String                 @db.Uuid
+  campaignId         String?                @db.Uuid
+  groupId            String?                @db.Uuid
+  adId               String?                @db.Uuid
+  creativeIdSnapshot String?                @db.Uuid
+  level              AdvertisingMetricLevel
+  date               DateTime               @db.Date
+  currency           String?
+  spend              Decimal                @default(0) @db.Decimal(20, 6)
+  impressions        BigInt                 @default(0)
+  reach              BigInt?
+  clicks             BigInt                 @default(0)
+  conversions        Decimal?               @db.Decimal(20, 8)
+  conversionValue    Decimal?               @db.Decimal(20, 8)
+  ctr                Decimal?               @db.Decimal(20, 8)
+  cpc                Decimal?               @db.Decimal(20, 8)
+  cpm                Decimal?               @db.Decimal(20, 8)
+  frequency          Decimal?               @db.Decimal(20, 8)
+  cpa                Decimal?               @db.Decimal(20, 8)
+  roas                Decimal?               @db.Decimal(20, 8)
+  providerMetrics    Json?
+  breakdownHash      String?
+  breakdownJson      Json?
+  rawJson            Json?
+  syncedAt           DateTime               @default(now())
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  account          AdvertisingAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  campaign         AdvertisingCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  group            AdvertisingGroup?    @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  ad               AdvertisingAd?       @relation(fields: [adId], references: [id], onDelete: SetNull)
+  creativeSnapshot AdvertisingCreative? @relation(fields: [creativeIdSnapshot], references: [id], onDelete: SetNull)
+
+  @@index([accountId, date, level])
+  @@index([campaignId, date])
+  @@index([groupId, date])
+  @@index([adId, date])
+  @@index([creativeIdSnapshot, date])
+}
+
+model AdvertisingProductMapping {
+  id                     String                      @id @default(uuid()) @db.Uuid
+  adId                   String                      @db.Uuid
+  productId              String                      @db.Uuid
+  variantId              String?                     @db.Uuid
+  granularity            AdProductMappingGranularity @default(PRODUCT)
+  optionSelector         Json?
+  source                 AdProductMappingSource
+  confidence             Decimal                     @db.Decimal(5, 4)
+  evidenceJson           Json?
+  landingUrl             String?
+  providerProductId      String?
+  providerProductGroupId String?
+  providerData           Json?
+  isMerchantConfirmed    Boolean                     @default(false)
+  validFrom              DateTime                    @default(now())
+  validUntil             DateTime?
+  createdAt              DateTime                    @default(now())
+  updatedAt              DateTime                    @updatedAt
+
+  ad      AdvertisingAd  @relation(fields: [adId], references: [id], onDelete: Cascade)
+  product Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  @@index([adId, validUntil])
+  @@index([productId, validUntil])
+  @@index([variantId, validUntil])
+  @@index([granularity, source, confidence])
+}
+
+model AdvertisingCollectionMapping {
+  id                  String                 @id @default(uuid()) @db.Uuid
+  adId                String                 @db.Uuid
+  collectionId        String                 @db.Uuid
+  source              AdProductMappingSource
+  confidence          Decimal                @db.Decimal(5, 4)
+  evidenceJson        Json?
+  landingUrl          String?
+  providerData        Json?
+  isMerchantConfirmed Boolean                @default(false)
+  validFrom           DateTime               @default(now())
+  validUntil          DateTime?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  ad         AdvertisingAd @relation(fields: [adId], references: [id], onDelete: Cascade)
+  collection Collection    @relation(fields: [collectionId], references: [id], onDelete: Restrict)
+
+  @@index([adId, validUntil])
+  @@index([collectionId, validUntil])
+  @@index([source, confidence])
+}

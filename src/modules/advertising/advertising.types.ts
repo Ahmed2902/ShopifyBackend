@@ -1,7 +1,8 @@
-import type { IntegrationProviderName } from '../integrations/integration.schema.js';
+import type { AdProviderName } from '../integrations/integration.schema.js';
 
-export type AdvertisingPlatform = Exclude<IntegrationProviderName, 'SHOPIFY'>;
-export type AdvertisingDeliveryGroupKind = 'AD_SET' | 'AD_GROUP';
+export type AdvertisingPlatform = AdProviderName;
+export type AdProvider = AdvertisingPlatform;
+export type AdvertisingDeliveryGroupKind = 'AD_SET' | 'AD_GROUP' | 'ASSET_GROUP';
 
 export interface AdvertisingAccountSummary {
   platform: AdvertisingPlatform;
