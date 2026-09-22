@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AdvertisingAnalyticsReadRepository } from '../../../src/modules/analytics/advertising-analytics.read.repository.js';
 import type { AnalyticsRepository } from '../../../src/modules/analytics/analytics.repository.js';
 import { AnalyticsWorkspace } from '../../../src/modules/analytics/analytics.workspace.js';
+import type { CommerceAnalyticsReadRepository } from '../../../src/modules/analytics/commerce-analytics.read.repository.js';
 
 const storeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const now = new Date('2026-09-22T08:00:00.000Z');
@@ -19,6 +20,7 @@ function buildRepository() {
         selectedAdAccountIds: ['act_101', 'act_202'],
       },
     }),
+    getLatestSuccessfulOrderHistorySync: vi.fn().mockResolvedValue(null),
   } as unknown as AnalyticsRepository;
 }
 
@@ -31,6 +33,13 @@ function buildAdvertisingRead() {
       lastInsightsSyncedAt: now,
     }),
   } as unknown as AdvertisingAnalyticsReadRepository;
+}
+
+function buildCommerceRead() {
+  return {
+    getOrderAggregates: vi.fn().mockResolvedValue([]),
+    getProductEconomicsAggregates: vi.fn().mockResolvedValue([]),
+  } as unknown as CommerceAnalyticsReadRepository;
 }
 
 describe('Meta advertising account scope', () => {
@@ -50,6 +59,24 @@ describe('Meta advertising account scope', () => {
       expect.objectContaining({ selectedAccountIds: ['act_202'] }),
     );
     expect(advertisingRead.getOverviewMeta).toHaveBeenCalledWith(storeId, ['act_202']);
+  });
+
+  it('applies the same account scope to overview spend, MER, and availability reads', async () => {
+    const repository = buildRepository();
+    const advertisingRead = buildAdvertisingRead();
+    const workspace = new AnalyticsWorkspace(repository, advertisingRead, buildCommerceRead());
+
+    const result = await workspace.overview(
+      storeId,
+      { days: 30, accountId: 'act_202' },
+      now,
+    );
+
+    expect(advertisingRead.getOverviewAggregateRows).toHaveBeenCalledWith(
+      expect.objectContaining({ selectedAccountIds: ['act_202'] }),
+    );
+    expect(advertisingRead.getOverviewMeta).toHaveBeenCalledWith(storeId, ['act_202']);
+    expect(result.availability.meta.selectedAdAccounts).toBe(1);
   });
 
   it('rejects an account that is not selected for the store', async () => {
