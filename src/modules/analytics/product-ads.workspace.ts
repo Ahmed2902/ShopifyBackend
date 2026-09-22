@@ -94,7 +94,18 @@ export class ProductAdsWorkspace {
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
 
     const windows = resolveAnalyticsWindows(query, store.ianaTimezone, now);
-    const selectedAccountIds = store.metaConnection?.selectedAdAccountIds ?? [];
+    const configuredAccountIds = store.metaConnection?.selectedAdAccountIds ?? [];
+    if (
+      query.accountId &&
+      (!store.metaConnection || !configuredAccountIds.includes(query.accountId))
+    ) {
+      throw new AppError(
+        'Meta ad account is not selected for this store',
+        400,
+        'META_AD_ACCOUNT_NOT_SELECTED',
+      );
+    }
+    const selectedAccountIds = query.accountId ? [query.accountId] : configuredAccountIds;
     const [commerceRows, metaRows, mappings] = await Promise.all([
       this.analyticsRepository.getCommerceRows(
         storeId,
