@@ -192,9 +192,20 @@ export class AdExposureWorkspace {
   private async context(storeId: string, query: AnalyticsRangeQuery, now: Date) {
     const store = await this.analyticsRepository.getStoreContext(storeId);
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
+    const configuredAccountIds = store.metaConnection?.selectedAdAccountIds ?? [];
+    if (
+      query.accountId &&
+      (!store.metaConnection || !configuredAccountIds.includes(query.accountId))
+    ) {
+      throw new AppError(
+        'Meta ad account is not selected for this store',
+        400,
+        'META_AD_ACCOUNT_NOT_SELECTED',
+      );
+    }
     return {
       store,
-      selectedAccountIds: store.metaConnection?.selectedAdAccountIds ?? [],
+      selectedAccountIds: query.accountId ? [query.accountId] : configuredAccountIds,
       windows: resolveAnalyticsWindows(query, store.ianaTimezone, now),
     };
   }
