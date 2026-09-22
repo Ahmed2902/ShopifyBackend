@@ -8,6 +8,7 @@ function challenge() {
 }
 
 function unauthorized(res: Response, message: string) {
+  res.setHeader('Cache-Control', 'no-store');
   res.setHeader('WWW-Authenticate', challenge());
   res.status(401).json({
     jsonrpc: '2.0',
@@ -33,12 +34,14 @@ export const requireMcpAuth: RequestHandler = async (req, res, next) => {
       unauthorized(res, 'Stride MCP token is missing mcp:read');
       return;
     }
-    if (!(await mcpOAuthRepository.hasStoreAccess(token.userId, token.storeId))) {
-      unauthorized(res, 'Stride MCP grant no longer has access to this store');
+    const membership = await mcpOAuthRepository.hasStoreAccess(token.userId, token.storeId);
+    if (!membership) {
+      unauthorized(res, 'Stride MCP store access is no longer available');
       return;
     }
     req.context.userId = token.userId;
     req.context.storeId = token.storeId;
+    req.context.role = membership.role;
     next();
   } catch {
     unauthorized(res, 'Invalid or expired Stride MCP access token');
