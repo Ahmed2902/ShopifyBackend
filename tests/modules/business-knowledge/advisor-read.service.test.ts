@@ -13,7 +13,9 @@ function createService() {
       items: [{ product: { id: 'product-1', shopifyProductId: '100', title: 'Hero Hoodie' } }],
     }),
     product: vi.fn(),
-    collections: vi.fn().mockResolvedValue({ items: [] }),
+    collections: vi.fn().mockResolvedValue({
+      items: [{ collection: { id: 'collection-1', shopifyCollectionId: '200', title: 'Summer' } }],
+    }),
     customers: vi.fn(),
     inventory: vi.fn(),
   };
@@ -27,13 +29,14 @@ function createService() {
     }),
   };
   const storefront = {
-    overview: vi.fn(),
     products: vi.fn(),
     collections: vi.fn(),
-    landingPages: vi.fn(),
+    landingPages: vi.fn().mockResolvedValue({
+      items: [{ dimensionKey: 'landing:home', landingPageUrl: 'https://example.com/' }],
+    }),
   };
   const attribution = {
-    sources: vi.fn(),
+    sources: vi.fn().mockResolvedValue({ items: [{ dimensionKey: 'source:META', source: 'META' }] }),
     metaAds: vi.fn(),
     paths: vi.fn(),
     mappingEvidence: vi.fn(),
@@ -60,9 +63,7 @@ function createService() {
     list: vi.fn().mockResolvedValue({
       evidence: {
         hierarchy: {
-          total: 1,
-          totalPages: 1,
-          items: [{ id: 'tt-campaign-1', externalId: 'tt-100', name: 'TikTok Prospecting' }],
+          items: [{ id: 'tiktok-campaign-1', externalId: 'tt-100', name: 'TikTok Prospecting' }],
         },
       },
     }),
@@ -72,6 +73,12 @@ function createService() {
     capabilities: vi.fn().mockReturnValue([{ provider: 'META' }, { provider: 'TIKTOK' }]),
     get: vi.fn().mockImplementation((provider: string) => (provider === 'TIKTOK' ? tiktok : meta)),
   };
+  const collectionDetails = { read: vi.fn().mockResolvedValue({ collection: { id: 'collection-1' } }) };
+  const storefrontOverview = { read: vi.fn().mockResolvedValue({ understanding: { current: {} } }) };
+  const performance = { daily: vi.fn().mockResolvedValue({ points: [] }) };
+  const leaderboard = { read: vi.fn().mockResolvedValue({ items: [] }) };
+  const adExposure = { list: vi.fn().mockResolvedValue({ items: [] }), detail: vi.fn() };
+  const pixelHealth = { read: vi.fn().mockResolvedValue({ installation: { status: 'ACTIVE' } }) };
 
   return {
     value: new AdvisorReadService(
@@ -83,10 +90,22 @@ function createService() {
       storefront as never,
       attribution as never,
       paidMedia as never,
+      collectionDetails as never,
+      storefrontOverview as never,
+      performance as never,
+      leaderboard as never,
+      adExposure as never,
+      pixelHealth as never,
     ),
     analytics,
     meta,
     tiktok,
+    collectionDetails,
+    storefrontOverview,
+    performance,
+    leaderboard,
+    adExposure,
+    pixelHealth,
   };
 }
 
@@ -106,8 +125,6 @@ describe('AdvisorReadService', () => {
       name: 'Hero Hoodie',
       provider: 'SHOPIFY',
     });
-    expect(result.truncated).toBe(false);
-    expect(result.scan.exhaustive).toBe(true);
     expect(result.privacy).toContain('customer PII');
   });
 
@@ -122,24 +139,6 @@ describe('AdvisorReadService', () => {
     });
   });
 
-  it('clamps provider lookback windows to the advisor read boundary', async () => {
-    const { value, meta } = createService();
-
-    await value.paidMediaList('store-1', 'META', 'AD', { days: 999 });
-    await value.paidMediaList('store-1', 'META', 'AD', { days: 0 });
-
-    expect(meta.list).toHaveBeenNthCalledWith(1, 'store-1', 'AD', {
-      days: 365,
-      page: undefined,
-      limit: undefined,
-    });
-    expect(meta.list).toHaveBeenNthCalledWith(2, 'store-1', 'AD', {
-      days: 1,
-      page: undefined,
-      limit: undefined,
-    });
-  });
-
   it('keeps search scoped when the advisor already knows the entity type', async () => {
     const { value, analytics, meta, tiktok } = createService();
     await value.search('store-1', { query: 'Hero', entityTypes: ['PRODUCT'] });
@@ -149,68 +148,65 @@ describe('AdvisorReadService', () => {
     expect(tiktok.list).not.toHaveBeenCalled();
   });
 
-  it('searches every capable paid-media provider instead of silently excluding TikTok', async () => {
-    const { value, meta, tiktok } = createService();
+  it('discovers TikTok entities without pretending creative support exists', async () => {
+    const { value, tiktok } = createService();
+    const result = await value.search('store-1', { query: 'prospecting', entityTypes: ['CAMPAIGN'] });
 
-    const result = await value.search('store-1', {
-      query: 'TikTok Prospecting',
-      entityTypes: ['CAMPAIGN'],
+    expect(tiktok.list).toHaveBeenCalledWith('store-1', 'CAMPAIGN', {
+      days: 30,
+      page: 1,
+      limit: 100,
     });
-
-    expect(meta.list).toHaveBeenCalled();
-    expect(tiktok.list).toHaveBeenCalled();
-    expect(result.items).toEqual([
-      expect.objectContaining({ provider: 'TIKTOK', id: 'tt-campaign-1', name: 'TikTok Prospecting' }),
-    ]);
-    expect(result.paidMediaProvidersSearched).toEqual(['META', 'TIKTOK']);
-  });
-
-  it('continues through bounded pages and can find a result outside page one', async () => {
-    const { value, analytics } = createService();
-    const pageOne = Array.from({ length: 100 }, (_, index) => ({
-      product: { id: `product-${index}`, title: `Other ${index}` },
-    }));
-    vi.mocked(analytics.products).mockImplementation(async (_storeId, input) =>
-      input.page === 1
-        ? { items: pageOne, total: 101, totalPages: 2 }
-        : {
-            items: [{ product: { id: 'product-needle', title: 'Needle Product' } }],
-            total: 101,
-            totalPages: 2,
-          },
+    expect(result.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'CAMPAIGN',
+          id: 'tiktok-campaign-1',
+          externalId: 'tt-100',
+          provider: 'TIKTOK',
+        }),
+      ]),
     );
-
-    const result = await value.search('store-1', {
-      query: 'Needle Product',
-      entityTypes: ['PRODUCT'],
-    });
-
-    expect(analytics.products).toHaveBeenCalledTimes(2);
-    expect(result.items).toEqual([
-      expect.objectContaining({ id: 'product-needle', name: 'Needle Product' }),
-    ]);
-    expect(result.truncated).toBe(false);
-    expect(result.scan.exhaustive).toBe(true);
   });
 
-  it('marks search as truncated when the bounded scan cannot prove exhaustiveness', async () => {
-    const { value, analytics } = createService();
-    vi.mocked(analytics.products).mockImplementation(async (_storeId, input) => ({
-      items: Array.from({ length: 100 }, (_, index) => ({
-        product: { id: `product-${input.page}-${index}`, title: `Product ${input.page}-${index}` },
-      })),
-      total: 900,
-      totalPages: 9,
-    }));
-
-    const result = await value.search('store-1', {
-      query: 'not-present',
-      entityTypes: ['PRODUCT'],
+  it('searches aggregate Pixel landing pages and attribution sources', async () => {
+    const { value } = createService();
+    const landing = await value.search('store-1', {
+      query: 'example.com',
+      entityTypes: ['LANDING_PAGE'],
+    });
+    const source = await value.search('store-1', {
+      query: 'meta',
+      entityTypes: ['ATTRIBUTION_SOURCE'],
     });
 
-    expect(analytics.products).toHaveBeenCalledTimes(5);
-    expect(result.items).toEqual([]);
-    expect(result.truncated).toBe(true);
-    expect(result.scan.exhaustive).toBe(false);
+    expect(landing.items[0]).toMatchObject({ type: 'LANDING_PAGE', provider: 'PIXEL' });
+    expect(source.items[0]).toMatchObject({ type: 'ATTRIBUTION_SOURCE', provider: 'PIXEL' });
+  });
+
+  it('delegates distinct decision-grade reads without recalculating them', async () => {
+    const {
+      value,
+      collectionDetails,
+      storefrontOverview,
+      performance,
+      leaderboard,
+      adExposure,
+      pixelHealth,
+    } = createService();
+
+    await value.collectionDetail('store-1', 'collection-1', { page: 2, limit: 10 });
+    await value.storefrontOverview('store-1', 14);
+    await value.performance('store-1', 14);
+    await value.productLeaderboard('store-1', { days: 14, limit: 5 });
+    await value.adExposureList('store-1', { days: 14, page: 1, limit: 5 });
+    await value.storefrontHealth('store-1');
+
+    expect(collectionDetails.read).toHaveBeenCalledWith('store-1', 'collection-1', 2, 10);
+    expect(storefrontOverview.read).toHaveBeenCalledWith('store-1', { days: 14 });
+    expect(performance.daily).toHaveBeenCalledWith('store-1', { days: 14 });
+    expect(leaderboard.read).toHaveBeenCalledWith('store-1', { days: 14, limit: 5 });
+    expect(adExposure.list).toHaveBeenCalledWith('store-1', { days: 14, page: 1, limit: 5 });
+    expect(pixelHealth.read).toHaveBeenCalledWith('store-1');
   });
 });

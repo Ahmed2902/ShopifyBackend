@@ -1,16 +1,40 @@
+import { adExposureWorkspace, type AdExposureWorkspace } from '../analytics/ad-exposure.workspace.js';
 import { analyticsWorkspace, type AnalyticsWorkspace } from '../analytics/analytics.workspace.js';
+import {
+  collectionDetailReadService,
+  type CollectionDetailReadService,
+} from '../analytics/collection-detail.read.service.js';
+import {
+  performanceAnalyticsWorkspace,
+  type PerformanceAnalyticsWorkspace,
+} from '../analytics/performance-analytics.workspace.js';
 import { productAdsWorkspace, type ProductAdsWorkspace } from '../analytics/product-ads.workspace.js';
+import {
+  productLeaderboardService,
+  type ProductLeaderboardService,
+} from '../analytics/product-leaderboard.service.js';
 import { reportWorkspace, type ReportWorkspace } from '../analytics/report.workspace.js';
+import { billingService, type BillingService } from '../billing/billing.service.js';
 import {
   intelligenceSnapshotReadService,
   type IntelligenceSnapshotReadService,
 } from '../intelligence/intelligence-snapshot.read.service.js';
+import { intelligenceService, type IntelligenceService } from '../intelligence/intelligence.service.js';
+import {
+  inventoryPlanningService,
+  type InventoryPlanningService,
+} from '../intelligence/inventory-planning.service.js';
 import { recommendationLifecycleService } from '../intelligence/recommendation-lifecycle.service.js';
 import {
   pixelAttributionService,
   type PixelAttributionService,
 } from '../pixel/attribution/pixel-attribution.service.js';
+import {
+  pixelBehaviorOverviewReadService,
+  type PixelBehaviorOverviewReadService,
+} from '../pixel/behavior/pixel-behavior-overview.read.service.js';
 import { pixelBehaviorService, type PixelBehaviorService } from '../pixel/behavior/pixel-behavior.service.js';
+import { pixelHealthService, type PixelHealthService } from '../pixel/pixel-health.service.js';
 import { businessKnowledgeService, type BusinessKnowledgeService } from './business-knowledge.service.js';
 import {
   paidMediaEvidenceRegistry,
@@ -26,6 +50,8 @@ export type AdvisorEntityType =
   | 'AD_SET'
   | 'AD'
   | 'CREATIVE'
+  | 'LANDING_PAGE'
+  | 'ATTRIBUTION_SOURCE'
   | 'RECOMMENDATION';
 
 interface AdvisorSearchResult {
@@ -33,17 +59,9 @@ interface AdvisorSearchResult {
   id: string | null;
   externalId: string | null;
   name: string;
-  provider: PaidMediaProvider | 'STRIDE' | 'SHOPIFY';
+  provider: PaidMediaProvider | 'STRIDE' | 'SHOPIFY' | 'PIXEL';
   evidence: unknown;
 }
-
-interface BoundedSearchRead {
-  rows: AdvisorSearchResult[];
-  incomplete: boolean;
-}
-
-const SEARCH_PAGE_SIZE = 100;
-const SEARCH_MAX_PAGES_PER_SOURCE = 5;
 
 function listQuery(days: number, page = 1, limit = 50) {
   return { days, page, limit };
@@ -69,7 +87,7 @@ function resultFromRow(
     (object.collection && typeof object.collection === 'object' ? object.collection : null) ??
     object;
   const entity = nested as Record<string, unknown>;
-  const id = text(entity.id) ?? text(object.id);
+  const id = text(entity.id) ?? text(object.id) ?? text(object.dimensionKey);
   const externalId =
     text(entity.externalId) ??
     text(entity.shopifyProductId) ??
@@ -82,6 +100,9 @@ function resultFromRow(
     text(entity.handle) ??
     text(object.entityName) ??
     text(object.title) ??
+    text(object.landingPageUrl) ??
+    text(object.source) ??
+    text(object.dimensionKey) ??
     externalId ??
     id ??
     type;
@@ -105,52 +126,14 @@ function items(value: unknown): unknown[] {
   return [];
 }
 
-function paginationContainers(value: unknown): Record<string, unknown>[] {
-  if (!value || typeof value !== 'object') return [];
-  const object = value as Record<string, unknown>;
-  const containers: Record<string, unknown>[] = [object];
-  for (const key of ['pagination', 'evidence']) {
-    const nested = object[key];
-    if (nested && typeof nested === 'object') containers.push(nested as Record<string, unknown>);
+function searchableEvidence(value: unknown) {
+  try {
+    return JSON.stringify(value, (_key, candidate) =>
+      typeof candidate === 'bigint' ? candidate.toString() : candidate,
+    );
+  } catch {
+    return '';
   }
-  const evidence = object.evidence;
-  if (evidence && typeof evidence === 'object') {
-    const hierarchy = (evidence as Record<string, unknown>).hierarchy;
-    if (hierarchy && typeof hierarchy === 'object') containers.push(hierarchy as Record<string, unknown>);
-  }
-  return containers;
-}
-
-function finiteInteger(value: unknown): number | null {
-  const number = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(number) && number >= 0 ? Math.trunc(number) : null;
-}
-
-function sourceHasMore(value: unknown, page: number, pageSize: number, rowCount: number): boolean {
-  for (const container of paginationContainers(value)) {
-    const totalPages = finiteInteger(container.totalPages);
-    if (totalPages !== null) return page < totalPages;
-    const total = finiteInteger(container.total);
-    if (total !== null) return page * pageSize < total;
-  }
-  // Without pagination metadata, a short page proves exhaustion; a full page does not.
-  return rowCount >= pageSize;
-}
-
-async function boundedSearchPages(
-  loader: (page: number) => Promise<unknown>,
-  mapper: (row: unknown) => AdvisorSearchResult,
-): Promise<BoundedSearchRead> {
-  const rows: AdvisorSearchResult[] = [];
-  for (let page = 1; page <= SEARCH_MAX_PAGES_PER_SOURCE; page += 1) {
-    const value = await loader(page);
-    const pageRows = items(value);
-    rows.push(...pageRows.map(mapper));
-    const hasMore = sourceHasMore(value, page, SEARCH_PAGE_SIZE, pageRows.length);
-    if (!hasMore) return { rows, incomplete: false };
-    if (page === SEARCH_MAX_PAGES_PER_SOURCE) return { rows, incomplete: true };
-  }
-  return { rows, incomplete: true };
 }
 
 /**
@@ -167,6 +150,15 @@ export class AdvisorReadService {
     private readonly storefront: PixelBehaviorService = pixelBehaviorService,
     private readonly attribution: PixelAttributionService = pixelAttributionService,
     private readonly paidMedia: PaidMediaEvidenceRegistry = paidMediaEvidenceRegistry,
+    private readonly collectionDetails: CollectionDetailReadService = collectionDetailReadService,
+    private readonly storefrontOverviewReads: PixelBehaviorOverviewReadService = pixelBehaviorOverviewReadService,
+    private readonly performanceAnalytics: PerformanceAnalyticsWorkspace = performanceAnalyticsWorkspace,
+    private readonly productLeaderboardReads: ProductLeaderboardService = productLeaderboardService,
+    private readonly adExposure: AdExposureWorkspace = adExposureWorkspace,
+    private readonly pixelHealth: PixelHealthService = pixelHealthService,
+    private readonly billing: BillingService = billingService,
+    private readonly intelligenceSettingsReads: IntelligenceService = intelligenceService,
+    private readonly inventoryPlanningReads: InventoryPlanningService = inventoryPlanningService,
   ) {}
 
   context(storeId: string) {
@@ -185,6 +177,10 @@ export class AdvisorReadService {
     return this.analytics.overview(storeId, { days: normalizedDays(days) });
   }
 
+  performance(storeId: string, days = 30) {
+    return this.performanceAnalytics.daily(storeId, { days: normalizedDays(days) });
+  }
+
   products(storeId: string, input: { days?: number; page?: number; limit?: number } = {}) {
     return this.analytics.products(
       storeId,
@@ -196,11 +192,26 @@ export class AdvisorReadService {
     return this.analytics.product(storeId, productId, { days: normalizedDays(days) });
   }
 
+  productLeaderboard(storeId: string, input: { days?: number; limit?: number } = {}) {
+    return this.productLeaderboardReads.read(storeId, {
+      days: normalizedDays(input.days),
+      limit: Math.min(Math.max(Math.trunc(input.limit ?? 20), 1), 100),
+    });
+  }
+
   collections(storeId: string, input: { days?: number; page?: number; limit?: number } = {}) {
     return this.analytics.collections(
       storeId,
       listQuery(normalizedDays(input.days), input.page ?? 1, input.limit ?? 50),
     );
+  }
+
+  collectionDetail(
+    storeId: string,
+    collectionId: string,
+    input: { page?: number; limit?: number } = {},
+  ) {
+    return this.collectionDetails.read(storeId, collectionId, input.page ?? 1, input.limit ?? 50);
   }
 
   customers(storeId: string, days = 30) {
@@ -243,8 +254,19 @@ export class AdvisorReadService {
     });
   }
 
+  adExposureList(storeId: string, input: { days?: number; page?: number; limit?: number } = {}) {
+    return this.adExposure.list(
+      storeId,
+      listQuery(normalizedDays(input.days), input.page ?? 1, input.limit ?? 50),
+    );
+  }
+
+  adExposureDetail(storeId: string, adId: string, days = 30) {
+    return this.adExposure.detail(storeId, adId, { days: normalizedDays(days) });
+  }
+
   storefrontOverview(storeId: string, days = 30) {
-    return this.storefront.overview(storeId, { days: normalizedDays(days) });
+    return this.storefrontOverviewReads.read(storeId, { days: normalizedDays(days) });
   }
 
   storefrontProducts(storeId: string, input: { days?: number; page?: number; limit?: number } = {}) {
@@ -266,6 +288,10 @@ export class AdvisorReadService {
       storeId,
       listQuery(normalizedDays(input.days), input.page ?? 1, input.limit ?? 50),
     );
+  }
+
+  storefrontHealth(storeId: string) {
+    return this.pixelHealth.read(storeId);
   }
 
   attributionSources(storeId: string, input: { days?: number; page?: number; limit?: number } = {}) {
@@ -312,10 +338,32 @@ export class AdvisorReadService {
     return this.productAds.detail(storeId, productId, { days: normalizedDays(days) });
   }
 
+  intelligenceSettings(storeId: string) {
+    return this.intelligenceSettingsReads.getSettings(storeId);
+  }
+
+  inventoryPlanningSettings(storeId: string) {
+    return this.inventoryPlanningReads.get(storeId);
+  }
+
   async recommendations(storeId: string, options: { fresh?: boolean } = {}) {
-    const snapshot = await this.intelligence.read(storeId, options);
-    const recommendations = await recommendationLifecycleService.attach(storeId, snapshot.recommendations);
-    return { evaluatedAt: snapshot.evaluatedAt, dataQuality: snapshot.dataQuality, recommendations };
+    const [snapshot, plan] = await Promise.all([
+      this.intelligence.read(storeId, options),
+      this.billing.requireActive(storeId),
+    ]);
+    const recommendationLimit = Math.max(
+      1,
+      Number(plan.entitlements.recommendationLimit ?? 10),
+    );
+    const recommendations = await recommendationLifecycleService.attach(
+      storeId,
+      snapshot.recommendations.slice(0, recommendationLimit),
+    );
+    return {
+      ...snapshot,
+      recommendations,
+      entitlement: { recommendationLimit },
+    };
   }
 
   report(storeId: string, input: { days?: number; fresh?: boolean } = {}) {
@@ -340,27 +388,37 @@ export class AdvisorReadService {
     const query = input.query.trim().toLocaleLowerCase();
     const limit = Math.min(Math.max(Math.trunc(input.limit ?? 20), 1), 50);
     const days = normalizedDays(input.days);
-    const searchableProviders = new Set<PaidMediaProvider>(input.paidMediaProviders ?? ['META', 'TIKTOK']);
+    const searchableProviders = new Set<PaidMediaProvider>(
+      input.paidMediaProviders ?? ['META', 'TIKTOK'],
+    );
     const requested = new Set<AdvisorEntityType>(
       input.entityTypes?.length
         ? input.entityTypes
-        : ['PRODUCT', 'COLLECTION', 'CAMPAIGN', 'AD_SET', 'AD', 'CREATIVE', 'RECOMMENDATION'],
+        : [
+            'PRODUCT',
+            'COLLECTION',
+            'CAMPAIGN',
+            'AD_SET',
+            'AD',
+            'CREATIVE',
+            'LANDING_PAGE',
+            'ATTRIBUTION_SOURCE',
+            'RECOMMENDATION',
+          ],
     );
-    const reads: Array<Promise<BoundedSearchRead>> = [];
+    const reads: Array<Promise<AdvisorSearchResult[]>> = [];
 
     if (requested.has('PRODUCT')) {
       reads.push(
-        boundedSearchPages(
-          (page) => this.products(storeId, { days, page, limit: SEARCH_PAGE_SIZE }),
-          (row) => resultFromRow('PRODUCT', row, 'SHOPIFY'),
+        this.products(storeId, { days, page: 1, limit: 100 }).then((value) =>
+          items(value).map((row) => resultFromRow('PRODUCT', row, 'SHOPIFY')),
         ),
       );
     }
     if (requested.has('COLLECTION')) {
       reads.push(
-        boundedSearchPages(
-          (page) => this.collections(storeId, { days, page, limit: SEARCH_PAGE_SIZE }),
-          (row) => resultFromRow('COLLECTION', row, 'SHOPIFY'),
+        this.collections(storeId, { days, page: 1, limit: 100 }).then((value) =>
+          items(value).map((row) => resultFromRow('COLLECTION', row, 'SHOPIFY')),
         ),
       );
     }
@@ -373,50 +431,54 @@ export class AdvisorReadService {
       if (!requested.has(type)) continue;
       if (searchableProviders.has('META')) {
         reads.push(
-          boundedSearchPages(
-            (page) => this.paidMediaList(storeId, 'META', level, { days, page, limit: SEARCH_PAGE_SIZE }),
-            (row) => resultFromRow(type, row, 'META'),
+          this.paidMediaList(storeId, 'META', level, { days, page: 1, limit: 100 }).then((value) =>
+            items(value).map((row) => resultFromRow(type, row, 'META')),
           ),
         );
       }
       if (level !== 'CREATIVE' && searchableProviders.has('TIKTOK')) {
         reads.push(
-          boundedSearchPages(
-            (page) => this.paidMediaList(storeId, 'TIKTOK', level, { days, page, limit: SEARCH_PAGE_SIZE }),
-            (row) => resultFromRow(type, row, 'TIKTOK'),
+          this.paidMediaList(storeId, 'TIKTOK', level, { days, page: 1, limit: 100 }).then((value) =>
+            items(value).map((row) => resultFromRow(type, row, 'TIKTOK')),
           ),
         );
       }
     }
+    if (requested.has('LANDING_PAGE')) {
+      reads.push(
+        this.storefrontLandingPages(storeId, { days, page: 1, limit: 100 }).then((value) =>
+          items(value).map((row) => resultFromRow('LANDING_PAGE', row, 'PIXEL')),
+        ),
+      );
+    }
+    if (requested.has('ATTRIBUTION_SOURCE')) {
+      reads.push(
+        this.attributionSources(storeId, { days, page: 1, limit: 100 }).then((value) =>
+          items(value).map((row) => resultFromRow('ATTRIBUTION_SOURCE', row, 'PIXEL')),
+        ),
+      );
+    }
     if (requested.has('RECOMMENDATION')) {
       reads.push(
-        this.recommendations(storeId).then((value) => ({
-          rows: value.recommendations.map((row) => resultFromRow('RECOMMENDATION', row, 'STRIDE')),
-          incomplete: false,
-        })),
+        this.recommendations(storeId).then((value) =>
+          value.recommendations.map((row) => resultFromRow('RECOMMENDATION', row, 'STRIDE')),
+        ),
       );
     }
 
-    const sourceResults = await Promise.all(reads);
-    const candidates = sourceResults.flatMap((result) => result.rows);
+    const candidates = (await Promise.all(reads)).flat();
     const matches = candidates.filter((candidate) => {
       if (!query) return true;
-      const haystack = `${candidate.name} ${candidate.id ?? ''} ${candidate.externalId ?? ''} ${JSON.stringify(candidate.evidence)}`.toLocaleLowerCase();
+      const haystack = `${candidate.name} ${candidate.id ?? ''} ${candidate.externalId ?? ''} ${searchableEvidence(candidate.evidence)}`.toLocaleLowerCase();
       return haystack.includes(query);
     });
-    const boundedScanIncomplete = sourceResults.some((result) => result.incomplete);
 
     return {
       query: input.query,
       searchedEntityTypes: [...requested],
       paidMediaProvidersSearched: [...searchableProviders],
       totalMatches: matches.length,
-      truncated: boundedScanIncomplete || matches.length > limit,
-      scan: {
-        maxPagesPerSource: SEARCH_MAX_PAGES_PER_SOURCE,
-        pageSize: SEARCH_PAGE_SIZE,
-        exhaustive: !boundedScanIncomplete,
-      },
+      truncated: matches.length > limit,
       items: matches.slice(0, limit),
       privacy: 'Business entities and aggregate evidence only; customer PII is not part of advisor search.',
     };

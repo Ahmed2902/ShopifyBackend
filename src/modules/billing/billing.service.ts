@@ -326,6 +326,39 @@ export class BillingService {
     return billing;
   }
 
+  /**
+   * Read-only counterpart to requireAdProvider for advisor/MCP reads.
+   * It preserves the same Essentials channel restrictions without auto-selecting
+   * a provider or otherwise mutating the subscription from a read-only tool call.
+   */
+  async requireAdProviderReadOnly(storeId: string, provider: V1AdProvider) {
+    const billing = await this.requireActive(storeId);
+    if (billing.entitlements.maxAdChannels === null) return billing;
+
+    const connections = await this.connectedProviders(storeId);
+    const selected = billing.essentialsAdProvider as V1AdProvider | null;
+
+    if (!selected && connections.length > 1) {
+      const portal = await this.portal(storeId);
+      throw new AppError(
+        'Essentials includes one advertising channel. Choose which connected channel should remain active in Stride.',
+        409,
+        'PLAN_CHANNEL_SELECTION_REQUIRED',
+        { connectedProviders: connections, planSelectionUrl: portal.url },
+      );
+    }
+
+    if (selected && selected !== provider) {
+      throw await this.adChannelLimitError(storeId, provider, connections);
+    }
+
+    if (!selected && connections.length === 1 && connections[0] !== provider) {
+      throw await this.adChannelLimitError(storeId, provider, connections);
+    }
+
+    return billing;
+  }
+
   private verificationIsStale(
     subscription: Awaited<ReturnType<BillingService['ensureSubscription']>>,
     now: Date,

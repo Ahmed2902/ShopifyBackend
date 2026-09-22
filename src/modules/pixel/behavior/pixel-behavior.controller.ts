@@ -4,66 +4,24 @@ import {
   analyticsRangeQuerySchema,
 } from '../../analytics/analytics.schema.js';
 import {
-  derivePixelBehaviorInsights,
-  pixelBehaviorInsightChangePoints,
-} from './pixel-behavior-insights.js';
-import {
-  pixelCheckoutPurchaseReadRepository,
-  type PixelCheckoutPurchaseReadRepository,
-} from './pixel-checkout-purchase.read.repository.js';
+  pixelBehaviorOverviewReadService,
+  type PixelBehaviorOverviewReadService,
+} from './pixel-behavior-overview.read.service.js';
 import { pixelBehaviorService, type PixelBehaviorService } from './pixel-behavior.service.js';
 
 export class PixelBehaviorController {
   constructor(
     private readonly service: PixelBehaviorService = pixelBehaviorService,
-    private readonly checkoutPurchaseReadRepository: PixelCheckoutPurchaseReadRepository =
-      pixelCheckoutPurchaseReadRepository,
+    private readonly overviewReads: PixelBehaviorOverviewReadService = pixelBehaviorOverviewReadService,
   ) {}
 
   overview = async (req: Request, res: Response) => {
-    const report = await this.service.overview(
-      req.context.storeId!,
-      analyticsRangeQuerySchema.parse(req.query),
+    res.status(200).json(
+      await this.overviewReads.read(
+        req.context.storeId!,
+        analyticsRangeQuerySchema.parse(req.query),
+      ),
     );
-    const checkoutPurchase = await this.checkoutPurchaseReadRepository.getOverlapCounts({
-      storeId: req.context.storeId!,
-      currentFrom: report.window.current.instantFrom,
-      currentTo: report.window.current.instantTo,
-      comparisonFrom: report.window.comparison.instantFrom,
-      comparisonTo: report.window.comparison.instantTo,
-    });
-    const current = derivePixelBehaviorInsights({
-      ...report.current,
-      checkoutStartPurchaseSessions: checkoutPurchase.current,
-    });
-    const comparison = derivePixelBehaviorInsights({
-      ...report.comparison,
-      checkoutStartPurchaseSessions: checkoutPurchase.comparison,
-    });
-
-    res.status(200).json({
-      ...report,
-      understanding: {
-        current: {
-          ...current,
-          checkoutStartPurchaseSessions: checkoutPurchase.current,
-        },
-        comparison: {
-          ...comparison,
-          checkoutStartPurchaseSessions: checkoutPurchase.comparison,
-        },
-        changePoints: pixelBehaviorInsightChangePoints(current, comparison),
-        methodology: {
-          cartAbandonment:
-            'Observed cart-view sessions that did not contain a linked valid Shopify purchase.',
-          checkoutAbandonment:
-            'Observed checkout-start sessions that did not contain a linked non-test, non-cancelled Shopify purchase in the same materialized session.',
-          largestFunnelDrop:
-            'Largest valid stage-to-stage drop in the observed session funnel; non-monotonic stages are excluded rather than guessed.',
-          interpretation: 'Observed behavior only; no causal explanation is implied.',
-        },
-      },
-    });
   };
 
   products = async (req: Request, res: Response) => {

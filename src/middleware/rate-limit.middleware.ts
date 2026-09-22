@@ -199,6 +199,9 @@ export const csrfRateLimit = rateLimit({
   key: sourceIdentity,
 });
 
+// MCP is outside /v1, so it needs an explicit pre-auth limiter. Key it by source rather than
+// caller-supplied Bearer text: otherwise an unauthenticated client could rotate fake tokens to
+// create unlimited buckets and force repeated token verification work.
 export const mcpRateLimit = rateLimit({
   name: 'mcp',
   max: 600,
@@ -207,6 +210,8 @@ export const mcpRateLimit = rateLimit({
   skip: skipInTest,
 });
 
+// OAuth authorization/token endpoints are public by design. Keep a tighter source-address
+// budget so they cannot be used to amplify database work or token verification indefinitely.
 export const mcpOAuthRateLimit = rateLimit({
   name: 'mcp-oauth',
   max: 120,
@@ -215,6 +220,8 @@ export const mcpOAuthRateLimit = rateLimit({
   skip: skipInTest,
 });
 
+// Dynamic client registration can perform client-metadata validation and is intentionally
+// stricter than normal OAuth traffic to bound remote/DNS work per source.
 export const mcpClientRegistrationRateLimit = rateLimit({
   name: 'mcp-client-registration',
   max: 20,

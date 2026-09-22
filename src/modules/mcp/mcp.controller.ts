@@ -28,7 +28,7 @@ export class McpController {
   constructor(private readonly protocol: McpProtocolService = mcpProtocolService) {}
 
   post = async (req: Request, res: Response) => {
-    res.setHeader('cache-control', 'no-store');
+    res.setHeader('Cache-Control', 'no-store');
     if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
       res.status(400).json(invalidRequest());
       return;
@@ -62,6 +62,7 @@ export class McpController {
   };
 
   methodNotAllowed = (_req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Allow', 'POST');
     res.status(405).json({
       jsonrpc: '2.0',

@@ -27,23 +27,53 @@ interface ClientMetadata {
 }
 
 const MAX_CLIENT_METADATA_BYTES = 64 * 1024;
+const MAX_CLIENT_REDIRECT_URIS = 20;
 
-function privateIp(address: string) {
-  const normalized = address.toLowerCase();
-  if (normalized === '::1') return true;
-  if (normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe80:')) {
-    return true;
+function normalizeIp(address: string) {
+  const withoutBrackets = address.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  const zoneIndex = withoutBrackets.indexOf('%');
+  return zoneIndex >= 0 ? withoutBrackets.slice(0, zoneIndex) : withoutBrackets;
+}
+
+function nonPublicIp(address: string): boolean {
+  const normalized = normalizeIp(address);
+  if (normalized.startsWith('::ffff:')) {
+    const mapped = normalized.slice('::ffff:'.length);
+    if (isIP(mapped) === 4) return nonPublicIp(mapped);
   }
-  const parts = address.split('.').map(Number);
-  if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) return false;
-  const [first, second] = parts as [number, number, number, number];
-  return (
-    first === 10 ||
-    first === 127 ||
-    (first === 169 && second === 254) ||
-    (first === 172 && second >= 16 && second <= 31) ||
-    (first === 192 && second === 168)
-  );
+
+  const family = isIP(normalized);
+  if (family === 4) {
+    const parts = normalized.split('.').map(Number);
+    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+      return true;
+    }
+    const [first, second, third] = parts as [number, number, number, number];
+    return (
+      first === 0 ||
+      first === 10 ||
+      first === 127 ||
+      (first === 100 && second >= 64 && second <= 127) ||
+      (first === 169 && second === 254) ||
+      (first === 172 && second >= 16 && second <= 31) ||
+      (first === 192 && second === 0 && third === 0) ||
+      (first === 192 && second === 0 && third === 2) ||
+      (first === 192 && second === 168) ||
+      (first === 198 && (second === 18 || second === 19)) ||
+      (first === 198 && second === 51 && third === 100) ||
+      (first === 203 && second === 0 && third === 113) ||
+      first >= 224
+    );
+  }
+  if (family === 6) {
+    if (normalized === '::' || normalized === '::1') return true;
+    if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
+    if (/^fe[89ab]/.test(normalized)) return true;
+    if (normalized.startsWith('ff')) return true;
+    if (normalized.startsWith('2001:db8:') || normalized === '2001:db8::') return true;
+    if (normalized.startsWith('64:ff9b:1:')) return true;
+  }
+  return false;
 }
 
 async function assertSafeMetadataUrl(url: URL) {
@@ -56,18 +86,21 @@ async function assertSafeMetadataUrl(url: URL) {
     }
     throw new AppError('MCP client metadata URL must use HTTPS', 400, 'MCP_INVALID_CLIENT');
   }
-  if (isIP(url.hostname) && privateIp(url.hostname)) {
+  if (url.username || url.password || url.hash) {
+    throw new AppError('Invalid MCP client metadata URL', 400, 'MCP_INVALID_CLIENT');
+  }
+  if (isIP(normalizeIp(url.hostname)) && nonPublicIp(url.hostname)) {
     throw new AppError(
-      'Private MCP client metadata addresses are not allowed',
+      'Non-public MCP client metadata addresses are not allowed',
       400,
       'MCP_INVALID_CLIENT',
     );
   }
   try {
     const addresses = await lookup(url.hostname, { all: true });
-    if (addresses.some((entry) => privateIp(entry.address))) {
+    if (addresses.length === 0 || addresses.some((entry) => nonPublicIp(entry.address))) {
       throw new AppError(
-        'Private MCP client metadata addresses are not allowed',
+        'Non-public MCP client metadata addresses are not allowed',
         400,
         'MCP_INVALID_CLIENT',
       );
@@ -146,7 +179,7 @@ export class McpOAuthService {
     response_types?: string[];
   }) {
     const redirectUris = input.redirect_uris ?? [];
-    if (redirectUris.length === 0 || redirectUris.length > 20) {
+    if (redirectUris.length === 0 || redirectUris.length > MAX_CLIENT_REDIRECT_URIS) {
       throw new AppError('redirect_uris is required', 400, 'MCP_INVALID_CLIENT_METADATA');
     }
     const unsupportedGrant = input.grant_types?.find(
@@ -243,7 +276,7 @@ export class McpOAuthService {
       throw new AppError('You do not have access to that store', 403, 'MCP_STORE_FORBIDDEN');
     }
     const code = opaqueToken(32);
-    const created = await this.repository.claimAuthorizationRequestAndCreateCode({
+    const authorizationCode = await this.repository.claimAuthorizationRequestAndCreateCode({
       requestId: request.id,
       codeHash: tokenHash(code),
       userId,
@@ -255,9 +288,9 @@ export class McpOAuthService {
       codeChallenge: request.codeChallenge,
       expiresAt: new Date(Date.now() + MCP_AUTHORIZATION_CODE_TTL_MS),
     });
-    if (!created) {
+    if (!authorizationCode) {
       throw new AppError(
-        'MCP authorization request was already used or expired',
+        'Authorization request has already been used or expired',
         400,
         'MCP_AUTH_REQUEST_EXPIRED',
       );
@@ -306,16 +339,19 @@ export class McpOAuthService {
       throw new AppError('Authorization grant is no longer valid', 400, 'MCP_INVALID_GRANT');
     }
 
-    const claimed = await this.repository.consumeAuthorizationCode(codeHash);
-    if (!claimed) {
+    // Claim only after all public-client bindings, PKCE, and current store membership have been
+    // validated. The repository performs the one-time claim atomically, so concurrent replays can
+    // validate the same candidate but only one can proceed to token issuance.
+    const code = await this.repository.consumeAuthorizationCode(codeHash);
+    if (!code) {
       throw new AppError('Invalid or expired authorization code', 400, 'MCP_INVALID_GRANT');
     }
     return this.issueTokens({
-      userId: claimed.userId,
-      storeId: claimed.storeId,
-      clientId: claimed.clientId,
-      scopes: claimed.scopes,
-      resource: claimed.resource,
+      userId: code.userId,
+      storeId: code.storeId,
+      clientId: code.clientId,
+      scopes: code.scopes,
+      resource: code.resource,
     });
   }
 
@@ -425,13 +461,18 @@ export class McpOAuthService {
       throw new AppError('MCP client metadata is too large', 400, 'MCP_INVALID_CLIENT');
     }
     const metadata = await readBoundedJson(response);
-    if (metadata.client_id !== clientId || !Array.isArray(metadata.redirect_uris)) {
+    if (
+      metadata.client_id !== clientId ||
+      !Array.isArray(metadata.redirect_uris) ||
+      metadata.redirect_uris.length === 0 ||
+      metadata.redirect_uris.length > MAX_CLIENT_REDIRECT_URIS
+    ) {
       throw new AppError('Invalid MCP client metadata document', 400, 'MCP_INVALID_CLIENT');
     }
     const redirectUris = metadata.redirect_uris.filter(
       (value): value is string => typeof value === 'string',
     );
-    if (redirectUris.length === 0 || redirectUris.length !== metadata.redirect_uris.length) {
+    if (redirectUris.length !== metadata.redirect_uris.length) {
       throw new AppError('Invalid MCP redirect metadata', 400, 'MCP_INVALID_CLIENT');
     }
     for (const redirectUri of redirectUris) this.validateRedirectUri(redirectUri);

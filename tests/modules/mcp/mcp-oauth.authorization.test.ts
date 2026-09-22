@@ -4,26 +4,9 @@ import { mcpResource, pkceChallenge } from '../../../src/modules/mcp/mcp-oauth.u
 
 const merchantId = '11111111-1111-4111-8111-111111111111';
 const storeId = '22222222-2222-4222-8222-222222222222';
-const requestId = '33333333-3333-4333-8333-333333333333';
 const clientId = 'urn:stride:mcp:client:test-suite';
 const redirectUri = 'https://client.example/callback';
 const verifier = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~abcd';
-
-function pendingRequest() {
-  return {
-    id: requestId,
-    clientId,
-    clientName: 'Advisor Client',
-    redirectUri,
-    state: 'opaque-state',
-    scopes: ['mcp:read'],
-    resource: mcpResource(),
-    codeChallenge: pkceChallenge(verifier),
-    codeChallengeMethod: 'S256',
-    expiresAt: new Date(Date.now() + 60_000),
-    createdAt: new Date(),
-  };
-}
 
 function repository() {
   return {
@@ -34,7 +17,7 @@ function repository() {
     }),
     createRegisteredClient: vi.fn(),
     createAuthorizationRequest: vi.fn().mockImplementation(async (input) => ({
-      id: requestId,
+      id: '33333333-3333-4333-8333-333333333333',
       ...input,
       createdAt: new Date(),
       codeChallengeMethod: 'S256',
@@ -44,8 +27,6 @@ function repository() {
     listUserStores: vi.fn().mockResolvedValue([]),
     hasStoreAccess: vi.fn(),
     createAuthorizationCode: vi.fn(),
-    claimAuthorizationRequestAndCreateCode: vi.fn().mockResolvedValue({ id: 'code-row' }),
-    findAuthorizationCode: vi.fn(),
     consumeAuthorizationCode: vi.fn(),
     createRefreshToken: vi.fn(),
     findRefreshToken: vi.fn(),
@@ -86,32 +67,26 @@ describe('McpOAuthService authorization', () => {
 
   it('refuses to authorize a store outside the signed-in merchant memberships', async () => {
     const repo = repository();
-    repo.getAuthorizationRequest.mockResolvedValue(pendingRequest());
+    repo.getAuthorizationRequest.mockResolvedValue({
+      id: '33333333-3333-4333-8333-333333333333',
+      clientId,
+      clientName: 'Advisor Client',
+      redirectUri,
+      state: 'opaque-state',
+      scopes: ['mcp:read'],
+      resource: mcpResource(),
+      codeChallenge: pkceChallenge(verifier),
+      codeChallengeMethod: 'S256',
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+    });
     repo.hasStoreAccess.mockResolvedValue(null);
     const service = new McpOAuthService(repo as never);
 
-    await expect(service.approve(merchantId, requestId, storeId)).rejects.toMatchObject({
-      code: 'MCP_STORE_FORBIDDEN',
-    });
-    expect(repo.claimAuthorizationRequestAndCreateCode).not.toHaveBeenCalled();
-  });
-
-  it('claims the authorization request atomically before issuing the redirect code', async () => {
-    const repo = repository();
-    repo.getAuthorizationRequest.mockResolvedValue(pendingRequest());
-    repo.hasStoreAccess.mockResolvedValue({ role: 'OWNER' });
-    const service = new McpOAuthService(repo as never);
-
-    const redirect = await service.approve(merchantId, requestId, storeId);
-    expect(repo.claimAuthorizationRequestAndCreateCode).toHaveBeenCalledWith(
-      expect.objectContaining({ requestId, userId: merchantId, storeId, clientId }),
-    );
-    expect(redirect).toContain('code=');
-
-    repo.claimAuthorizationRequestAndCreateCode.mockResolvedValue(null);
-    await expect(service.approve(merchantId, requestId, storeId)).rejects.toMatchObject({
-      code: 'MCP_AUTH_REQUEST_EXPIRED',
-    });
+    await expect(
+      service.approve(merchantId, '33333333-3333-4333-8333-333333333333', storeId),
+    ).rejects.toMatchObject({ code: 'MCP_STORE_FORBIDDEN' });
+    expect(repo.createAuthorizationCode).not.toHaveBeenCalled();
   });
 
   it('advertises only read/offline scopes with PKCE and refresh support', () => {

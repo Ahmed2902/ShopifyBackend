@@ -34,11 +34,16 @@ export const requireMcpAuth: RequestHandler = async (req, res, next) => {
       unauthorized(res, 'Stride MCP token is missing mcp:read');
       return;
     }
+
+    // Authorization can change after a 15-minute MCP access token is issued. Re-check the
+    // store membership on every MCP request so removing a merchant/user from a store revokes
+    // advisor access immediately rather than waiting for token expiry.
     const membership = await mcpOAuthRepository.hasStoreAccess(token.userId, token.storeId);
     if (!membership) {
       unauthorized(res, 'Stride MCP store access is no longer available');
       return;
     }
+
     req.context.userId = token.userId;
     req.context.storeId = token.storeId;
     req.context.role = membership.role;
