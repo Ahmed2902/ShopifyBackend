@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { IntelligenceSnapshotReadService } from '../../../src/modules/intelligence/intelligence-snapshot.read.service.js';
-import type { PixelAttributionService } from '../../../src/modules/pixel/attribution/pixel-attribution.service.js';
 import type { AnalyticsWorkspace } from '../../../src/modules/analytics/analytics.workspace.js';
 import type { DashboardReadRepository } from '../../../src/modules/analytics/dashboard.read.repository.js';
 import { DashboardWorkspace } from '../../../src/modules/analytics/dashboard.workspace.js';
@@ -13,14 +12,6 @@ function buildAnalytics(overrides: Partial<AnalyticsWorkspace> = {}) {
   return {
     overview: vi.fn().mockResolvedValue({ marker: 'overview' }),
     customers: vi.fn().mockResolvedValue({ marker: 'customers' }),
-    products: vi.fn().mockResolvedValue({
-      items: [
-        {
-          product: { id: 'product-1', title: 'Core Tee' },
-          current: { orderCount: 8, netUnits: 10, netProductRevenue: 900 },
-        },
-      ],
-    }),
     ...overrides,
   } as unknown as AnalyticsWorkspace;
 }
@@ -40,6 +31,25 @@ function buildRead(overrides: Partial<DashboardReadRepository> = {}) {
   return {
     getInventoryPreview: vi.fn().mockResolvedValue({ inventoryMode: 'DISABLED', items: [] }),
     getRecentOrders: vi.fn().mockResolvedValue([]),
+    getTopProducts: vi.fn().mockResolvedValue([
+      {
+        product: { id: 'product-1', title: 'Core Tee' },
+        orderCount: 8,
+        netUnits: 10,
+        netRevenue: 900,
+      },
+    ]),
+    getAdPlatformSessions: vi.fn().mockResolvedValue({
+      methodology: 'FIRST_TOUCH_PAID_PLATFORM',
+      items: [
+        {
+          platform: 'FACEBOOK',
+          currentSessions: 120,
+          comparisonSessions: 100,
+          change: 0.2,
+        },
+      ],
+    }),
     ...overrides,
   } as unknown as DashboardReadRepository;
 }
@@ -51,18 +61,10 @@ function buildPerformance(overrides: Partial<PerformanceAnalyticsWorkspace> = {}
   } as unknown as PerformanceAnalyticsWorkspace;
 }
 
-function buildAttribution(overrides: Partial<PixelAttributionService> = {}) {
-  return {
-    sources: vi.fn().mockResolvedValue({ marker: 'sources' }),
-    ...overrides,
-  } as unknown as PixelAttributionService;
-}
-
 describe('DashboardWorkspace', () => {
   it('keeps the primary overview available when every secondary section fails', async () => {
     const analytics = buildAnalytics({
       customers: vi.fn().mockRejectedValue(new Error('customers unavailable')),
-      products: vi.fn().mockRejectedValue(new Error('products unavailable')),
     });
     const intelligence = buildIntelligence({
       read: vi.fn().mockRejectedValue(new Error('intelligence unavailable')),
@@ -70,12 +72,11 @@ describe('DashboardWorkspace', () => {
     const read = buildRead({
       getInventoryPreview: vi.fn().mockRejectedValue(new Error('inventory unavailable')),
       getRecentOrders: vi.fn().mockRejectedValue(new Error('orders unavailable')),
+      getTopProducts: vi.fn().mockRejectedValue(new Error('products unavailable')),
+      getAdPlatformSessions: vi.fn().mockRejectedValue(new Error('paid sessions unavailable')),
     });
     const performance = buildPerformance({
       daily: vi.fn().mockRejectedValue(new Error('performance unavailable')),
-    });
-    const attribution = buildAttribution({
-      sources: vi.fn().mockRejectedValue(new Error('attribution unavailable')),
     });
 
     const result = await new DashboardWorkspace(
@@ -83,7 +84,6 @@ describe('DashboardWorkspace', () => {
       intelligence,
       read,
       performance,
-      attribution,
     ).read(storeId, { days: 30 }, now);
 
     expect(result.overview).toEqual({ marker: 'overview' });
@@ -98,7 +98,7 @@ describe('DashboardWorkspace', () => {
     });
   });
 
-  it('uses compact dashboard reads, includes customer/product/source context, and propagates explicit freshness', async () => {
+  it('uses compact dashboard reads and propagates explicit freshness', async () => {
     const recommendations = Array.from({ length: 5 }, (_, index) => ({
       ruleId: `rule-${index}`,
       severity: index < 2 ? 'HIGH' : 'LOW',
@@ -129,14 +129,12 @@ describe('DashboardWorkspace', () => {
       }),
     });
     const performance = buildPerformance();
-    const attribution = buildAttribution();
 
     const result = await new DashboardWorkspace(
       analytics,
       intelligence,
       read,
       performance,
-      attribution,
     ).read(storeId, { days: 30 }, now, { fresh: true });
 
     expect(read.getInventoryPreview).toHaveBeenCalledWith({
@@ -150,16 +148,21 @@ describe('DashboardWorkspace', () => {
     expect(intelligence.read).toHaveBeenCalledWith(storeId, { fresh: true });
     expect(performance.daily).toHaveBeenCalledWith(storeId, { days: 30 }, now);
     expect(analytics.customers).toHaveBeenCalledWith(storeId, { days: 30 }, now);
-    expect(analytics.products).toHaveBeenCalledWith(
+    expect(read.getTopProducts).toHaveBeenCalledWith({
       storeId,
-      { days: 30, page: 1, limit: 6 },
+      days: 30,
+      from: undefined,
+      to: undefined,
       now,
-    );
-    expect(attribution.sources).toHaveBeenCalledWith(
+      limit: 6,
+    });
+    expect(read.getAdPlatformSessions).toHaveBeenCalledWith({
       storeId,
-      { days: 30, page: 1, limit: 8 },
+      days: 30,
+      from: undefined,
+      to: undefined,
       now,
-    );
+    });
     expect(result.sections.inventory).toMatchObject({
       available: true,
       data: { inventoryMode: 'TRUSTED' },
@@ -192,33 +195,47 @@ describe('DashboardWorkspace', () => {
     });
     expect(result.sections.acquisitionSources).toEqual({
       available: true,
-      data: { marker: 'sources' },
+      data: {
+        methodology: 'FIRST_TOUCH_PAID_PLATFORM',
+        items: [
+          {
+            platform: 'FACEBOOK',
+            currentSessions: 120,
+            comparisonSessions: 100,
+            change: 0.2,
+          },
+        ],
+      },
     });
   });
 
-  it('passes explicit custom ranges through to customer, product and acquisition reads', async () => {
+  it('passes explicit custom ranges through to customer, top-product and paid-session reads', async () => {
     const analytics = buildAnalytics();
-    const attribution = buildAttribution();
+    const read = buildRead();
     const query = { days: 30, from: '2026-08-01', to: '2026-08-14' };
 
     await new DashboardWorkspace(
       analytics,
       buildIntelligence(),
-      buildRead(),
+      read,
       buildPerformance(),
-      attribution,
     ).read(storeId, query, now);
 
     expect(analytics.customers).toHaveBeenCalledWith(storeId, query, now);
-    expect(analytics.products).toHaveBeenCalledWith(
+    expect(read.getTopProducts).toHaveBeenCalledWith({
       storeId,
-      { ...query, page: 1, limit: 6 },
+      days: 30,
+      from: '2026-08-01',
+      to: '2026-08-14',
       now,
-    );
-    expect(attribution.sources).toHaveBeenCalledWith(
+      limit: 6,
+    });
+    expect(read.getAdPlatformSessions).toHaveBeenCalledWith({
       storeId,
-      { ...query, page: 1, limit: 8 },
+      days: 30,
+      from: '2026-08-01',
+      to: '2026-08-14',
       now,
-    );
+    });
   });
 });
