@@ -31,6 +31,7 @@ function analyticsCacheKey(
     query.from ?? '',
     query.to ?? '',
     String(query.days),
+    query.accountId ?? '',
     query.page === undefined ? '' : String(query.page),
     query.limit === undefined ? '' : String(query.limit),
   ].join(':');
