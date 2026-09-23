@@ -89,6 +89,21 @@ export class ShopifyPrivacyPurgeRepository {
           },
         });
 
+        // Canonical Product × Ads mappings intentionally keep restrictive Shopify-side FKs during
+        // ordinary application lifecycle so a physical catalog delete cannot silently erase mapping
+        // history. A privacy/store purge is different: mappings are derived store data and must not
+        // block erasure. Remove them explicitly before ProductVariant/Product/Collection deletion.
+        await tx.advertisingProductMapping.deleteMany({
+          where: {
+            OR: [{ product: { storeId } }, { ad: { account: { storeId } } }],
+          },
+        });
+        await tx.advertisingCollectionMapping.deleteMany({
+          where: {
+            OR: [{ collection: { storeId } }, { ad: { account: { storeId } } }],
+          },
+        });
+
         await tx.metaInsightDaily.deleteMany({ where: { adAccount: { storeId } } });
         await tx.metaAd.deleteMany({ where: { adAccount: { storeId } } });
         await tx.metaCreative.deleteMany({ where: { adAccount: { storeId } } });
