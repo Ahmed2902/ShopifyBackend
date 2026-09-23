@@ -11,8 +11,8 @@ export interface AdvertisingAggregateRow {
   spend: number;
   impressions: number;
   clicks: number;
-  conversions: number;
-  conversionValue: number;
+  conversions: number | null;
+  conversionValue: number | null;
   weightedFrequency: number;
   attributionSettings: string[];
 }
@@ -75,6 +75,14 @@ function numeric(value: Prisma.Decimal | string | number | bigint | null): numbe
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function nullableNumeric(
+  value: Prisma.Decimal | string | number | bigint | null,
+): number | null {
+  if (value === null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function selectedAccountFilter(externalIds: string[]) {
   if (externalIds.length === 0) return Prisma.sql`FALSE`;
   return Prisma.sql`account."providerEntityId" IN (${Prisma.join(
@@ -96,8 +104,8 @@ function aggregate(row: RawAggregateRow): AdvertisingAggregateRow {
     spend: numeric(row.spend),
     impressions: numeric(row.impressions),
     clicks: numeric(row.clicks),
-    conversions: numeric(row.conversions),
-    conversionValue: numeric(row.conversion_value),
+    conversions: nullableNumeric(row.conversions),
+    conversionValue: nullableNumeric(row.conversion_value),
     weightedFrequency: numeric(row.weighted_frequency),
     attributionSettings: row.attribution_settings ?? [],
   };
@@ -108,7 +116,9 @@ function aggregate(row: RawAggregateRow): AdvertisingAggregateRow {
  *
  * Provider interpretation belongs at ingestion. In particular, Meta purchase action selection is
  * normalized before data reaches AdvertisingDailyMetric, so consumers aggregate conversions/value
- * directly instead of repeating provider-specific action-array logic.
+ * directly instead of repeating provider-specific action-array logic. Nullable attribution is
+ * fail-closed: if any source fact in an aggregate is unavailable, the aggregate attribution field
+ * remains unavailable instead of publishing a partial total or a fabricated zero.
  */
 export class AdvertisingReadRepository {
   async getOverviewAggregateRows(input: {
@@ -156,8 +166,14 @@ export class AdvertisingReadRepository {
         COALESCE(SUM(scoped."spend"), 0) AS spend,
         COALESCE(SUM(scoped."impressions"), 0) AS impressions,
         COALESCE(SUM(scoped."clicks"), 0) AS clicks,
-        COALESCE(SUM(scoped."conversions"), 0) AS conversions,
-        COALESCE(SUM(scoped.conversion_value), 0) AS conversion_value,
+        CASE
+          WHEN COUNT(scoped."conversions") = COUNT(*) THEN SUM(scoped."conversions")
+          ELSE NULL
+        END AS conversions,
+        CASE
+          WHEN COUNT(scoped.conversion_value) = COUNT(*) THEN SUM(scoped.conversion_value)
+          ELSE NULL
+        END AS conversion_value,
         COALESCE(
           SUM(
             CASE
@@ -269,8 +285,14 @@ export class AdvertisingReadRepository {
         COALESCE(SUM(metric."spend"), 0) AS spend,
         COALESCE(SUM(metric."impressions"), 0) AS impressions,
         COALESCE(SUM(metric."clicks"), 0) AS clicks,
-        COALESCE(SUM(metric."conversions"), 0) AS conversions,
-        COALESCE(SUM(metric."conversionValue"), 0) AS conversion_value,
+        CASE
+          WHEN COUNT(metric."conversions") = COUNT(*) THEN SUM(metric."conversions")
+          ELSE NULL
+        END AS conversions,
+        CASE
+          WHEN COUNT(metric."conversionValue") = COUNT(*) THEN SUM(metric."conversionValue")
+          ELSE NULL
+        END AS conversion_value,
         COALESCE(
           SUM(
             CASE
@@ -303,8 +325,8 @@ export class AdvertisingReadRepository {
       spend: numeric(row.spend),
       impressions: numeric(row.impressions),
       clicks: numeric(row.clicks),
-      conversions: numeric(row.conversions),
-      conversionValue: numeric(row.conversion_value),
+      conversions: nullableNumeric(row.conversions),
+      conversionValue: nullableNumeric(row.conversion_value),
       weightedFrequency: numeric(row.weighted_frequency),
     }));
   }
@@ -340,8 +362,14 @@ export class AdvertisingReadRepository {
         COALESCE(SUM(metric."spend"), 0) AS spend,
         COALESCE(SUM(metric."impressions"), 0) AS impressions,
         COALESCE(SUM(metric."clicks"), 0) AS clicks,
-        COALESCE(SUM(metric."conversions"), 0) AS conversions,
-        COALESCE(SUM(metric."conversionValue"), 0) AS conversion_value,
+        CASE
+          WHEN COUNT(metric."conversions") = COUNT(*) THEN SUM(metric."conversions")
+          ELSE NULL
+        END AS conversions,
+        CASE
+          WHEN COUNT(metric."conversionValue") = COUNT(*) THEN SUM(metric."conversionValue")
+          ELSE NULL
+        END AS conversion_value,
         COALESCE(
           SUM(
             CASE
@@ -374,8 +402,8 @@ export class AdvertisingReadRepository {
       spend: numeric(row.spend),
       impressions: numeric(row.impressions),
       clicks: numeric(row.clicks),
-      conversions: numeric(row.conversions),
-      conversionValue: numeric(row.conversion_value),
+      conversions: nullableNumeric(row.conversions),
+      conversionValue: nullableNumeric(row.conversion_value),
       weightedFrequency: numeric(row.weighted_frequency),
     }));
   }
