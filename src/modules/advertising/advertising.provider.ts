@@ -99,7 +99,9 @@ export class MetaAdvertisingEvidenceProvider implements AdvertisingEvidenceProvi
       selectedAccountExternalIds: connection?.selectedAdAccountIds ?? [],
       accountId: canonicalAccountId,
     });
-    return account.providerEntityId;
+    // accountScope.resolve throws for a requested canonical id that does not resolve inside the
+    // merchant-selected store/provider scope. Keep that fail-closed invariant explicit here.
+    return account!.providerEntityId;
   }
 
   async overview(storeId: string, query: PaidMediaReadQuery = {}) {
