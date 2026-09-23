@@ -44,7 +44,6 @@ function aggregateRow(row: {
   _sum: {
     spend: Prisma.Decimal | null;
     impressions: bigint | null;
-    reach: bigint | null;
     clicks: bigint | null;
     conversions: Prisma.Decimal | null;
     conversionValue: Prisma.Decimal | null;
@@ -54,7 +53,10 @@ function aggregateRow(row: {
     currency: row.currency,
     spend: decimal(row._sum.spend) ?? '0',
     impressions: integer(row._sum.impressions) ?? '0',
-    reach: integer(row._sum.reach),
+    // Reach is non-additive across dates and entities. Canonical daily/ad-level facts cannot
+    // truthfully produce a deduplicated period reach, so expose it as unavailable instead of
+    // summing provider daily reach and overstating the audience.
+    reach: null,
     clicks: integer(row._sum.clicks) ?? '0',
     conversions: decimal(row._sum.conversions),
     conversionValue: decimal(row._sum.conversionValue),
@@ -139,7 +141,6 @@ export class CanonicalPaidMediaReadService {
         _sum: {
           spend: true,
           impressions: true,
-          reach: true,
           clicks: true,
           conversions: true,
           conversionValue: true,
@@ -294,7 +295,7 @@ export class CanonicalPaidMediaReadService {
     const rows = await prisma.advertisingDailyMetric.groupBy({
       by: ['campaignId', 'currency'],
       where: { accountId: { in: accountIds }, level: 'AD', campaignId: { in: ids }, date: { gte: window.from, lte: window.to } },
-      _sum: { spend: true, impressions: true, reach: true, clicks: true, conversions: true, conversionValue: true },
+      _sum: { spend: true, impressions: true, clicks: true, conversions: true, conversionValue: true },
     });
     return this.groupMetricsById(rows.map((row) => ({ id: row.campaignId, metric: aggregateRow(row) })));
   }
@@ -304,7 +305,7 @@ export class CanonicalPaidMediaReadService {
     const rows = await prisma.advertisingDailyMetric.groupBy({
       by: ['groupId', 'currency'],
       where: { accountId: { in: accountIds }, level: 'AD', groupId: { in: ids }, date: { gte: window.from, lte: window.to } },
-      _sum: { spend: true, impressions: true, reach: true, clicks: true, conversions: true, conversionValue: true },
+      _sum: { spend: true, impressions: true, clicks: true, conversions: true, conversionValue: true },
     });
     return this.groupMetricsById(rows.map((row) => ({ id: row.groupId, metric: aggregateRow(row) })));
   }
@@ -314,7 +315,7 @@ export class CanonicalPaidMediaReadService {
     const rows = await prisma.advertisingDailyMetric.groupBy({
       by: ['adId', 'currency'],
       where: { accountId: { in: accountIds }, level: 'AD', adId: { in: ids }, date: { gte: window.from, lte: window.to } },
-      _sum: { spend: true, impressions: true, reach: true, clicks: true, conversions: true, conversionValue: true },
+      _sum: { spend: true, impressions: true, clicks: true, conversions: true, conversionValue: true },
     });
     return this.groupMetricsById(rows.map((row) => ({ id: row.adId, metric: aggregateRow(row) })));
   }
