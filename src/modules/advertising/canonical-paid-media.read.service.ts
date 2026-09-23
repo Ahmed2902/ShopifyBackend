@@ -1,6 +1,7 @@
-import type { AdvertisingProvider, Prisma } from '../../generated/prisma/client.js';
-import { prisma } from '../../lib/prisma.js';
+import type { AdvertisingGroupKind, AdvertisingProvider, Prisma } from '../../generated/prisma/client.js';
 import { AppError } from '../../errors/app-error.js';
+import { prisma } from '../../lib/prisma.js';
+import { resolveAnalyticsWindows } from '../analytics/analytics.dates.js';
 
 export type CanonicalPaidMediaLevel = 'CAMPAIGN' | 'GROUP' | 'AD';
 
@@ -13,14 +14,40 @@ type CanonicalAccount = {
   status: string | null;
 };
 
+type ReportingWindow = {
+  from: Date;
+  to: Date;
+  fromDate: string;
+  toDate: string;
+  timeZone: string;
+};
+
 type MetricAggregate = {
   currency: string | null;
+  evidenceAvailable: true;
+  sourceRows: number;
   spend: string;
   impressions: string;
-  reach: string | null;
+  reach: null;
   clicks: string;
   conversions: string | null;
   conversionValue: string | null;
+  conversionsAvailable: boolean;
+  conversionValueAvailable: boolean;
+};
+
+type GroupIdentity = { id: string; kind: AdvertisingGroupKind };
+
+type AggregateGroupRow = {
+  currency: string | null;
+  _count: { _all: number; conversions: number; conversionValue: number };
+  _sum: {
+    spend: Prisma.Decimal | null;
+    impressions: bigint | null;
+    clicks: bigint | null;
+    conversions: Prisma.Decimal | null;
+    conversionValue: Prisma.Decimal | null;
+  };
 };
 
 function decimal(value: Prisma.Decimal | null | undefined): string | null {
@@ -31,35 +58,59 @@ function integer(value: bigint | null | undefined): string | null {
   return value == null ? null : value.toString();
 }
 
-function dateWindow(days: number) {
-  const to = new Date();
-  to.setUTCHours(0, 0, 0, 0);
-  const from = new Date(to);
-  from.setUTCDate(from.getUTCDate() - Math.max(days - 1, 0));
-  return { from, to };
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-function aggregateRow(row: {
-  currency: string | null;
-  _sum: {
-    spend: Prisma.Decimal | null;
-    impressions: bigint | null;
-    clicks: bigint | null;
-    conversions: Prisma.Decimal | null;
-    conversionValue: Prisma.Decimal | null;
-  };
-}): MetricAggregate {
+function aggregateRow(row: AggregateGroupRow): MetricAggregate {
+  const conversionsAvailable = row._count.conversions === row._count._all;
+  const conversionValueAvailable = row._count.conversionValue === row._count._all;
   return {
     currency: row.currency,
+    evidenceAvailable: true,
+    sourceRows: row._count._all,
     spend: decimal(row._sum.spend) ?? '0',
     impressions: integer(row._sum.impressions) ?? '0',
-    // Reach is non-additive across dates and entities. Canonical daily/ad-level facts cannot
-    // truthfully produce a deduplicated period reach, so expose it as unavailable instead of
-    // summing provider daily reach and overstating the audience.
+    // Reach is non-additive across dates and entities. Canonical daily facts cannot truthfully
+    // produce a deduplicated period reach, so keep it unavailable instead of summing daily reach.
     reach: null,
     clicks: integer(row._sum.clicks) ?? '0',
-    conversions: decimal(row._sum.conversions),
-    conversionValue: decimal(row._sum.conversionValue),
+    conversions: conversionsAvailable ? decimal(row._sum.conversions) : null,
+    conversionValue: conversionValueAvailable ? decimal(row._sum.conversionValue) : null,
+    conversionsAvailable,
+    conversionValueAvailable,
+  };
+}
+
+/**
+ * Provider-neutral metric-source policy.
+ *
+ * Meta/TikTok canonical production reads derive hierarchy totals from AD facts because that is the
+ * completed canonical runtime contract for those providers. Google persists trustworthy facts at
+ * each hierarchy level; ACCOUNT/CAMPAIGN/GROUP/ASSET_GROUP/AD must therefore be read from their own
+ * level so Performance Max Asset Groups work without invented AdvertisingAd rows and hierarchy facts
+ * are never summed together.
+ */
+function overviewMetricLevel(provider: AdvertisingProvider) {
+  return provider === 'GOOGLE_ADS' ? ('ACCOUNT' as const) : ('AD' as const);
+}
+
+function campaignMetricLevel(provider: AdvertisingProvider) {
+  return provider === 'GOOGLE_ADS' ? ('CAMPAIGN' as const) : ('AD' as const);
+}
+
+export function canonicalPaidMediaReportingWindow(
+  days: number,
+  timeZone: string,
+  now = new Date(),
+): ReportingWindow {
+  const windows = resolveAnalyticsWindows({ days }, timeZone, now);
+  return {
+    from: windows.current.metaFrom,
+    to: windows.current.metaTo,
+    fromDate: windows.current.fromDate,
+    toDate: windows.current.toDate,
+    timeZone,
   };
 }
 
@@ -70,8 +121,15 @@ function aggregateRow(row: {
  * integration concern. An optional accountId is a canonical AdvertisingAccount UUID and is
  * validated against store, provider and the merchant-selected external IDs before any hierarchy
  * or metric query is executed.
+ *
+ * Reporting windows use the store/business timezone and completed local days, matching unified
+ * analytics. Provider ingestion may use provider/account timezone to request source facts, but once
+ * persisted as canonical DATE facts the user-visible comparison window is the merchant reporting
+ * calendar.
  */
 export class CanonicalPaidMediaReadService {
+  constructor(private readonly now: () => Date = () => new Date()) {}
+
   private async accounts(input: {
     storeId: string;
     provider: AdvertisingProvider;
@@ -108,6 +166,15 @@ export class CanonicalPaidMediaReadService {
     return accounts;
   }
 
+  private async window(storeId: string, days: number): Promise<ReportingWindow> {
+    const store = await prisma.store.findUnique({
+      where: { id: storeId },
+      select: { ianaTimezone: true },
+    });
+    if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
+    return canonicalPaidMediaReportingWindow(days, store.ianaTimezone, this.now());
+  }
+
   async overview(input: {
     storeId: string;
     provider: AdvertisingProvider;
@@ -115,9 +182,11 @@ export class CanonicalPaidMediaReadService {
     accountId?: string;
     days: number;
   }) {
-    const accounts = await this.accounts(input);
+    const [accounts, window] = await Promise.all([
+      this.accounts(input),
+      this.window(input.storeId, input.days),
+    ]);
     const accountIds = accounts.map((account) => account.id);
-    const window = dateWindow(input.days);
     if (accountIds.length === 0) {
       return {
         accounts: [],
@@ -135,9 +204,10 @@ export class CanonicalPaidMediaReadService {
         by: ['currency'],
         where: {
           accountId: { in: accountIds },
-          level: 'AD',
+          level: overviewMetricLevel(input.provider),
           date: { gte: window.from, lte: window.to },
         },
+        _count: { _all: true, conversions: true, conversionValue: true },
         _sum: {
           spend: true,
           impressions: true,
@@ -167,9 +237,11 @@ export class CanonicalPaidMediaReadService {
     page: number;
     limit: number;
   }) {
-    const accounts = await this.accounts(input);
+    const [accounts, window] = await Promise.all([
+      this.accounts(input),
+      this.window(input.storeId, input.days),
+    ]);
     const accountIds = accounts.map((account) => account.id);
-    const window = dateWindow(input.days);
     if (accountIds.length === 0) {
       return { accounts: [], window, items: [], page: input.page, limit: input.limit, total: 0 };
     }
@@ -197,8 +269,20 @@ export class CanonicalPaidMediaReadService {
         }),
         prisma.advertisingCampaign.count({ where: { accountId: { in: accountIds }, deletedAt: null } }),
       ]);
-      const metrics = await this.campaignMetrics(accountIds, items.map((item) => item.id), window);
-      return { accounts, window, items: items.map((item) => ({ ...item, metrics: metrics.get(item.id) ?? [] })), page: input.page, limit: input.limit, total };
+      const metrics = await this.campaignMetrics(
+        input.provider,
+        accountIds,
+        items.map((item) => item.id),
+        window,
+      );
+      return {
+        accounts,
+        window,
+        items: items.map((item) => ({ ...item, metrics: metrics.get(item.id) ?? [] })),
+        page: input.page,
+        limit: input.limit,
+        total,
+      };
     }
 
     if (input.level === 'GROUP') {
@@ -224,8 +308,15 @@ export class CanonicalPaidMediaReadService {
         }),
         prisma.advertisingGroup.count({ where: { accountId: { in: accountIds }, deletedAt: null } }),
       ]);
-      const metrics = await this.groupMetrics(accountIds, items.map((item) => item.id), window);
-      return { accounts, window, items: items.map((item) => ({ ...item, metrics: metrics.get(item.id) ?? [] })), page: input.page, limit: input.limit, total };
+      const metrics = await this.groupMetrics(input.provider, accountIds, items, window);
+      return {
+        accounts,
+        window,
+        items: items.map((item) => ({ ...item, metrics: metrics.get(item.id) ?? [] })),
+        page: input.page,
+        limit: input.limit,
+        total,
+      };
     }
 
     const [items, total] = await Promise.all([
@@ -252,7 +343,14 @@ export class CanonicalPaidMediaReadService {
       prisma.advertisingAd.count({ where: { accountId: { in: accountIds }, deletedAt: null } }),
     ]);
     const metrics = await this.adMetrics(accountIds, items.map((item) => item.id), window);
-    return { accounts, window, items: items.map((item) => ({ ...item, metrics: metrics.get(item.id) ?? [] })), page: input.page, limit: input.limit, total };
+    return {
+      accounts,
+      window,
+      items: items.map((item) => ({ ...item, metrics: metrics.get(item.id) ?? [] })),
+      page: input.page,
+      limit: input.limit,
+      total,
+    };
   }
 
   async detail(input: {
@@ -264,58 +362,215 @@ export class CanonicalPaidMediaReadService {
     entityId: string;
     days: number;
   }) {
-    const accounts = await this.accounts(input);
+    const [accounts, window] = await Promise.all([
+      this.accounts(input),
+      this.window(input.storeId, input.days),
+    ]);
     const accountIds = accounts.map((account) => account.id);
-    const window = dateWindow(input.days);
     if (accountIds.length === 0) return { accounts: [], window, item: null };
 
     if (input.level === 'CAMPAIGN') {
-      const item = await prisma.advertisingCampaign.findFirst({
-        where: { accountId: { in: accountIds }, deletedAt: null, OR: [{ id: input.entityId }, { providerEntityId: input.entityId }] },
-      });
-      const metrics = item ? await this.campaignMetrics(accountIds, [item.id], window) : new Map();
-      return { accounts, window, item: item ? { ...item, metrics: metrics.get(item.id) ?? [] } : null };
+      const item = await this.campaignByIdentifier(accountIds, input.entityId);
+      const metrics = item
+        ? await this.campaignMetrics(input.provider, accountIds, [item.id], window)
+        : new Map<string, MetricAggregate[]>();
+      return {
+        accounts,
+        window,
+        item: item ? { ...item, metrics: metrics.get(item.id) ?? [] } : null,
+      };
     }
     if (input.level === 'GROUP') {
-      const item = await prisma.advertisingGroup.findFirst({
-        where: { accountId: { in: accountIds }, deletedAt: null, OR: [{ id: input.entityId }, { providerEntityId: input.entityId }] },
-      });
-      const metrics = item ? await this.groupMetrics(accountIds, [item.id], window) : new Map();
-      return { accounts, window, item: item ? { ...item, metrics: metrics.get(item.id) ?? [] } : null };
+      const item = await this.groupByIdentifier(accountIds, input.entityId);
+      const metrics = item
+        ? await this.groupMetrics(input.provider, accountIds, [{ id: item.id, kind: item.kind }], window)
+        : new Map<string, MetricAggregate[]>();
+      return {
+        accounts,
+        window,
+        item: item ? { ...item, metrics: metrics.get(item.id) ?? [] } : null,
+      };
     }
-    const item = await prisma.advertisingAd.findFirst({
-      where: { accountId: { in: accountIds }, deletedAt: null, OR: [{ id: input.entityId }, { providerEntityId: input.entityId }] },
-    });
-    const metrics = item ? await this.adMetrics(accountIds, [item.id], window) : new Map();
-    return { accounts, window, item: item ? { ...item, metrics: metrics.get(item.id) ?? [] } : null };
+    const item = await this.adByIdentifier(accountIds, input.entityId);
+    const metrics = item
+      ? await this.adMetrics(accountIds, [item.id], window)
+      : new Map<string, MetricAggregate[]>();
+    return {
+      accounts,
+      window,
+      item: item ? { ...item, metrics: metrics.get(item.id) ?? [] } : null,
+    };
   }
 
-  private async campaignMetrics(accountIds: string[], ids: string[], window: { from: Date; to: Date }) {
+  private async campaignByIdentifier(accountIds: string[], entityId: string) {
+    if (isUuid(entityId)) {
+      const canonical = await prisma.advertisingCampaign.findFirst({
+        where: { id: entityId, accountId: { in: accountIds }, deletedAt: null },
+      });
+      if (canonical) return canonical;
+    }
+    const candidates = await prisma.advertisingCampaign.findMany({
+      where: { providerEntityId: entityId, accountId: { in: accountIds }, deletedAt: null },
+      take: 2,
+      orderBy: { id: 'asc' },
+    });
+    return this.singleExternalCandidate(candidates, entityId);
+  }
+
+  private async groupByIdentifier(accountIds: string[], entityId: string) {
+    if (isUuid(entityId)) {
+      const canonical = await prisma.advertisingGroup.findFirst({
+        where: { id: entityId, accountId: { in: accountIds }, deletedAt: null },
+      });
+      if (canonical) return canonical;
+    }
+    const candidates = await prisma.advertisingGroup.findMany({
+      where: { providerEntityId: entityId, accountId: { in: accountIds }, deletedAt: null },
+      take: 2,
+      orderBy: { id: 'asc' },
+    });
+    return this.singleExternalCandidate(candidates, entityId);
+  }
+
+  private async adByIdentifier(accountIds: string[], entityId: string) {
+    if (isUuid(entityId)) {
+      const canonical = await prisma.advertisingAd.findFirst({
+        where: { id: entityId, accountId: { in: accountIds }, deletedAt: null },
+      });
+      if (canonical) return canonical;
+    }
+    const candidates = await prisma.advertisingAd.findMany({
+      where: { providerEntityId: entityId, accountId: { in: accountIds }, deletedAt: null },
+      take: 2,
+      orderBy: { id: 'asc' },
+    });
+    return this.singleExternalCandidate(candidates, entityId);
+  }
+
+  private singleExternalCandidate<T>(candidates: T[], entityId: string): T | null {
+    if (candidates.length > 1) {
+      throw new AppError(
+        'External advertising entity id is ambiguous across selected accounts; use the canonical entity UUID or scope the request to one canonical accountId.',
+        409,
+        'ADVERTISING_ENTITY_ID_AMBIGUOUS',
+        { providerEntityId: entityId },
+      );
+    }
+    return candidates[0] ?? null;
+  }
+
+  private async campaignMetrics(
+    provider: AdvertisingProvider,
+    accountIds: string[],
+    ids: string[],
+    window: ReportingWindow,
+  ) {
     if (ids.length === 0) return new Map<string, MetricAggregate[]>();
     const rows = await prisma.advertisingDailyMetric.groupBy({
       by: ['campaignId', 'currency'],
-      where: { accountId: { in: accountIds }, level: 'AD', campaignId: { in: ids }, date: { gte: window.from, lte: window.to } },
-      _sum: { spend: true, impressions: true, clicks: true, conversions: true, conversionValue: true },
+      where: {
+        accountId: { in: accountIds },
+        level: campaignMetricLevel(provider),
+        campaignId: { in: ids },
+        date: { gte: window.from, lte: window.to },
+      },
+      _count: { _all: true, conversions: true, conversionValue: true },
+      _sum: {
+        spend: true,
+        impressions: true,
+        clicks: true,
+        conversions: true,
+        conversionValue: true,
+      },
     });
-    return this.groupMetricsById(rows.map((row) => ({ id: row.campaignId, metric: aggregateRow(row) })));
+    return this.groupMetricsById(
+      rows.map((row) => ({ id: row.campaignId, metric: aggregateRow(row) })),
+    );
   }
 
-  private async groupMetrics(accountIds: string[], ids: string[], window: { from: Date; to: Date }) {
-    if (ids.length === 0) return new Map<string, MetricAggregate[]>();
+  private async groupMetrics(
+    provider: AdvertisingProvider,
+    accountIds: string[],
+    groups: GroupIdentity[],
+    window: ReportingWindow,
+  ) {
+    if (groups.length === 0) return new Map<string, MetricAggregate[]>();
+    if (provider !== 'GOOGLE_ADS') {
+      const ids = groups.map((group) => group.id);
+      const rows = await prisma.advertisingDailyMetric.groupBy({
+        by: ['groupId', 'currency'],
+        where: {
+          accountId: { in: accountIds },
+          level: 'AD',
+          groupId: { in: ids },
+          date: { gte: window.from, lte: window.to },
+        },
+        _count: { _all: true, conversions: true, conversionValue: true },
+        _sum: {
+          spend: true,
+          impressions: true,
+          clicks: true,
+          conversions: true,
+          conversionValue: true,
+        },
+      });
+      return this.groupMetricsById(
+        rows.map((row) => ({ id: row.groupId, metric: aggregateRow(row) })),
+      );
+    }
+
+    const ordinaryIds = groups
+      .filter((group) => group.kind !== 'ASSET_GROUP')
+      .map((group) => group.id);
+    const assetGroupIds = groups
+      .filter((group) => group.kind === 'ASSET_GROUP')
+      .map((group) => group.id);
+    const levelFilters: Prisma.AdvertisingDailyMetricWhereInput[] = [
+      ...(ordinaryIds.length > 0 ? [{ level: 'GROUP' as const, groupId: { in: ordinaryIds } }] : []),
+      ...(assetGroupIds.length > 0
+        ? [{ level: 'ASSET_GROUP' as const, groupId: { in: assetGroupIds } }]
+        : []),
+    ];
+    if (levelFilters.length === 0) return new Map<string, MetricAggregate[]>();
     const rows = await prisma.advertisingDailyMetric.groupBy({
       by: ['groupId', 'currency'],
-      where: { accountId: { in: accountIds }, level: 'AD', groupId: { in: ids }, date: { gte: window.from, lte: window.to } },
-      _sum: { spend: true, impressions: true, clicks: true, conversions: true, conversionValue: true },
+      where: {
+        accountId: { in: accountIds },
+        OR: levelFilters,
+        date: { gte: window.from, lte: window.to },
+      },
+      _count: { _all: true, conversions: true, conversionValue: true },
+      _sum: {
+        spend: true,
+        impressions: true,
+        clicks: true,
+        conversions: true,
+        conversionValue: true,
+      },
     });
-    return this.groupMetricsById(rows.map((row) => ({ id: row.groupId, metric: aggregateRow(row) })));
+    return this.groupMetricsById(
+      rows.map((row) => ({ id: row.groupId, metric: aggregateRow(row) })),
+    );
   }
 
-  private async adMetrics(accountIds: string[], ids: string[], window: { from: Date; to: Date }) {
+  private async adMetrics(accountIds: string[], ids: string[], window: ReportingWindow) {
     if (ids.length === 0) return new Map<string, MetricAggregate[]>();
     const rows = await prisma.advertisingDailyMetric.groupBy({
       by: ['adId', 'currency'],
-      where: { accountId: { in: accountIds }, level: 'AD', adId: { in: ids }, date: { gte: window.from, lte: window.to } },
-      _sum: { spend: true, impressions: true, clicks: true, conversions: true, conversionValue: true },
+      where: {
+        accountId: { in: accountIds },
+        level: 'AD',
+        adId: { in: ids },
+        date: { gte: window.from, lte: window.to },
+      },
+      _count: { _all: true, conversions: true, conversionValue: true },
+      _sum: {
+        spend: true,
+        impressions: true,
+        clicks: true,
+        conversions: true,
+        conversionValue: true,
+      },
     });
     return this.groupMetricsById(rows.map((row) => ({ id: row.adId, metric: aggregateRow(row) })));
   }
