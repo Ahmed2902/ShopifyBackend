@@ -1,5 +1,10 @@
 import { analyticsWorkspace, type AnalyticsWorkspace } from '../analytics/analytics.workspace.js';
+import { MetaRepository } from '../meta/meta.repository.js';
 import { TikTokRepository } from '../tiktok/tiktok.repository.js';
+import {
+  advertisingAccountScopeService,
+  type AdvertisingAccountScopeService,
+} from './advertising-account-scope.service.js';
 import {
   canonicalPaidMediaReadService,
   type CanonicalPaidMediaReadService,
@@ -56,7 +61,11 @@ function bounded(query: PaidMediaReadQuery = {}) {
 export class MetaAdvertisingEvidenceProvider implements AdvertisingEvidenceProvider {
   readonly provider = 'META' as const;
 
-  constructor(private readonly analytics: AnalyticsWorkspace = analyticsWorkspace) {}
+  constructor(
+    private readonly analytics: AnalyticsWorkspace = analyticsWorkspace,
+    private readonly metaRepository: MetaRepository = new MetaRepository(),
+    private readonly accountScope: AdvertisingAccountScopeService = advertisingAccountScopeService,
+  ) {}
 
   capabilities(): PaidMediaProviderCapabilities {
     return {
@@ -75,18 +84,46 @@ export class MetaAdvertisingEvidenceProvider implements AdvertisingEvidenceProvi
     };
   }
 
+  /**
+   * The provider-neutral boundary accepts a canonical AdvertisingAccount UUID. AnalyticsWorkspace
+   * still scopes Meta reads by Meta's selected external account ID, so translate only inside this
+   * adapter after validating the canonical UUID against store + provider + merchant selection.
+   */
+  private async selectedMetaAccountId(storeId: string, canonicalAccountId?: string) {
+    if (!canonicalAccountId) return undefined;
+
+    const connection = await this.metaRepository.findConnectionForStore(storeId);
+    const [account] = await this.accountScope.resolve({
+      storeId,
+      provider: this.provider,
+      selectedAccountExternalIds: connection?.selectedAdAccountIds ?? [],
+      accountId: canonicalAccountId,
+    });
+    return account.providerEntityId;
+  }
+
   async overview(storeId: string, query: PaidMediaReadQuery = {}) {
-    const { days } = bounded(query);
+    const normalized = bounded(query);
+    const accountId = await this.selectedMetaAccountId(storeId, normalized.accountId);
     return {
       provider: this.provider,
       capabilities: this.capabilities(),
-      evidence: await this.analytics.advertising(storeId, { days }),
+      evidence: await this.analytics.advertising(storeId, {
+        days: normalized.days,
+        ...(accountId ? { accountId } : {}),
+      }),
     };
   }
 
   async list(storeId: string, level: PaidMediaLevel, query: PaidMediaReadQuery = {}) {
     const normalized = bounded(query);
-    const range = { days: normalized.days, page: normalized.page, limit: normalized.limit };
+    const accountId = await this.selectedMetaAccountId(storeId, normalized.accountId);
+    const range = {
+      days: normalized.days,
+      page: normalized.page,
+      limit: normalized.limit,
+      ...(accountId ? { accountId } : {}),
+    };
     const evidence =
       level === 'CAMPAIGN'
         ? await this.analytics.campaigns(storeId, range)
@@ -105,15 +142,20 @@ export class MetaAdvertisingEvidenceProvider implements AdvertisingEvidenceProvi
     entityId: string,
     query: PaidMediaReadQuery = {},
   ) {
-    const { days } = bounded(query);
+    const normalized = bounded(query);
+    const accountId = await this.selectedMetaAccountId(storeId, normalized.accountId);
+    const range = {
+      days: normalized.days,
+      ...(accountId ? { accountId } : {}),
+    };
     const evidence =
       level === 'CAMPAIGN'
-        ? await this.analytics.campaign(storeId, entityId, { days })
+        ? await this.analytics.campaign(storeId, entityId, range)
         : level === 'GROUP'
-          ? await this.analytics.adSet(storeId, entityId, { days })
+          ? await this.analytics.adSet(storeId, entityId, range)
           : level === 'AD'
-            ? await this.analytics.ad(storeId, entityId, { days })
-            : await this.analytics.creative(storeId, entityId, { days });
+            ? await this.analytics.ad(storeId, entityId, range)
+            : await this.analytics.creative(storeId, entityId, range);
 
     return { provider: this.provider, level, capabilities: this.capabilities(), evidence };
   }
