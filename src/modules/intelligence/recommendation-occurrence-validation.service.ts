@@ -112,22 +112,30 @@ export class RecommendationOccurrenceValidationService {
     for (const account of accounts) {
       pushScope(scopes, seen, { provider: 'ALL', accountId: account.id });
       pushScope(scopes, seen, { provider: account.provider, accountId: account.id });
-      pushScope(scopes, seen, {
-        provider: 'ALL',
-        accountId: account.id,
-        currency: account.currency,
-      });
-      pushScope(scopes, seen, {
-        provider: account.provider,
-        accountId: account.id,
-        currency: account.currency,
-      });
+      if (account.currency) {
+        pushScope(scopes, seen, {
+          provider: 'ALL',
+          accountId: account.id,
+          currency: account.currency,
+        });
+        pushScope(scopes, seen, {
+          provider: account.provider,
+          accountId: account.id,
+          currency: account.currency,
+        });
+      }
     }
 
     // Currency filtering can likewise narrow the evaluation universe without selecting one account.
     // Reconstruct provider × currency scopes only from currently authorized selected accounts; no
     // arbitrary currency supplied by the client is trusted for lifecycle authorization.
-    const currencies = [...new Set(accounts.map((account) => account.currency))];
+    const currencies = [
+      ...new Set(
+        accounts
+          .map((account) => account.currency)
+          .filter((currency): currency is string => currency !== null),
+      ),
+    ];
     for (const currency of currencies) {
       for (const provider of PROVIDER_FILTERS) {
         pushScope(scopes, seen, { provider, currency });
