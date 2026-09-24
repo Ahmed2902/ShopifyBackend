@@ -24,6 +24,7 @@ import {
   unifiedDecisionService,
   type UnifiedDecisionService,
 } from '../intelligence/unified-decision.service.js';
+import { scopeUnifiedRecommendationOccurrenceKey } from '../intelligence/unified-recommendation-occurrence-scope.js';
 import { toJsonSafe } from '../meta/meta.utils.js';
 import {
   unifiedProductAdsIntelligenceService,
@@ -128,7 +129,13 @@ export class UnifiedAnalyticsController {
         const result = await this.decisions.read(storeId, query);
         return toJsonSafe({
           ...result,
-          recommendations: result.recommendations.slice(0, entitlementLimit),
+          recommendations: result.recommendations.slice(0, entitlementLimit).map((recommendation) => ({
+            ...recommendation,
+            occurrenceKey: scopeUnifiedRecommendationOccurrenceKey(
+              recommendation.occurrenceKey,
+              query,
+            ),
+          })),
         });
       },
     );
