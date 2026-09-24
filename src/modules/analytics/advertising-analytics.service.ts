@@ -68,19 +68,21 @@ function aggregateMetrics(row: {
   spend: number;
   impressions: number;
   clicks: number;
-  purchases: number;
-  purchaseValue: number;
+  purchases: number | null;
+  purchaseValue: number | null;
   weightedFrequency: number;
 } | undefined): MetaMetrics {
   if (!row) return emptyMetaMetrics();
   return {
+    sourceRows: 1,
     spend: row.spend,
     impressions: row.impressions,
     clicks: row.clicks,
     purchases: row.purchases,
     purchaseValue: row.purchaseValue,
-    providerRoas: row.spend > 0 ? row.purchaseValue / row.spend : null,
-    cpa: row.purchases > 0 ? row.spend / row.purchases : null,
+    providerRoas:
+      row.purchaseValue !== null && row.spend > 0 ? row.purchaseValue / row.spend : null,
+    cpa: row.purchases !== null && row.purchases > 0 ? row.spend / row.purchases : null,
     ctr: row.impressions > 0 ? row.clicks / row.impressions : null,
     cpc: row.clicks > 0 ? row.spend / row.clicks : null,
     cpm: row.impressions > 0 ? (row.spend / row.impressions) * 1_000 : null,
