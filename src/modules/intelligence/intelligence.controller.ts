@@ -76,6 +76,9 @@ export class IntelligenceController {
       state,
       currentRecommendations,
     );
+    // Unified decisions are cached with lifecycle state attached. Advance all Store decision-cache
+    // generations only after persistence succeeds so the next normal read reflects the mutation.
+    await invalidateStoreDecisionCaches(storeId);
     res.status(200).json(result);
   };
 }
