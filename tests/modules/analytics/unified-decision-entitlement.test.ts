@@ -146,7 +146,7 @@ describe('Unified decisions recommendation entitlement', () => {
         provider: 'META',
         accountId,
         currency: 'EUR',
-        from: '2026-09-01',
+        from: '2026-08-26',
         to: '2026-09-24',
       }),
       res,
@@ -162,7 +162,35 @@ describe('Unified decisions recommendation entitlement', () => {
         provider: 'META',
         accountId,
         currency: 'EUR',
-        from: '2026-09-01',
+        from: '2026-08-26',
+        to: '2026-09-24',
+        days: 30,
+      },
+    });
+  });
+
+  it('freezes the resolved dates into a relative-days occurrence handle', async () => {
+    vi.spyOn(analyticsWorkspaceCachedReads, 'run').mockImplementation(
+      async (_key, loader) => loader(),
+    );
+    const decisions = { read: vi.fn().mockResolvedValue(result(1)) };
+    const res = response(10);
+
+    await controller(decisions).decisionList(
+      request({ provider: 'ALL', currency: 'EUR', days: '30' }),
+      res,
+    );
+
+    const payload = vi.mocked(res.json).mock.calls[0]![0] as ReturnType<typeof result>;
+    const scoped = parseScopedUnifiedRecommendationOccurrenceKey(
+      payload.recommendations[0]!.occurrenceKey,
+    );
+    expect(scoped).toEqual({
+      canonicalOccurrenceKey: 'occurrence-0',
+      query: {
+        provider: 'ALL',
+        currency: 'EUR',
+        from: '2026-08-26',
         to: '2026-09-24',
         days: 30,
       },
