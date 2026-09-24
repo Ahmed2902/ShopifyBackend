@@ -5,15 +5,12 @@ export type TikTokInsightBulkClient = Pick<Prisma.TransactionClient, '$queryRaw'
 
 type BulkResult = { id: string; insight_key: string };
 
-type DecimalLike = Prisma.Decimal | number | string | null | undefined;
-type BigIntLike = bigint | number | string | null | undefined;
-
-function decimal(value: DecimalLike): string | null {
+function decimal(value: unknown): string | null {
   if (value === null || value === undefined) return null;
-  return value instanceof Prisma.Decimal ? value.toString() : String(value);
+  return String(value);
 }
 
-function integer(value: BigIntLike): string | null {
+function integer(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   return String(value);
 }
