@@ -66,8 +66,10 @@ function legacyAdvertising(
   };
 }
 
-function unavailableMetricChanges<T extends Record<string, number | null>>(metrics: T): T {
-  return Object.fromEntries(Object.keys(metrics).map((key) => [key, null])) as T;
+function unavailableMetricChanges<T extends object>(metrics: T): { [K in keyof T]: null } {
+  return Object.fromEntries(Object.keys(metrics).map((key) => [key, null])) as {
+    [K in keyof T]: null;
+  };
 }
 
 function legacyAdvertisingChanges(
