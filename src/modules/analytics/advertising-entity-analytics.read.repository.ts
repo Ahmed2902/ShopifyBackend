@@ -10,8 +10,8 @@ export interface AdvertisingEntityAggregateRow {
   spend: number;
   impressions: number;
   clicks: number;
-  purchases: number;
-  purchaseValue: number;
+  purchases: number | null;
+  purchaseValue: number | null;
   weightedFrequency: number;
 }
 
