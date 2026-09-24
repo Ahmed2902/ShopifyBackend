@@ -61,25 +61,29 @@ export class IntelligenceController {
     const storeId = req.context.storeId!;
     const { occurrenceKey, state } = recommendationLifecycleUpdateSchema.parse(req.body);
 
-    // Lifecycle writes are accepted only for recommendation occurrences the server actually issued
-    // to this store under its current entitlement. The validator composes legacy and unified
-    // recommendation sources without weakening the exact occurrence-key check in the persistence
-    // service.
-    const currentRecommendations = await this.occurrenceValidation.currentRecommendations(
+    // Lifecycle writes are accepted only for recommendation occurrences the server can reproduce
+    // under the current Store entitlement. Unified occurrence handles carry the exact issuing read
+    // scope while persistence continues to use the canonical occurrence key.
+    const validation = await this.occurrenceValidation.currentRecommendations(
       storeId,
       occurrenceKey,
       recommendationLimit(res),
     );
     const result = await this.lifecycle.setState(
       storeId,
-      occurrenceKey,
+      validation.canonicalOccurrenceKey,
       state,
-      currentRecommendations,
+      validation.recommendations,
     );
     // Unified decisions are cached with lifecycle state attached. Advance all Store decision-cache
     // generations only after persistence succeeds so the next normal read reflects the mutation.
     await invalidateStoreDecisionCaches(storeId);
-    res.status(200).json(result);
+    res.status(200).json({
+      ...result,
+      // Return the same public handle the caller submitted. The DB row intentionally stores the
+      // canonical key so lifecycle state remains shared across equivalent recommendation reads.
+      occurrenceKey,
+    });
   };
 }
 
