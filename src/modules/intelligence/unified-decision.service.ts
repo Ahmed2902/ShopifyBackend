@@ -15,6 +15,10 @@ import {
   type UnifiedProductAdsIntelligenceService,
 } from '../analytics/unified-product-ads-intelligence.service.js';
 import {
+  intelligenceContextReadRepository,
+  type IntelligenceContextReadRepository,
+} from './intelligence-context.read.repository.js';
+import {
   recommendationLifecycleService,
   type RecommendationLifecycleService,
 } from './recommendation-lifecycle.service.js';
@@ -200,6 +204,7 @@ function productDraft(input: {
     product: { id: string; shopifyProductId: string; title: string };
     current: {
       commerce: Record<string, unknown> & {
+        evidenceAvailable?: boolean;
         netProductRevenue?: number | null;
         contributionBeforeAds?: number | null;
       };
@@ -230,6 +235,7 @@ function productDraft(input: {
 }): RecommendationDraft[] {
   const drafts: RecommendationDraft[] = [];
   const spend = input.item.current.advertising.spend;
+  const authoritativeCommerce = input.item.current.commerce.evidenceAvailable === true;
   const confidence = input.item.current.intelligence.confidence;
   const evidenceQuality: RecommendationEvidenceQuality = confidence;
   const common = {
@@ -274,7 +280,10 @@ function productDraft(input: {
     });
   }
 
-  if (input.item.current.inventory.state === 'OVERSTOCK_WEAK_DEMAND') {
+  if (
+    authoritativeCommerce &&
+    input.item.current.inventory.state === 'OVERSTOCK_WEAK_DEMAND'
+  ) {
     drafts.push({
       ...common,
       ruleId: 'unified_inventory_overstock_weak_demand',
@@ -294,7 +303,10 @@ function productDraft(input: {
     });
   }
 
-  if (input.item.current.intelligence.inefficientPaidDemand === true) {
+  if (
+    authoritativeCommerce &&
+    input.item.current.intelligence.inefficientPaidDemand === true
+  ) {
     drafts.push({
       ...common,
       ruleId: 'unified_product_paid_demand_negative_contribution',
@@ -314,6 +326,7 @@ function productDraft(input: {
   }
 
   if (
+    authoritativeCommerce &&
     spend === 0 &&
     (input.item.current.commerce.netProductRevenue ?? 0) > 0 &&
     (input.item.current.commerce.contributionBeforeAds ?? 0) > 0 &&
@@ -384,6 +397,7 @@ export class UnifiedDecisionService {
     private readonly products: UnifiedProductAdsIntelligenceService =
       unifiedProductAdsIntelligenceService,
     private readonly lifecycle: RecommendationLifecycleService = recommendationLifecycleService,
+    private readonly context: IntelligenceContextReadRepository = intelligenceContextReadRepository,
   ) {}
 
   async read(storeId: string, query: UnifiedAdvertisingRangeQuery, now = new Date()) {
@@ -397,13 +411,38 @@ export class UnifiedDecisionService {
       page: 1,
       limit: MAX_PRODUCT_EVALUATION,
     };
-    const [overview, campaigns, groups, ads, products] = await Promise.all([
+    const [overview, campaigns, groups, ads, products, context] = await Promise.all([
       this.advertising.read(storeId, query, now),
       this.entities.list(storeId, 'CAMPAIGN', listQuery, now),
       this.entities.list(storeId, 'GROUP', listQuery, now),
       this.entities.list(storeId, 'AD', listQuery, now),
       this.products.list(storeId, productQuery, now),
+      this.context.getContext(storeId),
     ]);
+
+    const commerceHistoryComplete =
+      context?.shopifyConnection?.status === 'ACTIVE' &&
+      context.successfulOrderHistorySync?.status === 'SUCCEEDED';
+    const hasCommerceHistoryBlocker = overview.dataQuality.items.some(
+      (item) => item.code === 'INCOMPLETE_COMMERCE_HISTORY',
+    );
+    const dataQuality =
+      commerceHistoryComplete || hasCommerceHistoryBlocker
+        ? overview.dataQuality
+        : {
+            ...overview.dataQuality,
+            confidence: 'LOW' as const,
+            items: [
+              ...overview.dataQuality.items,
+              {
+                code: 'INCOMPLETE_COMMERCE_HISTORY',
+                status: 'BLOCKED' as const,
+                surface: 'COMMERCE',
+                message:
+                  'No completed Shopify order-history sync is available, so historical commerce conclusions may be incomplete.',
+              },
+            ],
+          };
 
     const start = date(overview.window.current.from);
     const end = date(overview.window.current.to);
@@ -411,7 +450,7 @@ export class UnifiedDecisionService {
     const comparisonEnd = date(overview.window.comparison.to);
     const drafts: RecommendationDraft[] = [];
 
-    for (const quality of overview.dataQuality.items) {
+    for (const quality of dataQuality.items) {
       const draft = qualityDraft({
         item: quality,
         start,
@@ -476,7 +515,7 @@ export class UnifiedDecisionService {
         rankingCompatibilityWeights: { LOW: 0.35, MEDIUM: 0.65, HIGH: 0.9 },
         weightsAreProbabilities: false,
       },
-      dataQuality: overview.dataQuality,
+      dataQuality,
       evaluationBounds: {
         campaigns: MAX_ENTITY_EVALUATION,
         groups: MAX_ENTITY_EVALUATION,
