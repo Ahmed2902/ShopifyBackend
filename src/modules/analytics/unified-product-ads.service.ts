@@ -104,7 +104,8 @@ function commerceFromAggregate(
     | undefined,
   historyComplete: boolean,
 ): ProductCommerce {
-  if (!row) return emptyCommerce(historyComplete);
+  if (!historyComplete) return emptyCommerce(false);
+  if (!row) return emptyCommerce(true);
   const netProductRevenue = Math.max(0, row.productRevenue - row.refunds);
   const costCoverage =
     row.costRelevantUnits > 0 ? row.costCoveredUnits / row.costRelevantUnits : 0;
@@ -223,7 +224,7 @@ function inventoryStatus(input: {
     return { state: 'UNAVAILABLE' as const, daysCover: null };
   }
   const daysCover =
-    input.unitsPerDay && input.unitsPerDay > 0
+    input.unitsPerDay !== null && input.unitsPerDay > 0
       ? Math.max(0, input.available) / input.unitsPerDay
       : null;
   if (input.available <= 0) return { state: 'SOLD_OUT' as const, daysCover };
@@ -233,7 +234,7 @@ function inventoryStatus(input: {
   if (input.available <= input.lowStockThreshold) {
     return { state: 'LOW_STOCK' as const, daysCover };
   }
-  if ((input.unitsPerDay ?? 0) === 0 && input.available > input.lowStockThreshold * 3) {
+  if (input.unitsPerDay === 0 && input.available > input.lowStockThreshold * 3) {
     return { state: 'OVERSTOCK_WEAK_DEMAND' as const, daysCover };
   }
   return { state: 'HEALTHY' as const, daysCover };
@@ -629,6 +630,7 @@ export class UnifiedProductAdsService {
     const merchantConfirmed = exactAds.some((mapping) => mapping.merchantConfirmed);
     const mappingLimitations = [
       ...(mappingRows.length === 0 ? ['NO_ACTIVE_PRODUCT_MAPPING'] : []),
+      ...(!dataset.historyComplete ? ['INCOMPLETE_COMMERCE_HISTORY'] : []),
       ...(mappingRows.some(
         (row) => dataset.resolutions.get(row.adId)?.classification === 'AMBIGUOUS',
       )
