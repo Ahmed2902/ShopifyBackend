@@ -19,6 +19,7 @@ import {
   unifiedDataQualityService,
   type UnifiedDataQualityService,
 } from '../intelligence/unified-data-quality.service.js';
+import { recommendationLimit } from '../intelligence/recommendation-entitlement.js';
 import {
   unifiedDecisionService,
   type UnifiedDecisionService,
@@ -113,11 +114,23 @@ export class UnifiedAnalyticsController {
   decisionList = async (req: Request, res: Response) => {
     const storeId = req.context.storeId!;
     const query = unifiedAdvertisingRangeQuerySchema.parse(req.query);
+    const entitlementLimit = recommendationLimit(res);
     const payload = await this.cached(
       storeId,
-      cacheKey(storeId, 'unified-decisions', query),
+      cacheKey(
+        storeId,
+        'unified-decisions',
+        query,
+        `recommendation-limit-${entitlementLimit}`,
+      ),
       req.query.fresh === 'true',
-      async () => toJsonSafe(await this.decisions.read(storeId, query)),
+      async () => {
+        const result = await this.decisions.read(storeId, query);
+        return toJsonSafe({
+          ...result,
+          recommendations: result.recommendations.slice(0, entitlementLimit),
+        });
+      },
     );
     res.status(200).json(payload);
   };
