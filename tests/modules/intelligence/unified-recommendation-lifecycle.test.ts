@@ -87,14 +87,12 @@ describe('Unified recommendation occurrence validation', () => {
   it('does not authorize a fabricated occurrence key', async () => {
     const { service } = validator({});
     const lifecycle = new RecommendationLifecycleService();
-    const current = await service.currentRecommendations(
-      storeId,
-      'fabricated:1:STORE:x:2026-09-01T00:00:00.000Z:2026-09-24T00:00:00.000Z',
-      10,
-    );
+    const fabricatedKey =
+      'fabricated:1:STORE:x:2026-09-01T00:00:00.000Z:2026-09-24T00:00:00.000Z';
+    const current = await service.currentRecommendations(storeId, fabricatedKey, 10);
 
     await expect(
-      lifecycle.setState(storeId, 'fabricated:1:STORE:x', 'DISMISSED', current),
+      lifecycle.setState(storeId, fabricatedKey, 'DISMISSED', current),
     ).rejects.toMatchObject({
       code: 'RECOMMENDATION_OCCURRENCE_NOT_FOUND',
       statusCode: 404,
