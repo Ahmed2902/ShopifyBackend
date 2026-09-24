@@ -1,12 +1,3 @@
-import { AppError } from '../../errors/app-error.js';
-import type {
-  UnifiedAdvertisingProviderFilter,
-  UnifiedAdvertisingRangeQuery,
-} from '../advertising/unified-advertising.schema.js';
-import {
-  unifiedAdvertisingScopeService,
-  type UnifiedAdvertisingScopeService,
-} from '../advertising/unified-advertising-scope.service.js';
 import {
   intelligenceSnapshotReadService,
   type IntelligenceSnapshotReadService,
@@ -19,21 +10,17 @@ import {
   unifiedDecisionService,
   type UnifiedDecisionService,
 } from './unified-decision.service.js';
+import { parseScopedUnifiedRecommendationOccurrenceKey } from './unified-recommendation-occurrence-scope.js';
 
-const PROVIDER_FILTERS: readonly UnifiedAdvertisingProviderFilter[] = [
-  'ALL',
-  'META',
-  'TIKTOK',
-  'GOOGLE_ADS',
-];
 const OCCURRENCE_WINDOW_PATTERN =
   /:(\d{4}-\d{2}-\d{2})T\d{2}:\d{2}:\d{2}\.\d{3}Z:(\d{4}-\d{2}-\d{2})T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 type IssuedRecommendation = RecommendationOccurrenceInput & { occurrenceKey?: string };
-type UnifiedScopeCandidate = Pick<
-  UnifiedAdvertisingRangeQuery,
-  'provider' | 'accountId' | 'currency'
->;
+
+export type RecommendationOccurrenceValidationResult = {
+  canonicalOccurrenceKey: string;
+  recommendations: RecommendationOccurrenceInput[];
+};
 
 function containsOccurrence(
   recommendations: readonly IssuedRecommendation[],
@@ -51,133 +38,70 @@ function occurrenceWindow(occurrenceKey: string) {
   return match ? { from: match[1]!, to: match[2]! } : null;
 }
 
-function unavailableProviderScope(error: unknown): boolean {
-  return (
-    error instanceof AppError &&
-    (error.code === 'PLAN_AD_CHANNEL_LIMIT' || error.code === 'PLAN_CHANNEL_SELECTION_REQUIRED')
-  );
-}
-
-function pushScope(
-  scopes: UnifiedScopeCandidate[],
-  seen: Set<string>,
-  scope: UnifiedScopeCandidate,
-) {
-  const key = `${scope.provider}:${scope.accountId ?? ''}:${scope.currency ?? ''}`;
-  if (seen.has(key)) return;
-  seen.add(key);
-  scopes.push(scope);
-}
-
 /**
- * Resolves the authoritative recommendation occurrences that may be mutated for one Store.
- * Legacy recommendations remain supported while unified decisions are validated through the same
- * deterministic read path that issued them. The caller still passes the resulting set to the one
- * lifecycle persistence service, so no duplicate lifecycle state store is introduced.
+ * Resolves the authoritative recommendation occurrence that may be mutated for one Store.
+ *
+ * New unified HTTP responses carry their exact read scope in the public occurrence handle. The
+ * validator replays exactly that one query through the normal unified service, so account,
+ * arbitrary three-letter currency, provider and window semantics are preserved without an
+ * exhaustive account/currency search. The canonical occurrence key is still what the single
+ * RecommendationLifecycle persistence mechanism stores.
+ *
+ * Unscoped keys remain supported for legacy recommendations and for the pre-hotfix default unified
+ * (`provider=ALL`) surface. They deliberately do not trigger unbounded scope guessing.
  */
 export class RecommendationOccurrenceValidationService {
   constructor(
     private readonly legacyReads: IntelligenceSnapshotReadService = intelligenceSnapshotReadService,
     private readonly unifiedReads: UnifiedDecisionService = unifiedDecisionService,
-    private readonly advertisingScope: UnifiedAdvertisingScopeService =
-      unifiedAdvertisingScopeService,
   ) {}
-
-  private async unifiedScopeCandidates(storeId: string): Promise<UnifiedScopeCandidate[]> {
-    const scopes: UnifiedScopeCandidate[] = [];
-    const seen = new Set<string>();
-
-    // Preserve the previously supported provider-wide replays first. Most occurrences validate on
-    // the first ALL read and avoid any additional scope discovery work.
-    for (const provider of PROVIDER_FILTERS) pushScope(scopes, seen, { provider });
-
-    let accounts: Awaited<ReturnType<UnifiedAdvertisingScopeService['resolve']>>['accounts'] = [];
-    try {
-      accounts = (
-        await this.advertisingScope.resolve({
-          storeId,
-          provider: 'ALL',
-        })
-      ).accounts;
-    } catch (error) {
-      // A selection-required/plan-limited Store cannot have issued an occurrence from the blocked
-      // ALL scope. Keep provider-wide validation behavior and let those canonical entitlement
-      // errors be skipped below rather than weakening authorization.
-      if (!unavailableProviderScope(error)) throw error;
-    }
-
-    // Account-scoped decision reads can reorder or bound the recommendation set differently from a
-    // provider-wide read. Reconstruct every currently authorized selected account scope so an
-    // occurrence that was genuinely issued under accountId remains mutable.
-    for (const account of accounts) {
-      pushScope(scopes, seen, { provider: 'ALL', accountId: account.id });
-      pushScope(scopes, seen, { provider: account.provider, accountId: account.id });
-      if (account.currency) {
-        pushScope(scopes, seen, {
-          provider: 'ALL',
-          accountId: account.id,
-          currency: account.currency,
-        });
-        pushScope(scopes, seen, {
-          provider: account.provider,
-          accountId: account.id,
-          currency: account.currency,
-        });
-      }
-    }
-
-    // Currency filtering can likewise narrow the evaluation universe without selecting one account.
-    // Reconstruct provider × currency scopes only from currently authorized selected accounts; no
-    // arbitrary currency supplied by the client is trusted for lifecycle authorization.
-    const currencies = [
-      ...new Set(
-        accounts
-          .map((account) => account.currency)
-          .filter((currency): currency is string => currency !== null),
-      ),
-    ];
-    for (const currency of currencies) {
-      for (const provider of PROVIDER_FILTERS) {
-        pushScope(scopes, seen, { provider, currency });
-      }
-    }
-
-    return scopes;
-  }
 
   async currentRecommendations(
     storeId: string,
     occurrenceKey: string,
     limit: number,
-  ): Promise<RecommendationOccurrenceInput[]> {
+  ): Promise<RecommendationOccurrenceValidationResult> {
     const legacySnapshot = await this.legacyReads.read(storeId, { fresh: false });
     const legacy = legacySnapshot.recommendations.slice(0, limit);
-    if (containsOccurrence(legacy, occurrenceKey)) return legacy;
+    if (containsOccurrence(legacy, occurrenceKey)) {
+      return { canonicalOccurrenceKey: occurrenceKey, recommendations: legacy };
+    }
 
-    const window = occurrenceWindow(occurrenceKey);
-    const scopes = await this.unifiedScopeCandidates(storeId);
-    for (const scope of scopes) {
-      try {
-        const unified = await this.unifiedReads.read(storeId, {
-          days: 30,
-          ...(window ?? {}),
-          ...scope,
-        });
-        const visible = unified.recommendations.slice(0, limit);
-        if (containsOccurrence(visible, occurrenceKey)) {
-          return [...legacy, ...visible];
-        }
-      } catch (error) {
-        // An Essentials store can legitimately be barred from one provider scope. Skip only those
-        // canonical entitlement errors; subscription/auth/data failures must remain visible.
-        if (unavailableProviderScope(error)) continue;
-        throw error;
+    const scoped = parseScopedUnifiedRecommendationOccurrenceKey(occurrenceKey);
+    if (scoped) {
+      // The parsed scope is not authorization by itself. UnifiedDecisionService re-enters the
+      // canonical store/provider/account entitlement boundary and the occurrence must still be
+      // visible under the current plan before mutation is accepted.
+      const unified = await this.unifiedReads.read(storeId, scoped.query);
+      const visible = unified.recommendations.slice(0, limit);
+      if (containsOccurrence(visible, scoped.canonicalOccurrenceKey)) {
+        return {
+          canonicalOccurrenceKey: scoped.canonicalOccurrenceKey,
+          recommendations: [...legacy, ...visible],
+        };
       }
+      return { canonicalOccurrenceKey: scoped.canonicalOccurrenceKey, recommendations: legacy };
+    }
+
+    // Backward compatibility for pre-hotfix unified keys: one bounded default-scope replay only.
+    // Scoped keys issued after this hotfix never reach this path.
+    const window = occurrenceWindow(occurrenceKey);
+    const unified = await this.unifiedReads.read(storeId, {
+      days: 30,
+      ...(window ?? {}),
+      provider: 'ALL',
+    });
+    const visible = unified.recommendations.slice(0, limit);
+    if (containsOccurrence(visible, occurrenceKey)) {
+      return {
+        canonicalOccurrenceKey: occurrenceKey,
+        recommendations: [...legacy, ...visible],
+      };
     }
 
     // RecommendationLifecycleService.setState performs the final exact-key check and returns the
     // established RECOMMENDATION_OCCURRENCE_NOT_FOUND response for fabricated/stale occurrences.
-    return legacy;
+    return { canonicalOccurrenceKey: occurrenceKey, recommendations: legacy };
   }
 }
 
