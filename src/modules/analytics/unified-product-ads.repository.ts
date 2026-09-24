@@ -116,6 +116,10 @@ function uuidList(ids: string[]) {
 }
 
 function mappingClassificationCtes(input: { storeId: string; accountIds: string[] }) {
+  const accountScope =
+    input.accountIds.length > 0
+      ? Prisma.sql`ad."accountId" IN (${uuidList(input.accountIds)})`
+      : Prisma.sql`FALSE`;
   return Prisma.sql`
     active_mapping AS (
       SELECT
@@ -137,7 +141,7 @@ function mappingClassificationCtes(input: { storeId: string; accountIds: string[
       INNER JOIN "Product" product ON product."id" = mapping."productId"
       WHERE mapping."validUntil" IS NULL
         AND ad."deletedAt" IS NULL
-        AND ad."accountId" IN (${uuidList(input.accountIds)})
+        AND ${accountScope}
         AND account."storeId" = ${input.storeId}::uuid
         AND product."storeId" = ${input.storeId}::uuid
     ),
@@ -205,12 +209,25 @@ export class UnifiedProductAdsRepository {
     limit: number;
     productId?: string;
   }): Promise<{ productIds: string[]; total: number }> {
-    if (input.accountIds.length === 0) return { productIds: [], total: 0 };
     const offset = input.productId ? 0 : (input.page - 1) * input.limit;
     const limit = input.productId ? 1 : input.limit;
     const productFilter = input.productId
       ? Prisma.sql`AND candidate.product_id = ${input.productId}::uuid`
       : Prisma.empty;
+    const explicitProductCandidate = input.productId
+      ? Prisma.sql`
+          UNION
+          SELECT product."id" AS product_id
+          FROM "Product" product
+          WHERE product."id" = ${input.productId}::uuid
+            AND product."storeId" = ${input.storeId}::uuid
+            AND product."deletedAt" IS NULL
+        `
+      : Prisma.empty;
+    const adMetricScope =
+      input.accountIds.length > 0
+        ? Prisma.sql`metric."accountId" IN (${uuidList(input.accountIds)})`
+        : Prisma.sql`FALSE`;
 
     const rows = await prisma.$queryRaw<RawCandidateRow[]>(Prisma.sql`
       WITH
@@ -269,11 +286,12 @@ export class UnifiedProductAdsRepository {
         SELECT product_id FROM commerce_products
         UNION
         SELECT product_id FROM mapped_products
+        ${explicitProductCandidate}
       ),
       current_ad_spend AS (
         SELECT metric."adId" AS ad_id, COALESCE(SUM(metric."spend"), 0) AS spend
         FROM "AdvertisingDailyMetric" metric
-        WHERE metric."accountId" IN (${uuidList(input.accountIds)})
+        WHERE ${adMetricScope}
           AND metric."level" = 'AD'::"AdvertisingMetricLevel"
           AND metric."adId" IS NOT NULL
           AND metric."currency" = ${input.currency}

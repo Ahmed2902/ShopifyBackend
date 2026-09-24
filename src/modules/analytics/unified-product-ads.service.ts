@@ -205,10 +205,10 @@ function pixelMetrics(
         row.cartViewSessionCount > 0
           ? 1 - row.cartViewPurchaseSessionCount / row.cartViewSessionCount
           : null,
-      checkoutAbandonmentRate:
-        row.checkoutStartSessionCount > 0
-          ? 1 - row.checkoutStartPurchaseSessionCount / row.checkoutStartSessionCount
-          : null,
+      // Product-level checkout-start → purchase overlap is not currently materialized. The
+      // repository intentionally computes that overlap only for STORE evidence, so treating the
+      // product placeholder zero as observed completion would fabricate 100% abandonment.
+      checkoutAbandonmentRate: null,
     },
   };
 }
@@ -551,6 +551,9 @@ export class UnifiedProductAdsService {
         mappingCoverage: percentChange(current.mappingCoverage, comparison.mappingCoverage),
       },
       limitations: [
+        ...(input.accounts.length === 0
+          ? ['No selected advertising account is available for this scope; paid-media totals are unavailable.']
+          : []),
         'Shared and ambiguous spend is never allocated to Shopify products.',
         'Performance Max or Shopping spend without defensible product-level canonical mappings remains unmapped.',
         'Provider-attributed conversions/value remain provider evidence and are not Shopify revenue.',
@@ -629,6 +632,7 @@ export class UnifiedProductAdsService {
       exactAds.length > 0 ? Math.min(...exactAds.map((mapping) => mapping.confidence)) : 0;
     const merchantConfirmed = exactAds.some((mapping) => mapping.merchantConfirmed);
     const mappingLimitations = [
+      ...(dataset.accounts.length === 0 ? ['NO_SELECTED_ADVERTISING_ACCOUNT'] : []),
       ...(mappingRows.length === 0 ? ['NO_ACTIVE_PRODUCT_MAPPING'] : []),
       ...(!dataset.historyComplete ? ['INCOMPLETE_COMMERCE_HISTORY'] : []),
       ...(mappingRows.some(

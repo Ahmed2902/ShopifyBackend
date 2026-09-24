@@ -1,6 +1,14 @@
 import type { Request, Response } from 'express';
 import { invalidateStoreDecisionCaches } from '../../lib/store-decision-cache.js';
-import { recommendationLifecycleService } from './recommendation-lifecycle.service.js';
+import { limitRecommendations, recommendationLimit } from './recommendation-entitlement.js';
+import {
+  recommendationLifecycleService,
+  type RecommendationLifecycleService,
+} from './recommendation-lifecycle.service.js';
+import {
+  recommendationOccurrenceValidationService,
+  type RecommendationOccurrenceValidationService,
+} from './recommendation-occurrence-validation.service.js';
 import {
   intelligenceReadQuerySchema,
   inventoryModeUpdateSchema,
@@ -13,26 +21,22 @@ import {
 import { intelligenceRuntimeService } from './intelligence.runtime.js';
 import type { IntelligenceService } from './intelligence.service.js';
 
-function recommendationLimit(res: Response) {
-  return Math.max(
-    1,
-    Number(res.locals.billing?.entitlements?.recommendationLimit ?? 10),
-  );
-}
-
 export class IntelligenceController {
   constructor(
     private readonly service: IntelligenceService,
     private readonly snapshotReads: IntelligenceSnapshotReadService,
+    private readonly occurrenceValidation: RecommendationOccurrenceValidationService =
+      recommendationOccurrenceValidationService,
+    private readonly lifecycle: RecommendationLifecycleService = recommendationLifecycleService,
   ) {}
 
   snapshot = async (req: Request, res: Response) => {
     const storeId = req.context.storeId!;
     const { fresh } = intelligenceReadQuerySchema.parse(req.query);
     const snapshot = await this.snapshotReads.read(storeId, { fresh });
-    const recommendations = await recommendationLifecycleService.attach(
+    const recommendations = await this.lifecycle.attach(
       storeId,
-      snapshot.recommendations.slice(0, recommendationLimit(res)),
+      limitRecommendations(res, snapshot.recommendations),
     );
     res.status(200).json({
       ...snapshot,
@@ -57,18 +61,29 @@ export class IntelligenceController {
     const storeId = req.context.storeId!;
     const { occurrenceKey, state } = recommendationLifecycleUpdateSchema.parse(req.body);
 
-    // Lifecycle writes are accepted only for recommendation occurrences the server actually issued
-    // to this store under its current entitlement. This prevents fabricated keys from creating
-    // orphan rows or pre-seeding state for predictable future recommendation occurrences.
-    const snapshot = await this.snapshotReads.read(storeId, { fresh: false });
-    const currentRecommendations = snapshot.recommendations.slice(0, recommendationLimit(res));
-    const result = await recommendationLifecycleService.setState(
+    // Lifecycle writes are accepted only for recommendation occurrences the server can reproduce
+    // under the current Store entitlement. Unified occurrence handles carry the exact issuing read
+    // scope while persistence continues to use the canonical occurrence key.
+    const validation = await this.occurrenceValidation.currentRecommendations(
       storeId,
       occurrenceKey,
-      state,
-      currentRecommendations,
+      recommendationLimit(res),
     );
-    res.status(200).json(result);
+    const result = await this.lifecycle.setState(
+      storeId,
+      validation.canonicalOccurrenceKey,
+      state,
+      validation.recommendations,
+    );
+    // Unified decisions are cached with lifecycle state attached. Advance all Store decision-cache
+    // generations only after persistence succeeds so the next normal read reflects the mutation.
+    await invalidateStoreDecisionCaches(storeId);
+    res.status(200).json({
+      ...result,
+      // Return the same public handle the caller submitted. The DB row intentionally stores the
+      // canonical key so lifecycle state remains shared across equivalent recommendation reads.
+      occurrenceKey,
+    });
   };
 }
 
