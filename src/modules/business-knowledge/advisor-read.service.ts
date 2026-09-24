@@ -348,18 +348,31 @@ export class AdvisorReadService {
     );
   }
 
-  productAdsList(storeId: string, input: { days?: number; page?: number; limit?: number } = {}) {
+  productAdsList(
+    storeId: string,
+    input: {
+      provider?: PaidMediaProvider | 'ALL';
+      days?: number;
+      page?: number;
+      limit?: number;
+    } = {},
+  ) {
     return this.unifiedProductAds.list(storeId, {
-      provider: 'ALL',
+      provider: input.provider ?? 'ALL',
       days: normalizedDays(input.days),
       page: input.page ?? 1,
       limit: input.limit ?? 50,
     });
   }
 
-  productAdsDetail(storeId: string, productId: string, days = 30) {
+  productAdsDetail(
+    storeId: string,
+    productId: string,
+    days = 30,
+    provider: PaidMediaProvider | 'ALL' = 'ALL',
+  ) {
     return this.unifiedProductAds.detail(storeId, productId, {
-      provider: 'ALL',
+      provider,
       days: normalizedDays(days),
     });
   }
