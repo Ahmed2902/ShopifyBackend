@@ -22,6 +22,16 @@ const googleAccount = {
   timezone: 'UTC',
   lastSyncedAt: new Date(),
 };
+const tiktokAccount = {
+  id: '33333333-3333-4333-8333-333333333333',
+  provider: 'TIKTOK' as const,
+  providerEntityId: 'tt_1',
+  name: 'TikTok',
+  status: 'ACTIVE',
+  currency: 'USD',
+  timezone: 'UTC',
+  lastSyncedAt: new Date(),
+};
 
 function state(provider: 'META' | 'TIKTOK' | 'GOOGLE_ADS', selectedExternalIds: string[]) {
   return {
@@ -37,9 +47,10 @@ function repository() {
   return {
     connectionStates: vi.fn().mockResolvedValue([
       state('META', ['act_1']),
+      state('TIKTOK', ['tt_1']),
       state('GOOGLE_ADS', ['1234567890']),
     ]),
-    selectedAccounts: vi.fn().mockResolvedValue([metaAccount, googleAccount]),
+    selectedAccounts: vi.fn().mockResolvedValue([metaAccount, tiktokAccount, googleAccount]),
   };
 }
 
@@ -57,22 +68,30 @@ describe('unified advertising channel entitlements', () => {
     expect(result.accounts.map((account) => account.provider).sort()).toEqual([
       'GOOGLE_ADS',
       'META',
+      'TIKTOK',
     ]);
   });
 
-  it('narrows provider=ALL to the Essentials selected channel', async () => {
-    const billing = {
-      requireActive: vi.fn().mockResolvedValue({
-        entitlements: { maxAdChannels: 1 },
-        essentialsAdProvider: 'META',
-      }),
-      requireAdProviderReadOnly: vi.fn(),
-    };
-    const service = new UnifiedAdvertisingScopeService(repository() as never, billing as never);
-    const result = await service.resolve({ storeId: 'store', provider: 'ALL' });
-    expect(result.accounts).toEqual([metaAccount]);
-    expect(result.states.map((item) => item.provider)).toEqual(['META']);
-  });
+  it.each([
+    ['META', metaAccount],
+    ['TIKTOK', tiktokAccount],
+    ['GOOGLE_ADS', googleAccount],
+  ] as const)(
+    'narrows provider=ALL to the Essentials selected %s channel',
+    async (selectedProvider, expectedAccount) => {
+      const billing = {
+        requireActive: vi.fn().mockResolvedValue({
+          entitlements: { maxAdChannels: 1 },
+          essentialsAdProvider: selectedProvider,
+        }),
+        requireAdProviderReadOnly: vi.fn(),
+      };
+      const service = new UnifiedAdvertisingScopeService(repository() as never, billing as never);
+      const result = await service.resolve({ storeId: 'store', provider: 'ALL' });
+      expect(result.accounts).toEqual([expectedAccount]);
+      expect(result.states.map((item) => item.provider)).toEqual([selectedProvider]);
+    },
+  );
 
   it('rejects an explicit provider outside the Essentials selected channel', async () => {
     const billing = {
