@@ -1,6 +1,7 @@
 import type { Prisma } from '../../../generated/prisma/client.js';
 import { prisma } from '../../../lib/prisma.js';
 import { advertisingWriteRepository } from '../../advertising/advertising-write.repository.js';
+import { bulkUpsertTikTokInsights } from './tiktok-insights-postgres-bulk-upsert.js';
 
 function metricLevel(level: 'ADVERTISER' | 'CAMPAIGN' | 'ADGROUP' | 'AD') {
   if (level === 'ADVERTISER') return 'ACCOUNT' as const;
@@ -84,17 +85,13 @@ export class TikTokInsightsRepository {
   }
 
   /**
-   * Bounded batch write used by report ingestion. Native and canonical facts are committed in the
-   * same transaction so a failed canonical projection cannot leave the native row ahead of the
-   * production read model (or vice versa).
+   * Report ingestion persists one bounded batch with one set-based PostgreSQL statement inside one
+   * transaction. The statement upserts native TikTok facts first and canonical facts from those
+   * exact returned rows second, so either both representations commit or neither does.
    */
   upsertInsights(inputs: Prisma.TikTokInsightDailyUncheckedCreateInput[]) {
     if (inputs.length === 0) return Promise.resolve([]);
-    return prisma.$transaction(async (tx) => {
-      const written = [];
-      for (const input of inputs) written.push(await this.upsertInsightTx(tx, input));
-      return written;
-    });
+    return prisma.$transaction((tx) => bulkUpsertTikTokInsights(tx, inputs));
   }
 
   async listInsights(storeId: string, input: {
