@@ -1,18 +1,13 @@
 import { AppError } from '../../errors/app-error.js';
-import {
-  UnifiedAdvertisingRepository,
-  type UnifiedAdvertisingAccountRow,
-} from '../advertising/unified-advertising.repository.js';
+import { UnifiedAdvertisingRepository } from '../advertising/unified-advertising.repository.js';
 import { resolveAnalyticsWindows } from './analytics.dates.js';
 import { metricChanges, percentChange, type MetaMetrics, type ProductMetrics } from './analytics.metrics.js';
 import { AnalyticsRepository } from './analytics.repository.js';
 import type { AnalyticsListQuery, AnalyticsRangeQuery } from './analytics.schema.js';
 import { LegacyProductAdsCompatibilityRepository } from './legacy-product-ads-compatibility.repository.js';
 import { UnifiedProductAdsRepository } from './unified-product-ads.repository.js';
-import {
-  UnifiedProductAdsService,
-  unifiedProductAdsService,
-} from './unified-product-ads.service.js';
+import { unifiedProductAdsService } from './unified-product-ads.service.js';
+import type { UnifiedProductAdsService } from './unified-product-ads.service.js';
 
 const MIN_AUTOMATIC_MAPPING_CONFIDENCE = 0.7;
 
