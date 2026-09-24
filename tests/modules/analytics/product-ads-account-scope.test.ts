@@ -1,11 +1,40 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AdvertisingAnalyticsRepository } from '../../../src/modules/analytics/advertising-analytics.repository.js';
-import type { AnalyticsRepository } from '../../../src/modules/analytics/analytics.repository.js';
-import type { ProductAdsRepository } from '../../../src/modules/analytics/product-ads.repository.js';
 import { ProductAdsWorkspace } from '../../../src/modules/analytics/product-ads.workspace.js';
 
 const storeId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const canonical101 = '11111111-1111-4111-8111-111111111111';
+const canonical202 = '22222222-2222-4222-8222-222222222222';
 const now = new Date('2026-09-22T08:00:00.000Z');
+
+function unifiedEmptyResult(accountId?: string) {
+  const period = {
+    evidenceAvailable: true,
+    compatiblePaidSpend: 0,
+    exactMappedSpend: 0,
+    sharedSpend: 0,
+    ambiguousObservedSpend: 0,
+    unmappedSpend: 0,
+    mappingCoverage: 0,
+    missingAccountIds: [],
+    exactMappedSpendByProvider: { META: 0 },
+  };
+  return {
+    schemaVersion: '2.0',
+    filters: { provider: 'META', accountId: accountId ?? null, currency: null },
+    window: {
+      current: { from: '2026-08-24', to: '2026-09-22' },
+      comparison: { from: '2026-07-25', to: '2026-08-23' },
+      days: 30,
+    },
+    currency: 'USD',
+    truthModel: {},
+    mappingPolicy: {},
+    methodology: {},
+    summary: { current: period, comparison: period, change: {} },
+    items: [],
+    pagination: { page: 1, limit: 50, total: 0, pages: 0 },
+  };
+}
 
 function buildHarness() {
   const analyticsRepository = {
@@ -13,49 +42,87 @@ function buildHarness() {
       id: storeId,
       currencyCode: 'USD',
       ianaTimezone: 'UTC',
-      metaConnection: {
-        status: 'ACTIVE',
-        selectedAdAccountIds: ['act_101', 'act_202'],
-      },
     }),
-    getCommerceRows: vi.fn().mockResolvedValue([]),
-    getVariantCosts: vi.fn().mockResolvedValue([]),
-  } as unknown as AnalyticsRepository;
-  const productAdsRepository = {
-    getActiveMappings: vi.fn().mockResolvedValue([]),
-  } as unknown as ProductAdsRepository;
+  };
   const advertisingRepository = {
-    getMetaRows: vi.fn().mockResolvedValue([]),
-  } as unknown as AdvertisingAnalyticsRepository;
+    connectionStates: vi.fn().mockResolvedValue([
+      {
+        provider: 'META',
+        status: 'ACTIVE',
+        selectedExternalIds: ['act_101', 'act_202'],
+        lastSyncedAt: now,
+        lastSyncStatus: 'SUCCEEDED',
+      },
+    ]),
+    selectedAccounts: vi.fn().mockResolvedValue([
+      {
+        id: canonical101,
+        provider: 'META',
+        providerEntityId: 'act_101',
+        name: 'Meta 101',
+        status: 'ACTIVE',
+        currency: 'USD',
+        timezone: 'UTC',
+        lastSyncedAt: now,
+      },
+      {
+        id: canonical202,
+        provider: 'META',
+        providerEntityId: 'act_202',
+        name: 'Meta 202',
+        status: 'ACTIVE',
+        currency: 'USD',
+        timezone: 'UTC',
+        lastSyncedAt: now,
+      },
+    ]),
+  };
+  const unifiedService = {
+    list: vi.fn(async (_storeId: string, query: { accountId?: string }) =>
+      unifiedEmptyResult(query.accountId),
+    ),
+    detail: vi.fn(),
+  };
+  const unifiedRepository = { activeMappings: vi.fn() };
+  const compatibilityRepository = {
+    netProductRevenueTotals: vi.fn().mockResolvedValue({ CURRENT: 0, COMPARISON: 0 }),
+  };
   return {
     analyticsRepository,
-    productAdsRepository,
     advertisingRepository,
+    unifiedService,
+    unifiedRepository,
+    compatibilityRepository,
     workspace: new ProductAdsWorkspace(
-      analyticsRepository,
-      productAdsRepository,
-      advertisingRepository,
+      analyticsRepository as never,
+      advertisingRepository as never,
+      unifiedService as never,
+      unifiedRepository as never,
+      compatibilityRepository as never,
     ),
   };
 }
 
 describe('Product x Ads selected account scope', () => {
-  it('narrows canonical advertising facts and mappings to the requested selected account', async () => {
-    const { workspace, advertisingRepository, productAdsRepository } = buildHarness();
+  it('translates the requested selected Meta external id to the canonical account id before unified reads', async () => {
+    const { workspace, unifiedService } = buildHarness();
 
     await workspace.list(storeId, { days: 30, page: 1, limit: 50, accountId: 'act_202' }, now);
 
-    expect(advertisingRepository.getMetaRows).toHaveBeenCalledWith(
+    expect(unifiedService.list).toHaveBeenCalledWith(
       storeId,
-      ['act_202'],
-      expect.any(Date),
-      expect.any(Date),
+      expect.objectContaining({
+        provider: 'META',
+        accountId: canonical202,
+        page: 1,
+        limit: 50,
+      }),
+      now,
     );
-    expect(productAdsRepository.getActiveMappings).toHaveBeenCalledWith(storeId, ['act_202']);
   });
 
-  it('rejects an account that is not selected for the store before reading advertising facts', async () => {
-    const { workspace, advertisingRepository, productAdsRepository } = buildHarness();
+  it('rejects an account that is not selected before invoking the authoritative Product x Ads computation', async () => {
+    const { workspace, unifiedService, compatibilityRepository } = buildHarness();
 
     await expect(
       workspace.list(
@@ -64,7 +131,8 @@ describe('Product x Ads selected account scope', () => {
         now,
       ),
     ).rejects.toMatchObject({ code: 'META_AD_ACCOUNT_NOT_SELECTED', statusCode: 400 });
-    expect(advertisingRepository.getMetaRows).not.toHaveBeenCalled();
-    expect(productAdsRepository.getActiveMappings).not.toHaveBeenCalled();
+
+    expect(unifiedService.list).not.toHaveBeenCalled();
+    expect(compatibilityRepository.netProductRevenueTotals).not.toHaveBeenCalled();
   });
 });
