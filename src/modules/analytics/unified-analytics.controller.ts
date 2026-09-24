@@ -127,13 +127,21 @@ export class UnifiedAnalyticsController {
       req.query.fresh === 'true',
       async () => {
         const result = await this.decisions.read(storeId, query);
+        // Freeze the actual issued observation window into the mutation handle. Relative `days`
+        // requests otherwise move at store-local midnight and can no longer reproduce the exact
+        // canonical occurrence that was returned (including responses served from cache).
+        const issuedQuery: UnifiedAdvertisingRangeQuery = {
+          ...query,
+          from: result.window.current.from,
+          to: result.window.current.to,
+        };
         return toJsonSafe({
           ...result,
           recommendations: result.recommendations.slice(0, entitlementLimit).map((recommendation) => ({
             ...recommendation,
             occurrenceKey: scopeUnifiedRecommendationOccurrenceKey(
               recommendation.occurrenceKey,
-              query,
+              issuedQuery,
             ),
           })),
         });
