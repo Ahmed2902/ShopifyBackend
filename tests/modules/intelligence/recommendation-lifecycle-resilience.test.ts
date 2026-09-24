@@ -4,20 +4,20 @@ const recommendationLifecycle = vi.hoisted(() => ({
   findMany: vi.fn(),
   upsert: vi.fn(),
 }));
-const metaCampaign = vi.hoisted(() => ({ findMany: vi.fn() }));
-const metaAdSet = vi.hoisted(() => ({ findMany: vi.fn() }));
-const metaAd = vi.hoisted(() => ({ findMany: vi.fn() }));
-const metaCreative = vi.hoisted(() => ({ findMany: vi.fn() }));
+const advertisingCampaign = vi.hoisted(() => ({ findMany: vi.fn() }));
+const advertisingGroup = vi.hoisted(() => ({ findMany: vi.fn() }));
+const advertisingAd = vi.hoisted(() => ({ findMany: vi.fn() }));
+const advertisingCreative = vi.hoisted(() => ({ findMany: vi.fn() }));
 const product = vi.hoisted(() => ({ findMany: vi.fn() }));
 const collection = vi.hoisted(() => ({ findMany: vi.fn() }));
 
 vi.mock('../../../src/lib/prisma.js', () => ({
   prisma: {
     recommendationLifecycle,
-    metaCampaign,
-    metaAdSet,
-    metaAd,
-    metaCreative,
+    advertisingCampaign,
+    advertisingGroup,
+    advertisingAd,
+    advertisingCreative,
     product,
     collection,
   },
@@ -59,17 +59,17 @@ describe('RecommendationLifecycleService resilience', () => {
     vi.clearAllMocks();
     recommendationLifecycle.findMany.mockResolvedValue([]);
     recommendationLifecycle.upsert.mockResolvedValue({});
-    metaCampaign.findMany.mockResolvedValue([]);
-    metaAdSet.findMany.mockResolvedValue([]);
-    metaAd.findMany.mockResolvedValue([]);
-    metaCreative.findMany.mockResolvedValue([]);
+    advertisingCampaign.findMany.mockResolvedValue([]);
+    advertisingGroup.findMany.mockResolvedValue([]);
+    advertisingAd.findMany.mockResolvedValue([]);
+    advertisingCreative.findMany.mockResolvedValue([]);
     product.findMany.mockResolvedValue([]);
     collection.findMany.mockResolvedValue([]);
   });
 
   it('keeps the decision feed readable when the lifecycle table has not been migrated locally', async () => {
     recommendationLifecycle.findMany.mockRejectedValue({ code: 'P2021' });
-    metaCampaign.findMany.mockResolvedValue([
+    advertisingCampaign.findMany.mockResolvedValue([
       { id: '11111111-1111-4111-8111-111111111111', name: 'Prospecting · Cairo · September' },
     ]);
 
@@ -79,6 +79,13 @@ describe('RecommendationLifecycleService resilience', () => {
     expect(result[0]?.lifecycleState).toBe('OPEN');
     expect(result[0]?.entityName).toBe('Prospecting · Cairo · September');
     expect(result[0]?.occurrenceKey).toContain('campaign_efficiency_deterioration');
+    expect(advertisingCampaign.findMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: ['11111111-1111-4111-8111-111111111111'] },
+        account: { storeId: 'store-1' },
+      },
+      select: { id: true, name: true },
+    });
   });
 
   it('still surfaces an explicit service error when a lifecycle write cannot be persisted', async () => {

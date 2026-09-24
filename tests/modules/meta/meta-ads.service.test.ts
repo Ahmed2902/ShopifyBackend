@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { AdvertisingProjectionRepository } from '../../../src/modules/advertising/advertising-projection.repository.js';
 import type { MetaAdsRepository } from '../../../src/modules/meta/ads/meta-ads.repository.js';
 import { MetaAdsService } from '../../../src/modules/meta/ads/meta-ads.service.js';
 import type { MetaApiService } from '../../../src/modules/meta/shared/meta-api.service.js';
@@ -79,13 +80,21 @@ function build(options?: { badAdSetParent?: boolean; empty?: boolean }) {
     getAdAccount: vi.fn().mockResolvedValue(accountProfile),
     collectGraphPages: vi.fn().mockImplementation(async () => collections[collectionIndex++]),
   } as unknown as MetaApiService;
+  const canonicalProjection = {
+    projectMetaHierarchy: vi.fn().mockResolvedValue(undefined),
+  } as unknown as AdvertisingProjectionRepository;
 
-  return { repository, apiService, service: new MetaAdsService(repository, apiService) };
+  return {
+    repository,
+    apiService,
+    canonicalProjection,
+    service: new MetaAdsService(repository, apiService, canonicalProjection),
+  };
 }
 
 describe('MetaAdsService', () => {
   it('persists a complete hierarchy snapshot and soft-deletes only after all provider reads succeed', async () => {
-    const { repository, service } = build();
+    const { repository, canonicalProjection, service } = build();
 
     const result = await service.syncSelectedAccount(context, 'act_101');
 
@@ -114,6 +123,7 @@ describe('MetaAdsService', () => {
       adIds: ['ad_1'],
     });
     expect(repository.markAccountSynced).toHaveBeenCalledWith('local-account');
+    expect(canonicalProjection.projectMetaHierarchy).toHaveBeenCalledWith('local-account');
     expect(result).toMatchObject({
       recordsRead: 5,
       recordsWritten: 11,
@@ -140,7 +150,7 @@ describe('MetaAdsService', () => {
   });
 
   it('rejects inconsistent parent references before mutating local hierarchy rows', async () => {
-    const { repository, service } = build({ badAdSetParent: true });
+    const { repository, canonicalProjection, service } = build({ badAdSetParent: true });
 
     await expect(service.syncSelectedAccount(context, 'act_101')).rejects.toMatchObject({
       code: 'META_HIERARCHY_INCONSISTENT',
@@ -148,10 +158,11 @@ describe('MetaAdsService', () => {
     expect(repository.updateAccountProfile).not.toHaveBeenCalled();
     expect(repository.upsertCampaign).not.toHaveBeenCalled();
     expect(repository.softDeleteMissing).not.toHaveBeenCalled();
+    expect(canonicalProjection.projectMetaHierarchy).not.toHaveBeenCalled();
   });
 
   it('treats an empty completed provider snapshot as deletion of all current hierarchy rows', async () => {
-    const { repository, service } = build({ empty: true });
+    const { repository, canonicalProjection, service } = build({ empty: true });
 
     await service.syncSelectedAccount(context, 'act_101');
 
@@ -162,6 +173,7 @@ describe('MetaAdsService', () => {
       adIds: [],
     });
     expect(repository.upsertCampaign).not.toHaveBeenCalled();
+    expect(canonicalProjection.projectMetaHierarchy).toHaveBeenCalledWith('local-account');
   });
 
   it('requires the account to have been explicitly configured locally', async () => {

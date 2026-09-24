@@ -1,19 +1,32 @@
 import { AppError } from '../../errors/app-error.js';
 import { memoizeRequestRead } from '../../lib/request-read-cache.js';
+import type { AdvertisingAnalyticsRepository } from './advertising-analytics.repository.js';
 import { resolveAnalyticsWindows } from './analytics.dates.js';
 import { AnalyticsRepository } from './analytics.repository.js';
 import type { AnalyticsRangeQuery } from './analytics.schema.js';
 import { windowResponse } from './analytics.shared.js';
+import { CanonicalAnalyticsRepository } from './canonical-analytics.repository.js';
 import { OverviewTrendService } from './overview-trend.service.js';
 
 export class PerformanceAnalyticsWorkspace {
   private readonly trend: OverviewTrendService;
 
-  constructor(private readonly repository: AnalyticsRepository = new AnalyticsRepository()) {
-    this.trend = new OverviewTrendService(repository);
+  constructor(
+    private readonly repository: AnalyticsRepository = new AnalyticsRepository(),
+    advertisingRepository: AdvertisingAnalyticsRepository = repository,
+  ) {
+    this.trend = new OverviewTrendService(repository, advertisingRepository);
   }
 
   async daily(storeId: string, query: AnalyticsRangeQuery, now = new Date()) {
+    if (query.accountId) {
+      throw new AppError(
+        'Account-scoped cross-channel performance is not supported because Shopify commerce remains store-scoped',
+        400,
+        'ACCOUNT_SCOPED_PERFORMANCE_UNSUPPORTED',
+      );
+    }
+
     const store = await memoizeRequestRead(`analytics:store-context:${storeId}`, () =>
       this.repository.getStoreContext(storeId),
     );
@@ -34,4 +47,7 @@ export class PerformanceAnalyticsWorkspace {
   }
 }
 
-export const performanceAnalyticsWorkspace = new PerformanceAnalyticsWorkspace();
+export const performanceAnalyticsWorkspace = new PerformanceAnalyticsWorkspace(
+  new AnalyticsRepository(),
+  new CanonicalAnalyticsRepository(),
+);

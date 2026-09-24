@@ -92,7 +92,9 @@ export class DashboardWorkspace {
       optionalSection<DashboardRecentOrder[]>(storeId, 'recentOrders', () =>
         this.readRepository.getRecentOrders(storeId, 6),
       ),
-      optionalSection(storeId, 'performance', () => this.performance.daily(storeId, query, now)),
+      query.accountId
+        ? Promise.resolve({ available: false, data: null } as Section<never>)
+        : optionalSection(storeId, 'performance', () => this.performance.daily(storeId, query, now)),
     ]);
 
     return {

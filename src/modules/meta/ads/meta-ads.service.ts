@@ -1,4 +1,8 @@
 import { AppError } from '../../../errors/app-error.js';
+import {
+  advertisingProjectionRepository,
+  type AdvertisingProjectionRepository,
+} from '../../advertising/advertising-projection.repository.js';
 import type { MetaApiContext } from '../meta.types.js';
 import { parseMetaRecord, toJsonSafe } from '../meta.utils.js';
 import type { MetaApiService } from '../shared/meta-api.service.js';
@@ -49,6 +53,8 @@ export class MetaAdsService {
   constructor(
     private readonly repository: MetaAdsRepository,
     private readonly apiService: MetaApiService,
+    private readonly canonicalProjection: AdvertisingProjectionRepository =
+      advertisingProjectionRepository,
   ) {}
 
   async syncSelectedAccount(context: MetaApiContext, metaAccountId: string) {
@@ -184,6 +190,10 @@ export class MetaAdsService {
       adIds: ads.map((ad) => ad.id),
     });
     await this.repository.markAccountSynced(account.id);
+
+    // Project only after the native provider snapshot, tombstones and freshness timestamp are all
+    // complete. Tests can inject a fake projector without weakening the production default.
+    await this.canonicalProjection.projectMetaHierarchy(account.id);
 
     const recordsRead = 1 + campaigns.length + adSets.length + creatives.length + ads.length;
     const softDeleted = deleted.campaigns + deleted.adSets + deleted.creatives + deleted.ads;

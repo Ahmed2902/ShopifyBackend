@@ -4,6 +4,7 @@ const insightUpsert = vi.hoisted(() => vi.fn());
 const insightUpdateMany = vi.hoisted(() => vi.fn());
 const actionDeleteMany = vi.hoisted(() => vi.fn());
 const actionCreateMany = vi.hoisted(() => vi.fn());
+const canonicalMetricUpsert = vi.hoisted(() => vi.fn());
 const campaignFindMany = vi.hoisted(() => vi.fn());
 const adSetFindMany = vi.hoisted(() => vi.fn());
 const adFindMany = vi.hoisted(() => vi.fn());
@@ -12,6 +13,7 @@ const transaction = vi.hoisted(() =>
     callback({
       metaInsightDaily: { upsert: insightUpsert, updateMany: insightUpdateMany },
       metaInsightAction: { deleteMany: actionDeleteMany, createMany: actionCreateMany },
+      advertisingDailyMetric: { upsert: canonicalMetricUpsert },
     }),
   ),
 );
@@ -60,10 +62,11 @@ function input(overrides: Partial<Parameters<MetaInsightsRepository['upsertDaily
 describe('MetaInsightsRepository creative snapshot provenance', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    insightUpsert.mockResolvedValue({ id: 'insight-1' });
+    insightUpsert.mockResolvedValue({ id: 'insight-1', creativeIdSnapshot: null });
     insightUpdateMany.mockResolvedValue({ count: 0 });
     actionDeleteMany.mockResolvedValue({ count: 0 });
     actionCreateMany.mockResolvedValue({ count: 0 });
+    canonicalMetricUpsert.mockResolvedValue({ id: 'insight-1' });
     campaignFindMany.mockResolvedValue([]);
     adSetFindMany.mockResolvedValue([]);
     adFindMany.mockResolvedValue([]);
@@ -111,6 +114,7 @@ describe('MetaInsightsRepository creative snapshot provenance', () => {
     expect(write.update).not.toHaveProperty('creativeSnapshotTracked');
     expect(write.update).not.toHaveProperty('creativeIdSnapshot');
     expect(insightUpdateMany).not.toHaveBeenCalled();
+    expect(canonicalMetricUpsert).toHaveBeenCalledTimes(1);
   });
 
   it('finalizes only a previously tracked null snapshot after the reporting day completes', async () => {

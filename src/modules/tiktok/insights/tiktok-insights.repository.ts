@@ -1,5 +1,14 @@
 import type { Prisma } from '../../../generated/prisma/client.js';
 import { prisma } from '../../../lib/prisma.js';
+import { advertisingWriteRepository } from '../../advertising/advertising-write.repository.js';
+import { bulkUpsertTikTokInsights } from './tiktok-insights-postgres-bulk-upsert.js';
+
+function metricLevel(level: 'ADVERTISER' | 'CAMPAIGN' | 'ADGROUP' | 'AD') {
+  if (level === 'ADVERTISER') return 'ACCOUNT' as const;
+  if (level === 'CAMPAIGN') return 'CAMPAIGN' as const;
+  if (level === 'ADGROUP') return 'GROUP' as const;
+  return 'AD' as const;
+}
 
 export class TikTokInsightsRepository {
   private async selectedAdvertiserIds(storeId: string): Promise<string[]> {
@@ -10,13 +19,79 @@ export class TikTokInsightsRepository {
     return connection?.selectedAdvertiserIds ?? [];
   }
 
-  upsertInsight(input: Prisma.TikTokInsightDailyUncheckedCreateInput) {
+  private async upsertInsightTx(
+    tx: Prisma.TransactionClient,
+    input: Prisma.TikTokInsightDailyUncheckedCreateInput,
+  ) {
     const { insightKey, id: _id, createdAt: _createdAt, ...update } = input;
-    return prisma.tikTokInsightDaily.upsert({
+    const native = await tx.tikTokInsightDaily.upsert({
       where: { insightKey },
       create: input,
       update,
     });
+    await advertisingWriteRepository.upsertDailyMetric(tx, {
+      id: native.id,
+      metricKey: `TIKTOK:${native.insightKey}`,
+      accountId: native.advertiserDbId,
+      campaignId: native.campaignId,
+      groupId: native.adGroupId,
+      adId: native.adId,
+      creativeIdSnapshot: null,
+      level: metricLevel(native.level),
+      date: native.date,
+      currency: native.accountCurrency,
+      spend: native.spend.toString(),
+      impressions: native.impressions,
+      reach: native.reach,
+      clicks: native.clicks,
+      conversions: native.conversions?.toString() ?? null,
+      conversionValue: native.conversionValue?.toString() ?? null,
+      ctr: native.ctr?.toString() ?? null,
+      cpc: native.cpc?.toString() ?? null,
+      cpm: native.cpm?.toString() ?? null,
+      frequency: native.frequency?.toString() ?? null,
+      cpa: native.costPerConversion?.toString() ?? null,
+      roas: native.roas?.toString() ?? null,
+      providerMetrics: {
+        resultCount: native.resultCount,
+        costPerResult: native.costPerResult,
+        videoPlayActions: native.videoPlayActions,
+        videoWatched2s: native.videoWatched2s,
+        videoWatched6s: native.videoWatched6s,
+        videoViewsP25: native.videoViewsP25,
+        videoViewsP50: native.videoViewsP50,
+        videoViewsP75: native.videoViewsP75,
+        videoViewsP100: native.videoViewsP100,
+        likes: native.likes,
+        comments: native.comments,
+        shares: native.shares,
+        follows: native.follows,
+        profileVisits: native.profileVisits,
+        objectiveType: native.objectiveType,
+        optimizationGoal: native.optimizationGoal,
+        attributionWindow: native.attributionWindow,
+        dimensions: native.dimensionsJson,
+        metrics: native.metricsJson,
+      },
+      breakdownJson: native.dimensionsJson,
+      rawJson: native.rawJson,
+      syncedAt: native.syncedAt,
+    });
+    return native;
+  }
+
+  upsertInsight(input: Prisma.TikTokInsightDailyUncheckedCreateInput) {
+    return prisma.$transaction((tx) => this.upsertInsightTx(tx, input));
+  }
+
+  /**
+   * Report ingestion persists one bounded batch with one set-based PostgreSQL statement inside one
+   * transaction. The statement upserts native TikTok facts first and canonical facts from those
+   * exact returned rows second, so either both representations commit or neither does.
+   */
+  upsertInsights(inputs: Prisma.TikTokInsightDailyUncheckedCreateInput[]) {
+    if (inputs.length === 0) return Promise.resolve([]);
+    return prisma.$transaction((tx) => bulkUpsertTikTokInsights(tx, inputs));
   }
 
   async listInsights(storeId: string, input: {

@@ -75,7 +75,7 @@ describe('AnalyticsController cached read surface', () => {
 
     expect(analyticsCache.run).toHaveBeenCalledTimes(1);
     expect(analyticsCache.run).toHaveBeenCalledWith(
-      `${storeId}:products:::14:2:25`,
+      `${storeId}:products:::14::2:25`,
       expect.any(Function),
       { fresh: false, versionScope: storeId },
     );
@@ -97,7 +97,7 @@ describe('AnalyticsController cached read surface', () => {
     );
 
     expect(analyticsCache.run).toHaveBeenCalledWith(
-      `${storeId}:campaigns:2026-09-01:2026-09-20:30:1:10`,
+      `${storeId}:campaigns:2026-09-01:2026-09-20:30::1:10`,
       expect.any(Function),
       { fresh: true, versionScope: storeId },
     );
@@ -115,7 +115,7 @@ describe('AnalyticsController cached read surface', () => {
     );
 
     expect(analyticsCache.run).toHaveBeenCalledWith(
-      `${storeId}:campaign:${campaignId}:::7::`,
+      `${storeId}:campaign:${campaignId}:::7:::`,
       expect.any(Function),
       { fresh: false, versionScope: storeId },
     );

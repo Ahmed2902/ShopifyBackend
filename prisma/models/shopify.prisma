@@ -31,12 +31,13 @@ model Product {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  store             Store                    @relation(fields: [storeId], references: [id], onDelete: Restrict)
-  variants          ProductVariant[]
-  collections       ProductCollection[]
-  orderLineItems    OrderLineItem[]
-  adMappings        AdProductMapping[]
-  tiktokAdMappings  TikTokAdProductMapping[]
+  store               Store                       @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  variants            ProductVariant[]
+  collections         ProductCollection[]
+  orderLineItems      OrderLineItem[]
+  adMappings          AdProductMapping[]
+  tiktokAdMappings    TikTokAdProductMapping[]
+  advertisingMappings AdvertisingProductMapping[]
 
   @@unique([storeId, shopifyProductId])
   @@index([storeId, status])
@@ -77,6 +78,7 @@ model ProductVariant {
   catalogMappings       CatalogItemVariantMapping[]
   tiktokAdMappings      TikTokAdProductMapping[]
   tiktokCatalogMappings TikTokCatalogItemVariantMapping[]
+  advertisingMappings   AdvertisingProductMapping[]
 
   @@unique([storeId, shopifyVariantId])
   @@index([productId, position])
@@ -113,9 +115,10 @@ model Collection {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
-  store      Store                 @relation(fields: [storeId], references: [id], onDelete: Restrict)
-  products   ProductCollection[]
-  adMappings AdCollectionMapping[]
+  store               Store                          @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  products            ProductCollection[]
+  adMappings          AdCollectionMapping[]
+  advertisingMappings AdvertisingCollectionMapping[]
 
   @@unique([storeId, shopifyCollectionId])
   @@index([storeId, handle])

@@ -1,0 +1,73 @@
+/// Google Ads stores only provider connection/account-discovery/sync-resume state here. Campaigns,
+/// groups, ads, assets and metrics are projected directly into the canonical Advertising* model.
+model GoogleAdsConnection {
+  id                     String           @id @default(uuid()) @db.Uuid
+  storeId                String           @unique @db.Uuid
+  status                 ConnectionStatus @default(ACTIVE)
+  selectedCustomerIds    String[]         @default([])
+  accessTokenCiphertext  String
+  accessTokenExpiresAt   DateTime?
+  refreshTokenCiphertext String
+  scopes                 String[]         @default([])
+  apiVersion             String
+  lastSyncedAt           DateTime?
+  lastSyncStatus         SyncStatus?
+  lastSyncError          String?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  store           Store                     @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  customers       GoogleAdsCustomer[]
+  syncCheckpoints GoogleAdsSyncCheckpoint[]
+
+  @@index([status])
+}
+
+/// A customer discovered through OAuth direct access or an MCC hierarchy. This is ingestion/account
+/// selection state, not a second analytics schema. `id` is reused as AdvertisingAccount.id.
+model GoogleAdsCustomer {
+  id                    String   @id @default(uuid()) @db.Uuid
+  storeId               String   @db.Uuid
+  googleAdsConnectionId String   @db.Uuid
+  customerId            String
+  loginCustomerId       String?
+  descriptiveName       String
+  status                String?
+  currencyCode          String?
+  timeZone              String?
+  manager               Boolean  @default(false)
+  testAccount           Boolean  @default(false)
+  level                 Int?
+  parentCustomerId      String?
+  rawJson               Json?
+  lastDiscoveredAt      DateTime @default(now())
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  store      Store               @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  connection GoogleAdsConnection @relation(fields: [googleAdsConnectionId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, customerId])
+  @@index([googleAdsConnectionId])
+  @@index([storeId, manager])
+  @@index([loginCustomerId])
+}
+
+/// Provider-native ingestion checkpoint only. Completed historical windows are retained after a
+/// partial run so a retry can resume, then cleared after the full selected-account bootstrap succeeds.
+model GoogleAdsSyncCheckpoint {
+  id                    String   @id @default(uuid()) @db.Uuid
+  googleAdsConnectionId String   @db.Uuid
+  customerId            String
+  kind                  String
+  windowStart           DateTime @db.Date
+  windowEnd             DateTime @db.Date
+  completedAt           DateTime @default(now())
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  connection GoogleAdsConnection @relation(fields: [googleAdsConnectionId], references: [id], onDelete: Cascade)
+
+  @@unique([googleAdsConnectionId, customerId, kind, windowStart, windowEnd])
+  @@index([googleAdsConnectionId, kind, customerId])
+}

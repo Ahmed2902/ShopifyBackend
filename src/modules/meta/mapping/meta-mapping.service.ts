@@ -1,5 +1,9 @@
 import { AppError } from '../../../errors/app-error.js';
 import { invalidateStoreDecisionCaches } from '../../../lib/store-decision-cache.js';
+import {
+  advertisingMappingProjectionRepository,
+  type AdvertisingMappingProjectionRepository,
+} from '../../advertising/advertising-mapping-projection.repository.js';
 import { integrationService, type IntegrationService } from '../../integrations/integration.service.js';
 import { MetaCollectionMappingRepository } from './meta-collection-mapping.repository.js';
 import { deriveScopeFromMappings, resolveAd, resolveCatalogItem } from './meta-mapping.resolver.js';
@@ -40,6 +44,7 @@ export class MetaMappingService {
     private readonly integrationService: IntegrationService,
     private readonly collectionRepository: MetaCollectionMappingRepository =
       new MetaCollectionMappingRepository(),
+    private readonly mappingProjection: AdvertisingMappingProjectionRepository | null = null,
   ) {}
 
   async resolveStoreMappings(storeId: string) {
@@ -138,6 +143,7 @@ export class MetaMappingService {
             collection: null,
             landingUrl: null,
           });
+          await this.mappingProjection?.projectMetaAd(ad.id);
           if (applied.changed) ads.changed += 1;
           ads.preservedConfirmed += 1;
           ads.collection += 1;
@@ -158,6 +164,7 @@ export class MetaMappingService {
             collection: null,
             landingUrl: null,
           });
+          await this.mappingProjection?.projectMetaAd(ad.id);
           if (applied.changed) ads.changed += 1;
           ads.preservedConfirmed += 1;
           ads[SCOPE_COUNTER[deriveScopeFromMappings(confirmed)]] += 1;
@@ -197,6 +204,7 @@ export class MetaMappingService {
           collection: linkedCollection,
           landingUrl,
         });
+        await this.mappingProjection?.projectMetaAd(ad.id);
         if (applied.changed) ads.changed += 1;
         ads[SCOPE_COUNTER[resolution.scope]] += 1;
         if (resolution.scope === 'UNKNOWN' && resolution.suggestions.length > 0) ads.needsReview += 1;
@@ -336,6 +344,7 @@ export class MetaMappingService {
     await this.requireSelectedAd(storeId, metaAdId);
     await this.repository.validateManualAdMappings(storeId, mappings);
     const result = await this.collectionRepository.replaceManualProductMappings(storeId, metaAdId, mappings);
+    await this.mappingProjection?.projectMetaAdByExternalId(storeId, metaAdId);
     await invalidateStoreDecisionCaches(storeId);
     return result;
   }
@@ -347,6 +356,7 @@ export class MetaMappingService {
   ) {
     await this.requireSelectedAd(storeId, metaAdId);
     const result = await this.collectionRepository.replaceManualMappings(storeId, metaAdId, collectionIds);
+    await this.mappingProjection?.projectMetaAdByExternalId(storeId, metaAdId);
     await invalidateStoreDecisionCaches(storeId);
     return result;
   }
@@ -355,10 +365,12 @@ export class MetaMappingService {
     await this.requireSelectedAd(storeId, metaAdId);
     const collection = await this.collectionRepository.confirmCurrentMappings(storeId, metaAdId);
     if (collection) {
+      await this.mappingProjection?.projectMetaAdByExternalId(storeId, metaAdId);
       await invalidateStoreDecisionCaches(storeId);
       return collection;
     }
     const result = await this.repository.confirmCurrentAdMappings(storeId, metaAdId);
+    await this.mappingProjection?.projectMetaAdByExternalId(storeId, metaAdId);
     await invalidateStoreDecisionCaches(storeId);
     return result;
   }
@@ -387,4 +399,5 @@ export const metaMappingService = new MetaMappingService(
   new MetaMappingRepository(),
   integrationService,
   new MetaCollectionMappingRepository(),
+  advertisingMappingProjectionRepository,
 );

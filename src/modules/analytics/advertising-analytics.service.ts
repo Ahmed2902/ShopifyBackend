@@ -11,6 +11,10 @@ import {
   type AdvertisingOverviewAggregateRow,
   type AdvertisingOverviewPeriod,
 } from './advertising-analytics.read.repository.js';
+import type {
+  AdvertisingAnalyticsRepository,
+  AdvertisingMetaFilter,
+} from './advertising-analytics.repository.js';
 import {
   AdvertisingEntityAnalyticsReadRepository,
   type AdvertisingEntityAggregateRow,
@@ -20,14 +24,15 @@ import {
 import type { AnalyticsRepository } from './analytics.repository.js';
 import { inRange, pagination, splitMeta, windowResponse } from './analytics.shared.js';
 import type { AnalyticsWindows } from './analytics.shared.js';
+import { CanonicalCreativeVideoRetentionService } from './canonical-creative-video-retention.service.js';
 import { CreativeAdvertisingReadRepository } from './creative-advertising.read.repository.js';
-import { CreativeVideoRetentionService } from './creative-video-retention.service.js';
+import type { CreativeVideoRetentionService } from './creative-video-retention.service.js';
 
 type StoreContext = NonNullable<Awaited<ReturnType<AnalyticsRepository['getStoreContext']>>>;
 type CreativeMetaRow = Awaited<ReturnType<CreativeAdvertisingReadRepository['getRows']>>[number];
 
 type MetaKind = 'CAMPAIGN' | 'ADSET' | 'AD';
-type MetaFilter = Parameters<AnalyticsRepository['getMetaRows']>[4];
+type MetaFilter = AdvertisingMetaFilter;
 
 function filter(kind: MetaKind, ids: string[]): MetaFilter {
   if (kind === 'CAMPAIGN') return { campaignIds: ids };
@@ -63,19 +68,21 @@ function aggregateMetrics(row: {
   spend: number;
   impressions: number;
   clicks: number;
-  purchases: number;
-  purchaseValue: number;
+  purchases: number | null;
+  purchaseValue: number | null;
   weightedFrequency: number;
 } | undefined): MetaMetrics {
   if (!row) return emptyMetaMetrics();
   return {
+    sourceRows: 1,
     spend: row.spend,
     impressions: row.impressions,
     clicks: row.clicks,
     purchases: row.purchases,
     purchaseValue: row.purchaseValue,
-    providerRoas: row.spend > 0 ? row.purchaseValue / row.spend : null,
-    cpa: row.purchases > 0 ? row.spend / row.purchases : null,
+    providerRoas:
+      row.purchaseValue !== null && row.spend > 0 ? row.purchaseValue / row.spend : null,
+    cpa: row.purchases !== null && row.purchases > 0 ? row.spend / row.purchases : null,
     ctr: row.impressions > 0 ? row.clicks / row.impressions : null,
     cpc: row.clicks > 0 ? row.spend / row.clicks : null,
     cpm: row.impressions > 0 ? (row.spend / row.impressions) * 1_000 : null,
@@ -98,11 +105,11 @@ function entityRow(
 
 export class AdvertisingAnalyticsService {
   constructor(
-    private readonly repository: AnalyticsRepository,
+    private readonly repository: AdvertisingAnalyticsRepository,
     private readonly readRepository: AdvertisingAnalyticsReadRepository =
       new AdvertisingAnalyticsReadRepository(),
     private readonly videoRetentionService: CreativeVideoRetentionService =
-      new CreativeVideoRetentionService(),
+      new CanonicalCreativeVideoRetentionService(),
     private readonly creativeReadRepository: CreativeAdvertisingReadRepository =
       new CreativeAdvertisingReadRepository(),
     private readonly entityReadRepository: AdvertisingEntityAnalyticsReadRepository =

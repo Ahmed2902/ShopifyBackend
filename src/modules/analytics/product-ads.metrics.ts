@@ -221,7 +221,7 @@ export function buildProductAdsPeriod(input: {
       advertising,
       derived: {
         contributionAfterAds:
-          commerce.contributionBeforeAds === null
+          commerce.contributionBeforeAds === null || advertising.sourceRows === 0
             ? null
             : commerce.contributionBeforeAds - advertising.spend,
         revenueShare:

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Prisma } from '../../../generated/prisma/client.js';
+import { prisma } from '../../../lib/prisma.js';
 import type { TikTokApiService } from '../shared/tiktok-api.service.js';
 import type { TikTokApiContext } from '../tiktok.types.js';
 import { asNumber, asRecord, asString } from '../tiktok.utils.js';
@@ -8,6 +9,7 @@ import type { TikTokInsightsRepository } from './tiktok-insights.repository.js';
 
 export const DEFAULT_TIKTOK_INSIGHTS_LOOKBACK_DAYS = 35;
 const REPORT_CHUNK_DAYS = 28;
+const INSIGHT_WRITE_BATCH_SIZE = 100;
 
 function formatDate(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -29,6 +31,18 @@ function dateChunks(lookbackDays: number): Array<{ start: string; end: string }>
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
   return chunks;
+}
+
+function batches<T>(items: T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let index = 0; index < items.length; index += size) result.push(items.slice(index, index + size));
+  return result;
+}
+
+function bigintMetric(value: unknown): bigint | null {
+  if (value === null || value === undefined) return null;
+  const text = asString(value);
+  return text === null ? null : BigInt(text);
 }
 
 export class TikTokInsightsService {
@@ -63,6 +77,9 @@ export class TikTokInsightsService {
     let recordsWritten = 0;
 
     for (const advertiserId of context.selectedAdvertiserIds) {
+      const [advertiser] = await this.adsRepository.findSelectedAdvertisers(storeId, [advertiserId]);
+      if (!advertiser || advertiser.advertiserId !== advertiserId) continue;
+
       for (const chunk of dateChunks(lookbackDays)) {
         const rows = await this.apiService.paginate(context, 'report/integrated/get', {
           advertiser_id: advertiserId,
@@ -79,6 +96,32 @@ export class TikTokInsightsService {
         }, ['list']);
         recordsRead += rows.length;
 
+        const externalAdIds = [...new Set(rows
+          .map((row) => {
+            const dimensions = asRecord(row.dimensions);
+            return asString(dimensions.ad_id) ?? asString(row.ad_id);
+          })
+          .filter((value): value is string => Boolean(value)))];
+
+        const localAds = externalAdIds.length === 0
+          ? []
+          : await prisma.tikTokAd.findMany({
+              where: {
+                advertiserDbId: advertiser.id,
+                tiktokAdId: { in: externalAdIds },
+                deletedAt: null,
+              },
+              select: {
+                id: true,
+                tiktokAdId: true,
+                advertiserDbId: true,
+                campaignId: true,
+                adGroupId: true,
+              },
+            });
+        const adsByExternalId = new Map(localAds.map((ad) => [ad.tiktokAdId, ad] as const));
+        const pending: Prisma.TikTokInsightDailyUncheckedCreateInput[] = [];
+
         for (const row of rows) {
           const dimensions = asRecord(row.dimensions);
           const metrics = asRecord(row.metrics);
@@ -86,15 +129,15 @@ export class TikTokInsightsService {
           const dateText = asString(dimensions.stat_time_day) ?? asString(row.stat_time_day);
           if (!externalAdId || !dateText) continue;
 
-          const localAd = await this.adsRepository.getAd(storeId, externalAdId);
-          if (!localAd || localAd.advertiser.advertiserId !== advertiserId) continue;
+          const localAd = adsByExternalId.get(externalAdId);
+          if (!localAd) continue;
           const date = new Date(`${dateText.slice(0, 10)}T00:00:00.000Z`);
           if (Number.isNaN(date.getTime())) continue;
           const insightKey = createHash('sha256')
             .update(['TIKTOK', advertiserId, externalAdId, formatDate(date)].join(':'))
             .digest('hex');
 
-          await this.repository.upsertInsight({
+          pending.push({
             insightKey,
             advertiserDbId: localAd.advertiserDbId,
             campaignId: localAd.campaignId,
@@ -102,34 +145,39 @@ export class TikTokInsightsService {
             adId: localAd.id,
             level: 'AD',
             date,
-            accountCurrency: localAd.advertiser.currency,
+            accountCurrency: advertiser.currency,
             spend: asNumber(metrics.spend) ?? 0,
-            impressions: BigInt(asString(metrics.impressions) ?? '0'),
-            reach: metrics.reach == null ? null : BigInt(asString(metrics.reach) ?? '0'),
-            clicks: BigInt(asString(metrics.clicks) ?? '0'),
+            impressions: bigintMetric(metrics.impressions) ?? 0n,
+            reach: bigintMetric(metrics.reach),
+            clicks: bigintMetric(metrics.clicks) ?? 0n,
             ctr: asNumber(metrics.ctr),
             cpc: asNumber(metrics.cpc),
             cpm: asNumber(metrics.cpm),
             frequency: asNumber(metrics.frequency),
             conversions: asNumber(metrics.complete_payment),
-            conversionValue: asNumber(metrics.total_complete_payment_rate),
+            // total_complete_payment_rate is a rate, not money. Keep it in metricsJson/provider
+            // evidence below; canonical conversionValue stays unavailable until TikTok supplies a
+            // trustworthy monetary conversion-value field for this reporting contract.
+            conversionValue: null,
             costPerConversion: asNumber(metrics.cost_per_complete_payment),
             roas: asNumber(metrics.complete_payment_roas),
-            videoPlayActions: metrics.video_play_actions == null ? null : BigInt(asString(metrics.video_play_actions) ?? '0'),
-            videoWatched2s: metrics.video_watched_2s == null ? null : BigInt(asString(metrics.video_watched_2s) ?? '0'),
-            videoWatched6s: metrics.video_watched_6s == null ? null : BigInt(asString(metrics.video_watched_6s) ?? '0'),
-            videoViewsP25: metrics.video_views_p25 == null ? null : BigInt(asString(metrics.video_views_p25) ?? '0'),
-            videoViewsP50: metrics.video_views_p50 == null ? null : BigInt(asString(metrics.video_views_p50) ?? '0'),
-            videoViewsP75: metrics.video_views_p75 == null ? null : BigInt(asString(metrics.video_views_p75) ?? '0'),
-            videoViewsP100: metrics.video_views_p100 == null ? null : BigInt(asString(metrics.video_views_p100) ?? '0'),
-            // TikTok API responses are parsed JSON. Narrow the untyped API records
-            // to Prisma's JSON input type at this persistence boundary.
+            videoPlayActions: bigintMetric(metrics.video_play_actions),
+            videoWatched2s: bigintMetric(metrics.video_watched_2s),
+            videoWatched6s: bigintMetric(metrics.video_watched_6s),
+            videoViewsP25: bigintMetric(metrics.video_views_p25),
+            videoViewsP50: bigintMetric(metrics.video_views_p50),
+            videoViewsP75: bigintMetric(metrics.video_views_p75),
+            videoViewsP100: bigintMetric(metrics.video_views_p100),
             dimensionsJson: dimensions as Prisma.InputJsonValue,
             metricsJson: metrics as Prisma.InputJsonValue,
             rawJson: row as Prisma.InputJsonValue,
             syncedAt: new Date(),
           });
-          recordsWritten += 1;
+        }
+
+        for (const batch of batches(pending, INSIGHT_WRITE_BATCH_SIZE)) {
+          const written = await this.repository.upsertInsights(batch);
+          recordsWritten += written.length;
         }
       }
     }

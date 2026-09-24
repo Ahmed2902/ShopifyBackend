@@ -7,6 +7,70 @@ import { aggregateMeta } from '../../../src/modules/analytics/analytics.metrics.
 const describeDatabase = process.env.RUN_DB_TESTS === 'true' ? describe : describe.skip;
 const stores: string[] = [];
 
+function purchaseRank(actionType: string): number {
+  if (actionType === 'offsite_conversion.fb_pixel_purchase') return 0;
+  if (actionType === 'omni_purchase') return 1;
+  if (actionType === 'purchase') return 2;
+  return actionType.toLowerCase().includes('purchase') ? 3 : 100;
+}
+
+async function refreshCanonicalPurchases(insightId: string) {
+  const insight = await prisma.metaInsightDaily.findUniqueOrThrow({
+    where: { id: insightId },
+    select: {
+      spend: true,
+      actions: {
+        where: {
+          kind: { in: ['ACTION', 'ACTION_VALUE', 'PURCHASE_ROAS', 'WEBSITE_PURCHASE_ROAS'] },
+        },
+        select: { kind: true, actionType: true, value: true },
+      },
+    },
+  });
+
+  function selected(kind: 'ACTION' | 'ACTION_VALUE') {
+    const candidates = insight.actions.filter(
+      (action) => action.kind === kind && purchaseRank(action.actionType) < 100,
+    );
+    if (candidates.length === 0) return 0;
+    const rank = Math.min(...candidates.map((action) => purchaseRank(action.actionType)));
+    const type = candidates.find((action) => purchaseRank(action.actionType) === rank)?.actionType;
+    return candidates
+      .filter((action) => action.actionType === type)
+      .reduce((sum, action) => sum + Number(action.value), 0);
+  }
+
+  function selectedRoas(kind: 'PURCHASE_ROAS' | 'WEBSITE_PURCHASE_ROAS') {
+    const candidates = insight.actions.filter(
+      (action) => action.kind === kind && purchaseRank(action.actionType) < 100,
+    );
+    if (candidates.length === 0) return null;
+    const rank = Math.min(...candidates.map((action) => purchaseRank(action.actionType)));
+    const type = candidates.find((action) => purchaseRank(action.actionType) === rank)?.actionType;
+    const values = candidates
+      .filter((action) => action.actionType === type)
+      .map((action) => Number(action.value))
+      .filter((value) => value > 0);
+    return values.length > 0 ? Math.max(...values) : null;
+  }
+
+  const purchases = selected('ACTION');
+  const directPurchaseValue = selected('ACTION_VALUE');
+  const fallbackRoas = selectedRoas('WEBSITE_PURCHASE_ROAS') ?? selectedRoas('PURCHASE_ROAS');
+  const spend = Number(insight.spend);
+  const purchaseValue = directPurchaseValue > 0 ? directPurchaseValue : spend * (fallbackRoas ?? 0);
+
+  await prisma.advertisingDailyMetric.update({
+    where: { id: insightId },
+    data: {
+      conversions: purchases,
+      conversionValue: purchaseValue,
+      cpa: purchases > 0 ? spend / purchases : null,
+      roas: spend > 0 ? purchaseValue / spend : fallbackRoas,
+    },
+  });
+}
+
 async function createInsight(input: {
   adAccountId: string;
   date: string;
@@ -18,7 +82,7 @@ async function createInsight(input: {
   frequency?: number | null;
   attributionSetting?: string | null;
 }) {
-  return prisma.metaInsightDaily.create({
+  const insight = await prisma.metaInsightDaily.create({
     data: {
       insightKey: `overview-parity-${randomUUID()}`,
       adAccountId: input.adAccountId,
@@ -32,6 +96,25 @@ async function createInsight(input: {
       attributionSetting: input.attributionSetting ?? null,
     },
   });
+
+  await prisma.advertisingDailyMetric.create({
+    data: {
+      id: insight.id,
+      metricKey: `META:${insight.insightKey}`,
+      accountId: input.adAccountId,
+      level: input.level ?? 'AD',
+      date: insight.date,
+      currency: input.currency ?? 'USD',
+      spend: input.spend,
+      impressions: BigInt(input.impressions),
+      clicks: BigInt(input.clicks),
+      frequency: input.frequency ?? null,
+      conversions: 0,
+      conversionValue: 0,
+      providerMetrics: { attributionSetting: input.attributionSetting ?? null },
+    },
+  });
+  return insight;
 }
 
 async function addAction(
@@ -49,6 +132,7 @@ async function addAction(
       value,
     },
   });
+  await refreshCanonicalPurchases(insightId);
 }
 
 async function fixture() {
@@ -89,6 +173,26 @@ async function fixture() {
       name: 'Deselected account',
       currency: 'USD',
     },
+  });
+  await prisma.advertisingAccount.createMany({
+    data: [
+      {
+        id: selected.id,
+        storeId: store.id,
+        provider: 'META',
+        providerEntityId: selected.metaAccountId,
+        name: selected.name,
+        currency: selected.currency,
+      },
+      {
+        id: deselected.id,
+        storeId: store.id,
+        provider: 'META',
+        providerEntityId: deselected.metaAccountId,
+        name: deselected.name,
+        currency: deselected.currency,
+      },
+    ],
   });
 
   const currentDirect = await createInsight({

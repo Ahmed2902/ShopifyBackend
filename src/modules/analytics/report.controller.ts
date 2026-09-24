@@ -14,8 +14,14 @@ const reportReads = new CachedReadCoordinator(
   250,
 );
 
-function cacheKey(storeId: string, query: AnalyticsRangeQuery): string {
-  return [storeId, query.from ?? '', query.to ?? '', String(query.days)].join(':');
+export function reportCacheKey(storeId: string, query: AnalyticsRangeQuery): string {
+  return [
+    storeId,
+    query.from ?? '',
+    query.to ?? '',
+    String(query.days),
+    query.accountId ?? '',
+  ].join(':');
 }
 
 export class ReportController {
@@ -26,7 +32,7 @@ export class ReportController {
     const query = analyticsRangeQuerySchema.parse(req.query);
     const { fresh } = analyticsReadControlSchema.parse(req.query);
     const payload = await reportReads.run(
-      cacheKey(storeId, query),
+      reportCacheKey(storeId, query),
       async () => toJsonSafe(await this.workspace.read(storeId, query, new Date(), { fresh })),
       { fresh },
     );

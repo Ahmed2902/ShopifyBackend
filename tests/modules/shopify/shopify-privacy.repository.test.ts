@@ -125,7 +125,7 @@ describeDatabase('ShopifyPrivacyRepository', () => {
     await prisma.store.delete({ where: { id: store.id } });
   });
 
-  it('purges Shopify, Meta, TikTok, Pixel and integration rows while retaining only a scrubbed shop-redact audit', async () => {
+  it('purges canonical mappings, catalog, advertising, provider and Pixel rows while retaining only a scrubbed shop-redact audit', async () => {
     const repository = new ShopifyPrivacyRepository();
     const store = await createBaseStore('privacy-shop');
     const shopifyConnectionId = store.shopifyConnection!.id;
@@ -255,6 +255,13 @@ describeDatabase('ShopifyPrivacyRepository', () => {
         title: 'Default',
       },
     });
+    const collection = await prisma.collection.create({
+      data: {
+        storeId: store.id,
+        shopifyCollectionId: `gid://shopify/Collection/${randomUUID()}`,
+        title: 'Privacy Collection',
+      },
+    });
     const location = await prisma.location.create({
       data: {
         storeId: store.id,
@@ -272,6 +279,61 @@ describeDatabase('ShopifyPrivacyRepository', () => {
     await prisma.inventoryLevelCurrent.create({
       data: { inventoryItemId: inventoryItem.id, locationId: location.id, available: 4 },
     });
+
+    const canonicalAccount = await prisma.advertisingAccount.create({
+      data: {
+        storeId: store.id,
+        provider: 'META',
+        providerEntityId: `canonical-act-${randomUUID()}`,
+        name: 'Canonical privacy account',
+        currency: 'USD',
+      },
+    });
+    const canonicalCampaign = await prisma.advertisingCampaign.create({
+      data: {
+        accountId: canonicalAccount.id,
+        providerEntityId: `canonical-campaign-${randomUUID()}`,
+        name: 'Canonical privacy campaign',
+      },
+    });
+    const canonicalGroup = await prisma.advertisingGroup.create({
+      data: {
+        accountId: canonicalAccount.id,
+        campaignId: canonicalCampaign.id,
+        providerEntityId: `canonical-group-${randomUUID()}`,
+        kind: 'AD_SET',
+        name: 'Canonical privacy group',
+      },
+    });
+    const canonicalAd = await prisma.advertisingAd.create({
+      data: {
+        accountId: canonicalAccount.id,
+        campaignId: canonicalCampaign.id,
+        groupId: canonicalGroup.id,
+        providerEntityId: `canonical-ad-${randomUUID()}`,
+        name: 'Canonical privacy ad',
+      },
+    });
+    const canonicalProductMapping = await prisma.advertisingProductMapping.create({
+      data: {
+        adId: canonicalAd.id,
+        productId: product.id,
+        variantId: variant.id,
+        source: 'MANUAL',
+        confidence: 1,
+        isMerchantConfirmed: true,
+      },
+    });
+    const canonicalCollectionMapping = await prisma.advertisingCollectionMapping.create({
+      data: {
+        adId: canonicalAd.id,
+        collectionId: collection.id,
+        source: 'MANUAL',
+        confidence: 1,
+        isMerchantConfirmed: true,
+      },
+    });
+
     const order = await prisma.order.create({
       data: {
         storeId: store.id,
@@ -334,11 +396,19 @@ describeDatabase('ShopifyPrivacyRepository', () => {
 
     expect(await repository.purgeStore(store.id, redactDelivery.id)).toBe(true);
 
+    expect(await prisma.advertisingProductMapping.findUnique({ where: { id: canonicalProductMapping.id } })).toBeNull();
+    expect(await prisma.advertisingCollectionMapping.findUnique({ where: { id: canonicalCollectionMapping.id } })).toBeNull();
+    expect(await prisma.advertisingAd.findUnique({ where: { id: canonicalAd.id } })).toBeNull();
+    expect(await prisma.advertisingGroup.findUnique({ where: { id: canonicalGroup.id } })).toBeNull();
+    expect(await prisma.advertisingCampaign.findUnique({ where: { id: canonicalCampaign.id } })).toBeNull();
+    expect(await prisma.advertisingAccount.findUnique({ where: { id: canonicalAccount.id } })).toBeNull();
+    expect(await prisma.productVariant.findUnique({ where: { id: variant.id } })).toBeNull();
+    expect(await prisma.collection.findUnique({ where: { id: collection.id } })).toBeNull();
+    expect(await prisma.product.findUnique({ where: { id: product.id } })).toBeNull();
     expect(await prisma.store.findUnique({ where: { id: store.id } })).toBeNull();
     expect(await prisma.shopifyConnection.findUnique({ where: { id: shopifyConnectionId } })).toBeNull();
     expect(await prisma.metaConnection.findUnique({ where: { id: metaConnection.id } })).toBeNull();
     expect(await prisma.tikTokConnection.findUnique({ where: { id: tiktokConnection.id } })).toBeNull();
-    expect(await prisma.product.findUnique({ where: { id: product.id } })).toBeNull();
     expect(await prisma.order.findUnique({ where: { id: order.id } })).toBeNull();
     expect(await prisma.storefrontEvent.findFirst({ where: { storeId: store.id } })).toBeNull();
     expect(await prisma.externalPayload.findUnique({ where: { id: externalPayload.id } })).toBeNull();

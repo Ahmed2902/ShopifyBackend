@@ -5,7 +5,7 @@ export const billingPlanSchema = z.object({
 });
 
 export const billingAdProviderSchema = z.object({
-  provider: z.enum(['META', 'TIKTOK']),
+  provider: z.enum(['META', 'TIKTOK', 'GOOGLE_ADS']),
 });
 
 export const billingReadQuerySchema = z.object({

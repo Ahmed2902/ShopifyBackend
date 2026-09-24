@@ -5,7 +5,11 @@ type OrderRow = Awaited<ReturnType<AnalyticsRepository['getOrders']>>[number];
 type CommerceRow = Awaited<ReturnType<AnalyticsRepository['getCommerceRows']>>[number];
 type CostRow = Awaited<ReturnType<AnalyticsRepository['getVariantCosts']>>[number];
 type VariantSalesRow = Awaited<ReturnType<AnalyticsRepository['getVariantSalesRows']>>[number];
-export type MetaMetricRow = Pick<MetaRow, 'spend' | 'impressions' | 'clicks' | 'frequency' | 'actions'>;
+export type MetaMetricRow = Pick<MetaRow, 'spend' | 'impressions' | 'clicks' | 'frequency' | 'actions'> & {
+  /** Undefined means legacy/native Meta evidence, where action absence is a reported zero. */
+  conversionsAvailable?: boolean;
+  conversionValueAvailable?: boolean;
+};
 type MetaAction = MetaMetricRow['actions'][number];
 
 const PURCHASE_ACTION_PRIORITY = [
@@ -16,11 +20,12 @@ const PURCHASE_ACTION_PRIORITY = [
 const MIN_COST_COVERAGE = 0.8;
 
 export interface MetaMetrics {
+  sourceRows: number;
   spend: number;
   impressions: number;
   clicks: number;
-  purchases: number;
-  purchaseValue: number;
+  purchases: number | null;
+  purchaseValue: number | null;
   providerRoas: number | null;
   cpa: number | null;
   ctr: number | null;
@@ -56,11 +61,14 @@ export interface ProductMetrics {
 }
 
 interface MetaAccumulator {
+  sourceRows: number;
   spend: number;
   impressions: number;
   clicks: number;
   purchases: number;
   purchaseValue: number;
+  conversionsAvailable: boolean;
+  conversionValueAvailable: boolean;
   weightedFrequency: number;
 }
 
@@ -138,11 +146,14 @@ function selectedPurchaseRoas(actions: MetaAction[]): number | null {
 
 function emptyMeta(): MetaAccumulator {
   return {
+    sourceRows: 0,
     spend: 0,
     impressions: 0,
     clicks: 0,
     purchases: 0,
     purchaseValue: 0,
+    conversionsAvailable: true,
+    conversionValueAvailable: true,
     weightedFrequency: 0,
   };
 }
@@ -151,26 +162,40 @@ function addMeta(target: MetaAccumulator, row: MetaMetricRow): void {
   const spend = numeric(row.spend);
   const impressions = numeric(row.impressions);
   const frequency = row.frequency === null ? null : numeric(row.frequency);
+  const conversionsAvailable = row.conversionsAvailable !== false;
+  const conversionValueAvailable = row.conversionValueAvailable !== false;
   const directValue = selectedPurchaseValue(row.actions, 'ACTION_VALUE');
   const fallbackRoas = selectedPurchaseRoas(row.actions);
 
+  target.sourceRows += 1;
   target.spend += spend;
   target.impressions += impressions;
   target.clicks += numeric(row.clicks);
-  target.purchases += selectedPurchaseValue(row.actions, 'ACTION');
-  target.purchaseValue += directValue > 0 ? directValue : spend * (fallbackRoas ?? 0);
+  target.conversionsAvailable = target.conversionsAvailable && conversionsAvailable;
+  target.conversionValueAvailable = target.conversionValueAvailable && conversionValueAvailable;
+  if (conversionsAvailable) {
+    target.purchases += selectedPurchaseValue(row.actions, 'ACTION');
+  }
+  if (conversionValueAvailable) {
+    target.purchaseValue += directValue > 0 ? directValue : spend * (fallbackRoas ?? 0);
+  }
   if (frequency !== null && impressions > 0) target.weightedFrequency += frequency * impressions;
 }
 
 function finishMeta(value: MetaAccumulator): MetaMetrics {
+  const purchases =
+    value.sourceRows > 0 && value.conversionsAvailable ? value.purchases : null;
+  const purchaseValue =
+    value.sourceRows > 0 && value.conversionValueAvailable ? value.purchaseValue : null;
   return {
+    sourceRows: value.sourceRows,
     spend: value.spend,
     impressions: value.impressions,
     clicks: value.clicks,
-    purchases: value.purchases,
-    purchaseValue: value.purchaseValue,
-    providerRoas: value.spend > 0 ? value.purchaseValue / value.spend : null,
-    cpa: value.purchases > 0 ? value.spend / value.purchases : null,
+    purchases,
+    purchaseValue,
+    providerRoas: purchaseValue !== null && value.spend > 0 ? purchaseValue / value.spend : null,
+    cpa: purchases !== null && purchases > 0 ? value.spend / purchases : null,
     ctr: value.impressions > 0 ? value.clicks / value.impressions : null,
     cpc: value.clicks > 0 ? value.spend / value.clicks : null,
     cpm: value.impressions > 0 ? (value.spend / value.impressions) * 1_000 : null,

@@ -57,7 +57,28 @@ export class IntelligenceStorefrontReadRepository {
     currentTo: Date;
     comparisonFrom: Date;
     comparisonTo: Date;
+    /** When present, return only PRODUCT evidence for these already-ranked page candidates. */
+    productIds?: string[];
   }): Promise<IntelligenceStorefrontEvidenceRow[]> {
+    if (input.productIds?.length === 0) return [];
+    const productFilter = input.productIds
+      ? Prisma.sql`
+          AND behavior."dimension" = 'PRODUCT'::"StorefrontBehaviorDimension"
+          AND behavior."productId" IN (${Prisma.join(
+            input.productIds.map((productId) => Prisma.sql`${productId}::uuid`),
+          )})
+        `
+      : Prisma.sql`AND behavior."dimension" IN ('STORE', 'PRODUCT', 'LANDING_PAGE')`;
+    const checkoutPurchasePromise = input.productIds
+      ? Promise.resolve({ current: 0, comparison: 0 })
+      : pixelCheckoutPurchaseReadRepository.getOverlapCountsForStoreDates({
+          storeId: input.storeId,
+          currentFrom: input.currentFrom,
+          currentTo: input.currentTo,
+          comparisonFrom: input.comparisonFrom,
+          comparisonTo: input.comparisonTo,
+        });
+
     const [rows, checkoutPurchase] = await Promise.all([
       prisma.$queryRaw<RawStorefrontEvidenceRow[]>(Prisma.sql`
         SELECT
@@ -87,7 +108,7 @@ export class IntelligenceStorefrontReadRepository {
           ON product."id" = behavior."productId"
           AND product."storeId" = behavior."storeId"
         WHERE behavior."storeId" = ${input.storeId}::uuid
-          AND behavior."dimension" IN ('STORE', 'PRODUCT', 'LANDING_PAGE')
+          ${productFilter}
           AND (
             behavior."bucketDate" BETWEEN ${input.currentFrom}::date AND ${input.currentTo}::date
             OR behavior."bucketDate" BETWEEN ${input.comparisonFrom}::date AND ${input.comparisonTo}::date
@@ -101,13 +122,7 @@ export class IntelligenceStorefrontReadRepository {
           product."title"
         ORDER BY behavior."dimension", behavior."dimensionKey", period
       `),
-      pixelCheckoutPurchaseReadRepository.getOverlapCountsForStoreDates({
-        storeId: input.storeId,
-        currentFrom: input.currentFrom,
-        currentTo: input.currentTo,
-        comparisonFrom: input.comparisonFrom,
-        comparisonTo: input.comparisonTo,
-      }),
+      checkoutPurchasePromise,
     ]);
 
     return rows.map((row) => ({

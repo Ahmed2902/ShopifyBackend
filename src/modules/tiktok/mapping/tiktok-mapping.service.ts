@@ -1,4 +1,8 @@
 import { AppError } from '../../../errors/app-error.js';
+import {
+  advertisingMappingProjectionRepository,
+  type AdvertisingMappingProjectionRepository,
+} from '../../advertising/advertising-mapping-projection.repository.js';
 import { resolveTikTokAd, resolveTikTokCatalogItem } from './tiktok-mapping.resolver.js';
 import { TikTokMappingRepository } from './tiktok-mapping.repository.js';
 import type {
@@ -9,7 +13,10 @@ import type {
 } from './tiktok-mapping.types.js';
 
 export class TikTokMappingService {
-  constructor(private readonly repository: TikTokMappingRepository) {}
+  constructor(
+    private readonly repository: TikTokMappingRepository,
+    private readonly mappingProjection: AdvertisingMappingProjectionRepository | null = null,
+  ) {}
 
   async resolveMappings(storeId: string) {
     const dataset = await this.requireDataset(storeId);
@@ -60,6 +67,7 @@ export class TikTokMappingService {
         resolution.confidence,
         resolution.evidence,
       );
+      await this.mappingProjection?.projectTikTokAd(ad.id);
     }
 
     return { catalogs: catalogItems.length, ads: ads.length };
@@ -72,6 +80,7 @@ export class TikTokMappingService {
     }
     const mapping = await this.repository.replaceManualAdMapping(storeId, externalAdId, productId, variantId);
     if (!mapping) throw new AppError('TikTok ad/product/variant mapping is invalid', 400, 'TIKTOK_MAPPING_INVALID');
+    await this.mappingProjection?.projectTikTokAd(mapping.tiktokAdId);
     return mapping;
   }
 
@@ -92,4 +101,7 @@ export class TikTokMappingService {
   }
 }
 
-export const tiktokMappingService = new TikTokMappingService(new TikTokMappingRepository());
+export const tiktokMappingService = new TikTokMappingService(
+  new TikTokMappingRepository(),
+  advertisingMappingProjectionRepository,
+);

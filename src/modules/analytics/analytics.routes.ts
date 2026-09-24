@@ -10,6 +10,7 @@ import { performanceAnalyticsController } from './performance-analytics.controll
 import { productLeaderboardController } from './product-leaderboard.controller.js';
 import { reportController } from './report.controller.js';
 import { tiktokMonitorController } from './tiktok-monitor.controller.js';
+import { unifiedAnalyticsController } from './unified-analytics.controller.js';
 
 export const analyticsRouter = Router({ mergeParams: true });
 analyticsRouter.use(requireAuth, requireStoreMembership, requireActiveSubscription);
@@ -21,6 +22,9 @@ analyticsRouter.get('/performance', performanceAnalyticsController.daily);
 analyticsRouter.get('/products', analyticsController.products);
 analyticsRouter.get('/products/leaderboard', productLeaderboardController.read);
 analyticsRouter.get('/products/:productId', analyticsController.product);
+// Provider-neutral Product × Ads routes must precede the legacy dynamic route.
+analyticsRouter.get('/product-ads/unified', unifiedAnalyticsController.productAdsList);
+analyticsRouter.get('/product-ads/unified/:productId', unifiedAnalyticsController.productAdsDetail);
 analyticsRouter.get('/product-ads', analyticsController.productAds);
 analyticsRouter.get('/product-ads/:productId', analyticsController.productAdsProduct);
 analyticsRouter.get('/ad-exposure', adExposureController.list);
@@ -30,6 +34,16 @@ analyticsRouter.get('/collections/:collectionId', collectionDetailController.rea
 analyticsRouter.get('/customers', analyticsController.customers);
 analyticsRouter.get('/inventory', analyticsController.inventory);
 
+// Frozen provider-neutral frontend contracts. Legacy Meta-shaped surfaces remain available during
+// the staged frontend cutover, but new frontend work should consume these unified endpoints.
+analyticsRouter.get('/unified/home', unifiedAnalyticsController.home);
+analyticsRouter.get('/unified/decisions', unifiedAnalyticsController.decisionList);
+analyticsRouter.get('/unified/data-quality', unifiedAnalyticsController.dataQuality);
+analyticsRouter.get('/advertising/unified', unifiedAnalyticsController.advertisingOverview);
+analyticsRouter.get('/advertising/unified/campaigns', unifiedAnalyticsController.campaigns);
+analyticsRouter.get('/advertising/unified/groups', unifiedAnalyticsController.groups);
+analyticsRouter.get('/advertising/unified/ads', unifiedAnalyticsController.ads);
+analyticsRouter.get('/advertising/unified/creatives', unifiedAnalyticsController.creatives);
 analyticsRouter.get('/advertising', analyticsController.advertising);
 analyticsRouter.get('/tiktok-monitor', tiktokMonitorController.read);
 analyticsRouter.get('/campaigns', analyticsController.campaigns);

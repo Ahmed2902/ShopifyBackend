@@ -1,16 +1,24 @@
 import { AppError } from '../../errors/app-error.js';
 import { memoizeRequestRead } from '../../lib/request-read-cache.js';
 import { AdvertisingAnalyticsReadRepository } from './advertising-analytics.read.repository.js';
+import type { AdvertisingAnalyticsRepository } from './advertising-analytics.repository.js';
 import { AdvertisingAnalyticsService } from './advertising-analytics.service.js';
 import { resolveAnalyticsWindows } from './analytics.dates.js';
 import { metricChanges, percentChange } from './analytics.metrics.js';
 import { AnalyticsRepository } from './analytics.repository.js';
 import type { AnalyticsListQuery, AnalyticsRangeQuery } from './analytics.schema.js';
 import { windowResponse } from './analytics.shared.js';
+import { CanonicalAnalyticsRepository } from './canonical-analytics.repository.js';
 import { collectionAnalyticsReadService } from './collection-analytics.read.service.js';
 import type { CollectionAnalyticsReadService } from './collection-analytics.read.service.js';
 import { CommerceAnalyticsReadRepository } from './commerce-analytics.read.repository.js';
 import { CommerceAnalyticsService } from './commerce-analytics.service.js';
+import {
+  legacyContributionAfterAds,
+  legacyMer,
+  legacySpendChange,
+  resolveLegacyAdvertisingEvidence,
+} from './legacy-ad-evidence.js';
 
 type StoreContext = NonNullable<Awaited<ReturnType<AnalyticsRepository['getStoreContext']>>>;
 type OrderHistorySync = NonNullable<StoreContext['shopifyConnection']>['syncRuns'][number];
@@ -31,14 +39,17 @@ export class AnalyticsWorkspace {
       new AdvertisingAnalyticsReadRepository(),
     commerceReadRepository?: CommerceAnalyticsReadRepository,
     private readonly collectionReadService?: CollectionAnalyticsReadService,
+    advertisingRepository: AdvertisingAnalyticsRepository = repository,
   ) {
     this.commerce = new CommerceAnalyticsService(repository, commerceReadRepository);
-    this.advertisingService = new AdvertisingAnalyticsService(repository, advertisingReadRepository);
+    this.advertisingService = new AdvertisingAnalyticsService(
+      advertisingRepository,
+      advertisingReadRepository,
+    );
   }
 
   async overview(storeId: string, query: AnalyticsRangeQuery, now = new Date()) {
-    const store = await this.loadStore(storeId);
-    const windows = resolveAnalyticsWindows(query, store.ianaTimezone, now);
+    const { store, windows } = await this.context(storeId, query, now);
     const latestOrderHistoryAttempt = store.shopifyConnection?.syncRuns[0] ?? null;
     const [commerce, advertising, profitabilityBase, latestSuccessfulOrderHistory] =
       await Promise.all([
@@ -52,14 +63,19 @@ export class AnalyticsWorkspace {
             ),
       ]);
 
-    const storeCurrencyAds = advertising.currencies.find(
-      (item) => item.currency === store.currencyCode,
+    const adEvidence = resolveLegacyAdvertisingEvidence(
+      advertising.currencies,
+      store.currencyCode,
     );
-    const currentSpend = storeCurrencyAds?.current.spend ?? 0;
-    const comparisonSpend = storeCurrencyAds?.comparison.spend ?? 0;
-    const currentMer = currentSpend > 0 ? commerce.current.netOrderValue / currentSpend : null;
-    const comparisonMer =
-      comparisonSpend > 0 ? commerce.comparison.netOrderValue / comparisonSpend : null;
+    const currentSpend = adEvidence.current.spend;
+    const comparisonSpend = adEvidence.comparison.spend;
+    const currentMer = legacyMer(commerce.current.netOrderValue, adEvidence.current);
+    const comparisonMer = legacyMer(
+      commerce.comparison.netOrderValue,
+      adEvidence.comparison,
+    );
+    const bothPeriodsHaveSameCurrencyAdSpendEvidence =
+      adEvidence.current.evidenceAvailable && adEvidence.comparison.evidenceAvailable;
 
     const currentProfitability = {
       netProductRevenue: profitabilityBase.current.netProductRevenue,
@@ -67,10 +83,10 @@ export class AnalyticsWorkspace {
       costCoverage: profitabilityBase.current.costCoverage,
       contributionBeforeAds: profitabilityBase.current.contributionBeforeAds,
       adSpend: currentSpend,
-      contributionAfterAds:
-        profitabilityBase.current.contributionBeforeAds === null
-          ? null
-          : profitabilityBase.current.contributionBeforeAds - currentSpend,
+      contributionAfterAds: legacyContributionAfterAds(
+        profitabilityBase.current.contributionBeforeAds,
+        adEvidence.current,
+      ),
     };
     const comparisonProfitability = {
       netProductRevenue: profitabilityBase.comparison.netProductRevenue,
@@ -78,10 +94,14 @@ export class AnalyticsWorkspace {
       costCoverage: profitabilityBase.comparison.costCoverage,
       contributionBeforeAds: profitabilityBase.comparison.contributionBeforeAds,
       adSpend: comparisonSpend,
-      contributionAfterAds:
-        profitabilityBase.comparison.contributionBeforeAds === null
-          ? null
-          : profitabilityBase.comparison.contributionBeforeAds - comparisonSpend,
+      contributionAfterAds: legacyContributionAfterAds(
+        profitabilityBase.comparison.contributionBeforeAds,
+        adEvidence.comparison,
+      ),
+    };
+    const profitabilityChange = {
+      ...metricChanges(currentProfitability, comparisonProfitability),
+      adSpend: legacySpendChange(adEvidence.current, adEvidence.comparison),
     };
 
     return {
@@ -98,18 +118,36 @@ export class AnalyticsWorkspace {
       profitability: {
         current: currentProfitability,
         comparison: comparisonProfitability,
-        change: metricChanges(currentProfitability, comparisonProfitability),
+        change: profitabilityChange,
+        sameCurrencyAdSpendAvailable: bothPeriodsHaveSameCurrencyAdSpendEvidence,
+        sameCurrencyAdSpendAvailability: {
+          current: adEvidence.current.evidenceAvailable,
+          comparison: adEvidence.comparison.evidenceAvailable,
+        },
         excludedMetaCurrencies: advertising.currencies
           .map((item) => item.currency)
           .filter((currency) => currency !== store.currencyCode),
       },
       advertising: advertising.currencies,
       blended: {
-        current: { mer: currentMer, metaSpend: currentSpend },
-        comparison: { mer: comparisonMer, metaSpend: comparisonSpend },
+        current: {
+          mer: currentMer,
+          metaSpend: currentSpend,
+          evidenceAvailable: adEvidence.current.evidenceAvailable,
+        },
+        comparison: {
+          mer: comparisonMer,
+          metaSpend: comparisonSpend,
+          evidenceAvailable: adEvidence.comparison.evidenceAvailable,
+        },
         change: {
           mer: percentChange(currentMer, comparisonMer),
-          metaSpend: percentChange(currentSpend, comparisonSpend),
+          metaSpend: legacySpendChange(adEvidence.current, adEvidence.comparison),
+        },
+        sameCurrencySpendAvailable: bothPeriodsHaveSameCurrencyAdSpendEvidence,
+        sameCurrencySpendAvailability: {
+          current: adEvidence.current.evidenceAvailable,
+          comparison: adEvidence.comparison.evidenceAvailable,
         },
       },
       availability: this.availability(
@@ -200,10 +238,30 @@ export class AnalyticsWorkspace {
   }
 
   private async context(storeId: string, query: AnalyticsRangeQuery, now: Date) {
-    const store = await this.loadStore(storeId);
+    const baseStore = await this.loadStore(storeId);
+    const store = this.scopeMetaAccount(baseStore, query.accountId);
     return {
       store,
       windows: resolveAnalyticsWindows(query, store.ianaTimezone, now),
+    };
+  }
+
+  private scopeMetaAccount(store: StoreContext, accountId?: string): StoreContext {
+    if (!accountId) return store;
+    const selected = store.metaConnection?.selectedAdAccountIds ?? [];
+    if (!store.metaConnection || !selected.includes(accountId)) {
+      throw new AppError(
+        'Meta ad account is not selected for this store',
+        400,
+        'META_AD_ACCOUNT_NOT_SELECTED',
+      );
+    }
+    return {
+      ...store,
+      metaConnection: {
+        ...store.metaConnection,
+        selectedAdAccountIds: [accountId],
+      },
     };
   }
 
@@ -261,4 +319,5 @@ export const analyticsWorkspace = new AnalyticsWorkspace(
   new AdvertisingAnalyticsReadRepository(),
   new CommerceAnalyticsReadRepository(),
   collectionAnalyticsReadService,
+  new CanonicalAnalyticsRepository(),
 );

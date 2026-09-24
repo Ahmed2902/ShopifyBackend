@@ -1,4 +1,5 @@
 import { AppError } from '../../errors/app-error.js';
+import type { AdvertisingAnalyticsRepository } from './advertising-analytics.repository.js';
 import { resolveAnalyticsWindows } from './analytics.dates.js';
 import {
   aggregateMeta,
@@ -9,6 +10,7 @@ import {
 import { AnalyticsRepository } from './analytics.repository.js';
 import type { AnalyticsListQuery, AnalyticsRangeQuery } from './analytics.schema.js';
 import { pagination, splitCommerce, splitMeta, windowResponse } from './analytics.shared.js';
+import { CanonicalAnalyticsRepository } from './canonical-analytics.repository.js';
 import {
   AD_EXPOSURE_DETAIL_MEMBER_LIMIT,
   AD_EXPOSURE_LIST_MEMBER_LIMIT,
@@ -147,6 +149,7 @@ export class AdExposureWorkspace {
   constructor(
     private readonly analyticsRepository: AnalyticsRepository = new AnalyticsRepository(),
     private readonly repository: AdExposureRepository = new AdExposureRepository(),
+    private readonly advertisingRepository: AdvertisingAnalyticsRepository = analyticsRepository,
   ) {}
 
   async list(storeId: string, query: AnalyticsListQuery, now = new Date()) {
@@ -192,9 +195,21 @@ export class AdExposureWorkspace {
   private async context(storeId: string, query: AnalyticsRangeQuery, now: Date) {
     const store = await this.analyticsRepository.getStoreContext(storeId);
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
+    const configuredAccountIds = store.metaConnection?.selectedAdAccountIds ?? [];
+    if (
+      query.accountId &&
+      (!store.metaConnection || !configuredAccountIds.includes(query.accountId))
+    ) {
+      throw new AppError(
+        'Meta ad account is not selected for this store',
+        400,
+        'META_AD_ACCOUNT_NOT_SELECTED',
+      );
+    }
+    const selectedAccountIds = query.accountId ? [query.accountId] : configuredAccountIds;
     return {
       store,
-      selectedAccountIds: store.metaConnection?.selectedAdAccountIds ?? [],
+      selectedAccountIds,
       windows: resolveAnalyticsWindows(query, store.ianaTimezone, now),
     };
   }
@@ -209,7 +224,7 @@ export class AdExposureWorkspace {
     const adIds = ads.map((ad) => ad.id);
     const productIds = [...new Set(ads.flatMap(targetProductIds))];
     const [metaRows, commerceRows, inventoryRows] = await Promise.all([
-      this.analyticsRepository.getMetaRows(
+      this.advertisingRepository.getMetaRows(
         storeId,
         context.selectedAccountIds,
         context.windows.comparison.metaFrom,
@@ -460,4 +475,8 @@ export class AdExposureWorkspace {
   }
 }
 
-export const adExposureWorkspace = new AdExposureWorkspace();
+export const adExposureWorkspace = new AdExposureWorkspace(
+  new AnalyticsRepository(),
+  new AdExposureRepository(),
+  new CanonicalAnalyticsRepository(),
+);

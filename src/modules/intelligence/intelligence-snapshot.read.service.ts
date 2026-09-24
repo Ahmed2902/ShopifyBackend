@@ -1,5 +1,6 @@
 import { intelligenceSnapshotCachedReads } from '../../lib/store-decision-cache.js';
-import { intelligenceService, type IntelligenceService } from './intelligence.service.js';
+import { intelligenceRuntimeService } from './intelligence.runtime.js';
+import type { IntelligenceService } from './intelligence.service.js';
 
 /**
  * Shared cache/coalescing boundary for the expensive deterministic snapshot.
@@ -9,7 +10,7 @@ import { intelligenceService, type IntelligenceService } from './intelligence.se
  * the evidence queries.
  */
 export class IntelligenceSnapshotReadService {
-  constructor(private readonly service: IntelligenceService = intelligenceService) {}
+  constructor(private readonly service: IntelligenceService = intelligenceRuntimeService) {}
 
   read(storeId: string, options: { fresh?: boolean } = {}) {
     return intelligenceSnapshotCachedReads.run(

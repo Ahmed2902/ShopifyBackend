@@ -2,8 +2,6 @@ import { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
 import type { PaidEntityEvidence } from './paid-entity-intelligence.metrics.js';
 
-const PURCHASE_ACTION_TYPE = 'offsite_conversion.fb_pixel_purchase';
-
 type RawAdSetEvidenceRow = {
   period: 'CURRENT' | 'COMPARISON';
   account_currency: string;
@@ -23,12 +21,7 @@ function numeric(value: Prisma.Decimal | string | number | bigint | null): numbe
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-/**
- * Period-level ad-set evidence built from the already-normalized AD insight rows.
- *
- * Meta reach is deliberately not summed across child ads, so frequency is left null.
- * Purchase actions use the same priority/fallback semantics as the main intelligence read.
- */
+/** Period-level delivery-group evidence from canonical AD facts. */
 export class IntelligenceAdSetReadRepository {
   async getEvidence(input: {
     storeId: string;
@@ -39,119 +32,43 @@ export class IntelligenceAdSetReadRepository {
     comparisonTo: Date;
   }): Promise<PaidEntityEvidence[]> {
     if (input.selectedAccountIds.length === 0) return [];
-
     const accountIds = Prisma.join(input.selectedAccountIds.map((id) => Prisma.sql`${id}`));
+
     const rows = await prisma.$queryRaw<RawAdSetEvidenceRow[]>(Prisma.sql`
-      WITH scoped_insights AS (
-        SELECT
-          insight."id",
-          CASE
-            WHEN insight."date" BETWEEN ${input.currentFrom} AND ${input.currentTo}
-              THEN 'CURRENT'
-            ELSE 'COMPARISON'
-          END AS period,
-          insight."accountCurrency" AS account_currency,
-          insight."spend",
-          insight."impressions",
-          insight."clicks",
-          ad_set."id" AS ad_set_id,
-          ad_set."metaAdSetId" AS ad_set_external_id,
-          ad_set."name" AS ad_set_name
-        FROM "MetaInsightDaily" insight
-        INNER JOIN "MetaAdAccount" account ON account."id" = insight."adAccountId"
-        INNER JOIN "MetaAdSet" ad_set ON ad_set."id" = insight."adSetId"
-        WHERE account."storeId" = ${input.storeId}::uuid
-          AND account."metaAccountId" IN (${accountIds})
-          AND insight."level" = 'AD'
-          AND (
-            insight."date" BETWEEN ${input.currentFrom} AND ${input.currentTo}
-            OR insight."date" BETWEEN ${input.comparisonFrom} AND ${input.comparisonTo}
-          )
-      ),
-      action_type_totals AS (
-        SELECT
-          action."insightId" AS insight_id,
-          action."kind"::text AS kind,
-          action."actionType" AS action_type,
-          SUM(action."value") AS summed_value,
-          MAX(action."value") FILTER (WHERE action."value" > 0) AS max_positive_value,
-          CASE
-            WHEN action."actionType" = ${PURCHASE_ACTION_TYPE} THEN 0
-            WHEN action."actionType" = 'omni_purchase' THEN 1
-            WHEN action."actionType" = 'purchase' THEN 2
-            WHEN LOWER(action."actionType") LIKE '%purchase%' THEN 3
-            ELSE 100
-          END AS purchase_rank
-        FROM "MetaInsightAction" action
-        INNER JOIN scoped_insights scoped ON scoped."id" = action."insightId"
-        WHERE action."kind" IN ('ACTION', 'ACTION_VALUE', 'PURCHASE_ROAS', 'WEBSITE_PURCHASE_ROAS')
-          AND (
-            action."actionType" IN (${PURCHASE_ACTION_TYPE}, 'omni_purchase', 'purchase')
-            OR LOWER(action."actionType") LIKE '%purchase%'
-          )
-        GROUP BY action."insightId", action."kind", action."actionType"
-      ),
-      ranked_actions AS (
-        SELECT
-          totals.*,
-          ROW_NUMBER() OVER (
-            PARTITION BY totals.insight_id, totals.kind
-            ORDER BY totals.purchase_rank ASC, totals.action_type ASC
-          ) AS type_rank
-        FROM action_type_totals totals
-        WHERE totals.purchase_rank < 100
-      ),
-      selected_actions AS (
-        SELECT
-          ranked.insight_id,
-          MAX(ranked.summed_value) FILTER (
-            WHERE ranked.kind = 'ACTION' AND ranked.type_rank = 1
-          ) AS purchases,
-          MAX(ranked.summed_value) FILTER (
-            WHERE ranked.kind = 'ACTION_VALUE' AND ranked.type_rank = 1
-          ) AS direct_purchase_value,
-          MAX(ranked.max_positive_value) FILTER (
-            WHERE ranked.kind = 'WEBSITE_PURCHASE_ROAS' AND ranked.type_rank = 1
-          ) AS website_purchase_roas,
-          MAX(ranked.max_positive_value) FILTER (
-            WHERE ranked.kind = 'PURCHASE_ROAS' AND ranked.type_rank = 1
-          ) AS purchase_roas
-        FROM ranked_actions ranked
-        GROUP BY ranked.insight_id
-      )
       SELECT
-        scoped.period,
-        scoped.account_currency,
-        scoped.ad_set_id,
-        scoped.ad_set_external_id,
-        scoped.ad_set_name,
-        COALESCE(SUM(scoped."spend"), 0) AS spend,
-        COALESCE(SUM(scoped."impressions"), 0) AS impressions,
-        COALESCE(SUM(scoped."clicks"), 0) AS clicks,
-        COALESCE(SUM(actions.purchases), 0) AS purchases,
-        COALESCE(
-          SUM(
-            CASE
-              WHEN COALESCE(actions.direct_purchase_value, 0) > 0
-                THEN actions.direct_purchase_value
-              ELSE scoped."spend" * COALESCE(
-                actions.website_purchase_roas,
-                actions.purchase_roas,
-                0
-              )
-            END
-          ),
-          0
-        ) AS purchase_value
-      FROM scoped_insights scoped
-      LEFT JOIN selected_actions actions ON actions.insight_id = scoped."id"
+        CASE
+          WHEN metric."date" BETWEEN ${input.currentFrom} AND ${input.currentTo}
+            THEN 'CURRENT'
+          ELSE 'COMPARISON'
+        END AS period,
+        COALESCE(metric."currency", account."currency", '') AS account_currency,
+        delivery_group."id" AS ad_set_id,
+        delivery_group."providerEntityId" AS ad_set_external_id,
+        delivery_group."name" AS ad_set_name,
+        COALESCE(SUM(metric."spend"), 0) AS spend,
+        COALESCE(SUM(metric."impressions"), 0) AS impressions,
+        COALESCE(SUM(metric."clicks"), 0) AS clicks,
+        COALESCE(SUM(metric."conversions"), 0) AS purchases,
+        COALESCE(SUM(metric."conversionValue"), 0) AS purchase_value
+      FROM "AdvertisingDailyMetric" metric
+      INNER JOIN "AdvertisingAccount" account ON account."id" = metric."accountId"
+      INNER JOIN "AdvertisingGroup" delivery_group ON delivery_group."id" = metric."groupId"
+      WHERE account."storeId" = ${input.storeId}::uuid
+        AND account."provider" = 'META'::"AdvertisingProvider"
+        AND account."providerEntityId" IN (${accountIds})
+        AND delivery_group."kind" = 'AD_SET'::"AdvertisingGroupKind"
+        AND metric."level" = 'AD'::"AdvertisingMetricLevel"
+        AND (
+          metric."date" BETWEEN ${input.currentFrom} AND ${input.currentTo}
+          OR metric."date" BETWEEN ${input.comparisonFrom} AND ${input.comparisonTo}
+        )
       GROUP BY
-        scoped.period,
-        scoped.account_currency,
-        scoped.ad_set_id,
-        scoped.ad_set_external_id,
-        scoped.ad_set_name
-      ORDER BY scoped.account_currency, scoped.ad_set_id, scoped.period
+        period,
+        account_currency,
+        delivery_group."id",
+        delivery_group."providerEntityId",
+        delivery_group."name"
+      ORDER BY account_currency, delivery_group."id", period
     `);
 
     const groups = new Map<
@@ -166,7 +83,6 @@ export class IntelligenceAdSetReadRepository {
       }
     >();
     const currentSpendByCurrency = new Map<string, number>();
-
     const empty = (): PaidEntityEvidence['current'] => ({
       spend: 0,
       impressions: 0,
