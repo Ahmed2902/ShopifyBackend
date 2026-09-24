@@ -23,12 +23,6 @@ export interface KnowledgeCapability {
   caveats: string[];
 }
 
-/**
- * Stable, model-readable map of what Stride knows.
- *
- * This catalog is intentionally independent from MCP. The UI, exports and future agents can use the
- * same vocabulary, while protocol adapters only decide how to expose it.
- */
 export const BUSINESS_KNOWLEDGE_CATALOG: readonly KnowledgeCapability[] = [
   {
     domain: 'BUSINESS',
@@ -81,7 +75,7 @@ export const BUSINESS_KNOWLEDGE_CATALOG: readonly KnowledgeCapability[] = [
   {
     domain: 'PAID_MEDIA',
     description: 'Provider-reported campaigns, groups, ads, spend, delivery, conversions, value and efficiency where the provider exposes trustworthy normalized evidence.',
-    sourceOfTruth: ['Meta provider reporting', 'TikTok provider reporting'],
+    sourceOfTruth: ['Meta provider reporting', 'TikTok provider reporting', 'Google Ads provider reporting'],
     entityTypes: ['AD_ACCOUNT', 'CAMPAIGN', 'GROUP', 'AD'],
     questions: ['What is spending?', 'Which campaigns are efficient?', 'What changed in paid media?'],
     caveats: ['Provider attribution is not Shopify purchase truth.', 'Currencies are never silently combined.', 'Provider capability limitations travel with the returned evidence.'],
@@ -89,12 +83,13 @@ export const BUSINESS_KNOWLEDGE_CATALOG: readonly KnowledgeCapability[] = [
   {
     domain: 'CREATIVES',
     description: 'Creative-level delivery, efficiency, fatigue and video-retention evidence only where normalized provider evidence is available.',
-    sourceOfTruth: ['Meta creative/insight data'],
+    sourceOfTruth: ['Meta creative/insight data', 'Google Ads canonical asset entities'],
     entityTypes: ['CREATIVE', 'AD'],
     questions: ['Which supported creatives are tiring?', 'Which supported creative has stronger delivery evidence?', 'Where does supported video attention drop?'],
     caveats: [
       'Meta normalized creative analytics and supported video-retention evidence are available.',
       'TikTok normalized creative analytics are not available; Stride must not infer creative efficiency, fatigue or video retention from unsupported evidence.',
+      'Google Ads asset entities are available, but normalized asset-level delivery analytics are not claimed; asset entities must not be presented as evidence of creative efficiency.',
       'Creative conclusions depend on sufficient delivery and the provider metrics available for that format.',
     ],
   },
@@ -117,10 +112,10 @@ export const BUSINESS_KNOWLEDGE_CATALOG: readonly KnowledgeCapability[] = [
   {
     domain: 'PRODUCT_ADS',
     description: 'Cross-domain mapping between Shopify product economics and exact/confirmed paid-media exposure.',
-    sourceOfTruth: ['Shopify commerce', 'Meta insights', 'Stride product-ad mappings'],
+    sourceOfTruth: ['Shopify commerce', 'provider paid-media facts', 'Stride product-ad mappings'],
     entityTypes: ['PRODUCT', 'VARIANT', 'AD'],
     questions: ['Which products receive ad spend?', 'Is mapped spend profitable?', 'How complete is mapping coverage?'],
-    caveats: ['Only exact single-product mappings are allocated directly; shared/multi-product spend remains explicit.'],
+    caveats: ['Only exact single-product mappings are allocated directly; shared/multi-product spend remains explicit.', 'Missing paid-media evidence never implies zero ad spend.'],
   },
   {
     domain: 'RECOMMENDATIONS',

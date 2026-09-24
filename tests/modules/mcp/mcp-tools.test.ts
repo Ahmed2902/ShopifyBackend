@@ -201,6 +201,12 @@ describe('Stride MCP tools', () => {
           message:
             'Essentials includes one advertising channel. Choose the existing channel or upgrade to Pro.',
         },
+        {
+          provider: 'GOOGLE_ADS',
+          code: 'PLAN_AD_CHANNEL_LIMIT',
+          message:
+            'Essentials includes one advertising channel. Choose the existing channel or upgrade to Pro.',
+        },
       ],
     });
   });
@@ -221,7 +227,7 @@ describe('Stride MCP tools', () => {
     expect(value.search).toHaveBeenCalledWith(storeId, {
       query: 'campaign',
       entityTypes: ['CAMPAIGN', 'AD'],
-      paidMediaProviders: ['META', 'TIKTOK'],
+      paidMediaProviders: ['META', 'TIKTOK', 'GOOGLE_ADS'],
     });
   });
 
@@ -250,9 +256,13 @@ describe('Stride MCP tools', () => {
     });
 
     expect(plan.requireActive).toHaveBeenCalledTimes(1);
-    expect(plan.requireAdProviderReadOnly).toHaveBeenCalledTimes(2);
+    expect(plan.requireAdProviderReadOnly).toHaveBeenCalledTimes(3);
     expect(result.paidMediaAccess.allowedProviders).toEqual(['META']);
-    expect(result.paidMediaAccess.blockedProviders).toHaveLength(1);
+    expect(result.paidMediaAccess.blockedProviders).toHaveLength(2);
+    expect(result.paidMediaAccess.blockedProviders.map((item) => item.provider)).toEqual([
+      'TIKTOK',
+      'GOOGLE_ADS',
+    ]);
   });
 
   it('preserves the Pro entitlement for advanced Pixel attribution', async () => {

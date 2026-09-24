@@ -50,9 +50,19 @@ function schema(properties: Record<string, unknown>, required: string[] = []) {
 }
 
 const paginationProperties = {
-  days: { type: 'integer', minimum: 1, maximum: 365, description: 'Analysis window in days. Defaults to 30.' },
+  days: {
+    type: 'integer',
+    minimum: 1,
+    maximum: 365,
+    description: 'Analysis window in days. Defaults to 30.',
+  },
   page: { type: 'integer', minimum: 1, description: '1-based page. Defaults to 1.' },
-  limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Maximum rows. Defaults to 50.' },
+  limit: {
+    type: 'integer',
+    minimum: 1,
+    maximum: 100,
+    description: 'Maximum rows. Defaults to 50.',
+  },
 };
 
 const advisorEntityTypes = [
@@ -68,7 +78,7 @@ const advisorEntityTypes = [
 ] as const;
 
 const paidMediaSearchTypes = new Set(['CAMPAIGN', 'GROUP', 'AD', 'CREATIVE']);
-const paidMediaProviders: readonly V1AdProvider[] = ['META', 'TIKTOK'];
+const paidMediaProviders: readonly V1AdProvider[] = ['META', 'TIKTOK', 'GOOGLE_ADS'];
 
 function providerAccessBlock(error: unknown): error is AppError {
   return (
@@ -94,7 +104,10 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
       'Get a compact cross-domain marketing-advisor snapshot: Shopify commerce truth, profitability/contribution, paid-media pressure, dashboard signals, deterministic Stride recommendations with lifecycle state and data quality, first-party storefront behavior including derived funnel understanding, and Product × Ads evidence. Start here for broad questions such as “how are we doing?”, “what changed?”, or “what needs attention?”. Drill down with the other tools before making entity-specific claims not present in the snapshot.',
     inputSchema: schema({
       days: paginationProperties.days,
-      fresh: { type: 'boolean', description: 'Bypass Stride intelligence/dashboard caches when true. Use sparingly.' },
+      fresh: {
+        type: 'boolean',
+        description: 'Bypass Stride intelligence/dashboard caches when true. Use sparingly.',
+      },
     }),
     outputSchema: objectOutputSchema,
     annotations: readAnnotations,
@@ -103,10 +116,15 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
     name: 'stride_search',
     title: 'Search Stride business evidence',
     description:
-      'Search business entities and deterministic findings Stride knows about by name, internal/external id, or matching aggregate evidence. Searches Shopify products/collections, entitled Meta/TikTok paid-media entities, Pixel landing pages and attribution sources, and Stride recommendations; it deliberately excludes raw customer PII. Use it to resolve names before a detail call.',
+      'Search business entities and deterministic findings Stride knows about by name, internal/external id, or matching aggregate evidence. Searches Shopify products/collections, entitled Meta/TikTok/Google Ads paid-media entities, Pixel landing pages and attribution sources, and Stride recommendations; it deliberately excludes raw customer PII. Use it to resolve names before a detail call.',
     inputSchema: schema(
       {
-        query: { type: 'string', minLength: 1, maxLength: 300, description: 'Name, identifier, or aggregate evidence phrase.' },
+        query: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 300,
+          description: 'Name, identifier, or aggregate evidence phrase.',
+        },
         entityTypes: {
           type: 'array',
           items: { enum: advisorEntityTypes },
@@ -125,11 +143,27 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
     name: 'stride_get_commerce',
     title: 'Read Shopify commerce intelligence',
     description:
-      'Read Stride’s Shopify-grounded commerce intelligence. `overview` covers revenue/order value, refunds, discounts, customer mix, contribution and same-currency blended MER. `performance` returns the daily commerce/Meta trend series. `products`/`product` expose product economics, while `product_leaderboard` returns store-wide product ranking/totals. `collections` lists collection analytics and `collection_detail` returns the current Shopify collection and paginated membership snapshot. `customers` and `inventory` expose their analytical read models. Shopify remains the commerce source of truth.',
+      'Read Stride’s Shopify-grounded commerce intelligence. `overview` covers revenue/order value, refunds, discounts, customer mix, contribution and same-currency blended MER. `performance` returns the daily commerce/paid-media trend series. `products`/`product` expose product economics, while `product_leaderboard` returns store-wide product ranking/totals. `collections` lists collection analytics and `collection_detail` returns the current Shopify collection and paginated membership snapshot. `customers` and `inventory` expose their analytical read models. Shopify remains the commerce source of truth.',
     inputSchema: schema(
       {
-        surface: { enum: ['overview', 'performance', 'products', 'product', 'product_leaderboard', 'collections', 'collection_detail', 'customers', 'inventory'] },
-        entityId: { type: 'string', format: 'uuid', description: 'Required for surface=product or collection_detail.' },
+        surface: {
+          enum: [
+            'overview',
+            'performance',
+            'products',
+            'product',
+            'product_leaderboard',
+            'collections',
+            'collection_detail',
+            'customers',
+            'inventory',
+          ],
+        },
+        entityId: {
+          type: 'string',
+          format: 'uuid',
+          description: 'Required for surface=product or collection_detail.',
+        },
         ...paginationProperties,
       },
       ['surface'],
@@ -141,13 +175,19 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
     name: 'stride_get_paid_media',
     title: 'Read paid-media intelligence',
     description:
-      'Read provider-reported paid-media evidence through Stride’s normalized provider layer while preserving the store plan’s selected advertising-channel entitlement. `overview`, `list`, and `detail` support Meta/TikTok according to returned capabilities. The generic hierarchy is Campaign → Group → Ad; provider-specific labels such as Meta Ad Set and TikTok Ad Group are returned by capabilities. Meta-only `ad_exposure_list` and `ad_exposure_detail` add deterministic Shopify target mapping, mapping confidence/precision, current inventory context, and explicit shared-spend limitations. TikTok has canonical campaign/group/ad drill-down but no claimed creative parity. Provider conversion/value metrics are not Shopify purchase truth.',
+      'Read provider-reported paid-media evidence through Stride’s normalized provider layer while preserving the store plan’s selected advertising-channel entitlement. `overview`, `list`, and `detail` support Meta, TikTok, and Google Ads according to returned capabilities. The generic hierarchy is Campaign → Group → Ad; provider capabilities label Meta groups as Ad Sets, TikTok/normal Google groups as Ad Groups, and Google Performance Max groups as Asset Groups. Meta-only `ad_exposure_list` and `ad_exposure_detail` add its specialized reverse mapping view. Google conversion value/ROAS remain provider attribution, PMax does not fabricate ads, and asset-level delivery metrics/reach remain unavailable unless Google supplies trustworthy evidence. Provider conversion/value metrics are not Shopify purchase truth.',
     inputSchema: schema(
       {
-        provider: { enum: ['META', 'TIKTOK'] },
+        provider: { enum: ['META', 'TIKTOK', 'GOOGLE_ADS'] },
         action: { enum: ['overview', 'list', 'detail', 'ad_exposure_list', 'ad_exposure_detail'] },
-        level: { enum: ['CAMPAIGN', 'GROUP', 'AD', 'CREATIVE'], description: 'Required for action=list or detail.' },
-        entityId: { type: 'string', description: 'Stride internal entity id. Required for detail or ad_exposure_detail.' },
+        level: {
+          enum: ['CAMPAIGN', 'GROUP', 'AD', 'CREATIVE'],
+          description: 'Required for action=list or detail.',
+        },
+        entityId: {
+          type: 'string',
+          description: 'Stride internal entity id. Required for detail or ad_exposure_detail.',
+        },
         ...paginationProperties,
       },
       ['provider', 'action'],
@@ -178,7 +218,10 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
     inputSchema: schema(
       {
         surface: { enum: ['sources', 'meta_ads', 'paths', 'mappings'] },
-        targetType: { enum: ['PRODUCT', 'COLLECTION'], description: 'Required for surface=mappings.' },
+        targetType: {
+          enum: ['PRODUCT', 'COLLECTION'],
+          description: 'Required for surface=mappings.',
+        },
         ...paginationProperties,
       },
       ['surface'],
@@ -190,7 +233,7 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
     name: 'stride_get_product_ads',
     title: 'Read Product × Ads evidence',
     description:
-      'Read the product-centric cross-domain connection between Shopify product economics and mapped Meta exposure. Returns mapping confidence/coverage, mapped vs shared/unmapped spend, contribution after mapped ads, and methodology. Use list for ranking/comparison and detail for one product. For the reverse ad-centric view with inventory context, use Meta ad exposure through stride_get_paid_media. Never allocate shared/multi-product spend as if it were exact.',
+      'Read the product-centric cross-domain connection between Shopify product economics and canonical mapped paid-media exposure. Returns mapping confidence/coverage, mapped vs shared/unmapped spend, contribution after mapped ads, and methodology. Google mappings are emitted only from deterministic Shopify-owned final URLs; PMax/Shopping shared spend is not guessed or divided across products. Never allocate shared/multi-product spend as if it were exact.',
     inputSchema: schema(
       {
         action: { enum: ['list', 'detail'] },
@@ -246,7 +289,17 @@ const searchInput = z
   .strict();
 const commerceInput = z
   .object({
-    surface: z.enum(['overview', 'performance', 'products', 'product', 'product_leaderboard', 'collections', 'collection_detail', 'customers', 'inventory']),
+    surface: z.enum([
+      'overview',
+      'performance',
+      'products',
+      'product',
+      'product_leaderboard',
+      'collections',
+      'collection_detail',
+      'customers',
+      'inventory',
+    ]),
     entityId: z.string().uuid().optional(),
     days,
     page,
@@ -255,7 +308,7 @@ const commerceInput = z
   .strict();
 const paidMediaInput = z
   .object({
-    provider: z.enum(['META', 'TIKTOK']),
+    provider: z.enum(['META', 'TIKTOK', 'GOOGLE_ADS']),
     action: z.enum(['overview', 'list', 'detail', 'ad_exposure_list', 'ad_exposure_detail']),
     level: z.enum(['CAMPAIGN', 'GROUP', 'AD', 'CREATIVE']).optional(),
     entityId: z.string().min(1).max(256).optional(),
@@ -265,7 +318,12 @@ const paidMediaInput = z
   })
   .strict();
 const storefrontInput = z
-  .object({ surface: z.enum(['overview', 'products', 'collections', 'landing_pages']), days, page, limit })
+  .object({
+    surface: z.enum(['overview', 'products', 'collections', 'landing_pages']),
+    days,
+    page,
+    limit,
+  })
   .strict();
 const attributionInput = z
   .object({
@@ -277,7 +335,13 @@ const attributionInput = z
   })
   .strict();
 const productAdsInput = z
-  .object({ action: z.enum(['list', 'detail']), productId: z.string().uuid().optional(), days, page, limit })
+  .object({
+    action: z.enum(['list', 'detail']),
+    productId: z.string().uuid().optional(),
+    days,
+    page,
+    limit,
+  })
   .strict();
 const recommendationInput = z.object({ fresh }).strict();
 const decisionSettingsInput = z.object({}).strict();
@@ -288,8 +352,10 @@ function required<T>(value: T | undefined, message: string): T {
   return value;
 }
 
-function requireMeta(provider: 'META' | 'TIKTOK', action: string) {
-  if (provider !== 'META') throw new Error(`${action} is currently supported only for provider=META`);
+function requireMeta(provider: V1AdProvider, action: string) {
+  if (provider !== 'META') {
+    throw new Error(`${action} is currently supported only for provider=META`);
+  }
 }
 
 export class McpToolExecutor {
@@ -354,7 +420,11 @@ export class McpToolExecutor {
               .map((check) => check.provider);
             blockedProviders = providerChecks
               .filter((check) => !check.allowed)
-              .map((check) => ({ provider: check.provider, code: check.code, message: check.message }));
+              .map((check) => ({
+                provider: check.provider,
+                code: check.code,
+                message: check.message,
+              }));
           }
         }
 
@@ -379,7 +449,9 @@ export class McpToolExecutor {
             input.days,
           );
         }
-        if (input.surface === 'product_leaderboard') return this.reads.productLeaderboard(storeId, input);
+        if (input.surface === 'product_leaderboard') {
+          return this.reads.productLeaderboard(storeId, input);
+        }
         if (input.surface === 'collections') return this.reads.collections(storeId, input);
         if (input.surface === 'collection_detail') {
           return this.reads.collectionDetail(
@@ -399,7 +471,10 @@ export class McpToolExecutor {
         if (input.action === 'ad_exposure_list' || input.action === 'ad_exposure_detail') {
           requireMeta(input.provider, input.action);
           if (input.action === 'ad_exposure_detail') {
-            detailEntityId = required(input.entityId, 'entityId is required for ad_exposure_detail');
+            detailEntityId = required(
+              input.entityId,
+              'entityId is required for ad_exposure_detail',
+            );
           }
         } else if (input.action === 'list' || input.action === 'detail') {
           level = required(input.level, 'level is required for paid-media list/detail');
@@ -408,16 +483,20 @@ export class McpToolExecutor {
           }
         }
 
-        // Validate provider/action/detail shape before touching billing or provider data so malformed
-        // requests are cheap to reject and cannot amplify database work.
         await this.billing.requireAdProviderReadOnly(storeId, input.provider);
 
-        if (input.action === 'ad_exposure_list') return this.reads.adExposureList(storeId, input);
+        if (input.action === 'ad_exposure_list') {
+          return this.reads.adExposureList(storeId, input);
+        }
         if (input.action === 'ad_exposure_detail') {
           return this.reads.adExposureDetail(storeId, detailEntityId!, input.days);
         }
-        if (input.action === 'overview') return this.reads.paidMediaOverview(storeId, input.provider, input.days);
-        if (input.action === 'list') return this.reads.paidMediaList(storeId, input.provider, level!, input);
+        if (input.action === 'overview') {
+          return this.reads.paidMediaOverview(storeId, input.provider, input.days);
+        }
+        if (input.action === 'list') {
+          return this.reads.paidMediaList(storeId, input.provider, level!, input);
+        }
         return this.reads.paidMediaDetail(
           storeId,
           input.provider,
@@ -428,9 +507,13 @@ export class McpToolExecutor {
       }
       case 'stride_get_storefront': {
         const input = storefrontInput.parse(args);
-        if (input.surface === 'overview') return this.reads.storefrontOverview(storeId, input.days);
+        if (input.surface === 'overview') {
+          return this.reads.storefrontOverview(storeId, input.days);
+        }
         if (input.surface === 'products') return this.reads.storefrontProducts(storeId, input);
-        if (input.surface === 'collections') return this.reads.storefrontCollections(storeId, input);
+        if (input.surface === 'collections') {
+          return this.reads.storefrontCollections(storeId, input);
+        }
         return this.reads.storefrontLandingPages(storeId, input);
       }
       case 'stride_get_attribution': {
@@ -438,7 +521,10 @@ export class McpToolExecutor {
         if (input.surface === 'sources') return this.reads.attributionSources(storeId, input);
         if (input.surface === 'meta_ads') return this.reads.attributionMetaAds(storeId, input);
         if (input.surface === 'mappings') {
-          const targetType = required(input.targetType, 'targetType is required for surface=mappings');
+          const targetType = required(
+            input.targetType,
+            'targetType is required for surface=mappings',
+          );
           await this.billing.requireEntitlement(storeId, 'ADVANCED_ATTRIBUTION');
           return this.reads.attributionMappings(storeId, targetType, input);
         }

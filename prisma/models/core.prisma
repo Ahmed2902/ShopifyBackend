@@ -44,6 +44,7 @@ enum BillingProvider {
 enum BillingAdProvider {
   META
   TIKTOK
+  GOOGLE_ADS
 }
 
 model User {
@@ -181,6 +182,7 @@ model Store {
   shopifyConnection               ShopifyConnection?
   metaConnection                  MetaConnection?
   tiktokConnection                TikTokConnection?
+  googleAdsConnection             GoogleAdsConnection?
   advertisingAccounts             AdvertisingAccount[]
   pixelInstallation               PixelInstallation?
   shopifyDataRequests             ShopifyDataRequest[]
@@ -189,6 +191,7 @@ model Store {
   metaCatalogs                    MetaProductCatalog[]
   tiktokAdvertisers               TikTokAdvertiser[]
   tiktokCatalogs                  TikTokCatalog[]
+  googleAdsCustomers              GoogleAdsCustomer[]
   products                        Product[]
   variants                        ProductVariant[]
   collections                     Collection[]

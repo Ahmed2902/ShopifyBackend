@@ -13,7 +13,7 @@ export const V1_TRIAL_DAYS = 14;
 
 export type V1BillingPlan = 'ESSENTIALS' | 'PRO';
 export type V1Entitlement = 'MULTI_AD_CHANNEL' | 'VISITOR_JOURNEYS' | 'ADVANCED_ATTRIBUTION';
-export type V1AdProvider = 'META' | 'TIKTOK';
+export type V1AdProvider = 'META' | 'TIKTOK' | 'GOOGLE_ADS';
 
 const planCatalog = {
   ESSENTIALS: {
@@ -238,15 +238,11 @@ export class BillingService {
       const inactiveNeedsRefresh = !billing.accessActive && billing.verification.stale;
 
       if (hasNeverVerified || inactiveNeedsRefresh) {
-        // This verification is correctness-critical: a never-verified or currently inactive local
-        // record cannot safely grant/deny access without checking Shopify once.
         billing = await this.read(storeId, now, {
           fresh: true,
           failOnVerificationError: true,
         });
       }
-      // Active stale records intentionally remain local-only on the request path. The persistent
-      // BillingReconciliation worker refreshes them, which survives serverless response teardown.
     }
 
     if (!billing.accessActive) {
@@ -326,11 +322,6 @@ export class BillingService {
     return billing;
   }
 
-  /**
-   * Read-only counterpart to requireAdProvider for advisor/MCP reads.
-   * It preserves the same Essentials channel restrictions without auto-selecting
-   * a provider or otherwise mutating the subscription from a read-only tool call.
-   */
   async requireAdProviderReadOnly(storeId: string, provider: V1AdProvider) {
     const billing = await this.requireActive(storeId);
     if (billing.entitlements.maxAdChannels === null) return billing;
@@ -434,6 +425,7 @@ export class BillingService {
       select: {
         metaConnection: { select: { status: true } },
         tiktokConnection: { select: { status: true } },
+        googleAdsConnection: { select: { status: true } },
       },
     });
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
@@ -441,6 +433,7 @@ export class BillingService {
     const connected: V1AdProvider[] = [];
     if (isConnected(store.metaConnection?.status)) connected.push('META');
     if (isConnected(store.tiktokConnection?.status)) connected.push('TIKTOK');
+    if (isConnected(store.googleAdsConnection?.status)) connected.push('GOOGLE_ADS');
     return connected;
   }
 

@@ -12,6 +12,7 @@ export class ShopifyPrivacyPurgeRepository {
             shopifyConnection: { select: { id: true } },
             metaConnection: { select: { id: true } },
             tiktokConnection: { select: { id: true } },
+            googleAdsConnection: { select: { id: true } },
           },
         });
         if (!store) return false;
@@ -19,6 +20,7 @@ export class ShopifyPrivacyPurgeRepository {
         const shopifyConnectionId = store.shopifyConnection?.id ?? null;
         const metaConnectionId = store.metaConnection?.id ?? null;
         const tiktokConnectionId = store.tiktokConnection?.id ?? null;
+        const googleAdsConnectionId = store.googleAdsConnection?.id ?? null;
 
         const syncRuns = await tx.syncRun.findMany({
           where: {
@@ -63,6 +65,20 @@ export class ShopifyPrivacyPurgeRepository {
           await tx.syncRun.deleteMany({ where: { id: { in: syncRunIds } } });
         }
 
+        // Canonical product/collection mappings are derived store data. Keep their normal RESTRICT
+        // Shopify-side FKs so ordinary lifecycle/history cannot silently erase mapping evidence, but
+        // a physical privacy purge must remove the mappings before Product/Variant/Collection rows.
+        await tx.advertisingCollectionMapping.deleteMany({
+          where: {
+            OR: [{ collection: { storeId } }, { ad: { account: { storeId } } }],
+          },
+        });
+        await tx.advertisingProductMapping.deleteMany({
+          where: {
+            OR: [{ product: { storeId } }, { ad: { account: { storeId } } }],
+          },
+        });
+
         await tx.adCollectionMapping.deleteMany({
           where: {
             OR: [{ collection: { storeId } }, { ad: { adAccount: { storeId } } }],
@@ -89,21 +105,6 @@ export class ShopifyPrivacyPurgeRepository {
           },
         });
 
-        // Canonical Product × Ads mappings intentionally keep restrictive Shopify-side FKs during
-        // ordinary application lifecycle so a physical catalog delete cannot silently erase mapping
-        // history. A privacy/store purge is different: mappings are derived store data and must not
-        // block erasure. Remove them explicitly before ProductVariant/Product/Collection deletion.
-        await tx.advertisingProductMapping.deleteMany({
-          where: {
-            OR: [{ product: { storeId } }, { ad: { account: { storeId } } }],
-          },
-        });
-        await tx.advertisingCollectionMapping.deleteMany({
-          where: {
-            OR: [{ collection: { storeId } }, { ad: { account: { storeId } } }],
-          },
-        });
-
         await tx.metaInsightDaily.deleteMany({ where: { adAccount: { storeId } } });
         await tx.metaAd.deleteMany({ where: { adAccount: { storeId } } });
         await tx.metaCreative.deleteMany({ where: { adAccount: { storeId } } });
@@ -120,6 +121,11 @@ export class ShopifyPrivacyPurgeRepository {
         await tx.tikTokCatalogItem.deleteMany({ where: { catalog: { storeId } } });
         await tx.tikTokCatalog.deleteMany({ where: { storeId } });
         await tx.tikTokAdvertiser.deleteMany({ where: { storeId } });
+
+        // Google Ads customer staging rows use restrictive store FKs so they must be explicitly
+        // removed before deleting the connection/store. Canonical Advertising* rows are owned by
+        // the store and follow the canonical cascade policy.
+        await tx.googleAdsCustomer.deleteMany({ where: { storeId } });
 
         const orders = await tx.order.findMany({ where: { storeId }, select: { id: true } });
         const orderIds = orders.map((order) => order.id);
@@ -150,6 +156,9 @@ export class ShopifyPrivacyPurgeRepository {
         if (metaConnectionId) await tx.metaConnection.delete({ where: { id: metaConnectionId } });
         if (tiktokConnectionId) {
           await tx.tikTokConnection.delete({ where: { id: tiktokConnectionId } });
+        }
+        if (googleAdsConnectionId) {
+          await tx.googleAdsConnection.delete({ where: { id: googleAdsConnectionId } });
         }
         if (shopifyConnectionId) {
           await tx.shopifyConnection.delete({ where: { id: shopifyConnectionId } });

@@ -1,4 +1,5 @@
 import { analyticsWorkspace, type AnalyticsWorkspace } from '../analytics/analytics.workspace.js';
+import { GoogleAdsAdvertisingEvidenceProvider } from '../google-ads/google-ads.evidence-provider.js';
 import { MetaRepository } from '../meta/meta.repository.js';
 import { TikTokRepository } from '../tiktok/tiktok.repository.js';
 import {
@@ -84,14 +85,8 @@ export class MetaAdvertisingEvidenceProvider implements AdvertisingEvidenceProvi
     };
   }
 
-  /**
-   * The provider-neutral boundary accepts a canonical AdvertisingAccount UUID. AnalyticsWorkspace
-   * still scopes Meta reads by Meta's selected external account ID, so translate only inside this
-   * adapter after validating the canonical UUID against store + provider + merchant selection.
-   */
   private async selectedMetaAccountId(storeId: string, canonicalAccountId?: string) {
     if (!canonicalAccountId) return undefined;
-
     const connection = await this.metaRepository.findConnectionForStore(storeId);
     const [account] = await this.accountScope.resolve({
       storeId,
@@ -99,8 +94,6 @@ export class MetaAdvertisingEvidenceProvider implements AdvertisingEvidenceProvi
       selectedAccountExternalIds: connection?.selectedAdAccountIds ?? [],
       accountId: canonicalAccountId,
     });
-    // accountScope.resolve throws for a requested canonical id that does not resolve inside the
-    // merchant-selected store/provider scope. Keep that fail-closed invariant explicit here.
     return account!.providerEntityId;
   }
 
@@ -134,7 +127,6 @@ export class MetaAdvertisingEvidenceProvider implements AdvertisingEvidenceProvi
           : level === 'AD'
             ? await this.analytics.ads(storeId, range)
             : await this.analytics.creatives(storeId, range);
-
     return { provider: this.provider, level, capabilities: this.capabilities(), evidence };
   }
 
@@ -146,10 +138,7 @@ export class MetaAdvertisingEvidenceProvider implements AdvertisingEvidenceProvi
   ) {
     const normalized = bounded(query);
     const accountId = await this.selectedMetaAccountId(storeId, normalized.accountId);
-    const range = {
-      days: normalized.days,
-      ...(accountId ? { accountId } : {}),
-    };
+    const range = { days: normalized.days, ...(accountId ? { accountId } : {}) };
     const evidence =
       level === 'CAMPAIGN'
         ? await this.analytics.campaign(storeId, entityId, range)
@@ -158,7 +147,6 @@ export class MetaAdvertisingEvidenceProvider implements AdvertisingEvidenceProvi
           : level === 'AD'
             ? await this.analytics.ad(storeId, entityId, range)
             : await this.analytics.creative(storeId, entityId, range);
-
     return { provider: this.provider, level, capabilities: this.capabilities(), evidence };
   }
 }
@@ -219,7 +207,6 @@ export class TikTokAdvertisingEvidenceProvider implements AdvertisingEvidencePro
         reason: 'TikTok creative-level normalized analytics are not available in Stride yet.',
       };
     }
-
     const normalized = bounded(query);
     const selectedAccountExternalIds = await this.selectedAdvertiserIds(storeId);
     const evidence = await this.canonicalReads.list({
@@ -250,7 +237,6 @@ export class TikTokAdvertisingEvidenceProvider implements AdvertisingEvidencePro
         reason: 'TikTok creative-level normalized analytics are not available in Stride yet.',
       };
     }
-
     const normalized = bounded(query);
     const selectedAccountExternalIds = await this.selectedAdvertiserIds(storeId);
     const evidence = await this.canonicalReads.detail({
@@ -281,6 +267,7 @@ export class AdvertisingProviderRegistry {
     providers: AdvertisingEvidenceProvider[] = [
       new MetaAdvertisingEvidenceProvider(),
       new TikTokAdvertisingEvidenceProvider(),
+      new GoogleAdsAdvertisingEvidenceProvider(),
     ],
   ) {
     for (const provider of providers) this.providers.set(provider.provider, provider);

@@ -1,12 +1,11 @@
 import { z } from 'zod';
-import { ADVERTISING_PROVIDERS } from '../integrations/integration.schema.js';
 
 export const billingPlanSchema = z.object({
   plan: z.enum(['ESSENTIALS', 'PRO']),
 });
 
 export const billingAdProviderSchema = z.object({
-  provider: z.enum(ADVERTISING_PROVIDERS),
+  provider: z.enum(['META', 'TIKTOK', 'GOOGLE_ADS']),
 });
 
 export const billingReadQuerySchema = z.object({
