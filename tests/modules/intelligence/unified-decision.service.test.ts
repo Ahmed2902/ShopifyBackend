@@ -16,7 +16,7 @@ function product(overrides: Record<string, unknown> = {}) {
     product: { id: 'product-1', shopifyProductId: '100', title: 'Hero Product' },
     mapping: { confidence: 1, merchantConfirmed: true, limitations: [] },
     current: {
-      commerce: { netProductRevenue: 500, contributionBeforeAds: 250 },
+      commerce: { evidenceAvailable: true, netProductRevenue: 500, contributionBeforeAds: 250 },
       advertising: { spend: 0, byProvider: [] },
       storefront: {
         available: true,
@@ -35,7 +35,9 @@ function product(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function service(input: { quality?: unknown[]; products?: unknown[] } = {}) {
+function service(
+  input: { quality?: unknown[]; products?: unknown[]; historyComplete?: boolean } = {},
+) {
   const advertising = {
     read: vi.fn().mockResolvedValue({
       truthModel: {},
@@ -57,11 +59,19 @@ function service(input: { quality?: unknown[]; products?: unknown[] } = {}) {
   const lifecycle = {
     attach: vi.fn().mockImplementation(async (_storeId: string, drafts: unknown[]) => drafts),
   };
+  const context = {
+    getContext: vi.fn().mockResolvedValue({
+      shopifyConnection: { status: 'ACTIVE' },
+      successfulOrderHistorySync:
+        input.historyComplete === false ? null : { status: 'SUCCEEDED' },
+    }),
+  };
   return new UnifiedDecisionService(
     advertising as never,
     entities as never,
     products as never,
     lifecycle as never,
+    context as never,
   );
 }
 
@@ -118,5 +128,59 @@ describe('UnifiedDecisionService guardrails', () => {
         expect.objectContaining({ code: 'CORRELATION_NOT_CAUSATION' }),
       ]),
     );
+  });
+
+  it('fails commerce-derived decisions closed while preserving independently valid Pixel recommendations', async () => {
+    const paid = product({
+      commerce: {
+        evidenceAvailable: false,
+        netProductRevenue: 500,
+        contributionBeforeAds: 250,
+      },
+      advertising: { spend: 120, byProvider: [{ provider: 'TIKTOK', spend: 120 }] },
+      inventory: { state: 'OVERSTOCK_WEAK_DEMAND', available: 100, daysCover: null },
+      intelligence: {
+        contributionAfterAds: -10,
+        inefficientPaidDemand: true,
+        profitableDemand: false,
+        confidence: 'LOW',
+        limitations: ['INCOMPLETE_COMMERCE_HISTORY'],
+      },
+    });
+    const organic = {
+      ...product({
+        commerce: {
+          evidenceAvailable: false,
+          netProductRevenue: 500,
+          contributionBeforeAds: 250,
+        },
+        intelligence: {
+          contributionAfterAds: null,
+          inefficientPaidDemand: null,
+          profitableDemand: null,
+          confidence: 'LOW',
+          limitations: ['INCOMPLETE_COMMERCE_HISTORY'],
+        },
+      }),
+      product: { id: 'product-2', shopifyProductId: '200', title: 'Organic Product' },
+    };
+    const value = service({ historyComplete: false, products: [paid, organic] });
+    const result = await value.read('store-1', { provider: 'ALL', days: 30 });
+    const ids = result.recommendations.map((item) => item.ruleId);
+
+    expect(ids).not.toContain('unified_inventory_overstock_weak_demand');
+    expect(ids).not.toContain('unified_product_paid_demand_negative_contribution');
+    expect(ids).not.toContain('unified_profitable_product_low_paid_support');
+    expect(ids).toContain('unified_paid_product_weak_view_to_cart');
+    expect(result.dataQuality.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'INCOMPLETE_COMMERCE_HISTORY',
+          status: 'BLOCKED',
+          surface: 'COMMERCE',
+        }),
+      ]),
+    );
+    expect(result.dataQuality.confidence).toBe('LOW');
   });
 });
