@@ -1,8 +1,10 @@
 import type { NextFunction, Request, Response } from 'express';
 import { AppError } from '../../errors/app-error.js';
+import { unifiedAdvertisingScopeService } from '../advertising/unified-advertising-scope.service.js';
 import { billingService, type V1AdProvider } from '../billing/billing.service.js';
 
-const PAID_MEDIA_SEARCH_TYPES = new Set(['CAMPAIGN', 'AD_SET', 'AD', 'CREATIVE']);
+const PAID_MEDIA_SEARCH_TYPES = new Set(['CAMPAIGN', 'GROUP', 'AD', 'CREATIVE']);
+const V1_AD_PROVIDERS = new Set<V1AdProvider>(['META', 'TIKTOK', 'GOOGLE_ADS']);
 
 function toolCall(req: Request) {
   if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) return null;
@@ -21,9 +23,10 @@ function toolCall(req: Request) {
   };
 }
 
-function selectedProvider(plan: Record<string, unknown>): V1AdProvider | null {
-  const value = plan.essentialsAdProvider;
-  return value === 'META' || value === 'TIKTOK' ? value : null;
+function provider(value: unknown): V1AdProvider | null {
+  return typeof value === 'string' && V1_AD_PROVIDERS.has(value as V1AdProvider)
+    ? (value as V1AdProvider)
+    : null;
 }
 
 function maxAdChannels(plan: Record<string, unknown>): number | null {
@@ -31,26 +34,6 @@ function maxAdChannels(plan: Record<string, unknown>): number | null {
   if (!entitlements || typeof entitlements !== 'object' || Array.isArray(entitlements)) return 0;
   const value = (entitlements as Record<string, unknown>).maxAdChannels;
   return value === null ? null : typeof value === 'number' ? value : 0;
-}
-
-function requireProvider(plan: Record<string, unknown>, provider: V1AdProvider) {
-  if (maxAdChannels(plan) === null) return;
-  const selected = selectedProvider(plan);
-  if (!selected) {
-    throw new AppError(
-      'Essentials requires selecting one advertising channel before MCP can read paid-media data.',
-      409,
-      'PLAN_CHANNEL_SELECTION_REQUIRED',
-    );
-  }
-  if (selected !== provider) {
-    throw new AppError(
-      'This advertising channel is not included in the store’s current Essentials selection.',
-      403,
-      'PLAN_AD_CHANNEL_LIMIT',
-      { selectedProvider: selected, requestedProvider: provider },
-    );
-  }
 }
 
 export async function requireMcpToolEntitlement(
@@ -68,12 +51,21 @@ export async function requireMcpToolEntitlement(
     >;
 
     if (call.name === 'stride_get_paid_media') {
-      const provider = call.args.provider;
-      if (provider === 'META' || provider === 'TIKTOK') requireProvider(plan, provider);
+      const requestedProvider = provider(call.args.provider);
+      if (requestedProvider) {
+        await billingService.requireAdProviderReadOnly(storeId, requestedProvider);
+      }
     }
 
     if (call.name === 'stride_get_product_ads') {
-      requireProvider(plan, 'META');
+      const requested = call.args.provider;
+      const requestedProvider = provider(requested);
+      if (requested === undefined || requested === 'ALL' || requestedProvider) {
+        await unifiedAdvertisingScopeService.resolve({
+          storeId,
+          provider: requestedProvider ?? 'ALL',
+        });
+      }
     }
 
     if (call.name === 'stride_get_attribution') {
