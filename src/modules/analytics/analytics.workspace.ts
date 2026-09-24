@@ -83,7 +83,6 @@ export class AnalyticsWorkspace {
       costCoverage: profitabilityBase.current.costCoverage,
       contributionBeforeAds: profitabilityBase.current.contributionBeforeAds,
       adSpend: currentSpend,
-      adSpendEvidenceAvailable: adEvidence.current.evidenceAvailable,
       contributionAfterAds: legacyContributionAfterAds(
         profitabilityBase.current.contributionBeforeAds,
         adEvidence.current,
@@ -95,11 +94,14 @@ export class AnalyticsWorkspace {
       costCoverage: profitabilityBase.comparison.costCoverage,
       contributionBeforeAds: profitabilityBase.comparison.contributionBeforeAds,
       adSpend: comparisonSpend,
-      adSpendEvidenceAvailable: adEvidence.comparison.evidenceAvailable,
       contributionAfterAds: legacyContributionAfterAds(
         profitabilityBase.comparison.contributionBeforeAds,
         adEvidence.comparison,
       ),
+    };
+    const profitabilityChange = {
+      ...metricChanges(currentProfitability, comparisonProfitability),
+      adSpend: legacySpendChange(adEvidence.current, adEvidence.comparison),
     };
 
     return {
@@ -116,7 +118,7 @@ export class AnalyticsWorkspace {
       profitability: {
         current: currentProfitability,
         comparison: comparisonProfitability,
-        change: metricChanges(currentProfitability, comparisonProfitability),
+        change: profitabilityChange,
         sameCurrencyAdSpendAvailable: bothPeriodsHaveSameCurrencyAdSpendEvidence,
         sameCurrencyAdSpendAvailability: {
           current: adEvidence.current.evidenceAvailable,
