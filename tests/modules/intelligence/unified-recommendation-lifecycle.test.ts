@@ -14,6 +14,7 @@ import {
   recommendationOccurrenceKey,
 } from '../../../src/modules/intelligence/recommendation-lifecycle.service.js';
 import { RecommendationOccurrenceValidationService } from '../../../src/modules/intelligence/recommendation-occurrence-validation.service.js';
+import { scopeUnifiedRecommendationOccurrenceKey } from '../../../src/modules/intelligence/unified-recommendation-occurrence-scope.js';
 
 const storeId = '11111111-1111-4111-8111-111111111111';
 const otherStoreId = '22222222-2222-4222-8222-222222222222';
@@ -39,23 +40,9 @@ function decorated(ruleId: string, entityId: string | null = null) {
   return { ...value, occurrenceKey: recommendationOccurrenceKey(value) };
 }
 
-function selectedAccount() {
-  return {
-    id: accountId,
-    provider: 'META' as const,
-    providerEntityId: 'act_1',
-    name: 'Meta account',
-    status: 'ACTIVE',
-    currency: 'USD',
-    timezone: 'UTC',
-    lastSyncedAt: new Date('2026-09-24T11:00:00.000Z'),
-  };
-}
-
 function validator(input: {
   legacyByStore?: Record<string, ReturnType<typeof occurrence>[]>;
   unifiedByStore?: Record<string, ReturnType<typeof decorated>[]>;
-  accounts?: ReturnType<typeof selectedAccount>[];
   unifiedRead?: (
     requestedStoreId: string,
     query: Record<string, unknown>,
@@ -72,79 +59,68 @@ function validator(input: {
       return { recommendations: input.unifiedByStore?.[requestedStoreId] ?? [] };
     }),
   };
-  const accounts = input.accounts ?? [];
-  const advertisingScope = {
-    resolve: vi.fn().mockResolvedValue({
-      states: [],
-      allSelectedAccounts: accounts,
-      accounts,
-    }),
-  };
   return {
     service: new RecommendationOccurrenceValidationService(
       legacyReads as never,
       unifiedReads as never,
-      advertisingScope as never,
     ),
     legacyReads,
     unifiedReads,
-    advertisingScope,
   };
 }
 
 describe('Unified recommendation occurrence validation', () => {
-  it('recognizes a backend-issued unified occurrence and reconstructs its exact evidence window', async () => {
+  it('replays exactly the scope carried by a backend-issued unified occurrence', async () => {
     const unified = decorated('unified_product_signal', '33333333-3333-4333-8333-333333333333');
+    const publicKey = scopeUnifiedRecommendationOccurrenceKey(unified.occurrenceKey, {
+      provider: 'META',
+      accountId,
+      currency: 'EUR',
+      from: '2026-09-01',
+      to: '2026-09-24',
+      days: 30,
+    });
     const { service, unifiedReads } = validator({ unifiedByStore: { [storeId]: [unified] } });
 
-    const current = await service.currentRecommendations(storeId, unified.occurrenceKey, 10);
+    const current = await service.currentRecommendations(storeId, publicKey, 10);
 
-    expect(current.some((item) => recommendationOccurrenceKey(item) === unified.occurrenceKey)).toBe(true);
-    expect(unifiedReads.read).toHaveBeenCalledWith(
-      storeId,
-      expect.objectContaining({
-        provider: 'ALL',
-        from: '2026-09-01',
-        to: '2026-09-24',
-      }),
-    );
+    expect(current.canonicalOccurrenceKey).toBe(unified.occurrenceKey);
+    expect(
+      current.recommendations.some(
+        (item) => recommendationOccurrenceKey(item) === unified.occurrenceKey,
+      ),
+    ).toBe(true);
+    expect(unifiedReads.read).toHaveBeenCalledTimes(1);
+    expect(unifiedReads.read).toHaveBeenCalledWith(storeId, {
+      provider: 'META',
+      accountId,
+      currency: 'EUR',
+      from: '2026-09-01',
+      to: '2026-09-24',
+      days: 30,
+    });
   });
 
-  it('reconstructs an authorized accountId scope when provider-wide bounds do not contain the issued occurrence', async () => {
-    const unified = decorated('unified_account_scoped_signal', '33333333-3333-4333-8333-333333333333');
-    const account = selectedAccount();
+  it('preserves an arbitrary issued currency even when no advertising account supplies it', async () => {
+    const unified = decorated('unified_currency_mismatch');
+    const publicKey = scopeUnifiedRecommendationOccurrenceKey(unified.occurrenceKey, {
+      provider: 'ALL',
+      currency: 'EUR',
+      days: 30,
+    });
     const { service, unifiedReads } = validator({
-      accounts: [account],
       unifiedRead: async (_requestedStoreId, query) => ({
-        recommendations: query.accountId === account.id ? [unified] : [],
+        recommendations: query.currency === 'EUR' ? [unified] : [],
       }),
     });
 
-    const current = await service.currentRecommendations(storeId, unified.occurrenceKey, 10);
+    const current = await service.currentRecommendations(storeId, publicKey, 10);
 
-    expect(current.some((item) => recommendationOccurrenceKey(item) === unified.occurrenceKey)).toBe(true);
+    expect(current.canonicalOccurrenceKey).toBe(unified.occurrenceKey);
+    expect(unifiedReads.read).toHaveBeenCalledTimes(1);
     expect(unifiedReads.read).toHaveBeenCalledWith(
       storeId,
-      expect.objectContaining({ accountId: account.id }),
-    );
-  });
-
-  it('reconstructs an authorized currency-only scope when the issued occurrence is not provider-wide', async () => {
-    const unified = decorated('unified_currency_scoped_signal', '33333333-3333-4333-8333-333333333333');
-    const { service, unifiedReads } = validator({
-      accounts: [selectedAccount()],
-      unifiedRead: async (_requestedStoreId, query) => ({
-        recommendations:
-          query.currency === 'USD' && query.accountId === undefined ? [unified] : [],
-      }),
-    });
-
-    const current = await service.currentRecommendations(storeId, unified.occurrenceKey, 10);
-
-    expect(current.some((item) => recommendationOccurrenceKey(item) === unified.occurrenceKey)).toBe(true);
-    expect(unifiedReads.read).toHaveBeenCalledWith(
-      storeId,
-      expect.objectContaining({ currency: 'USD' }),
+      expect.objectContaining({ provider: 'ALL', currency: 'EUR' }),
     );
   });
 
@@ -155,19 +131,48 @@ describe('Unified recommendation occurrence validation', () => {
 
     const current = await service.currentRecommendations(storeId, key, 10);
 
-    expect(current).toEqual([legacy]);
+    expect(current).toEqual({ canonicalOccurrenceKey: key, recommendations: [legacy] });
     expect(unifiedReads.read).not.toHaveBeenCalled();
   });
 
-  it('does not authorize a fabricated occurrence key', async () => {
-    const { service } = validator({});
-    const lifecycle = new RecommendationLifecycleService();
-    const fabricatedKey =
-      'fabricated:1:STORE:x:2026-09-01T00:00:00.000Z:2026-09-24T00:00:00.000Z';
-    const current = await service.currentRecommendations(storeId, fabricatedKey, 10);
+  it('keeps one bounded default-scope replay for pre-hotfix unified occurrence keys', async () => {
+    const unified = decorated('unified_pre_hotfix');
+    const { service, unifiedReads } = validator({ unifiedByStore: { [storeId]: [unified] } });
 
+    const current = await service.currentRecommendations(storeId, unified.occurrenceKey, 10);
+
+    expect(current.canonicalOccurrenceKey).toBe(unified.occurrenceKey);
+    expect(unifiedReads.read).toHaveBeenCalledTimes(1);
+    expect(unifiedReads.read).toHaveBeenCalledWith(
+      storeId,
+      expect.objectContaining({
+        provider: 'ALL',
+        from: '2026-09-01',
+        to: '2026-09-24',
+      }),
+    );
+  });
+
+  it('rejects a fabricated scoped occurrence after exactly one unified replay', async () => {
+    const fabricatedCanonical =
+      'fabricated:1:STORE:x:2026-09-01T00:00:00.000Z:2026-09-24T00:00:00.000Z';
+    const publicKey = scopeUnifiedRecommendationOccurrenceKey(fabricatedCanonical, {
+      provider: 'ALL',
+      currency: 'EUR',
+      days: 30,
+    });
+    const { service, unifiedReads } = validator({});
+    const lifecycle = new RecommendationLifecycleService();
+    const current = await service.currentRecommendations(storeId, publicKey, 10);
+
+    expect(unifiedReads.read).toHaveBeenCalledTimes(1);
     await expect(
-      lifecycle.setState(storeId, fabricatedKey, 'DISMISSED', current),
+      lifecycle.setState(
+        storeId,
+        current.canonicalOccurrenceKey,
+        'DISMISSED',
+        current.recommendations,
+      ),
     ).rejects.toMatchObject({
       code: 'RECOMMENDATION_OCCURRENCE_NOT_FOUND',
       statusCode: 404,
@@ -176,35 +181,68 @@ describe('Unified recommendation occurrence validation', () => {
 
   it('does not authorize an occurrence issued by another store', async () => {
     const other = decorated('unified_other_store_signal');
-    const { service } = validator({ unifiedByStore: { [otherStoreId]: [other] } });
+    const publicKey = scopeUnifiedRecommendationOccurrenceKey(other.occurrenceKey, {
+      provider: 'ALL',
+      days: 30,
+    });
+    const { service, unifiedReads } = validator({
+      unifiedRead: async (requestedStoreId) => ({
+        recommendations: requestedStoreId === otherStoreId ? [other] : [],
+      }),
+    });
     const lifecycle = new RecommendationLifecycleService();
-    const current = await service.currentRecommendations(storeId, other.occurrenceKey, 10);
+    const current = await service.currentRecommendations(storeId, publicKey, 10);
 
+    expect(unifiedReads.read).toHaveBeenCalledTimes(1);
     await expect(
-      lifecycle.setState(storeId, other.occurrenceKey, 'REVIEWED', current),
+      lifecycle.setState(
+        storeId,
+        current.canonicalOccurrenceKey,
+        'REVIEWED',
+        current.recommendations,
+      ),
     ).rejects.toMatchObject({ code: 'RECOMMENDATION_OCCURRENCE_NOT_FOUND' });
   });
 
   it('validates only recommendations visible under the supplied entitlement cap', async () => {
     const first = decorated('unified_first');
     const second = decorated('unified_second');
+    const publicKey = scopeUnifiedRecommendationOccurrenceKey(second.occurrenceKey, {
+      provider: 'ALL',
+      days: 30,
+    });
     const { service } = validator({ unifiedByStore: { [storeId]: [first, second] } });
 
-    const current = await service.currentRecommendations(storeId, second.occurrenceKey, 1);
+    const current = await service.currentRecommendations(storeId, publicKey, 1);
 
-    expect(current.some((item) => recommendationOccurrenceKey(item) === second.occurrenceKey)).toBe(false);
+    expect(
+      current.recommendations.some(
+        (item) => recommendationOccurrenceKey(item) === second.occurrenceKey,
+      ),
+    ).toBe(false);
   });
 });
 
 describe('Unified lifecycle cache coherence', () => {
-  it('invalidates legacy and unified Store decision caches after a successful lifecycle write', async () => {
+  it('persists the canonical key, returns the public scoped handle, and invalidates decision caches', async () => {
     const issued = occurrence('unified_cache_state');
-    const occurrenceKey = recommendationOccurrenceKey(issued);
+    const canonicalOccurrenceKey = recommendationOccurrenceKey(issued);
+    const publicOccurrenceKey = scopeUnifiedRecommendationOccurrenceKey(canonicalOccurrenceKey, {
+      provider: 'ALL',
+      currency: 'EUR',
+      days: 30,
+    });
     const occurrenceValidation = {
-      currentRecommendations: vi.fn().mockResolvedValue([issued]),
+      currentRecommendations: vi.fn().mockResolvedValue({
+        canonicalOccurrenceKey,
+        recommendations: [issued],
+      }),
     };
     const lifecycle = {
-      setState: vi.fn().mockResolvedValue({ occurrenceKey, state: 'REVIEWED' }),
+      setState: vi.fn().mockResolvedValue({
+        occurrenceKey: canonicalOccurrenceKey,
+        state: 'REVIEWED',
+      }),
       attach: vi.fn(),
     };
     const analyticsInvalidate = vi
@@ -224,7 +262,7 @@ describe('Unified lifecycle cache coherence', () => {
     );
     const req = {
       context: { storeId },
-      body: { occurrenceKey, state: 'REVIEWED' },
+      body: { occurrenceKey: publicOccurrenceKey, state: 'REVIEWED' },
     } as unknown as Request;
     const res = {
       locals: { billing: { entitlements: { recommendationLimit: 10 } } },
@@ -235,10 +273,19 @@ describe('Unified lifecycle cache coherence', () => {
 
     await controller.updateRecommendationLifecycle(req, res);
 
+    expect(lifecycle.setState).toHaveBeenCalledWith(
+      storeId,
+      canonicalOccurrenceKey,
+      'REVIEWED',
+      [issued],
+    );
     expect(analyticsInvalidate).toHaveBeenCalledWith(storeId);
     expect(dashboardInvalidate).toHaveBeenCalledWith(storeId);
     expect(intelligenceInvalidate).toHaveBeenCalledWith(storeId);
-    expect(res.json).toHaveBeenCalledWith({ occurrenceKey, state: 'REVIEWED' });
+    expect(res.json).toHaveBeenCalledWith({
+      occurrenceKey: publicOccurrenceKey,
+      state: 'REVIEWED',
+    });
   });
 });
 
