@@ -13,6 +13,12 @@ import { collectionAnalyticsReadService } from './collection-analytics.read.serv
 import type { CollectionAnalyticsReadService } from './collection-analytics.read.service.js';
 import { CommerceAnalyticsReadRepository } from './commerce-analytics.read.repository.js';
 import { CommerceAnalyticsService } from './commerce-analytics.service.js';
+import {
+  legacyContributionAfterAds,
+  legacyMer,
+  legacySpendChange,
+  resolveLegacyAdvertisingEvidence,
+} from './legacy-ad-evidence.js';
 
 type StoreContext = NonNullable<Awaited<ReturnType<AnalyticsRepository['getStoreContext']>>>;
 type OrderHistorySync = NonNullable<StoreContext['shopifyConnection']>['syncRuns'][number];
@@ -57,20 +63,19 @@ export class AnalyticsWorkspace {
             ),
       ]);
 
-    const storeCurrencyAds = advertising.currencies.find(
-      (item) => item.currency === store.currencyCode,
+    const adEvidence = resolveLegacyAdvertisingEvidence(
+      advertising.currencies,
+      store.currencyCode,
     );
-    const sameCurrencyAdSpendAvailable = Boolean(storeCurrencyAds);
-    const currentSpend = storeCurrencyAds?.current.spend ?? 0;
-    const comparisonSpend = storeCurrencyAds?.comparison.spend ?? 0;
-    const currentMer =
-      sameCurrencyAdSpendAvailable && currentSpend > 0
-        ? commerce.current.netOrderValue / currentSpend
-        : null;
-    const comparisonMer =
-      sameCurrencyAdSpendAvailable && comparisonSpend > 0
-        ? commerce.comparison.netOrderValue / comparisonSpend
-        : null;
+    const currentSpend = adEvidence.current.spend;
+    const comparisonSpend = adEvidence.comparison.spend;
+    const currentMer = legacyMer(commerce.current.netOrderValue, adEvidence.current);
+    const comparisonMer = legacyMer(
+      commerce.comparison.netOrderValue,
+      adEvidence.comparison,
+    );
+    const bothPeriodsHaveSameCurrencyAdSpendEvidence =
+      adEvidence.current.evidenceAvailable && adEvidence.comparison.evidenceAvailable;
 
     const currentProfitability = {
       netProductRevenue: profitabilityBase.current.netProductRevenue,
@@ -78,10 +83,11 @@ export class AnalyticsWorkspace {
       costCoverage: profitabilityBase.current.costCoverage,
       contributionBeforeAds: profitabilityBase.current.contributionBeforeAds,
       adSpend: currentSpend,
-      contributionAfterAds:
-        !sameCurrencyAdSpendAvailable || profitabilityBase.current.contributionBeforeAds === null
-          ? null
-          : profitabilityBase.current.contributionBeforeAds - currentSpend,
+      adSpendEvidenceAvailable: adEvidence.current.evidenceAvailable,
+      contributionAfterAds: legacyContributionAfterAds(
+        profitabilityBase.current.contributionBeforeAds,
+        adEvidence.current,
+      ),
     };
     const comparisonProfitability = {
       netProductRevenue: profitabilityBase.comparison.netProductRevenue,
@@ -89,10 +95,11 @@ export class AnalyticsWorkspace {
       costCoverage: profitabilityBase.comparison.costCoverage,
       contributionBeforeAds: profitabilityBase.comparison.contributionBeforeAds,
       adSpend: comparisonSpend,
-      contributionAfterAds:
-        !sameCurrencyAdSpendAvailable || profitabilityBase.comparison.contributionBeforeAds === null
-          ? null
-          : profitabilityBase.comparison.contributionBeforeAds - comparisonSpend,
+      adSpendEvidenceAvailable: adEvidence.comparison.evidenceAvailable,
+      contributionAfterAds: legacyContributionAfterAds(
+        profitabilityBase.comparison.contributionBeforeAds,
+        adEvidence.comparison,
+      ),
     };
 
     return {
@@ -110,22 +117,36 @@ export class AnalyticsWorkspace {
         current: currentProfitability,
         comparison: comparisonProfitability,
         change: metricChanges(currentProfitability, comparisonProfitability),
-        sameCurrencyAdSpendAvailable,
+        sameCurrencyAdSpendAvailable: bothPeriodsHaveSameCurrencyAdSpendEvidence,
+        sameCurrencyAdSpendAvailability: {
+          current: adEvidence.current.evidenceAvailable,
+          comparison: adEvidence.comparison.evidenceAvailable,
+        },
         excludedMetaCurrencies: advertising.currencies
           .map((item) => item.currency)
           .filter((currency) => currency !== store.currencyCode),
       },
       advertising: advertising.currencies,
       blended: {
-        current: { mer: currentMer, metaSpend: currentSpend },
-        comparison: { mer: comparisonMer, metaSpend: comparisonSpend },
+        current: {
+          mer: currentMer,
+          metaSpend: currentSpend,
+          evidenceAvailable: adEvidence.current.evidenceAvailable,
+        },
+        comparison: {
+          mer: comparisonMer,
+          metaSpend: comparisonSpend,
+          evidenceAvailable: adEvidence.comparison.evidenceAvailable,
+        },
         change: {
           mer: percentChange(currentMer, comparisonMer),
-          metaSpend: sameCurrencyAdSpendAvailable
-            ? percentChange(currentSpend, comparisonSpend)
-            : null,
+          metaSpend: legacySpendChange(adEvidence.current, adEvidence.comparison),
         },
-        sameCurrencySpendAvailable: sameCurrencyAdSpendAvailable,
+        sameCurrencySpendAvailable: bothPeriodsHaveSameCurrencyAdSpendEvidence,
+        sameCurrencySpendAvailability: {
+          current: adEvidence.current.evidenceAvailable,
+          comparison: adEvidence.comparison.evidenceAvailable,
+        },
       },
       availability: this.availability(
         store,
