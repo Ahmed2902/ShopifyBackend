@@ -233,9 +233,13 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
     name: 'stride_get_product_ads',
     title: 'Read Product × Ads evidence',
     description:
-      'Read the product-centric cross-domain connection between Shopify product economics and canonical mapped paid-media exposure. Returns mapping confidence/coverage, mapped vs shared/unmapped spend, contribution after mapped ads, and methodology. Google mappings are emitted only from deterministic Shopify-owned final URLs; PMax/Shopping shared spend is not guessed or divided across products. Never allocate shared/multi-product spend as if it were exact.',
+      'Read the product-centric cross-domain connection between Shopify product economics and canonical mapped paid-media exposure. Optionally scope to Meta, TikTok, Google Ads, or ALL; Essentials is constrained to its selected channel by the canonical unified advertising scope. Returns mapping confidence/coverage, mapped vs shared/unmapped spend, contribution after mapped ads, and methodology. Google mappings are emitted only from deterministic Shopify-owned final URLs; PMax/Shopping shared spend is not guessed or divided across products. Never allocate shared/multi-product spend as if it were exact.',
     inputSchema: schema(
       {
+        provider: {
+          enum: ['ALL', 'META', 'TIKTOK', 'GOOGLE_ADS'],
+          description: 'Optional provider scope. Defaults to ALL, subject to the store plan entitlement.',
+        },
         action: { enum: ['list', 'detail'] },
         productId: { type: 'string', format: 'uuid', description: 'Required for detail.' },
         ...paginationProperties,
@@ -336,6 +340,7 @@ const attributionInput = z
   .strict();
 const productAdsInput = z
   .object({
+    provider: z.enum(['ALL', 'META', 'TIKTOK', 'GOOGLE_ADS']).optional(),
     action: z.enum(['list', 'detail']),
     productId: z.string().uuid().optional(),
     days,
@@ -538,6 +543,7 @@ export class McpToolExecutor {
           storeId,
           required(input.productId, 'productId is required for detail'),
           input.days,
+          input.provider ?? 'ALL',
         );
       }
       case 'stride_get_recommendations':
