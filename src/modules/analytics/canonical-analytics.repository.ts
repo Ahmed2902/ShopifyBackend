@@ -107,6 +107,24 @@ export class CanonicalAnalyticsRepository implements AdvertisingAnalyticsReposit
 
     return rows.map((row) => {
       const provider = jsonRecord(row.providerMetrics);
+      const actions = [
+        ...(row.conversions === null
+          ? []
+          : [{
+              kind: 'ACTION' as const,
+              actionType: PURCHASE_ACTION_TYPE,
+              actionDestination: null,
+              value: new Prisma.Decimal(row.conversions),
+            }]),
+        ...(row.conversionValue === null
+          ? []
+          : [{
+              kind: 'ACTION_VALUE' as const,
+              actionType: PURCHASE_ACTION_TYPE,
+              actionDestination: null,
+              value: new Prisma.Decimal(row.conversionValue),
+            }]),
+      ];
       return {
         date: row.date,
         accountCurrency: row.currency ?? '',
@@ -114,6 +132,8 @@ export class CanonicalAnalyticsRepository implements AdvertisingAnalyticsReposit
         impressions: row.impressions,
         clicks: row.clicks,
         frequency: row.frequency,
+        conversionsAvailable: row.conversions !== null,
+        conversionValueAvailable: row.conversionValue !== null,
         objective: row.campaign?.objective ?? jsonString(provider.objective),
         optimizationGoal: row.group?.optimizationGoal ?? jsonString(provider.optimizationGoal),
         attributionSetting: jsonString(provider.attributionSetting),
@@ -147,20 +167,7 @@ export class CanonicalAnalyticsRepository implements AdvertisingAnalyticsReposit
                 : null,
             }
           : null,
-        actions: [
-          {
-            kind: 'ACTION' as const,
-            actionType: PURCHASE_ACTION_TYPE,
-            actionDestination: null,
-            value: new Prisma.Decimal(row.conversions ?? 0),
-          },
-          {
-            kind: 'ACTION_VALUE' as const,
-            actionType: PURCHASE_ACTION_TYPE,
-            actionDestination: null,
-            value: new Prisma.Decimal(row.conversionValue ?? 0),
-          },
-        ],
+        actions,
       };
     }) as MetaRows;
   }
