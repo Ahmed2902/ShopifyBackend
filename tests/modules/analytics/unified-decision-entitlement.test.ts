@@ -3,8 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { analyticsWorkspaceCachedReads } from '../../../src/lib/store-decision-cache.js';
 import { UnifiedAnalyticsController } from '../../../src/modules/analytics/unified-analytics.controller.js';
 import { recommendationLimit } from '../../../src/modules/intelligence/recommendation-entitlement.js';
+import { parseScopedUnifiedRecommendationOccurrenceKey } from '../../../src/modules/intelligence/unified-recommendation-occurrence-scope.js';
 
 const storeId = '11111111-1111-4111-8111-111111111111';
+const accountId = '44444444-4444-4444-8444-444444444444';
 
 function request(query: Record<string, string> = {}) {
   return {
@@ -130,5 +132,40 @@ describe('Unified decisions recommendation entitlement', () => {
 
     expect(String(run.mock.calls[0]![0])).toContain('recommendation-limit-3');
     expect(String(run.mock.calls[1]![0])).toContain('recommendation-limit-50');
+  });
+
+  it('carries the exact issued provider/account/currency scope in each unified occurrence handle', async () => {
+    vi.spyOn(analyticsWorkspaceCachedReads, 'run').mockImplementation(
+      async (_key, loader) => loader(),
+    );
+    const decisions = { read: vi.fn().mockResolvedValue(result(1)) };
+    const res = response(10);
+
+    await controller(decisions).decisionList(
+      request({
+        provider: 'META',
+        accountId,
+        currency: 'EUR',
+        from: '2026-09-01',
+        to: '2026-09-24',
+      }),
+      res,
+    );
+
+    const payload = vi.mocked(res.json).mock.calls[0]![0] as ReturnType<typeof result>;
+    const scoped = parseScopedUnifiedRecommendationOccurrenceKey(
+      payload.recommendations[0]!.occurrenceKey,
+    );
+    expect(scoped).toEqual({
+      canonicalOccurrenceKey: 'occurrence-0',
+      query: {
+        provider: 'META',
+        accountId,
+        currency: 'EUR',
+        from: '2026-09-01',
+        to: '2026-09-24',
+        days: 30,
+      },
+    });
   });
 });
