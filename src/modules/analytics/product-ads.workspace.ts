@@ -1,281 +1,413 @@
 import { AppError } from '../../errors/app-error.js';
-import type { AdvertisingAnalyticsRepository } from './advertising-analytics.repository.js';
+import {
+  UnifiedAdvertisingRepository,
+  type UnifiedAdvertisingAccountRow,
+} from '../advertising/unified-advertising.repository.js';
 import { resolveAnalyticsWindows } from './analytics.dates.js';
-import { commerceRowDate, percentChange } from './analytics.metrics.js';
+import { metricChanges, percentChange, type MetaMetrics, type ProductMetrics } from './analytics.metrics.js';
 import { AnalyticsRepository } from './analytics.repository.js';
 import type { AnalyticsListQuery, AnalyticsRangeQuery } from './analytics.schema.js';
-import { pagination, splitCommerce, splitMeta, windowResponse } from './analytics.shared.js';
-import { CanonicalAnalyticsRepository } from './canonical-analytics.repository.js';
+import { LegacyProductAdsCompatibilityRepository } from './legacy-product-ads-compatibility.repository.js';
+import { UnifiedProductAdsRepository } from './unified-product-ads.repository.js';
 import {
-  buildProductAdsPeriod,
-  emptyProductAdsPeriodProduct,
-  productAdsChanges,
-  resolveExactAdMappings,
-  MIN_AUTOMATIC_MAPPING_CONFIDENCE,
-} from './product-ads.metrics.js';
-import { ProductAdsRepository } from './product-ads.repository.js';
+  UnifiedProductAdsService,
+  unifiedProductAdsService,
+} from './unified-product-ads.service.js';
 
-type MappingRow = Awaited<ReturnType<ProductAdsRepository['getActiveMappings']>>[number];
-type ProductAdsPair = NonNullable<ReturnType<ProductAdsWorkspace['periodPair']>>;
+const MIN_AUTOMATIC_MAPPING_CONFIDENCE = 0.7;
 
-function compareProductAdsPairs(left: ProductAdsPair, right: ProductAdsPair) {
-  const spend = right.current.advertising.spend - left.current.advertising.spend;
-  if (spend !== 0) return spend;
-  const revenue = right.current.commerce.netProductRevenue - left.current.commerce.netProductRevenue;
-  if (revenue !== 0) return revenue;
-  return left.product.title.localeCompare(right.product.title);
+type UnifiedList = Awaited<ReturnType<UnifiedProductAdsService['list']>>;
+type UnifiedItem = UnifiedList['items'][number];
+type UnifiedDetail = Awaited<ReturnType<UnifiedProductAdsService['detail']>>;
+type UnifiedAdvertisingPeriod = UnifiedItem['current']['advertising'];
+type UnifiedCommercePeriod = UnifiedItem['current']['commerce'];
+type UnifiedSummaryPeriod = UnifiedList['summary']['current'];
+type ActiveMapping = Awaited<ReturnType<UnifiedProductAdsRepository['activeMappings']>>[number];
+type CommerceTotals = { CURRENT: number; COMPARISON: number };
+
+function legacyCommerce(period: UnifiedCommercePeriod): ProductMetrics & { evidenceAvailable: boolean } {
+  return {
+    evidenceAvailable: period.evidenceAvailable,
+    orderCount: period.orderCount ?? 0,
+    soldUnits: period.soldUnits ?? 0,
+    refundedUnits: period.refundedUnits ?? 0,
+    netUnits: period.netUnits ?? 0,
+    productRevenue: period.productRevenue ?? 0,
+    refunds: period.refunds ?? 0,
+    netProductRevenue: period.netProductRevenue ?? 0,
+    cogs: period.cogs,
+    costCoverage: period.costCoverage ?? 0,
+    contributionBeforeAds: period.contributionBeforeAds,
+  };
 }
 
-function insertRankedPair(items: ProductAdsPair[], item: ProductAdsPair, maxItems: number) {
-  let low = 0;
-  let high = items.length;
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2);
-    if (compareProductAdsPairs(item, items[middle]!) < 0) high = middle;
-    else low = middle + 1;
-  }
-  items.splice(low, 0, item);
-  if (items.length > maxItems) items.pop();
+function legacyAdvertising(
+  period: UnifiedAdvertisingPeriod,
+): MetaMetrics & { evidenceAvailable: boolean } {
+  const spend = period.spend ?? 0;
+  const impressions = period.impressions ?? 0;
+  const clicks = period.clicks ?? 0;
+  const purchases = period.providerConversions;
+  const purchaseValue = period.providerConversionValue;
+  return {
+    evidenceAvailable: period.evidenceAvailable,
+    sourceRows: period.evidenceAvailable ? 1 : 0,
+    spend,
+    impressions,
+    clicks,
+    purchases,
+    purchaseValue,
+    providerRoas: purchaseValue !== null && spend > 0 ? purchaseValue / spend : null,
+    cpa: purchases !== null && purchases > 0 ? spend / purchases : null,
+    ctr: impressions > 0 ? clicks / impressions : null,
+    cpc: clicks > 0 ? spend / clicks : null,
+    cpm: impressions > 0 ? (spend / impressions) * 1000 : null,
+    averageDailyFrequency: null,
+  };
+}
+
+function unavailableMetricChanges<T extends Record<string, number | null>>(metrics: T): T {
+  return Object.fromEntries(Object.keys(metrics).map((key) => [key, null])) as T;
+}
+
+function legacyAdvertisingChanges(
+  current: ReturnType<typeof legacyAdvertising>,
+  comparison: ReturnType<typeof legacyAdvertising>,
+) {
+  const currentMetrics: MetaMetrics = current;
+  const comparisonMetrics: MetaMetrics = comparison;
+  return current.evidenceAvailable && comparison.evidenceAvailable
+    ? metricChanges(currentMetrics, comparisonMetrics)
+    : unavailableMetricChanges(currentMetrics);
+}
+
+function legacyMapping(item: UnifiedItem) {
+  return {
+    confidence: item.mapping.confidence,
+    mappedAdCount: item.mapping.exactMappedAdCount,
+    merchantConfirmed: item.mapping.merchantConfirmed,
+    sources: [
+      ...new Set(
+        item.mapping.evidence
+          .map((evidence) => evidence.source)
+          .filter((source): source is string => typeof source === 'string'),
+      ),
+    ].sort(),
+  };
+}
+
+function legacySummaryPeriod(
+  period: UnifiedSummaryPeriod,
+  netProductRevenue: number,
+) {
+  return {
+    evidenceAvailable: period.evidenceAvailable,
+    netProductRevenue,
+    // Legacy numeric fields are retained for compatibility, but evidenceAvailable is authoritative.
+    metaSpend: period.compatiblePaidSpend ?? 0,
+    exactMappedSpend: period.exactMappedSpend,
+    sharedSpend: period.sharedSpend,
+    ambiguousObservedSpend: period.ambiguousObservedSpend,
+    unmappedSpend: period.unmappedSpend ?? 0,
+    mappingCoverage: period.mappingCoverage ?? 0,
+    missingAccountIds: period.missingAccountIds,
+    excludedMetaSpend: [] as Array<{ currency: string; spend: number }>,
+  };
 }
 
 export class ProductAdsWorkspace {
   constructor(
     private readonly analyticsRepository: AnalyticsRepository = new AnalyticsRepository(),
-    private readonly productAdsRepository: ProductAdsRepository = new ProductAdsRepository(),
-    private readonly advertisingRepository: AdvertisingAnalyticsRepository = analyticsRepository,
+    private readonly advertisingRepository: UnifiedAdvertisingRepository =
+      new UnifiedAdvertisingRepository(),
+    private readonly unifiedService: UnifiedProductAdsService = unifiedProductAdsService,
+    private readonly unifiedRepository: UnifiedProductAdsRepository = new UnifiedProductAdsRepository(),
+    private readonly compatibilityRepository: LegacyProductAdsCompatibilityRepository =
+      new LegacyProductAdsCompatibilityRepository(),
   ) {}
 
   async list(storeId: string, query: AnalyticsListQuery, now = new Date()) {
-    const dataset = await this.loadDataset(storeId, query, now);
-    const ids = new Set([
-      ...dataset.current.products.keys(),
-      ...dataset.comparison.products.keys(),
+    const context = await this.context(storeId, query, now);
+    const [unified, commerceTotals] = await Promise.all([
+      this.unifiedService.list(
+        storeId,
+        {
+          from: query.from,
+          to: query.to,
+          days: query.days,
+          provider: 'META',
+          accountId: context.canonicalAccountId,
+          page: query.page,
+          limit: query.limit,
+        },
+        now,
+      ),
+      this.compatibilityRepository.netProductRevenueTotals({
+        storeId,
+        currency: context.store.currencyCode,
+        currentFrom: context.windows.current.instantFrom,
+        currentTo: context.windows.current.instantTo,
+        comparisonFrom: context.windows.comparison.instantFrom,
+        comparisonTo: context.windows.comparison.instantTo,
+      }),
     ]);
 
-    // The previous implementation materialized and sorted every Product × Ads pair before slicing
-    // the requested page. Keep only the prefix needed to answer this page. Exact accounting and
-    // ordering remain unchanged, while pair materialization is bounded by page * limit instead of
-    // the full matching product cardinality.
-    const pageStart = (query.page - 1) * query.limit;
-    const pageEnd = pageStart + query.limit;
-    const ranked: ProductAdsPair[] = [];
-    let total = 0;
-    for (const productId of ids) {
-      const item = this.periodPair(productId, dataset.current, dataset.comparison);
-      if (!item) continue;
-      total += 1;
-      insertRankedPair(ranked, item, pageEnd);
-    }
-    const pageItems = ranked.slice(pageStart, pageEnd);
-
     return {
-      window: windowResponse(dataset.windows),
-      currency: dataset.store.currencyCode,
-      methodology: this.methodology(),
-      mappingPolicy: this.mappingPolicy(),
-      summary: this.summary(dataset.current.totals, dataset.comparison.totals),
-      items: pageItems,
-      pagination: pagination(query.page, query.limit, total),
+      ...this.header(unified),
+      summary: this.summary(unified, commerceTotals),
+      items: unified.items.map((item) => this.item(item, unified, commerceTotals)),
+      pagination: unified.pagination,
     };
   }
 
   async detail(storeId: string, productId: string, query: AnalyticsRangeQuery, now = new Date()) {
-    const [product, dataset] = await Promise.all([
-      this.analyticsRepository.getProduct(storeId, productId),
-      this.loadDataset(storeId, query, now),
+    const context = await this.context(storeId, query, now);
+    const [unified, commerceTotals, mappings] = await Promise.all([
+      this.unifiedService.detail(
+        storeId,
+        productId,
+        {
+          from: query.from,
+          to: query.to,
+          days: query.days,
+          provider: 'META',
+          accountId: context.canonicalAccountId,
+        },
+        now,
+      ),
+      this.compatibilityRepository.netProductRevenueTotals({
+        storeId,
+        currency: context.store.currencyCode,
+        currentFrom: context.windows.current.instantFrom,
+        currentTo: context.windows.current.instantTo,
+        comparisonFrom: context.windows.comparison.instantFrom,
+        comparisonTo: context.windows.comparison.instantTo,
+      }),
+      this.unifiedRepository.activeMappings(
+        storeId,
+        context.metaAccounts.map((account) => account.id),
+        [productId],
+      ),
     ]);
 
-    const pair = this.periodPair(
-      productId,
-      dataset.current,
-      dataset.comparison,
-      product
-        ? {
-            id: product.id,
-            shopifyProductId: product.shopifyProductId,
-            title: product.title,
-            status: product.status,
-          }
-        : undefined,
-    );
-    if (!pair) throw new AppError('Product not found', 404, 'PRODUCT_NOT_FOUND');
-
     return {
-      window: windowResponse(dataset.windows),
-      currency: dataset.store.currencyCode,
-      methodology: this.methodology(),
-      mappingPolicy: this.mappingPolicy(),
-      summary: this.summary(dataset.current.totals, dataset.comparison.totals),
-      ...pair,
-      mappings: this.mappingEvidence(productId, dataset.mappings),
+      ...this.header(unified),
+      summary: this.summary(unified, commerceTotals),
+      ...this.item(unified as UnifiedItem, unified, commerceTotals),
+      mappings: this.mappingEvidence(unified, mappings),
     };
   }
 
-  private async loadDataset(storeId: string, query: AnalyticsRangeQuery, now: Date) {
+  private async context(storeId: string, query: AnalyticsRangeQuery, now: Date) {
     const store = await this.analyticsRepository.getStoreContext(storeId);
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
-
     const windows = resolveAnalyticsWindows(query, store.ianaTimezone, now);
-    const configuredAccountIds = store.metaConnection?.selectedAdAccountIds ?? [];
-    if (
-      query.accountId &&
-      (!store.metaConnection || !configuredAccountIds.includes(query.accountId))
-    ) {
-      throw new AppError(
-        'Meta ad account is not selected for this store',
-        400,
-        'META_AD_ACCOUNT_NOT_SELECTED',
+    const states = await this.advertisingRepository.connectionStates(storeId);
+    const accounts = await this.advertisingRepository.selectedAccounts(storeId, states);
+    const metaAccounts = accounts.filter((account) => account.provider === 'META');
+    let canonicalAccountId: string | undefined;
+    if (query.accountId) {
+      const account = metaAccounts.find(
+        (candidate) =>
+          candidate.providerEntityId === query.accountId || candidate.id === query.accountId,
       );
-    }
-    const selectedAccountIds = query.accountId ? [query.accountId] : configuredAccountIds;
-    const [commerceRows, metaRows, mappings] = await Promise.all([
-      this.analyticsRepository.getCommerceRows(
-        storeId,
-        windows.comparison.instantFrom,
-        windows.current.instantTo,
-      ),
-      this.advertisingRepository.getMetaRows(
-        storeId,
-        selectedAccountIds,
-        windows.comparison.metaFrom,
-        windows.current.metaTo,
-      ),
-      this.productAdsRepository.getActiveMappings(storeId, selectedAccountIds),
-    ]);
-
-    const variantIds = [
-      ...new Set(
-        commerceRows
-          .map((row) => row.variantId)
-          .filter((variantId): variantId is string => variantId !== null),
-      ),
-    ];
-    const costs = await this.analyticsRepository.getVariantCosts(
-      storeId,
-      variantIds,
-      windows.comparison.instantFrom,
-      windows.current.instantTo,
-    );
-    const commerce = splitCommerce(commerceRows, windows, commerceRowDate);
-    const meta = splitMeta(metaRows, windows);
-
-    return {
-      store,
-      windows,
-      mappings,
-      current: buildProductAdsPeriod({
-        commerceRows: commerce.current,
-        costRows: costs,
-        mappings,
-        metaRows: meta.current,
-        storeCurrency: store.currencyCode,
-      }),
-      comparison: buildProductAdsPeriod({
-        commerceRows: commerce.comparison,
-        costRows: costs,
-        mappings,
-        metaRows: meta.comparison,
-        storeCurrency: store.currencyCode,
-      }),
-    };
-  }
-
-  private periodPair(
-    productId: string,
-    current: ReturnType<typeof buildProductAdsPeriod>,
-    comparison: ReturnType<typeof buildProductAdsPeriod>,
-    fallbackProduct?: { id: string; shopifyProductId: string; title: string; status: string },
-  ) {
-    const currentValue = current.products.get(productId);
-    const comparisonValue = comparison.products.get(productId);
-    const product = currentValue?.product ?? comparisonValue?.product ?? fallbackProduct;
-    if (!product) return null;
-
-    const currentPeriod = currentValue ?? emptyProductAdsPeriodProduct(product);
-    const comparisonPeriod = comparisonValue ?? emptyProductAdsPeriodProduct(product);
-    const mapping =
-      currentPeriod.mapping.mappedAdCount > 0 ? currentPeriod.mapping : comparisonPeriod.mapping;
-
-    return {
-      product,
-      mapping,
-      current: {
-        commerce: currentPeriod.commerce,
-        advertising: currentPeriod.advertising,
-        derived: currentPeriod.derived,
-      },
-      comparison: {
-        commerce: comparisonPeriod.commerce,
-        advertising: comparisonPeriod.advertising,
-        derived: comparisonPeriod.derived,
-      },
-      change: productAdsChanges(currentPeriod, comparisonPeriod),
-    };
-  }
-
-  private mappingEvidence(productId: string, mappings: MappingRow[]) {
-    const { exact } = resolveExactAdMappings(mappings);
-    return [...exact.values()]
-      .filter((mapping) => mapping.productId === productId)
-      .sort((left, right) => left.rows[0]!.ad.name.localeCompare(right.rows[0]!.ad.name))
-      .map((mapping) => {
-        const row = mapping.rows[0]!;
-        const variants = new Map(
-          mapping.rows
-            .filter((item) => item.variant !== null)
-            .map((item) => [item.variant!.id, item.variant!] as const),
+      if (!account) {
+        throw new AppError(
+          'Meta ad account is not selected for this store',
+          400,
+          'META_AD_ACCOUNT_NOT_SELECTED',
         );
-        return {
-          confidence: mapping.confidence,
-          merchantConfirmed: mapping.merchantConfirmed,
-          sources: mapping.sources,
-          ad: row.ad,
-          variants: [...variants.values()],
-        };
-      });
+      }
+      canonicalAccountId = account.id;
+    }
+    return { store, windows, metaAccounts, canonicalAccountId };
+  }
+
+  private header(unified: UnifiedList | UnifiedDetail) {
+    return {
+      window: unified.window,
+      currency: unified.currency,
+      methodology: {
+        commerce: 'SHOPIFY_PRODUCT_ORDER_COHORT_NET_OF_LINKED_REFUNDS',
+        advertising: 'META_PROVIDER_ATTRIBUTION_SAME_STORE_CURRENCY_ONLY',
+        mapping: 'EXACT_SINGLE_PRODUCT_MAPPING_ONLY',
+        mappingSnapshot: 'CURRENT_ACTIVE_MAPPING_APPLIED_TO_SELECTED_HISTORY',
+        contribution: 'SHOPIFY_CONTRIBUTION_BEFORE_ADS_MINUS_MAPPED_META_SPEND',
+        profitLabel: 'CONTRIBUTION_AFTER_ADS_NOT_NET_PROFIT',
+      },
+      mappingPolicy: {
+        minimumAutomaticConfidence: MIN_AUTOMATIC_MAPPING_CONFIDENCE,
+        merchantConfirmedOverridesAutomatic: true,
+        selectedMetaAccountsOnly: true,
+        multiProductAdsExcluded: true,
+        sameProductMultiVariantAdsAccepted: true,
+      },
+      compatibility: {
+        deprecated: true,
+        authoritativeEndpoint: '/analytics/product-ads/unified',
+        computation: 'UNIFIED_PRODUCT_ADS_SERVICE',
+      },
+    };
   }
 
   private summary(
-    current: ReturnType<typeof buildProductAdsPeriod>['totals'],
-    comparison: ReturnType<typeof buildProductAdsPeriod>['totals'],
+    unified: Pick<UnifiedList, 'summary'>,
+    commerceTotals: CommerceTotals,
   ) {
+    const current = legacySummaryPeriod(unified.summary.current, commerceTotals.CURRENT);
+    const comparison = legacySummaryPeriod(
+      unified.summary.comparison,
+      commerceTotals.COMPARISON,
+    );
     return {
       current,
       comparison,
       change: {
         netProductRevenue: percentChange(current.netProductRevenue, comparison.netProductRevenue),
-        metaSpend: percentChange(current.metaSpend, comparison.metaSpend),
+        metaSpend:
+          current.evidenceAvailable && comparison.evidenceAvailable
+            ? percentChange(current.metaSpend, comparison.metaSpend)
+            : null,
         exactMappedSpend: percentChange(current.exactMappedSpend, comparison.exactMappedSpend),
-        unmappedSpend: percentChange(current.unmappedSpend, comparison.unmappedSpend),
-        mappingCoverage: percentChange(current.mappingCoverage, comparison.mappingCoverage),
+        unmappedSpend:
+          current.evidenceAvailable && comparison.evidenceAvailable
+            ? percentChange(current.unmappedSpend, comparison.unmappedSpend)
+            : null,
+        mappingCoverage:
+          current.evidenceAvailable && comparison.evidenceAvailable
+            ? percentChange(current.mappingCoverage, comparison.mappingCoverage)
+            : null,
       },
     };
   }
 
-  private methodology() {
+  private item(
+    item: UnifiedItem,
+    unified: Pick<UnifiedList, 'summary'>,
+    commerceTotals: CommerceTotals,
+  ) {
+    const currentCommerce = legacyCommerce(item.current.commerce);
+    const comparisonCommerce = legacyCommerce(item.comparison.commerce);
+    const currentCommerceMetrics: ProductMetrics = currentCommerce;
+    const comparisonCommerceMetrics: ProductMetrics = comparisonCommerce;
+    const currentAdvertising = legacyAdvertising(item.current.advertising);
+    const comparisonAdvertising = legacyAdvertising(item.comparison.advertising);
+    const currentPaidTotal = unified.summary.current.compatiblePaidSpend;
+    const comparisonPaidTotal = unified.summary.comparison.compatiblePaidSpend;
+    const currentRevenueShare =
+      commerceTotals.CURRENT > 0
+        ? currentCommerce.netProductRevenue / commerceTotals.CURRENT
+        : 0;
+    const comparisonRevenueShare =
+      commerceTotals.COMPARISON > 0
+        ? comparisonCommerce.netProductRevenue / commerceTotals.COMPARISON
+        : 0;
+    const currentMappedSpendShare =
+      currentPaidTotal !== null && currentPaidTotal > 0 && item.current.advertising.spend !== null
+        ? item.current.advertising.spend / currentPaidTotal
+        : currentPaidTotal === 0
+          ? 0
+          : null;
+    const comparisonMappedSpendShare =
+      comparisonPaidTotal !== null &&
+      comparisonPaidTotal > 0 &&
+      item.comparison.advertising.spend !== null
+        ? item.comparison.advertising.spend / comparisonPaidTotal
+        : comparisonPaidTotal === 0
+          ? 0
+          : null;
+    const currentDerived = {
+      contributionAfterAds: item.current.intelligence.contributionAfterAds,
+      revenueShare: currentRevenueShare,
+      mappedSpendShare: currentMappedSpendShare,
+    };
+    const comparisonDerived = {
+      contributionAfterAds: item.comparison.intelligence.contributionAfterAds,
+      revenueShare: comparisonRevenueShare,
+      mappedSpendShare: comparisonMappedSpendShare,
+    };
+
     return {
-      commerce: 'SHOPIFY_PRODUCT_ORDER_COHORT_NET_OF_LINKED_REFUNDS',
-      advertising: 'META_PROVIDER_ATTRIBUTION_SAME_STORE_CURRENCY_ONLY',
-      mapping: 'EXACT_SINGLE_PRODUCT_MAPPING_ONLY',
-      mappingSnapshot: 'CURRENT_ACTIVE_MAPPING_APPLIED_TO_SELECTED_HISTORY',
-      contribution: 'SHOPIFY_CONTRIBUTION_BEFORE_ADS_MINUS_MAPPED_META_SPEND',
-      profitLabel: 'CONTRIBUTION_AFTER_ADS_NOT_NET_PROFIT',
+      product: item.product,
+      mapping: legacyMapping(item),
+      current: {
+        commerce: currentCommerce,
+        advertising: currentAdvertising,
+        derived: currentDerived,
+      },
+      comparison: {
+        commerce: comparisonCommerce,
+        advertising: comparisonAdvertising,
+        derived: comparisonDerived,
+      },
+      change: {
+        commerce: metricChanges(currentCommerceMetrics, comparisonCommerceMetrics),
+        advertising: legacyAdvertisingChanges(currentAdvertising, comparisonAdvertising),
+        derived: {
+          contributionAfterAds: percentChange(
+            currentDerived.contributionAfterAds,
+            comparisonDerived.contributionAfterAds,
+          ),
+          revenueShare: percentChange(
+            currentDerived.revenueShare,
+            comparisonDerived.revenueShare,
+          ),
+          mappedSpendShare: percentChange(
+            currentDerived.mappedSpendShare,
+            comparisonDerived.mappedSpendShare,
+          ),
+        },
+      },
     };
   }
 
-  private mappingPolicy() {
-    return {
-      minimumAutomaticConfidence: MIN_AUTOMATIC_MAPPING_CONFIDENCE,
-      merchantConfirmedOverridesAutomatic: true,
-      selectedMetaAccountsOnly: true,
-      multiProductAdsExcluded: true,
-      sameProductMultiVariantAdsAccepted: true,
-    };
+  private mappingEvidence(unified: UnifiedDetail, rows: ActiveMapping[]) {
+    const exactAdIds = new Set(
+      unified.mapping.evidence
+        .filter((evidence) => evidence.mappingType === 'EXACT')
+        .map((evidence) => evidence.ad.id),
+    );
+    const byAd = new Map<string, ActiveMapping[]>();
+    for (const row of rows) {
+      if (!exactAdIds.has(row.adId)) continue;
+      const values = byAd.get(row.adId) ?? [];
+      values.push(row);
+      byAd.set(row.adId, values);
+    }
+    return [...byAd.values()].map((values) => {
+      const first = values[0]!;
+      const variants = new Map(
+        values
+          .filter((row) => row.variant !== null)
+          .map((row) => [row.variant!.id, row.variant!] as const),
+      );
+      const confirmed = values.some((row) => row.merchantConfirmed);
+      return {
+        confidence: confirmed ? 1 : Math.max(...values.map((row) => row.confidence)),
+        merchantConfirmed: confirmed,
+        sources: [...new Set(values.map((row) => row.source))].sort(),
+        ad: {
+          id: first.ad.id,
+          metaAdId: first.ad.providerEntityId,
+          name: first.ad.name,
+          campaign: {
+            id: first.ad.campaign.id,
+            metaCampaignId: first.ad.campaign.providerEntityId,
+            name: first.ad.campaign.name,
+          },
+          adSet: first.ad.group
+            ? {
+                id: first.ad.group.id,
+                metaAdSetId: first.ad.group.providerEntityId,
+                name: first.ad.group.name,
+              }
+            : null,
+          creative: null,
+        },
+        variants: [...variants.values()],
+      };
+    });
   }
 }
 
-export const productAdsWorkspace = new ProductAdsWorkspace(
-  new AnalyticsRepository(),
-  new ProductAdsRepository(),
-  new CanonicalAnalyticsRepository(),
-);
+export const productAdsWorkspace = new ProductAdsWorkspace();

@@ -8,23 +8,29 @@ import {
   performanceAnalyticsWorkspace,
   type PerformanceAnalyticsWorkspace,
 } from '../analytics/performance-analytics.workspace.js';
-import { productAdsWorkspace, type ProductAdsWorkspace } from '../analytics/product-ads.workspace.js';
 import {
   productLeaderboardService,
   type ProductLeaderboardService,
 } from '../analytics/product-leaderboard.service.js';
 import { reportWorkspace, type ReportWorkspace } from '../analytics/report.workspace.js';
-import { billingService, type BillingService } from '../billing/billing.service.js';
 import {
-  intelligenceSnapshotReadService,
-  type IntelligenceSnapshotReadService,
-} from '../intelligence/intelligence-snapshot.read.service.js';
+  unifiedProductAdsIntelligenceService,
+  type UnifiedProductAdsIntelligenceService,
+} from '../analytics/unified-product-ads-intelligence.service.js';
+import {
+  unifiedAdvertisingIntelligenceService,
+  type UnifiedAdvertisingIntelligenceService,
+} from '../advertising/unified-advertising-intelligence.service.js';
+import { billingService, type BillingService } from '../billing/billing.service.js';
 import { intelligenceService, type IntelligenceService } from '../intelligence/intelligence.service.js';
 import {
   inventoryPlanningService,
   type InventoryPlanningService,
 } from '../intelligence/inventory-planning.service.js';
-import { recommendationLifecycleService } from '../intelligence/recommendation-lifecycle.service.js';
+import {
+  unifiedDecisionService,
+  type UnifiedDecisionService,
+} from '../intelligence/unified-decision.service.js';
 import {
   pixelAttributionService,
   type PixelAttributionService,
@@ -144,9 +150,7 @@ export class AdvisorReadService {
   constructor(
     private readonly knowledge: BusinessKnowledgeService = businessKnowledgeService,
     private readonly analytics: AnalyticsWorkspace = analyticsWorkspace,
-    private readonly productAds: ProductAdsWorkspace = productAdsWorkspace,
     private readonly reports: ReportWorkspace = reportWorkspace,
-    private readonly intelligence: IntelligenceSnapshotReadService = intelligenceSnapshotReadService,
     private readonly storefront: PixelBehaviorService = pixelBehaviorService,
     private readonly attribution: PixelAttributionService = pixelAttributionService,
     private readonly paidMedia: PaidMediaEvidenceRegistry = paidMediaEvidenceRegistry,
@@ -159,14 +163,31 @@ export class AdvisorReadService {
     private readonly billing: BillingService = billingService,
     private readonly intelligenceSettingsReads: IntelligenceService = intelligenceService,
     private readonly inventoryPlanningReads: InventoryPlanningService = inventoryPlanningService,
+    private readonly unifiedAdvertising: UnifiedAdvertisingIntelligenceService =
+      unifiedAdvertisingIntelligenceService,
+    private readonly unifiedProductAds: UnifiedProductAdsIntelligenceService =
+      unifiedProductAdsIntelligenceService,
+    private readonly unifiedDecisions: UnifiedDecisionService = unifiedDecisionService,
   ) {}
 
   context(storeId: string) {
     return this.knowledge.context(storeId);
   }
 
-  snapshot(storeId: string, input: { days?: number; fresh?: boolean } = {}) {
-    return this.knowledge.snapshot(storeId, input);
+  async snapshot(storeId: string, input: { days?: number; fresh?: boolean } = {}) {
+    const days = normalizedDays(input.days);
+    const [snapshot, unifiedPaidMedia, unifiedDecisions] = await Promise.all([
+      this.knowledge.snapshot(storeId, input),
+      this.unifiedAdvertising.read(storeId, { provider: 'ALL', days }),
+      this.unifiedDecisions.read(storeId, { provider: 'ALL', days }),
+    ]);
+    return {
+      ...snapshot,
+      unifiedPaidMedia,
+      unifiedDecisions,
+      truthBoundary:
+        'Shopify is commerce truth; provider conversion/value metrics remain provider-attributed evidence; Pixel is observed storefront evidence.',
+    };
   }
 
   catalog() {
@@ -328,14 +349,19 @@ export class AdvisorReadService {
   }
 
   productAdsList(storeId: string, input: { days?: number; page?: number; limit?: number } = {}) {
-    return this.productAds.list(
-      storeId,
-      listQuery(normalizedDays(input.days), input.page ?? 1, input.limit ?? 50),
-    );
+    return this.unifiedProductAds.list(storeId, {
+      provider: 'ALL',
+      days: normalizedDays(input.days),
+      page: input.page ?? 1,
+      limit: input.limit ?? 50,
+    });
   }
 
   productAdsDetail(storeId: string, productId: string, days = 30) {
-    return this.productAds.detail(storeId, productId, { days: normalizedDays(days) });
+    return this.unifiedProductAds.detail(storeId, productId, {
+      provider: 'ALL',
+      days: normalizedDays(days),
+    });
   }
 
   intelligenceSettings(storeId: string) {
@@ -346,33 +372,35 @@ export class AdvisorReadService {
     return this.inventoryPlanningReads.get(storeId);
   }
 
-  async recommendations(storeId: string, options: { fresh?: boolean } = {}) {
-    const [snapshot, plan] = await Promise.all([
-      this.intelligence.read(storeId, options),
+  async recommendations(storeId: string, _options: { fresh?: boolean } = {}) {
+    const [decisions, plan] = await Promise.all([
+      this.unifiedDecisions.read(storeId, { provider: 'ALL', days: 30 }),
       this.billing.requireActive(storeId),
     ]);
     const recommendationLimit = Math.max(
       1,
       Number(plan.entitlements.recommendationLimit ?? 10),
     );
-    const recommendations = await recommendationLifecycleService.attach(
-      storeId,
-      snapshot.recommendations.slice(0, recommendationLimit),
-    );
     return {
-      ...snapshot,
-      recommendations,
+      ...decisions,
+      recommendations: decisions.recommendations.slice(0, recommendationLimit),
       entitlement: { recommendationLimit },
     };
   }
 
-  report(storeId: string, input: { days?: number; fresh?: boolean } = {}) {
-    return this.reports.read(
-      storeId,
-      { days: normalizedDays(input.days) },
-      new Date(),
-      { fresh: input.fresh ?? false },
-    );
+  async report(storeId: string, input: { days?: number; fresh?: boolean } = {}) {
+    const days = normalizedDays(input.days);
+    const [report, unifiedPaidMedia, unifiedDecisions] = await Promise.all([
+      this.reports.read(
+        storeId,
+        { days },
+        new Date(),
+        { fresh: input.fresh ?? false },
+      ),
+      this.unifiedAdvertising.read(storeId, { provider: 'ALL', days }),
+      this.unifiedDecisions.read(storeId, { provider: 'ALL', days }),
+    ]);
+    return { ...report, unifiedPaidMedia, unifiedDecisions };
   }
 
   async search(
@@ -389,7 +417,7 @@ export class AdvisorReadService {
     const limit = Math.min(Math.max(Math.trunc(input.limit ?? 20), 1), 50);
     const days = normalizedDays(input.days);
     const searchableProviders = new Set<PaidMediaProvider>(
-      input.paidMediaProviders ?? ['META', 'TIKTOK'],
+      input.paidMediaProviders ?? ['META', 'TIKTOK', 'GOOGLE_ADS'],
     );
     const requested = new Set<AdvisorEntityType>(
       input.entityTypes?.length
@@ -440,6 +468,13 @@ export class AdvisorReadService {
         reads.push(
           this.paidMediaList(storeId, 'TIKTOK', level, { days, page: 1, limit: 100 }).then((value) =>
             items(value).map((row) => resultFromRow(type, row, 'TIKTOK')),
+          ),
+        );
+      }
+      if (searchableProviders.has('GOOGLE_ADS')) {
+        reads.push(
+          this.paidMediaList(storeId, 'GOOGLE_ADS', level, { days, page: 1, limit: 100 }).then((value) =>
+            items(value).map((row) => resultFromRow(type, row, 'GOOGLE_ADS')),
           ),
         );
       }

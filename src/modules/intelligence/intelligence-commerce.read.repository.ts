@@ -173,7 +173,16 @@ export class IntelligenceCommerceReadRepository {
     }));
   }
 
-  async getInventoryEvidenceAggregates(storeId: string): Promise<IntelligenceInventoryEvidenceRow[]> {
+  async getInventoryEvidenceAggregates(
+    storeId: string,
+    productIds?: string[],
+  ): Promise<IntelligenceInventoryEvidenceRow[]> {
+    if (productIds?.length === 0) return [];
+    const productFilter = productIds
+      ? Prisma.sql`AND variant."productId" IN (${Prisma.join(
+          productIds.map((productId) => Prisma.sql`${productId}::uuid`),
+        )})`
+      : Prisma.empty;
     const rows = await prisma.$queryRaw<RawIntelligenceInventoryEvidenceRow[]>(Prisma.sql`
       SELECT
         variant."productId" AS product_id,
@@ -190,6 +199,7 @@ export class IntelligenceCommerceReadRepository {
         AND product."deletedAt" IS NULL
         AND location."deletedAt" IS NULL
         AND location."isActive" = TRUE
+        ${productFilter}
       GROUP BY variant."productId"
       ORDER BY variant."productId"
     `);

@@ -82,7 +82,7 @@ describe('RecommendationLifecycleService resilience', () => {
     expect(advertisingCampaign.findMany).toHaveBeenCalledWith({
       where: {
         id: { in: ['11111111-1111-4111-8111-111111111111'] },
-        account: { storeId: 'store-1', provider: 'META' },
+        account: { storeId: 'store-1' },
       },
       select: { id: true, name: true },
     });

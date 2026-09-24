@@ -64,7 +64,9 @@ function entityKey(type: RecommendationDraft['entityType'], id: string) {
 
 async function loadEntityNames(storeId: string, recommendations: RankedRecommendation[]) {
   const ids = {
+    accounts: new Set<string>(),
     campaigns: new Set<string>(),
+    groups: new Set<string>(),
     adSets: new Set<string>(),
     ads: new Set<string>(),
     creatives: new Set<string>(),
@@ -74,7 +76,9 @@ async function loadEntityNames(storeId: string, recommendations: RankedRecommend
 
   for (const recommendation of recommendations) {
     if (!recommendation.entityId || recommendation.entityName) continue;
-    if (recommendation.entityType === 'CAMPAIGN') ids.campaigns.add(recommendation.entityId);
+    if (recommendation.entityType === 'AD_ACCOUNT') ids.accounts.add(recommendation.entityId);
+    else if (recommendation.entityType === 'CAMPAIGN') ids.campaigns.add(recommendation.entityId);
+    else if (recommendation.entityType === 'GROUP') ids.groups.add(recommendation.entityId);
     else if (recommendation.entityType === 'AD_SET') ids.adSets.add(recommendation.entityId);
     else if (recommendation.entityType === 'AD') ids.ads.add(recommendation.entityId);
     else if (recommendation.entityType === 'CREATIVE') ids.creatives.add(recommendation.entityId);
@@ -82,60 +86,66 @@ async function loadEntityNames(storeId: string, recommendations: RankedRecommend
     else if (recommendation.entityType === 'COLLECTION') ids.collections.add(recommendation.entityId);
   }
 
-  const [campaigns, adSets, ads, creatives, products, collections] = await Promise.all([
-    ids.campaigns.size
-      ? prisma.advertisingCampaign.findMany({
-          where: {
-            id: { in: [...ids.campaigns] },
-            account: { storeId, provider: 'META' },
-          },
-          select: { id: true, name: true },
-        })
-      : Promise.resolve([]),
-    ids.adSets.size
-      ? prisma.advertisingGroup.findMany({
-          where: {
-            id: { in: [...ids.adSets] },
-            kind: 'AD_SET',
-            account: { storeId, provider: 'META' },
-          },
-          select: { id: true, name: true },
-        })
-      : Promise.resolve([]),
-    ids.ads.size
-      ? prisma.advertisingAd.findMany({
-          where: {
-            id: { in: [...ids.ads] },
-            account: { storeId, provider: 'META' },
-          },
-          select: { id: true, name: true },
-        })
-      : Promise.resolve([]),
-    ids.creatives.size
-      ? prisma.advertisingCreative.findMany({
-          where: {
-            id: { in: [...ids.creatives] },
-            account: { storeId, provider: 'META' },
-          },
-          select: { id: true, name: true, title: true },
-        })
-      : Promise.resolve([]),
-    ids.products.size
-      ? prisma.product.findMany({
-          where: { id: { in: [...ids.products] }, storeId, deletedAt: null },
-          select: { id: true, title: true },
-        })
-      : Promise.resolve([]),
-    ids.collections.size
-      ? prisma.collection.findMany({
-          where: { id: { in: [...ids.collections] }, storeId, deletedAt: null },
-          select: { id: true, title: true },
-        })
-      : Promise.resolve([]),
-  ]);
+  const [accounts, campaigns, groups, adSets, ads, creatives, products, collections] =
+    await Promise.all([
+      ids.accounts.size
+        ? prisma.advertisingAccount.findMany({
+            where: { id: { in: [...ids.accounts] }, storeId },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+      ids.campaigns.size
+        ? prisma.advertisingCampaign.findMany({
+            where: { id: { in: [...ids.campaigns] }, account: { storeId } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+      ids.groups.size
+        ? prisma.advertisingGroup.findMany({
+            where: { id: { in: [...ids.groups] }, account: { storeId } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+      ids.adSets.size
+        ? prisma.advertisingGroup.findMany({
+            where: {
+              id: { in: [...ids.adSets] },
+              kind: 'AD_SET',
+              account: { storeId },
+            },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+      ids.ads.size
+        ? prisma.advertisingAd.findMany({
+            where: { id: { in: [...ids.ads] }, account: { storeId } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+      ids.creatives.size
+        ? prisma.advertisingCreative.findMany({
+            where: { id: { in: [...ids.creatives] }, account: { storeId } },
+            select: { id: true, name: true, title: true },
+          })
+        : Promise.resolve([]),
+      ids.products.size
+        ? prisma.product.findMany({
+            where: { id: { in: [...ids.products] }, storeId, deletedAt: null },
+            select: { id: true, title: true },
+          })
+        : Promise.resolve([]),
+      ids.collections.size
+        ? prisma.collection.findMany({
+            where: { id: { in: [...ids.collections] }, storeId, deletedAt: null },
+            select: { id: true, title: true },
+          })
+        : Promise.resolve([]),
+    ]);
 
   const names = new Map<string, string>();
+  for (const item of accounts) names.set(entityKey('AD_ACCOUNT', item.id), item.name);
   for (const item of campaigns) names.set(entityKey('CAMPAIGN', item.id), item.name);
+  for (const item of groups) names.set(entityKey('GROUP', item.id), item.name);
   for (const item of adSets) names.set(entityKey('AD_SET', item.id), item.name);
   for (const item of ads) names.set(entityKey('AD', item.id), item.name);
   for (const item of creatives) {
@@ -179,10 +189,6 @@ export class RecommendationLifecycleService {
           select: { occurrenceKey: true, state: true, updatedAt: true },
         });
       } catch (error) {
-        // Lifecycle persistence is secondary state. A developer database that has not yet
-        // applied the lifecycle migration must not make the deterministic decision feed 500.
-        // We still surface the recommendations as OPEN; writes fail explicitly below until
-        // the migration is applied.
         if (!lifecycleStorageUnavailable(error)) throw error;
       }
     }

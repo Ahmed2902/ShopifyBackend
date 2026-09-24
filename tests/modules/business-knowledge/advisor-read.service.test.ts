@@ -19,15 +19,7 @@ function createService() {
     customers: vi.fn(),
     inventory: vi.fn(),
   };
-  const productAds = { list: vi.fn(), detail: vi.fn() };
   const reports = { read: vi.fn() };
-  const intelligence = {
-    read: vi.fn().mockResolvedValue({
-      evaluatedAt: new Date(),
-      dataQuality: [],
-      recommendations: [],
-    }),
-  };
   const storefront = {
     products: vi.fn(),
     collections: vi.fn(),
@@ -84,9 +76,7 @@ function createService() {
     value: new AdvisorReadService(
       knowledge as never,
       analytics as never,
-      productAds as never,
       reports as never,
-      intelligence as never,
       storefront as never,
       attribution as never,
       paidMedia as never,
@@ -150,7 +140,11 @@ describe('AdvisorReadService', () => {
 
   it('discovers TikTok entities without pretending creative support exists', async () => {
     const { value, tiktok } = createService();
-    const result = await value.search('store-1', { query: 'prospecting', entityTypes: ['CAMPAIGN'] });
+    const result = await value.search('store-1', {
+      query: 'prospecting',
+      entityTypes: ['CAMPAIGN'],
+      paidMediaProviders: ['TIKTOK'],
+    });
 
     expect(tiktok.list).toHaveBeenCalledWith('store-1', 'CAMPAIGN', {
       days: 30,

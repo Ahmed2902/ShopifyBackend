@@ -168,12 +168,18 @@ export type RecommendationCategory =
   | 'LANDING_PAGE_QUALITY'
   | 'COMMERCE_HEALTH'
   | 'MAPPING_HEALTH'
-  | 'ATTRIBUTION_HEALTH';
+  | 'ATTRIBUTION_HEALTH'
+  | 'PAID_MEDIA_EFFICIENCY'
+  | 'PAID_MEDIA_DELIVERY'
+  | 'PRODUCT_ADS_ECONOMICS'
+  | 'DATA_QUALITY';
 
 export type RecommendationSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export type RecommendationEntityType =
   | 'STORE'
+  | 'AD_ACCOUNT'
   | 'CAMPAIGN'
+  | 'GROUP'
   | 'AD_SET'
   | 'AD'
   | 'CREATIVE'
@@ -185,6 +191,7 @@ export type RecommendationEntityType =
 export type RecommendationEvidenceQuality = 'HIGH' | 'MEDIUM' | 'LOW';
 export type RecommendationAttributionPrecision =
   | 'META_PROVIDER'
+  | 'PROVIDER_REPORTED'
   | 'EXACT_PRODUCT'
   | 'SHARED_MULTI_PRODUCT'
   | 'COLLECTION'
