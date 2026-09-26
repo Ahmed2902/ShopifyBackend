@@ -567,16 +567,6 @@ export class UnifiedProductAdsRepository {
             conversionValue: true,
           },
         });
-        const incompleteConversionCurrencies = new Set(
-          rows
-            .filter((row) => row._count.conversions !== row._count._all)
-            .map((row) => row.currency),
-        );
-        const incompleteValueCurrencies = new Set(
-          rows
-            .filter((row) => row._count.conversionValue !== row._count._all)
-            .map((row) => row.currency),
-        );
         return rows.flatMap((row) =>
           row.adId
             ? [{
@@ -588,12 +578,14 @@ export class UnifiedProductAdsRepository {
                 spend: decimal(row._sum.spend) ?? 0,
                 impressions: integer(row._sum.impressions),
                 clicks: integer(row._sum.clicks),
-                conversions: incompleteConversionCurrencies.has(row.currency)
-                  ? null
-                  : decimal(row._sum.conversions),
-                conversionValue: incompleteValueCurrencies.has(row.currency)
-                  ? null
-                  : decimal(row._sum.conversionValue),
+                conversions:
+                  row._count.conversions === row._count._all
+                    ? decimal(row._sum.conversions)
+                    : null,
+                conversionValue:
+                  row._count.conversionValue === row._count._all
+                    ? decimal(row._sum.conversionValue)
+                    : null,
               }]
             : [],
         );
