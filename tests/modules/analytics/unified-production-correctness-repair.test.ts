@@ -10,8 +10,10 @@ describe('unified production correctness repair', () => {
       'utf8',
     );
     expect(source).toContain('_count: { _all: true, conversions: true, conversionValue: true }');
-    expect(source).toContain('incompleteConversionCurrencies');
-    expect(source).toContain('incompleteValueCurrencies');
+    expect(source).toContain('row._count.conversions === row._count._all');
+    expect(source).toContain('row._count.conversionValue === row._count._all');
+    expect(source).not.toContain('incompleteConversionCurrencies');
+    expect(source).not.toContain('incompleteValueCurrencies');
     expect(source).not.toMatch(/conversions:\s*decimal\([^\n]+\)\s*\?\?\s*0/);
     expect(source).not.toMatch(/conversionValue:\s*decimal\([^\n]+\)\s*\?\?\s*0/);
   });
