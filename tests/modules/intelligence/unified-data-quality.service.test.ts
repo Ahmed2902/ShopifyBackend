@@ -135,7 +135,11 @@ describe('UnifiedDataQualityService', () => {
 
   it('reports bounded quality evaluation instead of pretending full entity coverage', async () => {
     const service = createService({ totalCampaigns: 101 });
-    const result = await service.read('store-1', { provider: 'ALL', days: 30 });
+    const result = await service.read(
+      'store-1',
+      { provider: 'ALL', days: 30 },
+      new Date('2026-09-23T11:00:00.000Z'),
+    );
     expect(result.evaluationBounds).toMatchObject({ maxPerEntityType: 100, truncated: true });
     expect(result.items).toEqual(
       expect.arrayContaining([expect.objectContaining({ code: 'QUALITY_AUDIT_BOUNDED' })]),
@@ -145,7 +149,11 @@ describe('UnifiedDataQualityService', () => {
 
   it('does not lower confidence solely because deduplicated reach is unsupported', async () => {
     const service = createService();
-    const result = await service.read('store-1', { provider: 'ALL', days: 30 });
+    const result = await service.read(
+      'store-1',
+      { provider: 'ALL', days: 30 },
+      new Date('2026-09-23T11:00:00.000Z'),
+    );
     expect(result.items.map((item) => item.code)).toEqual(['UNAVAILABLE_REACH']);
     expect(result.confidence).toBe('HIGH');
   });

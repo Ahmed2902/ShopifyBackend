@@ -152,14 +152,14 @@ function aggregateAdRows(
     values: UnifiedProductAdMetricRow[],
     field: 'spend' | 'impressions' | 'clicks',
   ) => values.reduce((total, row) => total + row[field], 0);
-  const nullableSum = (
+  const completeNullableSum = (
     values: UnifiedProductAdMetricRow[],
     field: 'conversions' | 'conversionValue',
   ) => {
-    const available = values.filter((row) => row[field] !== null);
-    return available.length > 0
-      ? available.reduce((total, row) => total + (row[field] ?? 0), 0)
-      : null;
+    // Provider attribution totals are authoritative only when every contributing row reports the
+    // metric. A genuine zero remains a known zero; any null makes the aggregate unavailable.
+    if (values.length === 0 || values.some((row) => row[field] === null)) return null;
+    return values.reduce((total, row) => total + (row[field] ?? 0), 0);
   };
   const byProvider = [...providers.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
@@ -168,16 +168,16 @@ function aggregateAdRows(
       spend: sum(values, 'spend'),
       impressions: sum(values, 'impressions'),
       clicks: sum(values, 'clicks'),
-      providerConversions: nullableSum(values, 'conversions'),
-      providerConversionValue: nullableSum(values, 'conversionValue'),
+      providerConversions: completeNullableSum(values, 'conversions'),
+      providerConversionValue: completeNullableSum(values, 'conversionValue'),
     }));
   return {
     evidenceAvailable: true,
     spend: sum(rows, 'spend'),
     impressions: sum(rows, 'impressions'),
     clicks: sum(rows, 'clicks'),
-    providerConversions: nullableSum(rows, 'conversions'),
-    providerConversionValue: nullableSum(rows, 'conversionValue'),
+    providerConversions: completeNullableSum(rows, 'conversions'),
+    providerConversionValue: completeNullableSum(rows, 'conversionValue'),
     byProvider,
   };
 }
