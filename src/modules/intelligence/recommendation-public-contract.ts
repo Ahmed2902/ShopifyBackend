@@ -326,16 +326,16 @@ function relevantQualityBlocker(
   item: PublicQualityItem,
 ): boolean {
   if (!PUBLIC_BLOCKING_QUALITY_CODES.has(item.code)) return false;
-  const provider = recommendationProvider(recommendation);
-  const accountId = recommendationAccountId(recommendation);
-  if (item.provider && provider && item.provider !== provider) return false;
-  if (item.accountId && accountId && item.accountId !== accountId) return false;
   if (
     recommendation.attributionPrecision === 'SHOPIFY_COMMERCE' ||
     recommendation.attributionPrecision === 'FIRST_PARTY_OBSERVED'
   ) {
-    return item.code === 'CURRENCY_MISMATCH';
+    return false;
   }
+  const provider = recommendationProvider(recommendation);
+  const accountId = recommendationAccountId(recommendation);
+  if (item.provider && provider && item.provider !== provider) return false;
+  if (item.accountId && accountId && item.accountId !== accountId) return false;
   return true;
 }
 
