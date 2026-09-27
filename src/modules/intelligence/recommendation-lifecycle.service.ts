@@ -1,12 +1,24 @@
 import { AppError } from '../../errors/app-error.js';
 import { prisma } from '../../lib/prisma.js';
 import { recommendationDecision } from './recommendation-decision.js';
+import {
+  publicRecommendation,
+  recommendationHasRequiredEvidence,
+} from './recommendation-public-contract.js';
 import type {
   RecommendationDraft,
   RecommendationLifecycleState,
 } from './intelligence.types.js';
 
 type RankedRecommendation = RecommendationDraft & { priority: number };
+type RecommendationQualityItem = {
+  code: string;
+  status: 'HEALTHY' | 'WARNING' | 'BLOCKED';
+  surface: string;
+  provider?: string;
+  accountId?: string;
+};
+
 export type RecommendationOccurrenceInput = Pick<
   RecommendationDraft,
   | 'ruleId'
@@ -162,20 +174,28 @@ function decorateRecommendation(
   entityName: string | null,
 ) {
   const occurrenceKey = recommendationOccurrenceKey(recommendation);
-  return {
+  const decision = recommendationDecision(recommendation);
+  return publicRecommendation({
     ...recommendation,
     entityName: recommendation.entityName ?? entityName,
-    ...recommendationDecision(recommendation),
+    ...decision,
     occurrenceKey,
     lifecycleState: lifecycle?.state ?? ('OPEN' as const),
     lifecycleUpdatedAt: lifecycle?.updatedAt ?? null,
-  };
+  });
 }
 
 export class RecommendationLifecycleService {
-  async attach(storeId: string, recommendations: RankedRecommendation[]) {
-    const occurrenceKeys = recommendations.map(recommendationOccurrenceKey);
-    const entityNamesPromise = loadEntityNames(storeId, recommendations);
+  async attach(
+    storeId: string,
+    recommendations: RankedRecommendation[],
+    dataQuality: readonly RecommendationQualityItem[] = [],
+  ) {
+    const supported = recommendations.filter((recommendation) =>
+      recommendationHasRequiredEvidence(recommendation, dataQuality),
+    );
+    const occurrenceKeys = supported.map(recommendationOccurrenceKey);
+    const entityNamesPromise = loadEntityNames(storeId, supported);
     let stored: Array<{
       occurrenceKey: string;
       state: RecommendationLifecycleState;
@@ -195,7 +215,7 @@ export class RecommendationLifecycleService {
 
     const entityNames = await entityNamesPromise;
     const storedByKey = new Map(stored.map((item) => [item.occurrenceKey, item]));
-    return recommendations.map((recommendation) =>
+    return supported.map((recommendation) =>
       decorateRecommendation(
         recommendation,
         storedByKey.get(recommendationOccurrenceKey(recommendation)) ?? null,
