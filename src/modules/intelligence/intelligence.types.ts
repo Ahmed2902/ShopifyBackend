@@ -245,7 +245,6 @@ export interface RecommendationDraft {
 
 export interface RecommendationDecisionMetadata {
   decisionAction: DecisionAction;
-  decisionConfidence: DecisionConfidence;
   decisionBasis: 'DETERMINISTIC_RULE';
   decisionMessage: string;
 }
