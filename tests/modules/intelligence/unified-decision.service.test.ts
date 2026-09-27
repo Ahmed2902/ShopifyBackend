@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { UnifiedDecisionService } from '../../../src/modules/intelligence/unified-decision.service.js';
+import { presentRecommendation } from '../../../src/modules/intelligence/recommendation-presentation.js';
 
 const window = {
   current: { from: '2026-09-01', to: '2026-09-30' },
@@ -36,8 +37,16 @@ function product(overrides: Record<string, unknown> = {}) {
 }
 
 function service(
-  input: { quality?: unknown[]; products?: unknown[]; historyComplete?: boolean } = {},
+  input: {
+    quality?: unknown[];
+    products?: unknown[];
+    historyComplete?: boolean;
+    shopifyFresh?: boolean;
+    pixelFresh?: boolean;
+  } = {},
 ) {
+  const fresh = new Date();
+  const stale = new Date('2020-01-01T00:00:00.000Z');
   const advertising = {
     read: vi.fn().mockResolvedValue({
       truthModel: {},
@@ -57,13 +66,24 @@ function service(
     }),
   };
   const lifecycle = {
-    attach: vi.fn().mockImplementation(async (_storeId: string, drafts: unknown[]) => drafts),
+    attach: vi.fn().mockImplementation(async (_storeId: string, drafts: any[]) =>
+      drafts.map((draft) => presentRecommendation(draft)),
+    ),
   };
   const context = {
     getContext: vi.fn().mockResolvedValue({
-      shopifyConnection: { status: 'ACTIVE' },
+      currencyCode: 'USD',
+      shopifyConnection: {
+        status: 'ACTIVE',
+        lastSyncedAt: input.shopifyFresh === false ? stale : fresh,
+      },
       successfulOrderHistorySync:
         input.historyComplete === false ? null : { status: 'SUCCEEDED' },
+      pixelInstallation: {
+        status: 'ACTIVE',
+        lastEventAt: input.pixelFresh === false ? stale : fresh,
+      },
+      storefrontBehaviorRollup: { lastError: null },
     }),
   };
   return new UnifiedDecisionService(
@@ -76,7 +96,7 @@ function service(
 }
 
 describe('UnifiedDecisionService guardrails', () => {
-  it('keeps unsupported deduplicated reach as a limitation instead of an impossible action', async () => {
+  it('keeps unsupported deduplicated reach as a diagnostic instead of an impossible action', async () => {
     const value = service({
       quality: [
         {
@@ -90,6 +110,8 @@ describe('UnifiedDecisionService guardrails', () => {
     const result = await value.read('store-1', { provider: 'ALL', days: 30 });
     expect(result.recommendations).toEqual([]);
     expect(result.dataQuality.items[0]).toMatchObject({ code: 'UNAVAILABLE_REACH' });
+    expect(result.dataQuality).not.toHaveProperty('confidence');
+    expect(result).not.toHaveProperty('confidenceModel');
   });
 
   it('does not call a weak product page a paid-media correlation when mapped spend is zero', async () => {
@@ -128,9 +150,11 @@ describe('UnifiedDecisionService guardrails', () => {
         expect.objectContaining({ code: 'CORRELATION_NOT_CAUSATION' }),
       ]),
     );
+    expect(result.recommendations[0]).not.toHaveProperty('confidenceScore');
+    expect(result.recommendations[0]).not.toHaveProperty('evidenceQuality');
   });
 
-  it('fails commerce-derived decisions closed while preserving independently valid Pixel recommendations', async () => {
+  it('fails commerce-derived decisions closed while preserving independently valid fresh Pixel recommendations', async () => {
     const paid = product({
       commerce: {
         evidenceAvailable: false,
@@ -181,6 +205,52 @@ describe('UnifiedDecisionService guardrails', () => {
         }),
       ]),
     );
-    expect(result.dataQuality.confidence).toBe('LOW');
+  });
+
+  it('withholds paid-media product conclusions when provider evidence is stale', async () => {
+    const paid = product({
+      advertising: { spend: 120, byProvider: [{ provider: 'META', spend: 120 }] },
+      inventory: { state: 'STOCKOUT_RISK', available: 4, daysCover: 2 },
+    });
+    const value = service({
+      products: [paid],
+      quality: [
+        {
+          code: 'STALE_SYNC',
+          status: 'WARNING',
+          surface: 'PAID_MEDIA',
+          provider: 'META',
+          message: 'stale',
+        },
+      ],
+    });
+    const result = await value.read('store-1', { provider: 'ALL', days: 30 });
+    expect(result.recommendations).toEqual([]);
+  });
+
+  it('withholds cross-domain product conclusions for an incompatible requested currency', async () => {
+    const paid = product({
+      advertising: { spend: 120, byProvider: [{ provider: 'META', spend: 120 }] },
+      inventory: { state: 'STOCKOUT_RISK', available: 4, daysCover: 2 },
+    });
+    const value = service({ products: [paid] });
+    const result = await value.read('store-1', {
+      provider: 'ALL',
+      days: 30,
+      currency: 'EUR',
+    });
+    expect(result.recommendations).toEqual([]);
+  });
+
+  it('withholds Pixel correlation findings when first-party evidence is stale', async () => {
+    const paid = product({
+      advertising: { spend: 120, byProvider: [{ provider: 'META', spend: 120 }] },
+      inventory: { state: 'HEALTHY', available: 50, daysCover: 30 },
+    });
+    const value = service({ products: [paid], pixelFresh: false });
+    const result = await value.read('store-1', { provider: 'ALL', days: 30 });
+    expect(result.recommendations.map((item) => item.ruleId)).not.toContain(
+      'unified_paid_product_weak_view_to_cart',
+    );
   });
 });
