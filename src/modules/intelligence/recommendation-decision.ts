@@ -3,8 +3,13 @@ import type {
   RecommendationDraft,
 } from './intelligence.types.js';
 
+type DecisionRecommendation = Pick<
+  RecommendationDraft,
+  'ruleId' | 'severity' | 'suggestedAction'
+>;
+
 export function recommendationDecision(
-  recommendation: RecommendationDraft,
+  recommendation: DecisionRecommendation,
 ): RecommendationDecisionMetadata {
   let decisionAction: RecommendationDecisionMetadata['decisionAction'];
   let decisionMessage = recommendation.suggestedAction;
@@ -75,7 +80,6 @@ export function recommendationDecision(
 
   return {
     decisionAction,
-    decisionConfidence: recommendation.evidenceQuality,
     decisionBasis: 'DETERMINISTIC_RULE',
     decisionMessage,
   };
