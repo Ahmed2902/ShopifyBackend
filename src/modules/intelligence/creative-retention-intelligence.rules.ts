@@ -62,6 +62,7 @@ export function videoRetentionDeteriorationRule(
       source: 'META_VIDEO_INSIGHTS',
       current,
       comparison,
+      minimumDiagnosticPlays: retention.minimumDiagnosticPlays,
       hookRatePointChange: hookPoints,
       completionRatePointChange: completionPoints,
       largestCurrentDropStage: current.largestDropStage,
