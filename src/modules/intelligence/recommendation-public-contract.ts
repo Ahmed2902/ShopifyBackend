@@ -154,7 +154,11 @@ export function recommendationThreshold(ruleId: string): RecommendationThreshold
       ]);
     case 'adset_efficiency_deterioration':
     case 'ad_efficiency_deterioration':
-      return threshold('Paid-media efficiency deterioration crossed the deterministic entity rule after the rule minimum delivery checks passed.', []);
+      return threshold('Current and comparison spend are each at least 50, spend increased at least 15%, and provider-reported ROAS fell at least 20% or CPA rose at least 20%.', [
+        { metric: 'current.spend', operator: '>=', value: 50, unit: 'CURRENCY' },
+        { metric: 'comparison.spend', operator: '>=', value: 50, unit: 'CURRENCY' },
+        { metric: 'change.spend', operator: '>=', value: 0.15, unit: 'PERCENT_CHANGE' },
+      ]);
     case 'creative_fatigue_symptoms':
       return threshold('Frequency rose at least 20%, CTR fell at least 20%, and CPA rose at least 15% or ROAS fell at least 20%, with at least 1,000 impressions in both periods.', [
         { metric: 'change.frequency', operator: '>=', value: 0.2, unit: 'PERCENT_CHANGE' },
@@ -163,7 +167,10 @@ export function recommendationThreshold(ruleId: string): RecommendationThreshold
         { metric: 'comparison.impressions', operator: '>=', value: 1000, unit: 'COUNT' },
       ]);
     case 'video_retention_deterioration':
-      return threshold('Video-retention deterioration crossed the deterministic retention rule after its minimum play-count checks passed.', []);
+      return threshold('Meta video evidence is READY, both periods meet the diagnostic minimum-play requirement, and either 25% view-through rate or completion rate fell by at least 10 percentage points.', [
+        { metric: 'change.to25Rate', operator: '<=', value: -0.1, unit: 'PERCENTAGE_POINTS' },
+        { metric: 'change.completionRate', operator: '<=', value: -0.1, unit: 'PERCENTAGE_POINTS' },
+      ]);
     case 'underexposed_commerce_winner':
       return threshold('At least 5 units, at least 8% Shopify revenue share, exact mapping confidence at least 70%, and mapped spend share below 60% of revenue share.', [
         { metric: 'units', operator: '>=', value: 5, unit: 'COUNT' },
@@ -250,7 +257,12 @@ export function recommendationThreshold(ruleId: string): RecommendationThreshold
         { metric: 'mappingCoverage', operator: '<', value: 0.6, unit: 'RATIO' },
       ]);
     case 'provider_first_party_purchase_gap':
-      return threshold('Provider-reported purchase count and first-party linked purchase journeys differ by at least the attribution-health rule threshold.', []);
+      return threshold('Attribution evidence is READY, provider-reported purchases are at least 20, first-party Meta-touched Shopify purchase journeys are at least 10, Meta-touched sessions are at least 100, and the absolute purchase-count gap is at least 30% of the larger count.', [
+        { metric: 'providerPurchases', operator: '>=', value: 20, unit: 'COUNT' },
+        { metric: 'firstPartyMetaPurchaseJourneys', operator: '>=', value: 10, unit: 'COUNT' },
+        { metric: 'metaTouchedSessions', operator: '>=', value: 100, unit: 'COUNT' },
+        { metric: 'relativeGap', operator: '>=', value: 0.3, unit: 'RATIO' },
+      ]);
     case 'unified_inventory_paid_spend_conflict':
       return threshold('Exact mapped paid spend is positive while trusted inventory is SOLD_OUT, STOCKOUT_RISK, or LOW_STOCK.', [
         { metric: 'mappedPaidSpend', operator: '>', value: 0, unit: 'CURRENCY' },
@@ -331,7 +343,7 @@ export function recommendationHasRequiredEvidence(
   recommendation: RecommendationDraft,
   dataQuality: readonly PublicQualityItem[] = [],
 ): boolean {
-  if (recommendation.category === 'DATA_QUALITY') return false;
+  if (recommendation.ruleId.startsWith('unified_data_quality_')) return false;
   if (recommendation.ruleId.includes('insufficient_current_evidence')) return false;
   if (recommendation.limitations.some(limitationBlocksPublicRecommendation)) return false;
   if (ruleNeedsComparison(recommendation.ruleId) && comparisonEvidenceMissing(recommendation)) {
