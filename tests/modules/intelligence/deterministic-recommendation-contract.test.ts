@@ -119,6 +119,50 @@ describe('deterministic recommendation thresholds', () => {
 
     expect(signals.map((signal) => signal.code)).toContain('NO_CONVERSION_SPEND');
   });
+
+  it('has public threshold metadata for every merchant-facing deterministic rule family', () => {
+    const ruleIds = [
+      'campaign_efficiency_deterioration',
+      'adset_efficiency_deterioration',
+      'ad_efficiency_deterioration',
+      'creative_fatigue_symptoms',
+      'video_retention_deterioration',
+      'underexposed_commerce_winner',
+      'paid_commerce_exposure_mismatch',
+      'provider_roas_margin_trap',
+      'inventory_spend_conflict',
+      'shared_exposure_inventory_conflict',
+      'inventory_runway_risk',
+      'cart_abandonment_deterioration',
+      'checkout_abandonment_deterioration',
+      'view_to_cart_deterioration',
+      'storefront_conversion_deterioration',
+      'product_conversion_deterioration',
+      'high_traffic_low_conversion_product',
+      'landing_page_quality_deterioration',
+      'refund_rate_deterioration',
+      'discount_dependency_deterioration',
+      'returning_customer_deterioration',
+      'mapping_coverage_degraded',
+      'provider_first_party_purchase_gap',
+      'unified_campaign_no_conversion_spend',
+      'unified_campaign_spend_up_efficiency_down',
+      'unified_campaign_cpc_deterioration',
+      'unified_campaign_ctr_deterioration',
+      'unified_campaign_conversions_down_spend_up',
+      'unified_campaign_strong_provider_efficiency',
+      'unified_campaign_sudden_delivery_change',
+      'unified_inventory_paid_spend_conflict',
+      'unified_inventory_overstock_weak_demand',
+      'unified_product_paid_demand_negative_contribution',
+      'unified_profitable_product_low_paid_support',
+      'unified_paid_product_weak_view_to_cart',
+    ];
+
+    for (const ruleId of ruleIds) {
+      expect(recommendationThreshold(ruleId), ruleId).not.toBeNull();
+    }
+  });
 });
 
 describe('public recommendation contract', () => {
@@ -172,6 +216,20 @@ describe('public recommendation contract', () => {
         },
       ]),
     ).toBe(false);
+  });
+
+  it('does not let an unrelated paid-media currency warning suppress Shopify-only evidence', () => {
+    expect(
+      recommendationHasRequiredEvidence(
+        recommendation({
+          ruleId: 'refund_rate_deterioration',
+          category: 'COMMERCE_HEALTH',
+          attributionPrecision: 'SHOPIFY_COMMERCE',
+          evidence: { current: { refundRate: 0.08 }, comparison: { refundRate: 0.02 } },
+        }),
+        [{ code: 'CURRENCY_MISMATCH', status: 'WARNING', surface: 'PAID_MEDIA' }],
+      ),
+    ).toBe(true);
   });
 
   it('withholds comparison rules when comparison evidence is incomplete', () => {
