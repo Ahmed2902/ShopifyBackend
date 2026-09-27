@@ -20,14 +20,26 @@ export type RecommendationOccurrenceInput = Pick<
   observationEnd: Date | string;
 };
 
-type RankedRecommendation = RecommendationOccurrenceInput & {
-  priority: number;
-  category: RecommendationDraft['category'];
-  severity: RecommendationDraft['severity'];
-  suggestedAction: string;
-  entityName?: string | null;
+type RawRankedRecommendation = RecommendationDraft & { priority: number };
+type RankedRecommendation = Omit<
+  RawRankedRecommendation,
+  'confidenceScore' | 'evidenceQuality'
+> & {
+  confidenceScore?: number;
+  evidenceQuality?: RecommendationDraft['evidenceQuality'];
+  thresholdCrossed?: unknown;
+  affectedEntity?: Record<string, unknown>;
   [key: string]: unknown;
 };
+
+function isRawRankedRecommendation(
+  recommendation: RankedRecommendation,
+): recommendation is RawRankedRecommendation {
+  return (
+    typeof recommendation.confidenceScore === 'number' &&
+    typeof recommendation.evidenceQuality === 'string'
+  );
+}
 
 function occurrenceTimestamp(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -171,17 +183,14 @@ function decorateRecommendation(
   entityName: string | null,
 ) {
   const occurrenceKey = recommendationOccurrenceKey(recommendation);
-  const presented =
-    'thresholdCrossed' in recommendation
-      ? recommendation
-      : presentRecommendation(recommendation as RecommendationDraft & { priority: number });
+  const presented = isRawRankedRecommendation(recommendation)
+    ? presentRecommendation(recommendation)
+    : recommendation;
   return {
     ...presented,
     entityName: recommendation.entityName ?? entityName,
     affectedEntity: {
-      ...(typeof presented.affectedEntity === 'object' && presented.affectedEntity
-        ? presented.affectedEntity
-        : {}),
+      ...(presented.affectedEntity ?? {}),
       name: recommendation.entityName ?? entityName,
     },
     ...recommendationDecision(recommendation),
