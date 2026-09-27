@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { UnifiedDecisionService } from '../../../src/modules/intelligence/unified-decision.service.js';
 
+const now = new Date('2026-09-26T13:00:00.000Z');
+const freshAt = new Date('2026-09-26T12:00:00.000Z');
 const window = {
   current: { from: '2026-09-01', to: '2026-09-30' },
   comparison: { from: '2026-08-02', to: '2026-08-31' },
@@ -36,7 +38,14 @@ function product(overrides: Record<string, unknown> = {}) {
 }
 
 function service(
-  input: { quality?: unknown[]; products?: unknown[]; historyComplete?: boolean } = {},
+  input: {
+    quality?: unknown[];
+    products?: unknown[];
+    historyComplete?: boolean;
+    shopifySyncedAt?: Date | null;
+    pixelLastEventAt?: Date | null;
+    pixelRollupError?: string | null;
+  } = {},
 ) {
   const advertising = {
     read: vi.fn().mockResolvedValue({
@@ -61,23 +70,37 @@ function service(
   };
   const context = {
     getContext: vi.fn().mockResolvedValue({
-      shopifyConnection: { status: 'ACTIVE' },
+      shopifyConnection: {
+        status: 'ACTIVE',
+        lastSyncedAt: input.shopifySyncedAt === undefined ? freshAt : input.shopifySyncedAt,
+      },
       successfulOrderHistorySync:
         input.historyComplete === false ? null : { status: 'SUCCEEDED' },
+      pixelInstallation: {
+        status: 'ACTIVE',
+        lastEventAt: input.pixelLastEventAt === undefined ? freshAt : input.pixelLastEventAt,
+      },
+      storefrontBehaviorRollup: {
+        lastRolledUpAt: freshAt,
+        lastError: input.pixelRollupError ?? null,
+      },
     }),
   };
-  return new UnifiedDecisionService(
-    advertising as never,
-    entities as never,
-    products as never,
-    lifecycle as never,
-    context as never,
-  );
+  return {
+    value: new UnifiedDecisionService(
+      advertising as never,
+      entities as never,
+      products as never,
+      lifecycle as never,
+      context as never,
+    ),
+    lifecycle,
+  };
 }
 
 describe('UnifiedDecisionService guardrails', () => {
-  it('keeps unsupported deduplicated reach as a limitation instead of an impossible action', async () => {
-    const value = service({
+  it('keeps unsupported deduplicated reach as a diagnostic limitation instead of an action', async () => {
+    const { value } = service({
       quality: [
         {
           code: 'UNAVAILABLE_REACH',
@@ -87,14 +110,16 @@ describe('UnifiedDecisionService guardrails', () => {
         },
       ],
     });
-    const result = await value.read('store-1', { provider: 'ALL', days: 30 });
+    const result = await value.read('store-1', { provider: 'ALL', days: 30 }, now);
     expect(result.recommendations).toEqual([]);
     expect(result.dataQuality.items[0]).toMatchObject({ code: 'UNAVAILABLE_REACH' });
+    expect(result).not.toHaveProperty('confidenceModel');
+    expect(result.dataQuality).not.toHaveProperty('confidence');
   });
 
   it('does not call a weak product page a paid-media correlation when mapped spend is zero', async () => {
-    const value = service({ products: [product()] });
-    const result = await value.read('store-1', { provider: 'ALL', days: 30 });
+    const { value } = service({ products: [product()] });
+    const result = await value.read('store-1', { provider: 'ALL', days: 30 }, now);
     expect(result.recommendations.map((item) => item.ruleId)).not.toContain(
       'unified_paid_product_weak_view_to_cart',
     );
@@ -115,8 +140,8 @@ describe('UnifiedDecisionService guardrails', () => {
         limitations: [],
       },
     });
-    const value = service({ products: [paid] });
-    const result = await value.read('store-1', { provider: 'ALL', days: 30 });
+    const { value } = service({ products: [paid] });
+    const result = await value.read('store-1', { provider: 'ALL', days: 30 }, now);
     const ids = result.recommendations.map((item) => item.ruleId);
     expect(ids).toContain('unified_inventory_paid_spend_conflict');
     expect(ids).toContain('unified_paid_product_weak_view_to_cart');
@@ -130,7 +155,7 @@ describe('UnifiedDecisionService guardrails', () => {
     );
   });
 
-  it('fails commerce-derived decisions closed while preserving independently valid Pixel recommendations', async () => {
+  it('fails commerce-derived decisions closed while preserving independently valid fresh Pixel recommendations', async () => {
     const paid = product({
       commerce: {
         evidenceAvailable: false,
@@ -164,8 +189,8 @@ describe('UnifiedDecisionService guardrails', () => {
       }),
       product: { id: 'product-2', shopifyProductId: '200', title: 'Organic Product' },
     };
-    const value = service({ historyComplete: false, products: [paid, organic] });
-    const result = await value.read('store-1', { provider: 'ALL', days: 30 });
+    const { value } = service({ historyComplete: false, products: [paid, organic] });
+    const result = await value.read('store-1', { provider: 'ALL', days: 30 }, now);
     const ids = result.recommendations.map((item) => item.ruleId);
 
     expect(ids).not.toContain('unified_inventory_overstock_weak_demand');
@@ -181,6 +206,43 @@ describe('UnifiedDecisionService guardrails', () => {
         }),
       ]),
     );
-    expect(result.dataQuality.confidence).toBe('LOW');
+  });
+
+  it('withholds storefront recommendations when Pixel evidence is stale', async () => {
+    const paid = product({
+      advertising: { spend: 120, byProvider: [{ provider: 'META', spend: 120 }] },
+    });
+    const { value } = service({
+      products: [paid],
+      pixelLastEventAt: new Date('2026-09-20T00:00:00.000Z'),
+    });
+    const result = await value.read('store-1', { provider: 'ALL', days: 30 }, now);
+
+    expect(result.recommendations.map((item) => item.ruleId)).not.toContain(
+      'unified_paid_product_weak_view_to_cart',
+    );
+    expect(result.dataQuality.items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'PIXEL_STALE' })]),
+    );
+  });
+
+  it('passes provider quality diagnostics into lifecycle gating', async () => {
+    const { value, lifecycle } = service({
+      quality: [
+        {
+          code: 'CURRENCY_MISMATCH',
+          status: 'WARNING',
+          surface: 'PAID_MEDIA',
+          message: 'Requested currency has no compatible selected advertising account.',
+        },
+      ],
+    });
+    await value.read('store-1', { provider: 'ALL', currency: 'EUR', days: 30 }, now);
+
+    expect(lifecycle.attach).toHaveBeenCalledWith(
+      'store-1',
+      expect.any(Array),
+      expect.arrayContaining([expect.objectContaining({ code: 'CURRENCY_MISMATCH' })]),
+    );
   });
 });

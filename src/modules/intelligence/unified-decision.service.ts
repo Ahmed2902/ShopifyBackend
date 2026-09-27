@@ -31,14 +31,21 @@ import type {
 const RULE_VERSION = '1';
 const MAX_ENTITY_EVALUATION = 100;
 const MAX_PRODUCT_EVALUATION = 100;
+const REQUIRED_FRESHNESS_HOURS = 48;
+const MIN_EXACT_MAPPING_CONFIDENCE = 0.7;
 
 function date(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
 }
 
+function ageHours(now: Date, value: Date | null | undefined) {
+  if (!value) return null;
+  return Math.max(0, (now.getTime() - value.getTime()) / 3_600_000);
+}
+
 function evidenceScore(quality: RecommendationEvidenceQuality) {
-  // Compatibility with the existing ranking contract. These are discrete rubric weights, not
-  // probabilities: LOW=0.35, MEDIUM=0.65, HIGH=0.90.
+  // Internal ranking compatibility only. These weights are never exposed as recommendation
+  // confidence or probability in the public contract.
   if (quality === 'HIGH') return 0.9;
   if (quality === 'MEDIUM') return 0.65;
   return 0.35;
@@ -63,64 +70,6 @@ function entitySeverity(value: 'INFO' | 'WARNING' | 'HIGH'): RecommendationSever
   if (value === 'HIGH') return 'HIGH';
   if (value === 'WARNING') return 'MEDIUM';
   return 'LOW';
-}
-
-function entityQuality(value: 'LOW' | 'MEDIUM' | 'HIGH'): RecommendationEvidenceQuality {
-  return value;
-}
-
-function qualityDraft(input: {
-  item: {
-    code: string;
-    status: 'HEALTHY' | 'WARNING' | 'BLOCKED';
-    surface: string;
-    message: string;
-    provider?: string;
-    accountId?: string;
-    metrics?: Record<string, unknown>;
-  };
-  start: Date;
-  end: Date;
-  comparisonStart: Date;
-  comparisonEnd: Date;
-}): RecommendationDraft | null {
-  if (input.item.status === 'HEALTHY' || input.item.code === 'UNAVAILABLE_REACH') return null;
-  const severity: RecommendationSeverity =
-    input.item.status === 'BLOCKED' ? 'HIGH' : 'MEDIUM';
-  const evidenceQuality: RecommendationEvidenceQuality =
-    input.item.status === 'BLOCKED' ? 'LOW' : 'MEDIUM';
-  return {
-    ruleId: `unified_data_quality_${input.item.code.toLowerCase()}`,
-    ruleVersion: RULE_VERSION,
-    category: 'DATA_QUALITY',
-    severity,
-    entityType: input.item.accountId ? 'AD_ACCOUNT' : 'STORE',
-    entityId: input.item.accountId ?? null,
-    externalEntityId: null,
-    title: input.item.code.replaceAll('_', ' '),
-    summary: input.item.message,
-    suggestedAction: 'Restore or verify the missing evidence before acting on affected metrics.',
-    impactScore: severityScore(severity),
-    confidenceScore: evidenceScore(evidenceQuality),
-    urgencyScore: input.item.status === 'BLOCKED' ? 0.9 : 0.55,
-    evidenceQuality,
-    attributionPrecision: 'UNKNOWN',
-    limitations: [
-      {
-        code: input.item.code,
-        message: input.item.message,
-      },
-    ],
-    observationStart: input.start,
-    observationEnd: input.end,
-    comparisonStart: input.comparisonStart,
-    comparisonEnd: input.comparisonEnd,
-    evidence: {
-      surface: input.item.surface,
-      provider: input.item.provider ?? null,
-      metrics: input.item.metrics ?? null,
-    },
-  };
 }
 
 function entityDraft(input: {
@@ -157,7 +106,7 @@ function entityDraft(input: {
   comparisonEnd: Date;
 }): RecommendationDraft {
   const severity = entitySeverity(input.signal.severity);
-  const evidenceQuality = entityQuality(input.item.intelligence.confidence);
+  const evidenceQuality = input.item.intelligence.confidence;
   const category = input.signal.code.includes('DELIVERY')
     ? 'PAID_MEDIA_DELIVERY'
     : 'PAID_MEDIA_EFFICIENCY';
@@ -232,12 +181,27 @@ function productDraft(input: {
   end: Date;
   comparisonStart: Date;
   comparisonEnd: Date;
+  commerceFresh: boolean;
+  pixelFresh: boolean;
 }): RecommendationDraft[] {
   const drafts: RecommendationDraft[] = [];
   const spend = input.item.current.advertising.spend;
-  const authoritativeCommerce = input.item.current.commerce.evidenceAvailable === true;
-  const confidence = input.item.current.intelligence.confidence;
-  const evidenceQuality: RecommendationEvidenceQuality = confidence;
+  const authoritativeCommerce =
+    input.commerceFresh && input.item.current.commerce.evidenceAvailable === true;
+  const mappingLimitations = input.item.mapping.limitations;
+  const mappingAmbiguous = mappingLimitations.some((code) => {
+    const upper = code.toUpperCase();
+    return upper.includes('AMBIGUOUS') || upper.includes('UNRESOLVED');
+  });
+  const exactMappingUsable =
+    !mappingAmbiguous &&
+    (input.item.mapping.merchantConfirmed ||
+      input.item.mapping.confidence >= MIN_EXACT_MAPPING_CONFIDENCE);
+  const evidenceQuality: RecommendationEvidenceQuality = input.item.current.intelligence.confidence;
+  const commonLimitations = [
+    ...input.item.current.intelligence.limitations,
+    ...mappingLimitations,
+  ].map((code) => ({ code, message: code.replaceAll('_', ' ') }));
   const common = {
     ruleVersion: RULE_VERSION,
     entityType: 'PRODUCT' as const,
@@ -251,13 +215,11 @@ function productDraft(input: {
     observationEnd: input.end,
     comparisonStart: input.comparisonStart,
     comparisonEnd: input.comparisonEnd,
-    limitations: input.item.current.intelligence.limitations.map((code) => ({
-      code,
-      message: code.replaceAll('_', ' '),
-    })),
+    limitations: commonLimitations,
   };
 
   if (
+    exactMappingUsable &&
     spend !== null &&
     spend > 0 &&
     ['SOLD_OUT', 'STOCKOUT_RISK', 'LOW_STOCK'].includes(input.item.current.inventory.state)
@@ -295,6 +257,10 @@ function productDraft(input: {
       impactScore: 0.65,
       urgencyScore: 0.5,
       attributionPrecision: 'SHOPIFY_COMMERCE',
+      limitations: input.item.current.intelligence.limitations.map((code) => ({
+        code,
+        message: code.replaceAll('_', ' '),
+      })),
       evidence: {
         inventory: input.item.current.inventory,
         commerce: input.item.current.commerce,
@@ -305,6 +271,7 @@ function productDraft(input: {
 
   if (
     authoritativeCommerce &&
+    exactMappingUsable &&
     input.item.current.intelligence.inefficientPaidDemand === true
   ) {
     drafts.push({
@@ -327,9 +294,14 @@ function productDraft(input: {
 
   if (
     authoritativeCommerce &&
+    exactMappingUsable &&
     spend === 0 &&
-    (input.item.current.commerce.netProductRevenue ?? 0) > 0 &&
-    (input.item.current.commerce.contributionBeforeAds ?? 0) > 0 &&
+    input.item.current.commerce.netProductRevenue !== null &&
+    input.item.current.commerce.netProductRevenue !== undefined &&
+    input.item.current.commerce.netProductRevenue > 0 &&
+    input.item.current.commerce.contributionBeforeAds !== null &&
+    input.item.current.commerce.contributionBeforeAds !== undefined &&
+    input.item.current.commerce.contributionBeforeAds > 0 &&
     input.item.current.inventory.state === 'HEALTHY'
   ) {
     drafts.push({
@@ -352,6 +324,8 @@ function productDraft(input: {
 
   const pixel = input.item.current.storefront;
   if (
+    input.pixelFresh &&
+    exactMappingUsable &&
     spend !== null &&
     spend > 0 &&
     pixel.available &&
@@ -377,7 +351,7 @@ function productDraft(input: {
         storefront: pixel.metrics,
       },
       limitations: [
-        ...common.limitations,
+        ...commonLimitations,
         {
           code: 'CORRELATION_NOT_CAUSATION',
           message: 'Stride Pixel observations do not establish that advertising caused the funnel weakness.',
@@ -423,43 +397,60 @@ export class UnifiedDecisionService {
     const commerceHistoryComplete =
       context?.shopifyConnection?.status === 'ACTIVE' &&
       context.successfulOrderHistorySync?.status === 'SUCCEEDED';
-    const hasCommerceHistoryBlocker = overview.dataQuality.items.some(
-      (item) => item.code === 'INCOMPLETE_COMMERCE_HISTORY',
-    );
-    const dataQuality =
-      commerceHistoryComplete || hasCommerceHistoryBlocker
-        ? overview.dataQuality
-        : {
-            ...overview.dataQuality,
-            confidence: 'LOW' as const,
-            items: [
-              ...overview.dataQuality.items,
-              {
-                code: 'INCOMPLETE_COMMERCE_HISTORY',
-                status: 'BLOCKED' as const,
-                surface: 'COMMERCE',
-                message:
-                  'No completed Shopify order-history sync is available, so historical commerce conclusions may be incomplete.',
-              },
-            ],
-          };
+    const shopifyAge = ageHours(now, context?.shopifyConnection?.lastSyncedAt);
+    const commerceFresh =
+      commerceHistoryComplete && shopifyAge !== null && shopifyAge <= REQUIRED_FRESHNESS_HOURS;
+    const pixelAge = ageHours(now, context?.pixelInstallation?.lastEventAt);
+    const pixelFresh =
+      context?.pixelInstallation?.status === 'ACTIVE' &&
+      pixelAge !== null &&
+      pixelAge <= REQUIRED_FRESHNESS_HOURS &&
+      !context.storefrontBehaviorRollup.lastError;
+
+    const qualityItems = [...overview.dataQuality.items];
+    if (
+      !commerceHistoryComplete &&
+      !qualityItems.some((item) => item.code === 'INCOMPLETE_COMMERCE_HISTORY')
+    ) {
+      qualityItems.push({
+        code: 'INCOMPLETE_COMMERCE_HISTORY',
+        status: 'BLOCKED' as const,
+        surface: 'COMMERCE',
+        message:
+          'No completed Shopify order-history sync is available, so historical commerce conclusions are withheld.',
+      });
+    }
+    if (commerceHistoryComplete && !commerceFresh) {
+      qualityItems.push({
+        code: 'SHOPIFY_SYNC_STALE',
+        status: 'WARNING' as const,
+        surface: 'COMMERCE',
+        message: 'Shopify commerce evidence is older than the recommendation freshness window.',
+        metrics: { ageHours: shopifyAge, thresholdHours: REQUIRED_FRESHNESS_HOURS },
+      });
+    }
+    if (context?.pixelInstallation?.status === 'ACTIVE' && !pixelFresh) {
+      qualityItems.push({
+        code: context.storefrontBehaviorRollup.lastError
+          ? 'PIXEL_BEHAVIOR_ROLLUP_FAILED'
+          : 'PIXEL_STALE',
+        status: context.storefrontBehaviorRollup.lastError ? ('BLOCKED' as const) : ('WARNING' as const),
+        surface: 'STOREFRONT',
+        message: context.storefrontBehaviorRollup.lastError
+          ? 'Stride Pixel behavior rollup reports an error; storefront recommendations are withheld.'
+          : 'Stride Pixel evidence is older than the recommendation freshness window.',
+        metrics: context.storefrontBehaviorRollup.lastError
+          ? undefined
+          : { ageHours: pixelAge, thresholdHours: REQUIRED_FRESHNESS_HOURS },
+      });
+    }
+    const dataQuality = { items: qualityItems };
 
     const start = date(overview.window.current.from);
     const end = date(overview.window.current.to);
     const comparisonStart = date(overview.window.comparison.from);
     const comparisonEnd = date(overview.window.comparison.to);
     const drafts: RecommendationDraft[] = [];
-
-    for (const quality of dataQuality.items) {
-      const draft = qualityDraft({
-        item: quality,
-        start,
-        end,
-        comparisonStart,
-        comparisonEnd,
-      });
-      if (draft) drafts.push(draft);
-    }
 
     for (const [kind, collection] of [
       ['CAMPAIGN', campaigns] as const,
@@ -468,7 +459,12 @@ export class UnifiedDecisionService {
     ]) {
       for (const item of collection.items) {
         for (const signal of item.intelligence.signals) {
-          if (signal.code === 'LOW_DELIVERY_INSUFFICIENT_EVIDENCE') continue;
+          if (
+            signal.code === 'LOW_DELIVERY_INSUFFICIENT_EVIDENCE' ||
+            signal.code === 'INSUFFICIENT_CURRENT_EVIDENCE'
+          ) {
+            continue;
+          }
           drafts.push(
             entityDraft({
               kind,
@@ -486,7 +482,15 @@ export class UnifiedDecisionService {
 
     for (const item of products.items) {
       drafts.push(
-        ...productDraft({ item, start, end, comparisonStart, comparisonEnd }),
+        ...productDraft({
+          item,
+          start,
+          end,
+          comparisonStart,
+          comparisonEnd,
+          commerceFresh,
+          pixelFresh,
+        }),
       );
     }
 
@@ -494,27 +498,15 @@ export class UnifiedDecisionService {
       .map((draft) => ({ ...draft, priority: priority(draft) }))
       .sort((left, right) => right.priority - left.priority)
       .slice(0, 100);
-    const decorated = await this.lifecycle.attach(storeId, ranked);
+    const decorated = await this.lifecycle.attach(storeId, ranked, qualityItems);
 
     return {
-      schemaVersion: '2.0',
+      schemaVersion: '2.1',
       generatedAt: now,
       truthModel: overview.truthModel,
       filters: overview.filters,
       window: overview.window,
       recommendations: decorated,
-      confidenceModel: {
-        type: 'DETERMINISTIC_ENUM',
-        levels: ['LOW', 'MEDIUM', 'HIGH'],
-        criteria: {
-          LOW: 'Current evidence missing/too small, blocked data quality, incomplete mapping or unavailable required economics.',
-          MEDIUM:
-            'Current evidence is usable but comparison, freshness, sample size, mapping or another evidence-quality dimension is limited.',
-          HIGH: 'Current and comparison evidence are available with sufficient sample and no blocking limitation.',
-        },
-        rankingCompatibilityWeights: { LOW: 0.35, MEDIUM: 0.65, HIGH: 0.9 },
-        weightsAreProbabilities: false,
-      },
       dataQuality,
       evaluationBounds: {
         campaigns: MAX_ENTITY_EVALUATION,
@@ -532,6 +524,7 @@ export class UnifiedDecisionService {
         'Pixel-based recommendations describe observed correlation, not causal proof.',
         'Shared, ambiguous and unsupported PMax product spend is not allocated to products.',
         'Decision evaluation is deliberately bounded; the response reports when entity coverage is truncated.',
+        'Recommendation findings are emitted only after their deterministic threshold and required evidence checks pass.',
       ],
     };
   }
