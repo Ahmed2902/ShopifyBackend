@@ -253,7 +253,7 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
     name: 'stride_get_recommendations',
     title: 'Read Stride recommendations',
     description:
-      'Get Stride deterministic recommendations together with lifecycle state, evidence, evidence quality, attribution precision, limitations, confidence and data-quality context. Use this for “what should I do?” and “why did Stride flag this?” questions. Recommendations are advice only; MCP cannot execute the suggested action.',
+      'Get Stride deterministic findings with the affected entity, measured values, comparison period, explicit rule threshold crossed, suggested action, attribution meaning, limitations and lifecycle state. Required inputs are checked before a finding is emitted; missing, partial, stale, currency-incompatible or ambiguous evidence is withheld rather than assigned a confidence grade. Use this for “what should I do?” and “why did Stride flag this?” questions. Recommendations are advice only; MCP remains read-only and cannot execute the suggested action.',
     inputSchema: schema({ fresh: { type: 'boolean' } }),
     outputSchema: objectOutputSchema,
     annotations: readAnnotations,
