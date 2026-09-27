@@ -45,13 +45,12 @@ const ACTIONABLE_ENTITY_SIGNALS = new Set([
 ]);
 
 const PAID_MEDIA_BLOCKERS = new Set([
-  'PROVIDER_DISCONNECTED',
   'PROVIDER_CONNECTION_BLOCKED',
-  'ACCOUNT_NOT_SELECTED',
   'STALE_SYNC',
   'PARTIAL_SYNC',
   'FAILED_SYNC',
   'SELECTED_ACCOUNT_EVIDENCE_MISSING',
+  'MISSING_PAID_MEDIA_EVIDENCE',
   'CURRENCY_MISMATCH',
 ]);
 
@@ -236,8 +235,13 @@ function productDraft(input: {
   const mappingTrusted =
     input.item.mapping.merchantConfirmed ||
     input.item.mapping.confidence >= MIN_EXACT_MAPPING_CONFIDENCE;
+  const mappedAdEvidenceComplete =
+    !input.item.current.intelligence.limitations.includes('CURRENT_MAPPED_AD_EVIDENCE_INCOMPLETE');
   const paidProductEvidenceReady =
-    input.paidMediaComplete && input.currencyCompatible && mappingTrusted;
+    input.paidMediaComplete &&
+    input.currencyCompatible &&
+    mappingTrusted &&
+    mappedAdEvidenceComplete;
   const confidence = input.item.current.intelligence.confidence;
   const evidenceQuality: RecommendationEvidenceQuality = confidence;
   const common = {
