@@ -31,14 +31,40 @@ import type {
 const RULE_VERSION = '1';
 const MAX_ENTITY_EVALUATION = 100;
 const MAX_PRODUCT_EVALUATION = 100;
+const EVIDENCE_FRESHNESS_HOURS = 48;
+const MIN_EXACT_MAPPING_CONFIDENCE = 0.7;
+
+const ACTIONABLE_ENTITY_SIGNALS = new Set([
+  'NO_CONVERSION_SPEND',
+  'SPEND_UP_EFFICIENCY_DOWN',
+  'CPC_DETERIORATION',
+  'CTR_DETERIORATION',
+  'CONVERSIONS_DOWN_SPEND_UP',
+  'STRONG_PROVIDER_EFFICIENCY',
+  'SUDDEN_DELIVERY_CHANGE',
+]);
+
+const PAID_MEDIA_BLOCKERS = new Set([
+  'PROVIDER_DISCONNECTED',
+  'PROVIDER_CONNECTION_BLOCKED',
+  'ACCOUNT_NOT_SELECTED',
+  'STALE_SYNC',
+  'PARTIAL_SYNC',
+  'FAILED_SYNC',
+  'SELECTED_ACCOUNT_EVIDENCE_MISSING',
+  'CURRENCY_MISMATCH',
+]);
 
 function date(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
 }
 
+function ageHours(now: Date, value: Date | null | undefined) {
+  return value ? Math.max(0, (now.getTime() - value.getTime()) / 3_600_000) : null;
+}
+
 function evidenceScore(quality: RecommendationEvidenceQuality) {
-  // Compatibility with the existing ranking contract. These are discrete rubric weights, not
-  // probabilities: LOW=0.35, MEDIUM=0.65, HIGH=0.90.
+  // Internal ranking compatibility only. These weights are never exposed as merchant confidence.
   if (quality === 'HIGH') return 0.9;
   if (quality === 'MEDIUM') return 0.65;
   return 0.35;
@@ -69,58 +95,24 @@ function entityQuality(value: 'LOW' | 'MEDIUM' | 'HIGH'): RecommendationEvidence
   return value;
 }
 
-function qualityDraft(input: {
-  item: {
-    code: string;
-    status: 'HEALTHY' | 'WARNING' | 'BLOCKED';
-    surface: string;
-    message: string;
-    provider?: string;
-    accountId?: string;
-    metrics?: Record<string, unknown>;
-  };
-  start: Date;
-  end: Date;
-  comparisonStart: Date;
-  comparisonEnd: Date;
-}): RecommendationDraft | null {
-  if (input.item.status === 'HEALTHY' || input.item.code === 'UNAVAILABLE_REACH') return null;
-  const severity: RecommendationSeverity =
-    input.item.status === 'BLOCKED' ? 'HIGH' : 'MEDIUM';
-  const evidenceQuality: RecommendationEvidenceQuality =
-    input.item.status === 'BLOCKED' ? 'LOW' : 'MEDIUM';
-  return {
-    ruleId: `unified_data_quality_${input.item.code.toLowerCase()}`,
-    ruleVersion: RULE_VERSION,
-    category: 'DATA_QUALITY',
-    severity,
-    entityType: input.item.accountId ? 'AD_ACCOUNT' : 'STORE',
-    entityId: input.item.accountId ?? null,
-    externalEntityId: null,
-    title: input.item.code.replaceAll('_', ' '),
-    summary: input.item.message,
-    suggestedAction: 'Restore or verify the missing evidence before acting on affected metrics.',
-    impactScore: severityScore(severity),
-    confidenceScore: evidenceScore(evidenceQuality),
-    urgencyScore: input.item.status === 'BLOCKED' ? 0.9 : 0.55,
-    evidenceQuality,
-    attributionPrecision: 'UNKNOWN',
-    limitations: [
-      {
-        code: input.item.code,
-        message: input.item.message,
-      },
-    ],
-    observationStart: input.start,
-    observationEnd: input.end,
-    comparisonStart: input.comparisonStart,
-    comparisonEnd: input.comparisonEnd,
-    evidence: {
-      surface: input.item.surface,
-      provider: input.item.provider ?? null,
-      metrics: input.item.metrics ?? null,
-    },
-  };
+function providerEvidenceBlocked(
+  items: Array<{ code: string; surface: string; provider?: string; status: string }>,
+  provider: string,
+) {
+  return items.some(
+    (item) =>
+      item.surface === 'PAID_MEDIA' &&
+      PAID_MEDIA_BLOCKERS.has(item.code) &&
+      (!item.provider || item.provider === provider),
+  );
+}
+
+function anyPaidMediaEvidenceBlocked(
+  items: Array<{ code: string; surface: string; provider?: string; status: string }>,
+) {
+  return items.some(
+    (item) => item.surface === 'PAID_MEDIA' && PAID_MEDIA_BLOCKERS.has(item.code),
+  );
 }
 
 function entityDraft(input: {
@@ -232,10 +224,20 @@ function productDraft(input: {
   end: Date;
   comparisonStart: Date;
   comparisonEnd: Date;
+  commerceFresh: boolean;
+  paidMediaComplete: boolean;
+  pixelFresh: boolean;
+  currencyCompatible: boolean;
 }): RecommendationDraft[] {
   const drafts: RecommendationDraft[] = [];
   const spend = input.item.current.advertising.spend;
-  const authoritativeCommerce = input.item.current.commerce.evidenceAvailable === true;
+  const authoritativeCommerce =
+    input.commerceFresh && input.item.current.commerce.evidenceAvailable === true;
+  const mappingTrusted =
+    input.item.mapping.merchantConfirmed ||
+    input.item.mapping.confidence >= MIN_EXACT_MAPPING_CONFIDENCE;
+  const paidProductEvidenceReady =
+    input.paidMediaComplete && input.currencyCompatible && mappingTrusted;
   const confidence = input.item.current.intelligence.confidence;
   const evidenceQuality: RecommendationEvidenceQuality = confidence;
   const common = {
@@ -258,6 +260,7 @@ function productDraft(input: {
   };
 
   if (
+    paidProductEvidenceReady &&
     spend !== null &&
     spend > 0 &&
     ['SOLD_OUT', 'STOCKOUT_RISK', 'LOW_STOCK'].includes(input.item.current.inventory.state)
@@ -268,7 +271,7 @@ function productDraft(input: {
       category: 'INVENTORY_SPEND_CONFLICT',
       severity: input.item.current.inventory.state === 'SOLD_OUT' ? 'CRITICAL' : 'HIGH',
       title: 'Paid demand conflicts with inventory',
-      summary: `This product is receiving mapped paid spend while inventory state is ${input.item.current.inventory.state}.`,
+      summary: `This product is receiving exactly mapped paid spend while inventory state is ${input.item.current.inventory.state}.`,
       suggestedAction: 'Hold aggressive scaling until inventory risk is resolved.',
       impactScore: input.item.current.inventory.state === 'SOLD_OUT' ? 1 : 0.9,
       urgencyScore: input.item.current.inventory.state === 'SOLD_OUT' ? 1 : 0.9,
@@ -290,7 +293,7 @@ function productDraft(input: {
       category: 'INVENTORY_SPEND_CONFLICT',
       severity: 'MEDIUM',
       title: 'Overstock meets weak observed demand',
-      summary: 'Trusted inventory evidence shows elevated stock while current product sales velocity is zero.',
+      summary: 'Trusted inventory evidence shows elevated stock while current authoritative Shopify product sales velocity is zero.',
       suggestedAction: 'Review merchandising and demand-generation strategy before committing additional inventory.',
       impactScore: 0.65,
       urgencyScore: 0.5,
@@ -305,6 +308,7 @@ function productDraft(input: {
 
   if (
     authoritativeCommerce &&
+    paidProductEvidenceReady &&
     input.item.current.intelligence.inefficientPaidDemand === true
   ) {
     drafts.push({
@@ -327,9 +331,12 @@ function productDraft(input: {
 
   if (
     authoritativeCommerce &&
+    paidProductEvidenceReady &&
     spend === 0 &&
-    (input.item.current.commerce.netProductRevenue ?? 0) > 0 &&
-    (input.item.current.commerce.contributionBeforeAds ?? 0) > 0 &&
+    typeof input.item.current.commerce.netProductRevenue === 'number' &&
+    input.item.current.commerce.netProductRevenue > 0 &&
+    typeof input.item.current.commerce.contributionBeforeAds === 'number' &&
+    input.item.current.commerce.contributionBeforeAds > 0 &&
     input.item.current.inventory.state === 'HEALTHY'
   ) {
     drafts.push({
@@ -338,7 +345,7 @@ function productDraft(input: {
       category: 'PRODUCT_ADS_ECONOMICS',
       severity: 'LOW',
       title: 'Profitable product has low mapped paid support',
-      summary: 'Shopify contribution is positive, trusted inventory is healthy, and exact mapped paid-media evidence reports zero spend.',
+      summary: 'Shopify contribution is positive, trusted inventory is healthy, and complete exact mapped paid-media evidence reports a genuine zero spend.',
       suggestedAction: 'Review whether limited paid support is intentional; validate demand and constraints before any budget increase.',
       impactScore: 0.45,
       urgencyScore: 0.3,
@@ -352,6 +359,8 @@ function productDraft(input: {
 
   const pixel = input.item.current.storefront;
   if (
+    paidProductEvidenceReady &&
+    input.pixelFresh &&
     spend !== null &&
     spend > 0 &&
     pixel.available &&
@@ -367,7 +376,7 @@ function productDraft(input: {
       severity: 'MEDIUM',
       title: 'Paid product demand meets weak on-site conversion',
       summary:
-        'The product has mapped paid demand and observed storefront views but a low view-to-cart rate; this is correlation evidence, not proof that advertising caused the weakness.',
+        'The product has exactly mapped paid demand and observed storefront views but a view-to-cart rate below 10%; this is correlation evidence, not proof that advertising caused the weakness.',
       suggestedAction: 'Review product-page offer and landing experience before increasing paid support.',
       impactScore: 0.65,
       urgencyScore: 0.55,
@@ -444,22 +453,25 @@ export class UnifiedDecisionService {
             ],
           };
 
+    const shopifyAgeHours = ageHours(now, context?.shopifyConnection?.lastSyncedAt);
+    const commerceFresh =
+      commerceHistoryComplete &&
+      shopifyAgeHours !== null &&
+      shopifyAgeHours <= EVIDENCE_FRESHNESS_HOURS;
+    const pixelAgeHours = ageHours(now, context?.pixelInstallation?.lastEventAt);
+    const pixelFresh =
+      context?.pixelInstallation?.status === 'ACTIVE' &&
+      pixelAgeHours !== null &&
+      pixelAgeHours <= EVIDENCE_FRESHNESS_HOURS &&
+      !context.storefrontBehaviorRollup?.lastError;
+    const paidMediaComplete = !anyPaidMediaEvidenceBlocked(dataQuality.items);
+    const currencyCompatible = !query.currency || query.currency === context?.currencyCode;
+
     const start = date(overview.window.current.from);
     const end = date(overview.window.current.to);
     const comparisonStart = date(overview.window.comparison.from);
     const comparisonEnd = date(overview.window.comparison.to);
     const drafts: RecommendationDraft[] = [];
-
-    for (const quality of dataQuality.items) {
-      const draft = qualityDraft({
-        item: quality,
-        start,
-        end,
-        comparisonStart,
-        comparisonEnd,
-      });
-      if (draft) drafts.push(draft);
-    }
 
     for (const [kind, collection] of [
       ['CAMPAIGN', campaigns] as const,
@@ -467,8 +479,9 @@ export class UnifiedDecisionService {
       ['AD', ads] as const,
     ]) {
       for (const item of collection.items) {
+        if (providerEvidenceBlocked(dataQuality.items, item.entity.account.provider)) continue;
         for (const signal of item.intelligence.signals) {
-          if (signal.code === 'LOW_DELIVERY_INSUFFICIENT_EVIDENCE') continue;
+          if (!ACTIONABLE_ENTITY_SIGNALS.has(signal.code)) continue;
           drafts.push(
             entityDraft({
               kind,
@@ -486,7 +499,17 @@ export class UnifiedDecisionService {
 
     for (const item of products.items) {
       drafts.push(
-        ...productDraft({ item, start, end, comparisonStart, comparisonEnd }),
+        ...productDraft({
+          item,
+          start,
+          end,
+          comparisonStart,
+          comparisonEnd,
+          commerceFresh,
+          paidMediaComplete,
+          pixelFresh,
+          currencyCompatible,
+        }),
       );
     }
 
@@ -497,25 +520,15 @@ export class UnifiedDecisionService {
     const decorated = await this.lifecycle.attach(storeId, ranked);
 
     return {
-      schemaVersion: '2.0',
+      schemaVersion: '3.0',
       generatedAt: now,
       truthModel: overview.truthModel,
       filters: overview.filters,
       window: overview.window,
       recommendations: decorated,
-      confidenceModel: {
-        type: 'DETERMINISTIC_ENUM',
-        levels: ['LOW', 'MEDIUM', 'HIGH'],
-        criteria: {
-          LOW: 'Current evidence missing/too small, blocked data quality, incomplete mapping or unavailable required economics.',
-          MEDIUM:
-            'Current evidence is usable but comparison, freshness, sample size, mapping or another evidence-quality dimension is limited.',
-          HIGH: 'Current and comparison evidence are available with sufficient sample and no blocking limitation.',
-        },
-        rankingCompatibilityWeights: { LOW: 0.35, MEDIUM: 0.65, HIGH: 0.9 },
-        weightsAreProbabilities: false,
+      dataQuality: {
+        items: dataQuality.items,
       },
-      dataQuality,
       evaluationBounds: {
         campaigns: MAX_ENTITY_EVALUATION,
         groups: MAX_ENTITY_EVALUATION,
@@ -531,6 +544,8 @@ export class UnifiedDecisionService {
         'Provider attribution remains provider-reported evidence and never replaces Shopify commerce truth.',
         'Pixel-based recommendations describe observed correlation, not causal proof.',
         'Shared, ambiguous and unsupported PMax product spend is not allocated to products.',
+        'Recommendations are withheld when required evidence is missing, partial, stale beyond 48 hours, currency-incompatible, or not supported by an exact/merchant-confirmed product mapping.',
+        'Merchant-entered costs, margins, inventory settings and selected accounts are treated as inputs; Stride is responsible for deterministic calculation from those inputs and withholds unsupported conclusions.',
         'Decision evaluation is deliberately bounded; the response reports when entity coverage is truncated.',
       ],
     };
