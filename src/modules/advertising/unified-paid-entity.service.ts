@@ -54,16 +54,12 @@ function aggregate(rows: UnifiedPaidEntityMetricRow[]): PaidEntityMetrics {
   const spend = rows.reduce((sum, row) => sum + row.spend, 0);
   const impressions = rows.reduce((sum, row) => sum + row.impressions, 0);
   const clicks = rows.reduce((sum, row) => sum + row.clicks, 0);
-  const conversionRows = rows.filter((row) => row.conversions !== null);
-  const valueRows = rows.filter((row) => row.conversionValue !== null);
-  const providerConversions =
-    conversionRows.length > 0
-      ? conversionRows.reduce((sum, row) => sum + (row.conversions ?? 0), 0)
-      : null;
-  const providerConversionValue =
-    valueRows.length > 0
-      ? valueRows.reduce((sum, row) => sum + (row.conversionValue ?? 0), 0)
-      : null;
+  const completeNullableSum = (field: 'conversions' | 'conversionValue') => {
+    if (rows.some((row) => row[field] === null)) return null;
+    return rows.reduce((sum, row) => sum + (row[field] ?? 0), 0);
+  };
+  const providerConversions = completeNullableSum('conversions');
+  const providerConversionValue = completeNullableSum('conversionValue');
   return {
     evidenceAvailable: true,
     sourceRows: rows.reduce((sum, row) => sum + row.sourceRows, 0),
@@ -149,10 +145,6 @@ export function unifiedPaidEntitySignals(
     });
   }
 
-  // Comparison-based deterioration requires enough delivery in both periods. Without this guard,
-  // a handful of impressions can produce dramatic CTR/CPC/ROAS percentages that look actionable
-  // despite being statistically thin. Missing or low comparison delivery remains a limitation,
-  // not a deterioration claim.
   if (
     !comparison.evidenceAvailable ||
     comparison.sourceRows === 0 ||
