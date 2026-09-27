@@ -273,6 +273,14 @@ const PIXEL_BLOCKERS = new Set([
   'PIXEL_EVENTS_STALE',
 ]);
 
+const FIRST_PARTY_SHOPIFY_RULES = new Set([
+  'storefront_conversion_deterioration',
+  'product_conversion_deterioration',
+  'high_traffic_low_conversion_product',
+  'landing_page_quality_deterioration',
+  'provider_first_party_purchase_gap',
+]);
+
 function usesMetaEvidence(recommendation: RecommendationDraft) {
   return [
     'META_PROVIDER',
@@ -290,9 +298,8 @@ function usesShopifyEvidence(recommendation: RecommendationDraft) {
     'EXACT_PRODUCT',
     'SHARED_MULTI_PRODUCT',
     'COLLECTION',
-    'FIRST_PARTY_OBSERVED',
   ].includes(recommendation.attributionPrecision) ||
-    recommendation.ruleId === 'provider_first_party_purchase_gap';
+    FIRST_PARTY_SHOPIFY_RULES.has(recommendation.ruleId);
 }
 
 export function recommendationInputsComplete(
