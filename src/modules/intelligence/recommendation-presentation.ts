@@ -22,23 +22,23 @@ const RULE_THRESHOLDS: Record<string, RecommendationThresholdCrossed> = {
     ],
   },
   adset_efficiency_deterioration: {
-    description: 'Spend expanded while provider-reported efficiency deteriorated with sufficient delivery in both periods.',
+    description: 'Ad-set spend expanded while provider-reported efficiency deteriorated with sufficient delivery in both periods.',
     conditions: [
       'current impressions >= 1,000',
       'comparison impressions >= 1,000',
       'current spend > 0 and comparison spend > 0',
       'spend change >= +15%',
-      'ROAS change <= -20% OR CPA change >= +20%',
+      'ROAS change <= -25% OR CPA change >= +25%',
     ],
   },
   ad_efficiency_deterioration: {
-    description: 'Spend expanded while provider-reported efficiency deteriorated with sufficient delivery in both periods.',
+    description: 'Ad spend expanded while provider-reported efficiency deteriorated with sufficient delivery in both periods.',
     conditions: [
       'current impressions >= 1,000',
       'comparison impressions >= 1,000',
       'current spend > 0 and comparison spend > 0',
       'spend change >= +15%',
-      'ROAS change <= -20% OR CPA change >= +20%',
+      'ROAS change <= -25% OR CPA change >= +25%',
     ],
   },
   creative_fatigue_symptoms: {
@@ -52,8 +52,13 @@ const RULE_THRESHOLDS: Record<string, RecommendationThresholdCrossed> = {
     ],
   },
   video_retention_deterioration: {
-    description: 'Observed video retention deteriorated beyond the rule threshold with sufficient comparable delivery.',
-    conditions: ['the video-retention rule sample minimum is met', 'the configured retention deterioration threshold is crossed'],
+    description: 'Observed video retention deteriorated by at least 10 percentage points with a valid comparable play sample.',
+    conditions: [
+      'video-retention evidence status = READY',
+      'comparison plays >= the returned minimumDiagnosticPlays threshold',
+      'comparison provider data passes consistency checks',
+      '25%-view rate change <= -10 percentage points OR completion-rate change <= -10 percentage points',
+    ],
   },
   underexposed_commerce_winner: {
     description: 'Shopify commerce share materially exceeds exactly mapped paid-spend share.',
@@ -79,7 +84,7 @@ const RULE_THRESHOLDS: Record<string, RecommendationThresholdCrossed> = {
   },
   inventory_spend_conflict: {
     description: 'Trusted inventory is at or below the merchant-configured reorder point while exactly mapped paid spend remains active.',
-    conditions: ['inventory is trusted', 'mapped paid spend > 0', 'stock available <= calculated reorder point'],
+    conditions: ['inventory is trusted', 'mapped paid spend > 0', 'stock available <= measuredValues.reorderPoint'],
   },
   shared_exposure_inventory_conflict: {
     description: 'A shared paid-media exposure includes at least one product at or below its merchant-configured reorder point.',
@@ -88,7 +93,7 @@ const RULE_THRESHOLDS: Record<string, RecommendationThresholdCrossed> = {
       'shared ad spend > 0',
       'impressions >= 1,000',
       'shared scope is merchant-confirmed OR scope confidence >= 0.70',
-      'at least one affected product is at or below its reorder point',
+      'at least one affected product has stock available <= its returned reorderPoint',
     ],
   },
   inventory_runway_risk: {
@@ -98,7 +103,7 @@ const RULE_THRESHOLDS: Record<string, RecommendationThresholdCrossed> = {
       'recent observed unit velocity > 0',
       'Shopify units >= 3 OR revenue share >= 3%',
       'mapped paid spend = 0',
-      'stock available <= calculated reorder point',
+      'stock available <= measuredValues.reorderPoint',
     ],
   },
   cart_abandonment_deterioration: {
@@ -155,19 +160,19 @@ const RULE_THRESHOLDS: Record<string, RecommendationThresholdCrossed> = {
   },
   unified_inventory_overstock_weak_demand: {
     description: 'Trusted inventory is elevated while authoritative Shopify sales velocity is exactly zero.',
-    conditions: ['authoritative Shopify commerce evidence is available', 'inventory state is OVERSTOCK_WEAK_DEMAND'],
+    conditions: ['authoritative Shopify commerce evidence is available and fresh', 'inventory state is OVERSTOCK_WEAK_DEMAND'],
   },
   unified_product_paid_demand_negative_contribution: {
     description: 'Complete Shopify product economics minus exactly mapped paid spend produce negative contribution after ads.',
-    conditions: ['authoritative Shopify commerce evidence is available', 'inefficient paid demand = true'],
+    conditions: ['authoritative Shopify commerce evidence is available and fresh', 'paid-media evidence is complete and fresh', 'exact product mapping is merchant-confirmed or confidence >= 0.70', 'inefficient paid demand = true'],
   },
   unified_profitable_product_low_paid_support: {
     description: 'A profitable Shopify product with healthy trusted inventory has a genuine zero of exactly mapped paid spend.',
-    conditions: ['authoritative Shopify commerce evidence is available', 'mapped paid spend = 0', 'net product revenue > 0', 'contribution before ads > 0', 'inventory state is HEALTHY'],
+    conditions: ['authoritative Shopify commerce evidence is available and fresh', 'paid-media evidence is complete and fresh', 'exact product mapping is merchant-confirmed or confidence >= 0.70', 'mapped paid spend = 0', 'net product revenue > 0', 'contribution before ads > 0', 'inventory state is HEALTHY'],
   },
   unified_paid_product_weak_view_to_cart: {
     description: 'Exactly mapped paid spend is active while first-party product views progress to cart below the deterministic threshold.',
-    conditions: ['mapped paid spend > 0', 'Stride Pixel product evidence is available and fresh', 'product-view sessions >= 20', 'view-to-cart rate < 10%'],
+    conditions: ['paid-media evidence is complete and fresh', 'exact product mapping is merchant-confirmed or confidence >= 0.70', 'mapped paid spend > 0', 'Stride Pixel product evidence is available and fresh', 'product-view sessions >= 20', 'view-to-cart rate < 10%'],
   },
 };
 
@@ -259,7 +264,6 @@ const META_BLOCKERS = new Set([
 ]);
 const SHOPIFY_BLOCKERS = new Set([
   'SHOPIFY_CONNECTION_BLOCKED',
-  'SHOPIFY_HISTORY_LIMITED',
   'SHOPIFY_SYNC_STALE',
 ]);
 const PIXEL_BLOCKERS = new Set([
@@ -268,6 +272,28 @@ const PIXEL_BLOCKERS = new Set([
   'PIXEL_ROLLUP_ERROR',
   'PIXEL_EVENTS_STALE',
 ]);
+
+function usesMetaEvidence(recommendation: RecommendationDraft) {
+  return [
+    'META_PROVIDER',
+    'EXACT_PRODUCT',
+    'SHARED_MULTI_PRODUCT',
+    'COLLECTION',
+  ].includes(recommendation.attributionPrecision) ||
+    recommendation.ruleId === 'mapping_coverage_degraded' ||
+    recommendation.ruleId === 'provider_first_party_purchase_gap';
+}
+
+function usesShopifyEvidence(recommendation: RecommendationDraft) {
+  return [
+    'SHOPIFY_COMMERCE',
+    'EXACT_PRODUCT',
+    'SHARED_MULTI_PRODUCT',
+    'COLLECTION',
+    'FIRST_PARTY_OBSERVED',
+  ].includes(recommendation.attributionPrecision) ||
+    recommendation.ruleId === 'provider_first_party_purchase_gap';
+}
 
 export function recommendationInputsComplete(
   recommendation: RecommendationDraft,
@@ -278,10 +304,8 @@ export function recommendationInputsComplete(
   );
   const hasAny = (codes: Set<string>) => [...codes].some((code) => activeCodes.has(code));
 
-  if (recommendation.attributionPrecision === 'META_PROVIDER' && hasAny(META_BLOCKERS)) return false;
-
-  const usesShopify = recommendation.attributionPrecision !== 'META_PROVIDER';
-  if (usesShopify && hasAny(SHOPIFY_BLOCKERS)) return false;
+  if (usesMetaEvidence(recommendation) && hasAny(META_BLOCKERS)) return false;
+  if (usesShopifyEvidence(recommendation) && hasAny(SHOPIFY_BLOCKERS)) return false;
 
   if (recommendation.attributionPrecision === 'EXACT_PRODUCT') {
     if (activeCodes.has('META_CURRENCY_MISMATCH')) return false;
@@ -302,7 +326,7 @@ export function recommendationInputsComplete(
 
   if (
     recommendation.ruleId === 'provider_first_party_purchase_gap' &&
-    (hasAny(META_BLOCKERS) || hasAny(PIXEL_BLOCKERS))
+    hasAny(PIXEL_BLOCKERS)
   ) {
     return false;
   }
