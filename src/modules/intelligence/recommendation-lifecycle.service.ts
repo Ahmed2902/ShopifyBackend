@@ -29,7 +29,6 @@ type RankedRecommendation = Omit<
   evidenceQuality?: RecommendationDraft['evidenceQuality'];
   thresholdCrossed?: unknown;
   affectedEntity?: Record<string, unknown>;
-  [key: string]: unknown;
 };
 
 function isRawRankedRecommendation(
