@@ -1,12 +1,12 @@
 import { AppError } from '../../errors/app-error.js';
 import { prisma } from '../../lib/prisma.js';
 import { recommendationDecision } from './recommendation-decision.js';
+import { presentRecommendation } from './recommendation-presentation.js';
 import type {
   RecommendationDraft,
   RecommendationLifecycleState,
 } from './intelligence.types.js';
 
-type RankedRecommendation = RecommendationDraft & { priority: number };
 export type RecommendationOccurrenceInput = Pick<
   RecommendationDraft,
   | 'ruleId'
@@ -18,6 +18,15 @@ export type RecommendationOccurrenceInput = Pick<
 > & {
   observationStart: Date | string;
   observationEnd: Date | string;
+};
+
+type RankedRecommendation = RecommendationOccurrenceInput & {
+  priority: number;
+  category: RecommendationDraft['category'];
+  severity: RecommendationDraft['severity'];
+  suggestedAction: string;
+  entityName?: string | null;
+  [key: string]: unknown;
 };
 
 function occurrenceTimestamp(value: Date | string): string {
@@ -162,9 +171,19 @@ function decorateRecommendation(
   entityName: string | null,
 ) {
   const occurrenceKey = recommendationOccurrenceKey(recommendation);
+  const presented =
+    'thresholdCrossed' in recommendation
+      ? recommendation
+      : presentRecommendation(recommendation as RecommendationDraft & { priority: number });
   return {
-    ...recommendation,
+    ...presented,
     entityName: recommendation.entityName ?? entityName,
+    affectedEntity: {
+      ...(typeof presented.affectedEntity === 'object' && presented.affectedEntity
+        ? presented.affectedEntity
+        : {}),
+      name: recommendation.entityName ?? entityName,
+    },
     ...recommendationDecision(recommendation),
     occurrenceKey,
     lifecycleState: lifecycle?.state ?? ('OPEN' as const),
