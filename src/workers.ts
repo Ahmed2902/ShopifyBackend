@@ -2,6 +2,7 @@ import { logger } from './lib/logger.js';
 import { PollingWorker } from './lib/polling-worker.js';
 import { authEmailDeliveryService } from './modules/auth/auth.email-delivery.js';
 import { billingReconciliationService } from './modules/billing/billing-reconciliation.service.js';
+import { conversionDeliveryService } from './modules/conversion-delivery/conversion-delivery.service.js';
 import { pixelAttributionService } from './modules/pixel/attribution/pixel-attribution.service.js';
 import { pixelBehaviorService } from './modules/pixel/behavior/pixel-behavior.service.js';
 import { pixelJourneyService } from './modules/pixel/journey/pixel-journey.service.js';
@@ -79,6 +80,28 @@ const pixelJourneyWorker = new PollingWorker(
   'Stride Pixel journey reconciliation failed',
 );
 
+const conversionEnqueueWorker = new PollingWorker(
+  30_000,
+  async () => {
+    const result = await conversionDeliveryService.enqueuePurchases(500);
+    if (result.enqueued > 0) {
+      logger.info(result, 'Queued Shopify-backed server-side purchase conversions');
+    }
+  },
+  'Server-side conversion enqueue failed',
+);
+
+const conversionDeliveryWorker = new PollingWorker(
+  2_000,
+  async () => {
+    const result = await conversionDeliveryService.processDue(25);
+    if (result.claimed > 0) {
+      logger.info(result, 'Processed server-side conversion delivery batch');
+    }
+  },
+  'Server-side conversion delivery failed',
+);
+
 const pixelBehaviorWorker = new PollingWorker(
   30_000,
   async () => {
@@ -135,6 +158,8 @@ const workers = [
   billingReconciliationWorker,
   reconciliationWorker,
   pixelJourneyWorker,
+  conversionEnqueueWorker,
+  conversionDeliveryWorker,
   pixelBehaviorWorker,
   pixelAttributionWorker,
   pixelRetentionWorker,
