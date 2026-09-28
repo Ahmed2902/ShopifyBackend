@@ -2,6 +2,7 @@ import { logger } from './lib/logger.js';
 import { PollingWorker } from './lib/polling-worker.js';
 import { authEmailDeliveryService } from './modules/auth/auth.email-delivery.js';
 import { billingReconciliationService } from './modules/billing/billing-reconciliation.service.js';
+import { conversionDeliveryService } from './modules/conversion-delivery/conversion-delivery.service.js';
 import { pixelAttributionService } from './modules/pixel/attribution/pixel-attribution.service.js';
 import { pixelBehaviorService } from './modules/pixel/behavior/pixel-behavior.service.js';
 import { pixelJourneyService } from './modules/pixel/journey/pixel-journey.service.js';
@@ -36,6 +37,23 @@ const tiktokWebhookWorker = new PollingWorker(
     if (result.claimed > 0) logger.debug(result, 'Processed TikTok webhook queue batch');
   },
   'TikTok webhook worker failed',
+);
+
+const conversionDeliveryWorker = new PollingWorker(
+  5_000,
+  async () => {
+    const queued = await conversionDeliveryService.enqueueEligiblePurchases(50, 100);
+    const delivered = await conversionDeliveryService.processDue(50);
+    if (
+      queued.created > 0 ||
+      queued.pausedForEntitlement > 0 ||
+      delivered.claimed > 0 ||
+      delivered.paused > 0
+    ) {
+      logger.info({ queued, delivered }, 'Processed server-side conversion delivery');
+    }
+  },
+  'Server-side conversion delivery worker failed',
 );
 
 const authEmailWorker = new PollingWorker(
@@ -131,6 +149,7 @@ const workers = [
   shopifyManualSyncWorker,
   shopifyWebhookWorker,
   tiktokWebhookWorker,
+  conversionDeliveryWorker,
   authEmailWorker,
   billingReconciliationWorker,
   reconciliationWorker,
