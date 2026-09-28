@@ -49,8 +49,10 @@ CREATE TABLE "ConversionDelivery" (
     CONSTRAINT "ConversionDelivery_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "ConversionDestination_store_provider_account_key"
-    ON "ConversionDestination"("storeId", "provider", "accountExternalId");
+CREATE UNIQUE INDEX "ConversionDestination_identity_key"
+    ON "ConversionDestination"("storeId", "provider", "accountExternalId", "destinationExternalId");
+CREATE INDEX "ConversionDestination_account_status_idx"
+    ON "ConversionDestination"("storeId", "provider", "accountExternalId", "status");
 CREATE INDEX "ConversionDestination_store_status_idx"
     ON "ConversionDestination"("storeId", "status");
 
