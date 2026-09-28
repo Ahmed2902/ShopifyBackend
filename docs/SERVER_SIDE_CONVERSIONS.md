@@ -76,6 +76,8 @@ Content-Type: application/json
 
 ### Configure TikTok
 
+Stride sends TikTok's current `Purchase` standard event name for new Web/Events API integrations.
+
 ```http
 PUT /v1/stores/:storeId/conversion-delivery/destinations
 Content-Type: application/json
