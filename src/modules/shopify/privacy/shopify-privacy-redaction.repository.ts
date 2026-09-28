@@ -35,6 +35,18 @@ export class ShopifyPrivacyRedactionRepository {
         });
         const orderIds = orders.map((order) => order.id);
 
+        // Conversion-delivery rows can retain click identifiers while pending/retrying. Erase them
+        // with the customer/order redaction rather than waiting for generic storefront retention.
+        await tx.conversionDelivery.deleteMany({
+          where: {
+            storeId,
+            OR: [
+              { shopifyOrderId: { in: orderExternalIds } },
+              ...(orderIds.length > 0 ? [{ sourceOrderId: { in: orderIds } }] : []),
+            ],
+          },
+        });
+
         const rawOrderEvents = await tx.storefrontEvent.findMany({
           where: { storeId, shopifyOrderExternalId: { in: orderExternalIds } },
           select: { sessionId: true },
