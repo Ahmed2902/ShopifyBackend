@@ -45,16 +45,24 @@ function repository(input: {
   return {
     activeDestinations: vi.fn().mockResolvedValue(input.destinations ?? []),
     findPurchaseCandidates: vi.fn().mockResolvedValue(input.candidates ?? []),
-    enqueue: vi.fn().mockResolvedValue({ id: 'delivery-1', status: 'PENDING', created: input.enqueueCreated ?? true }),
+    enqueue: vi.fn().mockResolvedValue({
+      id: 'delivery-1',
+      status: 'PENDING',
+      created: input.enqueueCreated ?? true,
+    }),
     recoverStaleClaims: vi.fn().mockResolvedValue({ count: 0 }),
     claimDue: vi.fn().mockResolvedValue([]),
+    upsertDestination: vi.fn().mockResolvedValue({ id: 'destination-1' }),
   };
 }
 
 describe('ConversionDeliveryService purchase enqueue', () => {
   it('queues only the provider whose consented click identifier exists', async () => {
     const repo = repository({
-      destinations: [destination('META', 'meta-destination'), destination('TIKTOK', 'tiktok-destination')],
+      destinations: [
+        destination('META', 'meta-destination'),
+        destination('TIKTOK', 'tiktok-destination'),
+      ],
       candidates: [candidate()],
     });
     const service = new ConversionDeliveryService(repo as never, () => now);
@@ -100,5 +108,31 @@ describe('ConversionDeliveryService purchase enqueue', () => {
     const result = await service.enqueuePurchases();
     expect(result).toMatchObject({ eligible: 0, enqueued: 0 });
     expect(repo.enqueue).not.toHaveBeenCalled();
+  });
+});
+
+describe('ConversionDeliveryService destination configuration', () => {
+  it('requires a provider Events API token for Meta and TikTok', async () => {
+    const service = new ConversionDeliveryService(repository() as never, () => now);
+
+    await expect(
+      service.configureDestination('store-1', {
+        provider: 'META',
+        externalId: '123',
+        config: {},
+      }),
+    ).rejects.toMatchObject({ code: 'CONVERSION_DESTINATION_TOKEN_REQUIRED' });
+  });
+
+  it('requires a Google Ads customer id while keeping its OAuth token in the existing connection', async () => {
+    const service = new ConversionDeliveryService(repository() as never, () => now);
+
+    await expect(
+      service.configureDestination('store-1', {
+        provider: 'GOOGLE_ADS',
+        externalId: '987654321',
+        config: {},
+      }),
+    ).rejects.toMatchObject({ code: 'GOOGLE_CONVERSION_CUSTOMER_REQUIRED' });
   });
 });
