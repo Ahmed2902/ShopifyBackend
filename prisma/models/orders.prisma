@@ -42,9 +42,10 @@ model Order {
   createdAt                        DateTime   @default(now())
   updatedAt                        DateTime   @updatedAt
 
-  store     Store           @relation(fields: [storeId], references: [id], onDelete: Restrict)
-  lineItems OrderLineItem[]
-  refunds   Refund[]
+  store                Store                @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  lineItems            OrderLineItem[]
+  refunds              Refund[]
+  conversionDeliveries ConversionDelivery[]
 
   @@unique([storeId, shopifyOrderId])
   @@index([storeId, shopifyCreatedAt])
