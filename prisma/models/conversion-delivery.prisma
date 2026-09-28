@@ -1,0 +1,93 @@
+enum ConversionProvider {
+  META
+  TIKTOK
+  GOOGLE_ADS
+}
+
+enum ConversionDestinationStatus {
+  ACTIVE
+  PAUSED
+  ERROR
+}
+
+enum ConversionDeliveryStatus {
+  PENDING
+  PROCESSING
+  RETRYING
+  SENT
+  DEAD
+}
+
+enum ConversionMatchKeyKind {
+  FBC
+  TTCLID
+  GCLID
+  GBRAID
+  WBRAID
+}
+
+/// One merchant-approved server-side conversion destination. Secrets are encrypted with the same
+/// envelope used by the existing provider integrations and are never returned through the API.
+/// Google Ads reuses the existing OAuth connection, so its destination has no secret ciphertext.
+model ConversionDestination {
+  id                    String                      @id @default(uuid()) @db.Uuid
+  storeId               String                      @db.Uuid
+  provider              ConversionProvider
+  accountExternalId     String                      @db.VarChar(128)
+  destinationExternalId String                      @db.VarChar(256)
+  secretCiphertext      String?                     @db.Text
+  status                ConversionDestinationStatus @default(PAUSED)
+  activeFrom            DateTime                    @default(now())
+  testEventCode         String?                     @db.VarChar(128)
+  lastErrorCode         String?                     @db.VarChar(128)
+  lastError             String?                     @db.Text
+  lastDeliveredAt       DateTime?
+  createdAt             DateTime                    @default(now())
+  updatedAt             DateTime                    @updatedAt
+
+  store      Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  deliveries ConversionDelivery[]
+
+  @@unique([storeId, provider, accountExternalId], map: "ConversionDestination_store_provider_account_key")
+  @@index([storeId, status], map: "ConversionDestination_store_status_idx")
+}
+
+/// Durable, replay-safe server-side conversion delivery. The matching key is encrypted at rest and
+/// the row is deleted with its Shopify source order so privacy redaction cannot leave an orphaned
+/// advertising identifier behind.
+model ConversionDelivery {
+  id                 String                   @id @default(uuid()) @db.Uuid
+  storeId            String                   @db.Uuid
+  destinationId      String                   @db.Uuid
+  sourceOrderId      String                   @db.Uuid
+  eventKey           String                   @db.VarChar(256)
+  providerEventId    String                   @db.VarChar(256)
+  eventAt            DateTime
+  sourceEventAt      DateTime
+  value              Decimal                  @db.Decimal(20, 6)
+  currencyCode       String                   @db.VarChar(3)
+  sourceUrl           String                   @db.Text
+  matchKeyKind       ConversionMatchKeyKind
+  matchKeyCiphertext String                   @db.Text
+  consentState       StorefrontConsentState
+  status             ConversionDeliveryStatus @default(PENDING)
+  attempts           Int                      @default(0)
+  nextAttemptAt      DateTime                 @default(now())
+  processingStartedAt DateTime?
+  sentAt             DateTime?
+  providerRequestId  String?                  @db.VarChar(256)
+  lastErrorCode      String?                  @db.VarChar(128)
+  lastError          String?                  @db.Text
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+
+  store       Store                 @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  destination ConversionDestination @relation(fields: [destinationId], references: [id], onDelete: Cascade)
+  sourceOrder Order                 @relation(fields: [sourceOrderId], references: [id], onDelete: Cascade)
+
+  @@unique([destinationId, eventKey], map: "ConversionDelivery_destination_event_key")
+  @@index([status, nextAttemptAt, createdAt], map: "ConversionDelivery_due_idx")
+  @@index([processingStartedAt], map: "ConversionDelivery_processing_idx")
+  @@index([storeId, createdAt], map: "ConversionDelivery_store_created_idx")
+  @@index([sourceOrderId], map: "ConversionDelivery_order_idx")
+}
