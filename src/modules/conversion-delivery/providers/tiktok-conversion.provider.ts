@@ -1,5 +1,9 @@
 import { decryptSecret } from '../../integrations/integration.utils.js';
-import type { ConversionDestinationConfig, DeliveryClaim, ProviderDeliveryResult } from '../conversion-delivery.types.js';
+import type {
+  ConversionDestinationConfig,
+  DeliveryClaim,
+  ProviderDeliveryResult,
+} from '../conversion-delivery.types.js';
 import { ConversionProviderError } from './conversion-provider.error.js';
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -19,7 +23,9 @@ async function responseJson(response: Response): Promise<TikTokResponse> {
   }
 }
 
-export async function deliverTikTokPurchase(delivery: DeliveryClaim): Promise<ProviderDeliveryResult> {
+export async function deliverTikTokPurchase(
+  delivery: DeliveryClaim,
+): Promise<ProviderDeliveryResult> {
   const tokenCiphertext = delivery.destination.accessTokenCiphertext;
   if (!tokenCiphertext) {
     throw new ConversionProviderError(
@@ -42,7 +48,8 @@ export async function deliverTikTokPurchase(delivery: DeliveryClaim): Promise<Pr
     event_source_id: delivery.destination.externalId,
     data: [
       {
-        event: 'CompletePayment',
+        // TikTok renamed CompletePayment to Purchase for new Web/Events API integrations in 2025.
+        event: 'Purchase',
         event_time: Math.floor(delivery.eventAt.getTime() / 1000),
         event_id: delivery.eventKey,
         user: { ttclid: delivery.clickId },
@@ -69,7 +76,11 @@ export async function deliverTikTokPurchase(delivery: DeliveryClaim): Promise<Pr
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch {
-    throw new ConversionProviderError('TikTok Events API request failed', true, 'TIKTOK_EVENTS_NETWORK');
+    throw new ConversionProviderError(
+      'TikTok Events API request failed',
+      true,
+      'TIKTOK_EVENTS_NETWORK',
+    );
   }
 
   const payload = await responseJson(response);
