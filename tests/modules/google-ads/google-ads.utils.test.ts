@@ -46,11 +46,14 @@ describe('Google Ads OAuth state', () => {
     expect(() => verifyGoogleAdsOAuthState(`${tamperedEncoded}.${signature}`)).toThrow();
   });
 
-  it('requests the dedicated adwords scope with offline refresh-token access', () => {
+  it('requests reporting and Data Manager scopes with offline refresh-token access', () => {
     const { authorizationUrl } = buildGoogleAdsAuthorizationUrl('user-1', 'store-1');
     const url = new URL(authorizationUrl);
     expect(url.origin).toBe('https://accounts.google.com');
-    expect(url.searchParams.get('scope')).toBe('https://www.googleapis.com/auth/adwords');
+    expect(url.searchParams.get('scope')?.split(' ')).toEqual([
+      'https://www.googleapis.com/auth/adwords',
+      'https://www.googleapis.com/auth/datamanager',
+    ]);
     expect(url.searchParams.get('access_type')).toBe('offline');
     expect(url.searchParams.get('prompt')).toBe('consent');
     expect(url.searchParams.get('state')).toBeTruthy();
