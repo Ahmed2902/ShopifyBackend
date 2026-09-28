@@ -67,7 +67,13 @@ export class ConversionDeliveryService {
 
   async disableDestination(storeId: string, destinationId: string) {
     const destination = await this.repository.getDestination(storeId, destinationId);
-    if (!destination) throw new AppError('Conversion destination not found', 404, 'CONVERSION_DESTINATION_NOT_FOUND');
+    if (!destination) {
+      throw new AppError(
+        'Conversion destination not found',
+        404,
+        'CONVERSION_DESTINATION_NOT_FOUND',
+      );
+    }
     await this.repository.disableDestination(storeId, destinationId);
     return { ...destination, status: 'DISABLED' as const };
   }
@@ -101,7 +107,7 @@ export class ConversionDeliveryService {
         const attribution = attributionFor(candidate, destination.provider);
         if (!attribution.clickId) continue;
         eligible += 1;
-        const before = await this.repository.enqueue({
+        const result = await this.repository.enqueue({
           storeId: candidate.storeId,
           destinationId: destination.id,
           provider: destination.provider,
@@ -115,7 +121,7 @@ export class ConversionDeliveryService {
           attributionEventAt: attribution.eventAt,
           eventSourceUrl: candidate.eventSourceUrl,
         });
-        if (before.status === 'PENDING') enqueued += 1;
+        if (result.created) enqueued += 1;
       }
     }
 
@@ -143,9 +149,10 @@ export class ConversionDeliveryService {
         const nextAttemptAt = isDead
           ? this.now()
           : new Date(this.now().getTime() + retryDelayMs(attempt));
-        const code = error instanceof ConversionProviderError && error.providerCode
-          ? ` [${error.providerCode}]`
-          : '';
+        const code =
+          error instanceof ConversionProviderError && error.providerCode
+            ? ` [${error.providerCode}]`
+            : '';
         await this.repository.markFailed(
           claim.id,
           isDead ? 'DEAD' : 'RETRY',
