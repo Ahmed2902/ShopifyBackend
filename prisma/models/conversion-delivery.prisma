@@ -1,0 +1,70 @@
+enum ConversionDestinationStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum ConversionDeliveryStatus {
+  PENDING
+  PROCESSING
+  RETRY
+  DELIVERED
+  DEAD
+  SKIPPED
+}
+
+/// Provider-neutral server-side conversion destination. Provider-specific secrets are encrypted
+/// and never returned through read APIs. Public configuration is stored in configJson.
+model ConversionDestination {
+  id                    String                      @id @default(uuid()) @db.Uuid
+  storeId               String                      @db.Uuid
+  provider              AdvertisingProvider
+  externalId            String
+  displayName           String?
+  accessTokenCiphertext String?
+  configJson            Json?
+  status                ConversionDestinationStatus @default(ACTIVE)
+  createdAt             DateTime                    @default(now())
+  updatedAt             DateTime                    @updatedAt
+
+  store      Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  deliveries ConversionDelivery[]
+
+  @@unique([storeId, provider, externalId])
+  @@index([storeId, provider, status])
+}
+
+/// Durable, idempotent server-side conversion delivery. Purchase truth always comes from Shopify
+/// Order; Stride Pixel contributes only consented attribution identifiers (fbclid/gclid/ttclid).
+model ConversionDelivery {
+  id                     String                   @id @default(uuid()) @db.Uuid
+  storeId                String                   @db.Uuid
+  destinationId          String                   @db.Uuid
+  provider               AdvertisingProvider
+  eventKey               String
+  eventName              String
+  sourceOrderId          String                   @db.Uuid
+  shopifyOrderId         String
+  eventAt                DateTime
+  value                  Decimal                  @db.Decimal(20, 6)
+  currencyCode           String
+  clickId                String?                  @db.VarChar(512)
+  attributionEventAt     DateTime?
+  eventSourceUrl         String?                  @db.Text
+  status                 ConversionDeliveryStatus @default(PENDING)
+  attempts               Int                      @default(0)
+  nextAttemptAt          DateTime                 @default(now())
+  processingStartedAt    DateTime?
+  deliveredAt            DateTime?
+  providerRequestId      String?
+  lastError              String?
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+
+  store       Store                 @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  destination ConversionDestination @relation(fields: [destinationId], references: [id], onDelete: Cascade)
+
+  @@unique([destinationId, eventKey])
+  @@index([status, nextAttemptAt, createdAt])
+  @@index([storeId, provider, createdAt])
+  @@index([sourceOrderId])
+}
