@@ -50,7 +50,7 @@ export class ConversionDeliveryRepository {
           externalId: input.externalId,
         },
       },
-      select: { id: true, accessTokenCiphertext: true },
+      select: { id: true },
     });
 
     const data = {
@@ -159,7 +159,7 @@ export class ConversionDeliveryRepository {
     `);
   }
 
-  enqueue(input: {
+  async enqueue(input: {
     storeId: string;
     destinationId: string;
     provider: AdvertisingProvider;
@@ -173,20 +173,22 @@ export class ConversionDeliveryRepository {
     attributionEventAt: Date | null;
     eventSourceUrl: string | null;
   }) {
-    return prisma.conversionDelivery.upsert({
+    const existing = await prisma.conversionDelivery.findUnique({
       where: {
         destinationId_eventKey: {
           destinationId: input.destinationId,
           eventKey: input.eventKey,
         },
       },
-      create: {
-        ...input,
-        eventName: 'PURCHASE',
-      },
-      update: {},
       select: { id: true, status: true },
     });
+    if (existing) return { ...existing, created: false };
+
+    const created = await prisma.conversionDelivery.create({
+      data: { ...input, eventName: 'PURCHASE' },
+      select: { id: true, status: true },
+    });
+    return { ...created, created: true };
   }
 
   async recoverStaleClaims(cutoff: Date) {
@@ -207,9 +209,19 @@ export class ConversionDeliveryRepository {
         SELECT d."id"
         FROM "ConversionDelivery" d
         JOIN "ConversionDestination" dest ON dest."id" = d."destinationId"
+        JOIN "StoreSubscription" sub ON sub."storeId" = d."storeId"
         WHERE d."status" IN ('PENDING', 'RETRY')
           AND d."nextAttemptAt" <= ${now}
           AND dest."status" = 'ACTIVE'
+          AND sub."status" IN ('TRIALING', 'ACTIVE')
+          AND (
+            sub."selectedPlan" = 'PRO'
+            OR (
+              sub."selectedPlan" = 'ESSENTIALS'
+              AND sub."essentialsAdProvider" IS NOT NULL
+              AND sub."essentialsAdProvider"::text = d."provider"::text
+            )
+          )
         ORDER BY d."nextAttemptAt" ASC, d."createdAt" ASC, d."id" ASC
         LIMIT ${limit}
         FOR UPDATE OF d SKIP LOCKED
@@ -238,6 +250,9 @@ export class ConversionDeliveryRepository {
         deliveredAt,
         providerRequestId,
         lastError: null,
+        clickId: null,
+        attributionEventAt: null,
+        eventSourceUrl: null,
       },
     });
   }
