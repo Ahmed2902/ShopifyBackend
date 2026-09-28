@@ -184,6 +184,8 @@ model Store {
   tiktokConnection                TikTokConnection?
   googleAdsConnection             GoogleAdsConnection?
   advertisingAccounts             AdvertisingAccount[]
+  conversionDestinations          ConversionDestination[]
+  conversionDeliveries            ConversionDelivery[]
   pixelInstallation               PixelInstallation?
   shopifyDataRequests             ShopifyDataRequest[]
   shopifyOrderRedactions          ShopifyOrderRedaction[]
