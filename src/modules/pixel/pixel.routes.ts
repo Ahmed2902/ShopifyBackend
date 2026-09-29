@@ -7,6 +7,7 @@ import {
 } from '../billing/billing.middleware.js';
 import { pixelAttributionController } from './attribution/pixel-attribution.controller.js';
 import { pixelBehaviorController } from './behavior/pixel-behavior.controller.js';
+import { pixelEntityDetailController } from './behavior/pixel-entity-detail.controller.js';
 import { pixelJourneyController } from './journey/pixel-journey.controller.js';
 import { pixelHealthController } from './pixel-health.controller.js';
 import { pixelController } from './pixel.controller.js';
@@ -34,7 +35,13 @@ pixelStoreRouter.get(
 );
 
 pixelStoreRouter.get('/analytics/overview', pixelBehaviorController.overview);
+pixelStoreRouter.get('/analytics/products/batch', pixelEntityDetailController.productBatch);
+pixelStoreRouter.get('/analytics/products/:productId/sources', pixelEntityDetailController.productSources);
+pixelStoreRouter.get('/analytics/products/:productId', pixelEntityDetailController.product);
 pixelStoreRouter.get('/analytics/products', pixelBehaviorController.products);
+pixelStoreRouter.get('/analytics/collections/batch', pixelEntityDetailController.collectionBatch);
+pixelStoreRouter.get('/analytics/collections/:collectionId/sources', pixelEntityDetailController.collectionSources);
+pixelStoreRouter.get('/analytics/collections/:collectionId', pixelEntityDetailController.collection);
 pixelStoreRouter.get('/analytics/collections', pixelBehaviorController.collections);
 pixelStoreRouter.get('/analytics/landing-pages', pixelBehaviorController.landingPages);
 pixelStoreRouter.get('/attribution/sources', pixelAttributionController.sources);
