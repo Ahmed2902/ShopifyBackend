@@ -6,10 +6,8 @@ import type {
 import { AppError } from '../../../errors/app-error.js';
 import { invalidateStoreDecisionCaches } from '../../../lib/store-decision-cache.js';
 import { billingService, type BillingService } from '../../billing/billing.service.js';
-import {
-  GoogleAdsMappingService,
-  googleAdsMappingService,
-} from '../../google-ads/google-ads-mapping.service.js';
+import { googleAdsMappingService } from '../../google-ads/google-ads-mapping.service.js';
+import type { GoogleAdsMappingService } from '../../google-ads/google-ads-mapping.service.js';
 import { GoogleAdsRepository } from '../../google-ads/google-ads.repository.js';
 import { GoogleAdsService } from '../../google-ads/google-ads.service.js';
 import { GoogleAdsApiService } from '../../google-ads/shared/google-ads-api.service.js';
