@@ -26,6 +26,11 @@ export const PRODUCTS_QUERY = `#graphql
         status
         totalInventory
         tracksInventory
+        featuredMedia {
+          preview {
+            image { url }
+          }
+        }
         publishedAt
         createdAt
         updatedAt
