@@ -9,7 +9,7 @@ CREATE TABLE "AdvertisingReconciliationState" (
     "nextCatalogAt" TIMESTAMP(3),
     "manualRequestedAt" TIMESTAMP(3),
     "urgentAt" TIMESTAMP(3),
-    "urgentKinds" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "urgentKinds" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
     "claimedAt" TIMESTAMP(3),
     "claimToken" TEXT,
     "lastStartedAt" TIMESTAMP(3),
