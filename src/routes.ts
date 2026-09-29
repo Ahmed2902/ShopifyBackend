@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { advertisingReconciliationRouter } from './modules/advertising/reconciliation/advertising-reconciliation.routes.js';
 import { analyticsRouter } from './modules/analytics/analytics.routes.js';
 import { authRouter } from './modules/auth/auth.routes.js';
 import { billingRouter } from './modules/billing/billing.routes.js';
@@ -44,6 +45,7 @@ router.use('/v1/stores/:storeId/integrations/meta', metaStoreRouter);
 router.use('/v1/stores/:storeId/integrations/tiktok', tiktokStoreRouter);
 router.use('/v1/stores/:storeId/integrations/google-ads', googleAdsStoreRouter);
 router.use('/v1/stores/:storeId/integrations', integrationRouter);
+router.use('/v1/stores/:storeId/advertising/reconciliation', advertisingReconciliationRouter);
 router.use('/v1/stores/:storeId/intelligence', intelligenceRouter);
 router.use('/v1/stores/:storeId/analytics', analyticsRouter);
 router.use('/v1/stores/:storeId/pixel', pixelStoreRouter);
