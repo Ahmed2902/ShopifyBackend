@@ -11,10 +11,19 @@ function bucketDate(value: string): Date {
 }
 
 function numeric(value: unknown): number {
-  if (value == null) return 0;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
 }
+
+type DailyPoint = {
+  date: string;
+  currency: string;
+  spend: number;
+  purchaseValue: number | null;
+  purchases: number | null;
+  impressions: number;
+  clicks: number;
+};
 
 export class AdvertisingDailyReadService {
   async read(storeId: string, query: UnifiedAdvertisingRangeQuery, now = new Date()) {
@@ -31,15 +40,7 @@ export class AdvertisingDailyReadService {
       accountId: query.accountId,
       currency: query.currency,
     });
-    const grouped = new Map<string, {
-      date: string;
-      currency: string;
-      spend: number;
-      purchaseValue: number;
-      purchases: number;
-      impressions: number;
-      clicks: number;
-    }>();
+    const grouped = new Map<string, DailyPoint>();
 
     const providers: UnifiedAdvertisingProvider[] = ['META', 'TIKTOK', 'GOOGLE_ADS'];
     for (const provider of providers) {
@@ -63,11 +64,17 @@ export class AdvertisingDailyReadService {
           impressions: true,
           clicks: true,
         },
+        _count: {
+          _all: true,
+          conversionValue: true,
+          conversions: true,
+        },
         orderBy: [{ date: 'asc' }, { currency: 'asc' }],
       });
 
       for (const row of rows) {
-        const currency = row.currency ?? accounts.find((account) => account.currency)?.currency ?? 'UNKNOWN';
+        const accountCurrencies = [...new Set(accounts.map((account) => account.currency).filter(Boolean))];
+        const currency = row.currency ?? query.currency ?? (accountCurrencies.length === 1 ? accountCurrencies[0]! : 'UNKNOWN');
         const date = row.date.toISOString().slice(0, 10);
         const key = `${date}:${currency}`;
         const point = grouped.get(key) ?? {
@@ -79,11 +86,22 @@ export class AdvertisingDailyReadService {
           impressions: 0,
           clicks: 0,
         };
+
         point.spend += numeric(row._sum.spend);
-        point.purchaseValue += numeric(row._sum.conversionValue);
-        point.purchases += numeric(row._sum.conversions);
         point.impressions += numeric(row._sum.impressions);
         point.clicks += numeric(row._sum.clicks);
+
+        if (point.purchaseValue !== null) {
+          point.purchaseValue = row._count.conversionValue === row._count._all
+            ? point.purchaseValue + numeric(row._sum.conversionValue)
+            : null;
+        }
+        if (point.purchases !== null) {
+          point.purchases = row._count.conversions === row._count._all
+            ? point.purchases + numeric(row._sum.conversions)
+            : null;
+        }
+
         grouped.set(key, point);
       }
     }
