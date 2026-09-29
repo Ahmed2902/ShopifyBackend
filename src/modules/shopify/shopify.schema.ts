@@ -41,6 +41,17 @@ export const shopifyProductSchema = z.object({
   status: z.string(),
   totalInventory: z.number().int().nullable().optional(),
   tracksInventory: z.boolean().default(false),
+  featuredMedia: z
+    .object({
+      preview: z
+        .object({
+          image: z.object({ url: z.string().url() }).nullable().optional(),
+        })
+        .nullable()
+        .optional(),
+    })
+    .nullable()
+    .optional(),
   publishedAt: z.string().datetime().nullable().optional(),
   createdAt: z.string().datetime().nullable().optional(),
   updatedAt: z.string().datetime().nullable().optional(),
