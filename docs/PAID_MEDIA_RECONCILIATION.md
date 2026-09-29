@@ -6,14 +6,14 @@ Stride keeps Meta, TikTok and Google Ads data fresh with a deliberately low-reso
 
 One `AdvertisingReconciliationState` row exists per Store/provider, not per campaign or ad account.
 
-- Meta daily reconciliation: every 24 hours plus deterministic 0–60 minute jitter. `syncInsights()` owns the rolling Insights refresh and refreshes the selected hierarchy immediately before importing Insights. The normal refresh window remains the configured 35-day rolling window.
-- TikTok daily reconciliation: every 24 hours plus deterministic 0–60 minute jitter. It refreshes hierarchy and the normal 35-day rolling Insights window.
-- Google Ads daily reconciliation: every 24 hours plus deterministic 0–60 minute jitter. It uses the existing `INCREMENTAL` sync, which refreshes hierarchy and the 35-day rolling metric window.
-- Meta/TikTok catalogs: every 72 hours plus deterministic 0–2 hour jitter when catalogs are configured.
+- Meta daily reconciliation: exact 24-hour recurrence after each successful run. `syncInsights()` owns the rolling Insights refresh and refreshes the selected hierarchy immediately before importing Insights. The normal refresh window remains the configured 35-day rolling window.
+- TikTok daily reconciliation: exact 24-hour recurrence after each successful run. It refreshes hierarchy and the normal 35-day rolling Insights window.
+- Google Ads daily reconciliation: exact 24-hour recurrence after each successful run. It uses the existing `INCREMENTAL` sync, which refreshes hierarchy and the 35-day rolling metric window.
+- Meta/TikTok catalogs: exact 72-hour recurrence after each successful catalog run when catalogs are configured.
 - Google `change_status` is not polled in V1.
 - No Meta webhook is required for V1 correctness.
 
-The jitter is derived from Store ID + provider, so schedules remain stable while avoiding a midnight thundering herd.
+The first schedule for each Store/provider is deterministically offset by up to one hour (catalogs by up to two hours) using Store ID + provider. That initial phase spreading avoids a deployment/midnight thundering herd without stretching later daily intervals beyond 24 hours.
 
 ## Initial history versus reconciliation
 
