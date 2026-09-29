@@ -5,14 +5,17 @@ import type {
 } from '../../../generated/prisma/client.js';
 import { AppError } from '../../../errors/app-error.js';
 import { invalidateStoreDecisionCaches } from '../../../lib/store-decision-cache.js';
-import { billingService } from '../../billing/billing.service.js';
-import { GoogleAdsMappingService, googleAdsMappingService } from '../../google-ads/google-ads-mapping.service.js';
+import { billingService, type BillingService } from '../../billing/billing.service.js';
+import {
+  GoogleAdsMappingService,
+  googleAdsMappingService,
+} from '../../google-ads/google-ads-mapping.service.js';
 import { GoogleAdsRepository } from '../../google-ads/google-ads.repository.js';
 import { GoogleAdsService } from '../../google-ads/google-ads.service.js';
 import { GoogleAdsApiService } from '../../google-ads/shared/google-ads-api.service.js';
 import { GoogleAdsAuthService } from '../../google-ads/shared/google-ads-auth.service.js';
-import { metaService } from '../../meta/meta.service.js';
-import { tiktokService } from '../../tiktok/tiktok.service.js';
+import { metaService, type MetaService } from '../../meta/meta.service.js';
+import { tiktokService, type TikTokService } from '../../tiktok/tiktok.service.js';
 import { AdvertisingReconciliationRepository } from './advertising-reconciliation.repository.js';
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -21,7 +24,7 @@ const DAILY_JITTER_MS = 60 * 60 * 1_000;
 const CATALOG_JITTER_MS = 2 * 60 * 60 * 1_000;
 const MANUAL_COOLDOWN_MS = 5 * 60 * 1_000;
 const URGENT_DEBOUNCE_MS = 60 * 1_000;
-const CLAIM_STALE_MS = 30 * 60 * 1_000;
+const CLAIM_STALE_MS = 60 * 60 * 1_000;
 const ENSURE_INTERVAL_MS = 10 * 60 * 1_000;
 const BACKOFF_MS = [15 * 60 * 1_000, 60 * 60 * 1_000, 4 * 60 * 60 * 1_000] as const;
 
@@ -29,11 +32,19 @@ const BILLING_SKIP_CODES = new Set([
   'SUBSCRIPTION_REQUIRED',
   'PLAN_UPGRADE_REQUIRED',
   'PLAN_CHANNEL_SELECTION_REQUIRED',
-  'PLAN_CHANNEL_LIMIT_REACHED',
+  'PLAN_AD_CHANNEL_LIMIT',
   'PLAN_CHANNEL_NOT_CONNECTED',
 ]);
 
-const providerValues = new Set<AdvertisingProvider>(['META', 'TIKTOK', 'GOOGLE_ADS']);
+const providers: AdvertisingProvider[] = ['META', 'TIKTOK', 'GOOGLE_ADS'];
+const providerValues = new Set<AdvertisingProvider>(providers);
+
+type BillingGuard = Pick<BillingService, 'requireAdProvider'>;
+type MetaSync = Pick<MetaService, 'syncInsights' | 'syncCatalogs'>;
+type TikTokSync = Pick<TikTokService, 'syncAdsHierarchy' | 'syncInsights' | 'syncCatalogs'>;
+type GoogleSync = Pick<GoogleAdsService, 'sync'>;
+type GoogleMapping = Pick<GoogleAdsMappingService, 'projectDeterministicFinalUrls'>;
+type CacheInvalidator = (storeId: string) => Promise<void>;
 
 function errorCode(error: unknown) {
   return error instanceof AppError ? error.code : 'PAID_MEDIA_RECONCILIATION_FAILED';
@@ -84,8 +95,12 @@ export class AdvertisingReconciliationService {
 
   constructor(
     private readonly repository: AdvertisingReconciliationRepository,
-    private readonly googleAds: GoogleAdsService,
-    private readonly googleMappings: GoogleAdsMappingService,
+    private readonly billing: BillingGuard,
+    private readonly meta: MetaSync,
+    private readonly tiktok: TikTokSync,
+    private readonly googleAds: GoogleSync,
+    private readonly googleMappings: GoogleMapping,
+    private readonly invalidateCaches: CacheInvalidator,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
@@ -113,8 +128,30 @@ export class AdvertisingReconciliationService {
     );
   }
 
+  private async ensureStoreSchedules(storeId: string) {
+    const now = this.now();
+    const snapshots = await Promise.all(
+      providers.map(async (provider) => ({
+        provider,
+        connection: await this.repository.connectionSnapshot(storeId, provider),
+      })),
+    );
+    await Promise.all(
+      snapshots
+        .filter(({ connection }) => connection.status === 'ACTIVE' && connection.configured)
+        .map(({ provider, connection }) =>
+          this.repository.ensureState({
+            storeId,
+            provider,
+            nextDailyAt: nextDaily(storeId, provider, now),
+            nextCatalogAt: connection.catalogConfigured ? nextCatalog(storeId, provider, now) : null,
+          }),
+        ),
+    );
+  }
+
   async status(storeId: string) {
-    await this.ensureSchedules(true);
+    await this.ensureStoreSchedules(storeId);
     const states = await this.repository.listStates(storeId);
     return states.map((state) => ({
       id: state.id,
@@ -137,7 +174,7 @@ export class AdvertisingReconciliationService {
 
   async requestManual(storeId: string, rawProvider: string) {
     const provider = providerFromInput(rawProvider);
-    await billingService.requireAdProvider(storeId, provider);
+    await this.billing.requireAdProvider(storeId, provider);
     const connection = await this.repository.connectionSnapshot(storeId, provider);
     if (connection.status !== 'ACTIVE') {
       throw new AppError(
@@ -234,7 +271,7 @@ export class AdvertisingReconciliationService {
     }
 
     try {
-      await billingService.requireAdProvider(state.storeId, state.provider);
+      await this.billing.requireAdProvider(state.storeId, state.provider);
     } catch (error) {
       if (error instanceof AppError && BILLING_SKIP_CODES.has(error.code)) {
         await this.repository.completeSkipped({
@@ -291,20 +328,21 @@ export class AdvertisingReconciliationService {
       (manual || catalogDue || (urgentDue && urgentKinds.has('CATALOG')));
 
     if (state.provider === 'META') {
-      if (runDaily) await metaService.syncInsights(state.storeId);
-      if (runCatalog) await metaService.syncCatalogs(state.storeId);
+      if (runDaily) await this.meta.syncInsights(state.storeId);
+      if (runCatalog) await this.meta.syncCatalogs(state.storeId);
     } else if (state.provider === 'TIKTOK') {
       const hierarchy = runDaily || (urgentDue && urgentKinds.has('HIERARCHY'));
       const insights = runDaily || (urgentDue && urgentKinds.has('INSIGHTS'));
-      if (hierarchy) await tiktokService.syncAdsHierarchy(state.storeId);
-      if (insights) await tiktokService.syncInsights(state.storeId, urgentDue && !runDaily ? 2 : undefined);
-      if (runCatalog) await tiktokService.syncCatalogs(state.storeId);
-    } else {
-      if (runDaily) {
-        await this.googleAds.sync(state.storeId, 'INCREMENTAL');
-        await this.googleMappings.projectDeterministicFinalUrls(state.storeId);
-        await invalidateStoreDecisionCaches(state.storeId);
+      if (hierarchy) await this.tiktok.syncAdsHierarchy(state.storeId);
+      if (insights) {
+        if (urgentDue && !runDaily) await this.tiktok.syncInsights(state.storeId, 2);
+        else await this.tiktok.syncInsights(state.storeId);
       }
+      if (runCatalog) await this.tiktok.syncCatalogs(state.storeId);
+    } else if (runDaily) {
+      await this.googleAds.sync(state.storeId, 'INCREMENTAL');
+      await this.googleMappings.projectDeterministicFinalUrls(state.storeId);
+      await this.invalidateCaches(state.storeId);
     }
 
     return {
@@ -354,6 +392,10 @@ const googleService = new GoogleAdsService(googleRepository, googleAuth, googleA
 
 export const advertisingReconciliationService = new AdvertisingReconciliationService(
   new AdvertisingReconciliationRepository(),
+  billingService,
+  metaService,
+  tiktokService,
   googleService,
   googleAdsMappingService,
+  invalidateStoreDecisionCaches,
 );
