@@ -73,7 +73,11 @@ export class AdvertisingDailyReadService {
       });
 
       for (const row of rows) {
-        const accountCurrencies = [...new Set(accounts.map((account) => account.currency).filter(Boolean))];
+        const accountCurrencies = [...new Set(
+          accounts
+            .map((account) => account.currency)
+            .filter((value): value is string => Boolean(value)),
+        )];
         const currency = row.currency ?? query.currency ?? (accountCurrencies.length === 1 ? accountCurrencies[0]! : 'UNKNOWN');
         const date = row.date.toISOString().slice(0, 10);
         const key = `${date}:${currency}`;
