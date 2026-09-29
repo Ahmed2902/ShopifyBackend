@@ -184,6 +184,7 @@ model Store {
   tiktokConnection                TikTokConnection?
   googleAdsConnection             GoogleAdsConnection?
   advertisingAccounts             AdvertisingAccount[]
+  advertisingReconciliationStates AdvertisingReconciliationState[]
   conversionDestinations          ConversionDestination[]
   conversionDeliveries            ConversionDelivery[]
   pixelInstallation               PixelInstallation?
