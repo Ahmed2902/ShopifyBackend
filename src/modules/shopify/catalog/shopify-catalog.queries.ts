@@ -10,6 +10,11 @@ export const PRODUCT_BY_ID_QUERY = `#graphql
       status
       totalInventory
       tracksInventory
+      featuredMedia {
+        preview {
+          image { url }
+        }
+      }
       publishedAt
       createdAt
       updatedAt
