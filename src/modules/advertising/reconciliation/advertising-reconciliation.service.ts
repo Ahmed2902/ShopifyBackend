@@ -67,14 +67,22 @@ function stableJitter(storeId: string, provider: AdvertisingProvider, purpose: s
   return digest.readUInt32BE(0) % maxMs;
 }
 
-function nextDaily(storeId: string, provider: AdvertisingProvider, now: Date) {
+function initialDaily(storeId: string, provider: AdvertisingProvider, now: Date) {
   return new Date(now.getTime() + DAY_MS + stableJitter(storeId, provider, 'daily', DAILY_JITTER_MS));
 }
 
-function nextCatalog(storeId: string, provider: AdvertisingProvider, now: Date) {
+function nextDaily(now: Date) {
+  return new Date(now.getTime() + DAY_MS);
+}
+
+function initialCatalog(storeId: string, provider: AdvertisingProvider, now: Date) {
   return new Date(
     now.getTime() + CATALOG_INTERVAL_MS + stableJitter(storeId, provider, 'catalog', CATALOG_JITTER_MS),
   );
+}
+
+function nextCatalog(now: Date) {
+  return new Date(now.getTime() + CATALOG_INTERVAL_MS);
 }
 
 function providerFromInput(value: string): AdvertisingProvider {
@@ -119,9 +127,9 @@ export class AdvertisingReconciliationService {
         this.repository.ensureState({
           storeId: connection.storeId,
           provider: connection.provider,
-          nextDailyAt: nextDaily(connection.storeId, connection.provider, now),
+          nextDailyAt: initialDaily(connection.storeId, connection.provider, now),
           nextCatalogAt: connection.catalogConfigured
-            ? nextCatalog(connection.storeId, connection.provider, now)
+            ? initialCatalog(connection.storeId, connection.provider, now)
             : null,
         }),
       ),
@@ -143,8 +151,10 @@ export class AdvertisingReconciliationService {
           this.repository.ensureState({
             storeId,
             provider,
-            nextDailyAt: nextDaily(storeId, provider, now),
-            nextCatalogAt: connection.catalogConfigured ? nextCatalog(storeId, provider, now) : null,
+            nextDailyAt: initialDaily(storeId, provider, now),
+            nextCatalogAt: connection.catalogConfigured
+              ? initialCatalog(storeId, provider, now)
+              : null,
           }),
         ),
     );
@@ -197,8 +207,8 @@ export class AdvertisingReconciliationService {
     await this.repository.ensureState({
       storeId,
       provider,
-      nextDailyAt: nextDaily(storeId, provider, now),
-      nextCatalogAt: connection.catalogConfigured ? nextCatalog(storeId, provider, now) : null,
+      nextDailyAt: initialDaily(storeId, provider, now),
+      nextCatalogAt: connection.catalogConfigured ? initialCatalog(storeId, provider, now) : null,
     });
     const result = await this.repository.requestManual(storeId, provider, now, MANUAL_COOLDOWN_MS);
     if (result.kind === 'MISSING') {
@@ -227,8 +237,8 @@ export class AdvertisingReconciliationService {
     await this.repository.ensureState({
       storeId,
       provider: 'TIKTOK',
-      nextDailyAt: nextDaily(storeId, 'TIKTOK', now),
-      nextCatalogAt: connection.catalogConfigured ? nextCatalog(storeId, 'TIKTOK', now) : null,
+      nextDailyAt: initialDaily(storeId, 'TIKTOK', now),
+      nextCatalogAt: connection.catalogConfigured ? initialCatalog(storeId, 'TIKTOK', now) : null,
     });
     return this.repository.markUrgent(
       storeId,
@@ -277,7 +287,7 @@ export class AdvertisingReconciliationService {
         await this.repository.completeSkipped({
           id: state.id,
           claimToken,
-          nextDailyAt: nextDaily(state.storeId, state.provider, now),
+          nextDailyAt: nextDaily(now),
           reason: error.code,
         });
         return 'SKIPPED' as const;
@@ -291,12 +301,8 @@ export class AdvertisingReconciliationService {
         id: state.id,
         claimToken,
         now,
-        ...(result.dailyRan || state.manualRequestedAt
-          ? { nextDailyAt: nextDaily(state.storeId, state.provider, now) }
-          : {}),
-        ...(result.catalogRan
-          ? { nextCatalogAt: nextCatalog(state.storeId, state.provider, now) }
-          : {}),
+        ...(result.dailyRan || state.manualRequestedAt ? { nextDailyAt: nextDaily(now) } : {}),
+        ...(result.catalogRan ? { nextCatalogAt: nextCatalog(now) } : {}),
         clearManual: state.manualRequestedAt !== null,
         clearUrgent: result.urgentRan,
         catalogSucceeded: result.catalogRan,
@@ -375,10 +381,8 @@ export class AdvertisingReconciliationService {
     await this.repository.exhaustFailure({
       id: state.id,
       claimToken,
-      nextDailyAt: nextDaily(state.storeId, state.provider, now),
-      nextCatalogAt: connection.catalogConfigured
-        ? nextCatalog(state.storeId, state.provider, now)
-        : null,
+      nextDailyAt: nextDaily(now),
+      nextCatalogAt: connection.catalogConfigured ? nextCatalog(now) : null,
       error: message,
     });
     return 'FAILED' as const;
