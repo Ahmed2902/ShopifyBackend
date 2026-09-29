@@ -1,5 +1,6 @@
 import { logger } from './lib/logger.js';
 import { PollingWorker } from './lib/polling-worker.js';
+import { advertisingReconciliationService } from './modules/advertising/reconciliation/advertising-reconciliation.service.js';
 import { authEmailDeliveryService } from './modules/auth/auth.email-delivery.js';
 import { billingReconciliationService } from './modules/billing/billing-reconciliation.service.js';
 import { conversionDeliveryService } from './modules/conversion-delivery/conversion-delivery.service.js';
@@ -64,6 +65,15 @@ const reconciliationWorker = new PollingWorker(
     if (result.claimed > 0) logger.info(result, 'Processed scheduled reconciliation batch');
   },
   'Scheduled reconciliation worker failed',
+);
+
+const advertisingReconciliationWorker = new PollingWorker(
+  60_000,
+  async () => {
+    const result = await advertisingReconciliationService.processDue(2);
+    if (result.claimed > 0) logger.info(result, 'Processed paid-media reconciliation batch');
+  },
+  'Paid-media reconciliation worker failed',
 );
 
 const pixelJourneyWorker = new PollingWorker(
@@ -135,10 +145,6 @@ const pixelAttributionWorker = new PollingWorker(
 const pixelRetentionWorker = new PollingWorker(
   60_000,
   async () => {
-    // Raw evidence expires first. Deleting expired source events rotates repair generations for
-    // affected sessions. Drain one bounded repair batch immediately, then always run session
-    // cleanup: the cleanup query itself excludes any session that still has repair work or stale
-    // rollups, so one tenant's backlog cannot globally retain unrelated expired traces.
     const events = await pixelService.cleanupExpiredEvents();
     const repairs = await pixelJourneyService.repairDirtySessions(500);
     const sessions = await pixelJourneyService.cleanupExpiredSessions();
@@ -157,6 +163,7 @@ const workers = [
   authEmailWorker,
   billingReconciliationWorker,
   reconciliationWorker,
+  advertisingReconciliationWorker,
   pixelJourneyWorker,
   conversionEnqueueWorker,
   conversionDeliveryWorker,
