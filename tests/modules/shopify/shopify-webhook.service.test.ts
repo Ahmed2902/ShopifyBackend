@@ -50,7 +50,7 @@ function buildService(currentDelivery = delivery('products/update', { id: 1 })) 
     markProcessed: vi.fn().mockResolvedValue(undefined),
     markIgnored: vi.fn().mockResolvedValue(undefined),
     markFailed: vi.fn().mockResolvedValue(undefined),
-    markConnectionUninstalled: vi.fn().mockResolvedValue(undefined),
+    markStoreUninstalled: vi.fn().mockResolvedValue(undefined),
     markProductDeleted: vi.fn().mockResolvedValue(true),
     markMissingProductVariantsDeleted: vi.fn().mockResolvedValue(0),
     markLocationDeleted: vi.fn().mockResolvedValue(undefined),
@@ -191,12 +191,12 @@ describe('ShopifyWebhookService', () => {
     expect(repository.markProcessed).toHaveBeenCalledWith(deliveryId);
   });
 
-  it('processes app uninstall without attempting to refresh or use the access token', async () => {
+  it('stops store processing on app uninstall without attempting to use the access token', async () => {
     const { repository, authService, service } = buildService(delivery('app/uninstalled', { id: 1 }));
 
     await service.processDueDeliveries();
 
-    expect(repository.markConnectionUninstalled).toHaveBeenCalledWith(connectionId);
+    expect(repository.markStoreUninstalled).toHaveBeenCalledWith(connectionId, storeId);
     expect(authService.resolveAccessToken).not.toHaveBeenCalled();
     expect(repository.markProcessed).toHaveBeenCalledWith(deliveryId);
   });
