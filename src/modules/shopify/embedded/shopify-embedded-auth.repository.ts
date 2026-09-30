@@ -12,12 +12,6 @@ export type EmbeddedOfflineCredentials = {
   scopes: string[];
 };
 
-function normalizedVerifiedEmail(user: ShopifyAssociatedUser): string | null {
-  if (!user.email_verified) return null;
-  const email = user.email.trim().toLowerCase();
-  return email || null;
-}
-
 function syntheticIdentityEmail(shop: string, shopifyUserId: string): string {
   const digest = createHash('sha256')
     .update(`${shop}\u0000${shopifyUserId}`)
@@ -26,9 +20,10 @@ function syntheticIdentityEmail(shop: string, shopifyUserId: string): string {
   return `shopify-${digest}@identity.invalid`;
 }
 
-function displayName(user: ShopifyAssociatedUser): string | null {
-  const value = `${user.first_name} ${user.last_name}`.trim();
-  return value || null;
+function authoritativeRole(accountOwner: boolean): 'OWNER' | 'MEMBER' {
+  // The Shopify ID/online token gives us a trustworthy account-owner bit, but it doesn't encode
+  // Stride's ADMIN concept. Never guess elevated permissions for staff/collaborators.
+  return accountOwner ? 'OWNER' : 'MEMBER';
 }
 
 export class ShopifyEmbeddedAuthRepository {
@@ -56,18 +51,9 @@ export class ShopifyEmbeddedAuthRepository {
         userId: true,
         accountOwner: true,
         collaborator: true,
-        user: {
-          select: {
-            memberships: {
-              where: { storeId },
-              select: { role: true },
-              take: 1,
-            },
-          },
-        },
       },
     });
-    if (!identity?.user.memberships[0]) return null;
+    if (!identity) return null;
 
     await prisma.shopifyUserIdentity.update({
       where: { storeId_shopifyUserId: { storeId, shopifyUserId } },
@@ -76,10 +62,41 @@ export class ShopifyEmbeddedAuthRepository {
 
     return {
       userId: identity.userId,
-      role: identity.user.memberships[0].role,
+      role: authoritativeRole(identity.accountOwner),
       accountOwner: identity.accountOwner,
       collaborator: identity.collaborator,
     };
+  }
+
+  async refreshIdentity(
+    storeId: string,
+    shopifyUserId: string,
+    associatedUser: ShopifyAssociatedUser,
+  ) {
+    const identity = await prisma.shopifyUserIdentity.findUnique({
+      where: { storeId_shopifyUserId: { storeId, shopifyUserId } },
+      select: { userId: true },
+    });
+    if (!identity) return null;
+
+    const role = authoritativeRole(associatedUser.account_owner);
+    return prisma.$transaction(async (tx) => {
+      await tx.shopifyUserIdentity.update({
+        where: { storeId_shopifyUserId: { storeId, shopifyUserId } },
+        data: {
+          accountOwner: associatedUser.account_owner,
+          collaborator: associatedUser.collaborator,
+          emailVerified: associatedUser.email_verified,
+          lastSeenAt: new Date(),
+        },
+      });
+      await tx.storeMembership.upsert({
+        where: { userId_storeId: { userId: identity.userId, storeId } },
+        create: { userId: identity.userId, storeId, role },
+        update: { role },
+      });
+      return { userId: identity.userId, role };
+    });
   }
 
   async provision(input: {
@@ -98,7 +115,7 @@ export class ShopifyEmbeddedAuthRepository {
             { myshopifyDomain: input.shop },
           ],
         },
-        select: { id: true, shopifyShopId: true, myshopifyDomain: true },
+        select: { id: true },
         take: 2,
       });
       if (candidates.length > 1) {
@@ -166,9 +183,10 @@ export class ShopifyEmbeddedAuthRepository {
         });
       }
 
-      const verifiedEmail = normalizedVerifiedEmail(input.associatedUser);
-      const internalEmail =
-        verifiedEmail ?? syntheticIdentityEmail(input.shop, input.shopifyUserId);
+      // Deliberately do not link a Shopify staff member to a legacy Stride account by email. That
+      // could inherit stale OWNER/ADMIN permissions. The synthetic address exists only because the
+      // compatibility User table still requires a unique email during this migration.
+      const internalEmail = syntheticIdentityEmail(input.shop, input.shopifyUserId);
       let user = await tx.user.findUnique({
         where: { email: internalEmail },
         select: { id: true },
@@ -177,31 +195,19 @@ export class ShopifyEmbeddedAuthRepository {
         user = await tx.user.create({
           data: {
             email: internalEmail,
-            name: displayName(input.associatedUser),
-            emailVerifiedAt: verifiedEmail ? new Date() : null,
+            name: null,
+            emailVerifiedAt: null,
           },
           select: { id: true },
         });
       }
 
-      const existingMembership = await tx.storeMembership.findUnique({
+      const role = authoritativeRole(input.associatedUser.account_owner);
+      await tx.storeMembership.upsert({
         where: { userId_storeId: { userId: user.id, storeId: store.id } },
-        select: { role: true },
+        create: { userId: user.id, storeId: store.id, role },
+        update: { role },
       });
-      if (!existingMembership) {
-        await tx.storeMembership.create({
-          data: {
-            userId: user.id,
-            storeId: store.id,
-            role: input.associatedUser.account_owner ? 'OWNER' : 'MEMBER',
-          },
-        });
-      } else if (input.associatedUser.account_owner && existingMembership.role !== 'OWNER') {
-        await tx.storeMembership.update({
-          where: { userId_storeId: { userId: user.id, storeId: store.id } },
-          data: { role: 'OWNER' },
-        });
-      }
 
       await tx.shopifyUserIdentity.upsert({
         where: {
@@ -228,15 +234,10 @@ export class ShopifyEmbeddedAuthRepository {
         },
       });
 
-      const membership = await tx.storeMembership.findUniqueOrThrow({
-        where: { userId_storeId: { userId: user.id, storeId: store.id } },
-        select: { role: true },
-      });
-
       return {
         storeId: store.id,
         userId: user.id,
-        role: membership.role,
+        role,
       };
     });
   }
