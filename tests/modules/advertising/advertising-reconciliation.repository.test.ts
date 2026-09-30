@@ -24,6 +24,7 @@ async function createStore() {
 
 afterEach(async () => {
   for (const storeId of createdStoreIds.splice(0)) {
+    await prisma.metaConnection.deleteMany({ where: { storeId } });
     await prisma.store.delete({ where: { id: storeId } });
   }
 });
@@ -88,37 +89,55 @@ describeDatabase('AdvertisingReconciliationRepository', () => {
     expect(new Set(persisted.urgentKinds)).toEqual(new Set(['INSIGHTS', 'HIERARCHY']));
   });
 
-  it('keeps reauth suspension until the provider connection has changed after suspension', async () => {
+  it('keeps reauth suspension until the real provider connection changes after suspension', async () => {
     const store = await createStore();
     const repository = new AdvertisingReconciliationRepository();
     const now = new Date();
-
-    const suspended = await prisma.advertisingReconciliationState.create({
+    const connection = await prisma.metaConnection.create({
       data: {
         storeId: store.id,
-        provider: 'GOOGLE_ADS',
+        status: 'ACTIVE',
+        selectedAdAccountIds: ['act_test'],
+        accessTokenCiphertext: 'test-token',
+        scopes: ['ads_read'],
+        apiVersion: 'v24.0',
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await prisma.advertisingReconciliationState.create({
+      data: {
+        storeId: store.id,
+        provider: 'META',
         status: 'SUSPENDED',
-        suspendedReason: 'GOOGLE_ADS_REAUTH_REQUIRED',
-        lastError: 'GOOGLE_ADS_REAUTH_REQUIRED',
+        suspendedReason: 'META_REAUTH_REQUIRED',
+        lastError: 'META_REAUTH_REQUIRED',
       },
     });
 
     const unchanged = await repository.ensureState({
       storeId: store.id,
-      provider: 'GOOGLE_ADS',
+      provider: 'META',
       nextDailyAt: new Date(now.getTime() + 24 * 60 * 60_000),
       nextCatalogAt: null,
-      connectionUpdatedAt: new Date(suspended.updatedAt.getTime() - 1_000),
+      connectionUpdatedAt: connection.updatedAt,
     });
     expect(unchanged.status).toBe('SUSPENDED');
     expect(unchanged.nextDailyAt).toBeNull();
 
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const reconnectedConnection = await prisma.metaConnection.update({
+      where: { storeId: store.id },
+      data: { metaUserId: 'reconnected-user' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
     const reconnected = await repository.ensureState({
       storeId: store.id,
-      provider: 'GOOGLE_ADS',
+      provider: 'META',
       nextDailyAt: new Date(now.getTime() + 24 * 60 * 60_000),
       nextCatalogAt: null,
-      connectionUpdatedAt: new Date(suspended.updatedAt.getTime() + 1_000),
+      connectionUpdatedAt: reconnectedConnection.updatedAt,
     });
     expect(reconnected.status).toBe('IDLE');
     expect(reconnected.suspendedReason).toBeNull();
