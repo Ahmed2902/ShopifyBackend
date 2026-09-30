@@ -6,7 +6,7 @@ Stride keeps Meta, TikTok and Google Ads data fresh with a deliberately low-reso
 
 One `AdvertisingReconciliationState` row exists per Store/provider, not per campaign or ad account.
 
-- Meta daily reconciliation: exact 24-hour recurrence after each successful run. `syncInsights()` owns the rolling Insights refresh and refreshes the selected hierarchy immediately before importing Insights. The normal refresh window remains the configured 35-day rolling window.
+- Meta daily reconciliation: exact 24-hour recurrence after each successful run. `syncInsights()` owns the rolling Insights refresh and refreshes the selected hierarchy immediately before importing Insights. After the initial import, the normal refresh window is the configured rolling refresh window.
 - TikTok daily reconciliation: exact 24-hour recurrence after each successful run. It refreshes hierarchy and the normal 35-day rolling Insights window.
 - Google Ads daily reconciliation: exact 24-hour recurrence after each successful run. It uses the existing `INCREMENTAL` sync, which refreshes hierarchy and the 35-day rolling metric window.
 - Meta/TikTok catalogs: exact 72-hour recurrence after each successful catalog run when catalogs are configured.
@@ -17,9 +17,9 @@ The first schedule for each Store/provider is deterministically offset by up to 
 
 ## Initial history versus reconciliation
 
-Daily reconciliation never performs a 365-day backfill.
+Routine reconciliation does not repeatedly reread a full year of provider history. Meta's first Insights import can still use its configured initial lookback (currently up to 365 days) when no local Insights exist; later Meta refreshes use the configured rolling refresh window. Google's explicit `HISTORICAL` sync remains its bootstrap path and is not routed through the daily queue. TikTok keeps its existing provider-module import semantics.
 
-Google's explicit `HISTORICAL` sync remains the bootstrap path and is not routed through the daily queue. Meta/TikTok keep their existing initial-history semantics inside their provider modules. Normal scheduled and manual refreshes use rolling incremental windows so late provider attribution can be corrected without rereading the whole account history.
+After initial history exists, scheduled and manual reconciliation use bounded rolling refreshes so late provider attribution can be corrected without rereading the entire account history on every run.
 
 ## Worker budget
 
@@ -60,7 +60,7 @@ Instead they mark the Store/provider dirty with a one-minute debounce:
 - catalog/product events -> `CATALOG`
 - ad/ad-group review, creative-fatigue and account-change events -> `HIERARCHY`
 
-Multiple events union their required work on the same reconciliation row. A burst of webhook deliveries therefore results in one bounded refresh rather than one provider sync per webhook. Urgent Insights-only reconciliation uses a two-day window; the independent daily reconciliation still supplies the 35-day correctness safety net.
+Multiple events union their required work on the same reconciliation row. A burst of webhook deliveries therefore results in one bounded refresh rather than one provider sync per webhook. Urgent Insights-only reconciliation uses a two-day window; the independent daily reconciliation still supplies the rolling correctness safety net.
 
 ## Billing and connection gates
 
@@ -73,7 +73,7 @@ Before any provider API call, background reconciliation requires:
 
 An Essentials Store does not spend API/DB resources refreshing a second provider that is outside its selected channel. Inactive providers make no external calls.
 
-`REAUTH_REQUIRED` or equivalent OAuth/token failures suspend that provider's schedule. A later successful reconnect/reactivation causes schedule discovery to reactivate the row.
+`REAUTH_REQUIRED` or equivalent OAuth/token failures suspend that provider's schedule. Schedule discovery does not reactivate a suspended row merely because the connection still reads ACTIVE; it requires the provider connection to have been updated after suspension, which is the reconnect/reconfiguration signal.
 
 ## Failure policy
 
@@ -83,7 +83,7 @@ Transient failures use bounded backoff:
 2. 1 hour
 3. 4 hours
 
-After those retries are exhausted, Stride stops immediate retries and schedules the next normal daily reconciliation. A merchant can still use manual sync after the provider is healthy.
+Manual refresh requests and TikTok webhook dirtiness are retained during backoff but do not erase `retryAt` or bypass the provider retry budget. After those retries are exhausted, Stride stops immediate retries and schedules the next normal daily/catalog reconciliation.
 
 ## Cache correctness
 
