@@ -71,7 +71,7 @@ function remoteSubscription(
           __typename: 'FlatRatePrice',
           active: true,
           currency: 'USD',
-          amount: handle === 'stride-pro' ? '99.00' : '49.00',
+          amount: handle === 'stride-pro' ? '84.99' : '49.99',
         },
       },
     ],
@@ -140,6 +140,10 @@ describe('BillingService Shopify App Pricing verification', () => {
       selectedPlan: 'PRO',
       effectivePlan: 'PRO',
       accessActive: true,
+      plans: expect.arrayContaining([
+        expect.objectContaining({ code: 'ESSENTIALS', monthlyUsd: 49.99 }),
+        expect.objectContaining({ code: 'PRO', monthlyUsd: 84.99 }),
+      ]),
       verification: {
         source: 'SHOPIFY_PARTNER_API',
         lastVerifiedAt: now,
@@ -153,9 +157,7 @@ describe('BillingService Shopify App Pricing verification', () => {
     const client = pricingClient();
     subscriptionRepository.findUnique.mockResolvedValue(current);
     makeUpdateReturn(current);
-    vi.mocked(client.activeSubscription).mockResolvedValue(
-      remoteSubscription('stride-essentials'),
-    );
+    vi.mocked(client.activeSubscription).mockResolvedValue(remoteSubscription('stride-essentials'));
 
     const result = await new BillingService(client).read(storeId, now, {
       fresh: true,
@@ -168,6 +170,34 @@ describe('BillingService Shopify App Pricing verification', () => {
       effectivePlan: 'ESSENTIALS',
       status: 'ACTIVE',
       accessActive: true,
+      entitlements: {
+        maxAdChannels: 1,
+        recommendationLimit: 10,
+        sessionExplorer: true,
+        visitorJourneys: false,
+        advancedAttribution: false,
+      },
+    });
+  });
+
+  it('keeps Pro as all-channel plus advanced attribution packaging', async () => {
+    const current = localSubscription({ provider: 'SHOPIFY' });
+    const client = pricingClient();
+    subscriptionRepository.findUnique.mockResolvedValue(current);
+    makeUpdateReturn(current);
+    vi.mocked(client.activeSubscription).mockResolvedValue(remoteSubscription('stride-pro'));
+
+    const result = await new BillingService(client).read(storeId, now, {
+      fresh: true,
+      failOnVerificationError: true,
+    });
+
+    expect(result.entitlements).toEqual({
+      maxAdChannels: null,
+      recommendationLimit: 50,
+      sessionExplorer: true,
+      visitorJourneys: true,
+      advancedAttribution: true,
     });
   });
 
