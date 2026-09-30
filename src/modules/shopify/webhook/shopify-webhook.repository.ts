@@ -164,13 +164,72 @@ export class ShopifyWebhookRepository {
     });
   }
 
-  markConnectionUninstalled(connectionId: string) {
-    return prisma.shopifyConnection.update({
-      where: { id: connectionId },
-      data: {
-        status: 'UNINSTALLED',
-        uninstalledAt: new Date(),
-      },
+  /**
+   * `app/uninstalled` is an immediate processing stop, not the destructive privacy deletion event.
+   * Shopify sends `shop/redact` later for deletion. Until then keep retained data but ensure no
+   * provider sync, Pixel collection, billing entitlement, or queued server-side conversion can
+   * continue merely because local state was previously active.
+   */
+  markStoreUninstalled(connectionId: string, storeId: string) {
+    const now = new Date();
+    return prisma.$transaction(async (tx) => {
+      await tx.shopifyConnection.update({
+        where: { id: connectionId },
+        data: {
+          status: 'UNINSTALLED',
+          uninstalledAt: now,
+          reconciliationClaimedAt: null,
+          nextReconciliationAt: null,
+        },
+      });
+
+      await tx.storeSubscription.updateMany({
+        where: { storeId },
+        data: {
+          status: 'CANCELED',
+          canceledAt: now,
+          currentPeriodEndsAt: null,
+          cancelAtEndOfCycle: false,
+          shopifyAppSubscriptionId: null,
+          shopifyPlanHandle: null,
+          lastVerifiedAt: now,
+        },
+      });
+
+      await Promise.all([
+        tx.metaConnection.updateMany({ where: { storeId }, data: { status: 'DISCONNECTED' } }),
+        tx.tiktokConnection.updateMany({ where: { storeId }, data: { status: 'DISCONNECTED' } }),
+        tx.googleAdsConnection.updateMany({ where: { storeId }, data: { status: 'DISCONNECTED' } }),
+        tx.pixelInstallation.updateMany({
+          where: { storeId },
+          data: {
+            status: 'DISABLED',
+            pendingCollectorTokenHash: null,
+            pendingCollectorTokenPrefix: null,
+            lastError: 'Shopify app uninstalled',
+          },
+        }),
+        tx.conversionDestination.updateMany({
+          where: { storeId, status: 'ACTIVE' },
+          data: { status: 'DISABLED' },
+        }),
+      ]);
+
+      await tx.conversionDelivery.updateMany({
+        where: {
+          storeId,
+          status: { in: ['PENDING', 'PROCESSING', 'RETRY'] },
+        },
+        data: {
+          status: 'SKIPPED',
+          nextAttemptAt: now,
+          processingStartedAt: null,
+          clickId: null,
+          attributionEventAt: null,
+          eventSourceUrl: null,
+          lastError: 'Shopify app uninstalled before delivery',
+        },
+      });
     });
   }
 
@@ -282,10 +341,6 @@ export class ShopifyWebhookRepository {
 
       const dirtyAt = new Date();
 
-      // Invalidate every retained browser session whose raw checkout evidence names this Shopify
-      // order, even if the session is still PENDING or has not been materialized yet. This repair
-      // generation survives a stale pending-link write that races after deletion; the repair pass
-      // will rematerialize against current Shopify truth and return the link to PENDING.
       await tx.$executeRaw`
         INSERT INTO "StorefrontSessionRepair"
           ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
@@ -311,8 +366,6 @@ export class ShopifyWebhookRepository {
           "updatedAt" = CURRENT_TIMESTAMP
       `;
 
-      // Also rotate repair state for an already-linked session even if its retained raw checkout
-      // source is absent for any reason.
       await tx.$executeRaw`
         INSERT INTO "StorefrontSessionRepair"
           ("id", "storeId", "browserSessionId", "sourceReceivedAt", "createdAt", "updatedAt")
@@ -320,15 +373,12 @@ export class ShopifyWebhookRepository {
           gen_random_uuid(),
           s."storeId",
           s."browserSessionId",
-          s."lastSourceReceivedAt",
+          GREATEST(COALESCE(s."lastEventAt", s."startedAt"), ${dirtyAt}),
           CURRENT_TIMESTAMP,
           CURRENT_TIMESTAMP
         FROM "StorefrontSession" s
         WHERE s."storeId" = ${storeId}::uuid
-          AND (
-            s."orderId" = ${order.id}::uuid
-            OR s."shopifyOrderExternalId" = ${shopifyOrderId}
-          )
+          AND s."shopifyOrderExternalId" = ${shopifyOrderId}
         ON CONFLICT ("storeId", "browserSessionId")
         DO UPDATE SET
           "id" = EXCLUDED."id",
@@ -340,48 +390,46 @@ export class ShopifyWebhookRepository {
       `;
 
       await tx.storefrontSession.updateMany({
-        where: {
-          storeId,
-          OR: [{ orderId: order.id }, { shopifyOrderExternalId: shopifyOrderId }],
-        },
+        where: { storeId, shopifyOrderExternalId: shopifyOrderId },
         data: {
-          orderId: null,
+          shopifyOrderId: null,
+          shopifyOrderExternalId: null,
           orderLinkStatus: 'PENDING',
-          orderLinkAttemptCount: 0,
-          orderLinkNextAttemptAt: dirtyAt,
-          rollupDirtyAt: dirtyAt,
+          orderLinkSourceEventId: null,
+          orderLinkedAt: null,
+          orderLinkedEventAt: null,
+          orderLinkAttemptedAt: null,
+          orderLinkError: 'Order was redacted by Shopify',
+          materializedThrough: null,
         },
       });
 
-      const refunds = await tx.refund.findMany({
-        where: { orderId: order.id },
-        select: { id: true },
+      await tx.storefrontEvent.updateMany({
+        where: { storeId, shopifyOrderExternalId: shopifyOrderId },
+        data: { shopifyOrderExternalId: null },
       });
-      const refundIds = refunds.map((refund) => refund.id);
-      if (refundIds.length > 0) {
-        await tx.refundLineItem.deleteMany({ where: { refundId: { in: refundIds } } });
-        await tx.refund.deleteMany({ where: { id: { in: refundIds } } });
-      }
+
+      await tx.conversionDelivery.deleteMany({
+        where: { storeId, shopifyOrderId },
+      });
+
+      await tx.refundLineItem.deleteMany({
+        where: { refund: { orderId: order.id } },
+      });
+      await tx.refund.deleteMany({ where: { orderId: order.id } });
       await tx.orderLineItem.deleteMany({ where: { orderId: order.id } });
       await tx.order.delete({ where: { id: order.id } });
       return true;
     });
   }
 
-  findOrderBackfillByOperation(connectionId: string, providerOperationId: string) {
-    return prisma.syncRun.findFirst({
+  markRefundLineItemsDeleted(refundId: string, activeRefundLineIds: string[]) {
+    return prisma.refundLineItem.deleteMany({
       where: {
-        provider: 'SHOPIFY',
-        shopifyConnectionId: connectionId,
-        resourceType: 'OrdersRefunds',
-        providerOperationId,
-      },
-      select: {
-        id: true,
-        status: true,
-        providerOperationId: true,
-        recordsRead: true,
-        recordsWritten: true,
+        refundId,
+        ...(activeRefundLineIds.length > 0
+          ? { shopifyRefundLineId: { notIn: activeRefundLineIds } }
+          : {}),
       },
     });
   }
