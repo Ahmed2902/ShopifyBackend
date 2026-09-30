@@ -66,7 +66,9 @@ function stableJitter(storeId: string, provider: AdvertisingProvider, purpose: s
 }
 
 function initialDaily(storeId: string, provider: AdvertisingProvider, now: Date) {
-  return new Date(now.getTime() + DAY_MS + stableJitter(storeId, provider, 'daily', DAILY_JITTER_MS));
+  return new Date(
+    now.getTime() + DAY_MS + stableJitter(storeId, provider, 'daily', DAILY_JITTER_MS),
+  );
 }
 
 function nextDaily(now: Date) {
@@ -75,7 +77,9 @@ function nextDaily(now: Date) {
 
 function initialCatalog(storeId: string, provider: AdvertisingProvider, now: Date) {
   return new Date(
-    now.getTime() + CATALOG_INTERVAL_MS + stableJitter(storeId, provider, 'catalog', CATALOG_JITTER_MS),
+    now.getTime() +
+      CATALOG_INTERVAL_MS +
+      stableJitter(storeId, provider, 'catalog', CATALOG_JITTER_MS),
   );
 }
 
@@ -129,6 +133,7 @@ export class AdvertisingReconciliationService {
           nextCatalogAt: connection.catalogConfigured
             ? initialCatalog(connection.storeId, connection.provider, now)
             : null,
+          connectionUpdatedAt: connection.updatedAt,
         }),
       ),
     );
@@ -153,6 +158,7 @@ export class AdvertisingReconciliationService {
             nextCatalogAt: connection.catalogConfigured
               ? initialCatalog(storeId, provider, now)
               : null,
+            connectionUpdatedAt: connection.updatedAt,
           }),
         ),
     );
@@ -202,12 +208,22 @@ export class AdvertisingReconciliationService {
     }
 
     const now = this.now();
-    await this.repository.ensureState({
+    const schedule = await this.repository.ensureState({
       storeId,
       provider,
       nextDailyAt: initialDaily(storeId, provider, now),
       nextCatalogAt: connection.catalogConfigured ? initialCatalog(storeId, provider, now) : null,
+      connectionUpdatedAt: connection.updatedAt,
     });
+    if (schedule.status === 'SUSPENDED') {
+      throw new AppError(
+        'Reconnect this advertising provider before syncing.',
+        409,
+        'AD_PROVIDER_REAUTH_REQUIRED',
+        { provider, reason: schedule.suspendedReason },
+      );
+    }
+
     const result = await this.repository.requestManual(storeId, provider, now, MANUAL_COOLDOWN_MS);
     if (result.kind === 'MISSING') {
       throw new AppError('Advertising reconciliation state is unavailable', 503, 'AD_SYNC_STATE_MISSING');
@@ -237,6 +253,7 @@ export class AdvertisingReconciliationService {
       provider: 'TIKTOK',
       nextDailyAt: initialDaily(storeId, 'TIKTOK', now),
       nextCatalogAt: connection.catalogConfigured ? initialCatalog(storeId, 'TIKTOK', now) : null,
+      connectionUpdatedAt: connection.updatedAt,
     });
     return this.repository.markUrgent(
       storeId,
