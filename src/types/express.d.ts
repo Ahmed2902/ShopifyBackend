@@ -8,6 +8,9 @@ declare module 'express-serve-static-core' {
       storeId?: string;
       role?: StoreRoleClaim;
       storeAccess?: StoreAccessClaim[];
+      authSource?: 'LEGACY' | 'SHOPIFY' | 'MCP';
+      shopifyShop?: string;
+      shopifyUserId?: string;
     };
   }
 }
