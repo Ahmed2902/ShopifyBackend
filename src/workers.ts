@@ -145,6 +145,10 @@ const pixelAttributionWorker = new PollingWorker(
 const pixelRetentionWorker = new PollingWorker(
   60_000,
   async () => {
+    // Raw evidence expires first. Deleting expired source events rotates repair generations for
+    // affected sessions. Drain one bounded repair batch immediately, then always run session
+    // cleanup: the cleanup query itself excludes any session that still has repair work or stale
+    // rollups, so one tenant's backlog cannot globally retain unrelated expired traces.
     const events = await pixelService.cleanupExpiredEvents();
     const repairs = await pixelJourneyService.repairDirtySessions(500);
     const sessions = await pixelJourneyService.cleanupExpiredSessions();
