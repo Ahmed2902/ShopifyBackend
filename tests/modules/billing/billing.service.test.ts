@@ -81,7 +81,11 @@ describe('BillingService internal trial expiry', () => {
       status: 'TRIALING',
       effectivePlan: 'PRO',
       accessActive: true,
-      trial: { active: true, days: 14 },
+      trial: { active: true, days: 14, grantsProEntitlements: true },
+      plans: [
+        expect.objectContaining({ code: 'ESSENTIALS', monthlyUsd: 49.99 }),
+        expect.objectContaining({ code: 'PRO', monthlyUsd: 84.99 }),
+      ],
     });
   });
 
@@ -101,7 +105,7 @@ describe('BillingService internal trial expiry', () => {
       status: 'EXPIRED',
       effectivePlan: 'ESSENTIALS',
       accessActive: false,
-      trial: { active: false, endsAt: trialEndsAt },
+      trial: { active: false, endsAt: trialEndsAt, grantsProEntitlements: false },
     });
   });
 
@@ -170,7 +174,7 @@ describe('BillingService request-path Shopify verification', () => {
         {
           handle: 'essentials',
           description: 'Essentials',
-          price: { __typename: 'FlatRatePrice', active: true, currency: 'USD', amount: '49' },
+          price: { __typename: 'FlatRatePrice', active: true, currency: 'USD', amount: '49.99' },
         },
       ],
       legacySubscriptionId: 'gid://shopify/AppSubscription/1',
