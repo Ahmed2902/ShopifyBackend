@@ -19,7 +19,7 @@ const planCatalog = {
   ESSENTIALS: {
     code: 'ESSENTIALS' as const,
     name: 'Essentials',
-    monthlyUsd: 49,
+    monthlyUsd: 49.99,
     maxAdChannels: 1,
     recommendationLimit: 10,
     sessionExplorer: true,
@@ -29,7 +29,7 @@ const planCatalog = {
   PRO: {
     code: 'PRO' as const,
     name: 'Pro',
-    monthlyUsd: 99,
+    monthlyUsd: 84.99,
     maxAdChannels: null,
     recommendationLimit: 50,
     sessionExplorer: true,
