@@ -1,0 +1,127 @@
+import { randomUUID } from 'node:crypto';
+import { afterEach, describe, expect, it } from 'vitest';
+import { prisma } from '../../../src/lib/prisma.js';
+import { AdvertisingReconciliationRepository } from '../../../src/modules/advertising/reconciliation/advertising-reconciliation.repository.js';
+
+const describeDatabase = process.env.RUN_DB_TESTS === 'true' ? describe : describe.skip;
+const createdStoreIds: string[] = [];
+
+async function createStore() {
+  const unique = randomUUID();
+  const store = await prisma.store.create({
+    data: {
+      shopifyShopId: `gid://shopify/Shop/${unique}`,
+      name: 'Advertising Reconciliation Test Store',
+      myshopifyDomain: `paid-reconcile-${unique}.myshopify.com`,
+      currencyCode: 'USD',
+      ianaTimezone: 'UTC',
+    },
+    select: { id: true },
+  });
+  createdStoreIds.push(store.id);
+  return store;
+}
+
+afterEach(async () => {
+  for (const storeId of createdStoreIds.splice(0)) {
+    await prisma.store.delete({ where: { id: storeId } });
+  }
+});
+
+describeDatabase('AdvertisingReconciliationRepository', () => {
+  it('queues manual work without erasing an active retry backoff', async () => {
+    const store = await createStore();
+    const repository = new AdvertisingReconciliationRepository();
+    const now = new Date();
+    const retryAt = new Date(now.getTime() + 15 * 60_000);
+
+    await prisma.advertisingReconciliationState.create({
+      data: {
+        storeId: store.id,
+        provider: 'META',
+        status: 'BACKOFF',
+        failureCount: 1,
+        retryAt,
+        lastStartedAt: new Date(now.getTime() - 10 * 60_000),
+        nextDailyAt: new Date(now.getTime() - 60_000),
+      },
+    });
+
+    await expect(repository.requestManual(store.id, 'META', now, 5 * 60_000)).resolves.toMatchObject({
+      kind: 'QUEUED',
+    });
+
+    const persisted = await prisma.advertisingReconciliationState.findUniqueOrThrow({
+      where: { storeId_provider: { storeId: store.id, provider: 'META' } },
+    });
+    expect(persisted.status).toBe('BACKOFF');
+    expect(persisted.retryAt).toEqual(retryAt);
+    expect(persisted.manualRequestedAt).toEqual(now);
+  });
+
+  it('coalesces urgent webhook work without bypassing provider retry backoff', async () => {
+    const store = await createStore();
+    const repository = new AdvertisingReconciliationRepository();
+    const now = new Date();
+    const retryAt = new Date(now.getTime() + 60 * 60_000);
+    const urgentAt = new Date(now.getTime() + 60_000);
+
+    await prisma.advertisingReconciliationState.create({
+      data: {
+        storeId: store.id,
+        provider: 'TIKTOK',
+        status: 'BACKOFF',
+        failureCount: 2,
+        retryAt,
+        nextDailyAt: new Date(now.getTime() + 24 * 60 * 60_000),
+      },
+    });
+
+    await repository.markUrgent(store.id, 'TIKTOK', ['INSIGHTS', 'HIERARCHY'], urgentAt);
+
+    const persisted = await prisma.advertisingReconciliationState.findUniqueOrThrow({
+      where: { storeId_provider: { storeId: store.id, provider: 'TIKTOK' } },
+    });
+    expect(persisted.status).toBe('BACKOFF');
+    expect(persisted.retryAt).toEqual(retryAt);
+    expect(persisted.urgentAt).toEqual(urgentAt);
+    expect(new Set(persisted.urgentKinds)).toEqual(new Set(['INSIGHTS', 'HIERARCHY']));
+  });
+
+  it('keeps reauth suspension until the provider connection has changed after suspension', async () => {
+    const store = await createStore();
+    const repository = new AdvertisingReconciliationRepository();
+    const now = new Date();
+
+    const suspended = await prisma.advertisingReconciliationState.create({
+      data: {
+        storeId: store.id,
+        provider: 'GOOGLE_ADS',
+        status: 'SUSPENDED',
+        suspendedReason: 'GOOGLE_ADS_REAUTH_REQUIRED',
+        lastError: 'GOOGLE_ADS_REAUTH_REQUIRED',
+      },
+    });
+
+    const unchanged = await repository.ensureState({
+      storeId: store.id,
+      provider: 'GOOGLE_ADS',
+      nextDailyAt: new Date(now.getTime() + 24 * 60 * 60_000),
+      nextCatalogAt: null,
+      connectionUpdatedAt: new Date(suspended.updatedAt.getTime() - 1_000),
+    });
+    expect(unchanged.status).toBe('SUSPENDED');
+    expect(unchanged.nextDailyAt).toBeNull();
+
+    const reconnected = await repository.ensureState({
+      storeId: store.id,
+      provider: 'GOOGLE_ADS',
+      nextDailyAt: new Date(now.getTime() + 24 * 60 * 60_000),
+      nextCatalogAt: null,
+      connectionUpdatedAt: new Date(suspended.updatedAt.getTime() + 1_000),
+    });
+    expect(reconnected.status).toBe('IDLE');
+    expect(reconnected.suspendedReason).toBeNull();
+    expect(reconnected.nextDailyAt).not.toBeNull();
+  });
+});
