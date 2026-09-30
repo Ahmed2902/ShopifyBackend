@@ -20,6 +20,26 @@ export class ShopifyController {
     private readonly syncQueue?: Pick<ShopifySyncQueueService, 'enqueue' | 'get'>,
   ) {}
 
+  sessionBootstrap = async (req: Request, res: Response) => {
+    res.status(200).json({
+      authenticated: true,
+      authSource: 'SHOPIFY',
+      store: {
+        id: req.context.storeId!,
+        shop: req.context.shopifyShop!,
+      },
+      user: {
+        shopifyUserId: req.context.shopifyUserId!,
+        role: req.context.role!,
+      },
+    });
+  };
+
+  /**
+   * Legacy standalone install bridge retained only while the current frontend migrates to App
+   * Bridge. Public Shopify App Store installation must start on a Shopify-owned surface and should
+   * never ask the merchant to type a myshopify.com domain.
+   */
   install = async (req: Request, res: Response) => {
     const { shop } = shopifyInstallSchema.parse(req.body);
     const oauth = this.service.beginOAuth(req.context.userId!, shop);
