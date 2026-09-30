@@ -4,39 +4,26 @@ import { InFlightCoalescer } from '../../lib/in-flight-coalescer.js';
 import { logger } from '../../lib/logger.js';
 import { prisma } from '../../lib/prisma.js';
 import {
+  STRIDE_PLAN_CATALOG,
+  V1_TRIAL_DAYS,
+  type V1AdProvider,
+  type V1BillingPlan,
+} from './billing.catalog.js';
+import {
   shopifyAppPricingClient,
   type ShopifyAppPricingClient,
   type ShopifyAppPricingSubscription,
 } from './shopify-app-pricing.client.js';
 
-export const V1_TRIAL_DAYS = 14;
+export { V1_TRIAL_DAYS } from './billing.catalog.js';
+export type { V1AdProvider, V1BillingPlan } from './billing.catalog.js';
+export type V1Entitlement =
+  | 'MULTI_AD_CHANNEL'
+  | 'CROSS_CHANNEL_INTELLIGENCE'
+  | 'VISITOR_JOURNEYS'
+  | 'ADVANCED_ATTRIBUTION';
 
-export type V1BillingPlan = 'ESSENTIALS' | 'PRO';
-export type V1Entitlement = 'MULTI_AD_CHANNEL' | 'VISITOR_JOURNEYS' | 'ADVANCED_ATTRIBUTION';
-export type V1AdProvider = 'META' | 'TIKTOK' | 'GOOGLE_ADS';
-
-const planCatalog = {
-  ESSENTIALS: {
-    code: 'ESSENTIALS' as const,
-    name: 'Essentials',
-    monthlyUsd: 49,
-    maxAdChannels: 1,
-    recommendationLimit: 10,
-    sessionExplorer: true,
-    visitorJourneys: false,
-    advancedAttribution: false,
-  },
-  PRO: {
-    code: 'PRO' as const,
-    name: 'Pro',
-    monthlyUsd: 99,
-    maxAdChannels: null,
-    recommendationLimit: 50,
-    sessionExplorer: true,
-    visitorJourneys: true,
-    advancedAttribution: true,
-  },
-} as const;
+const planCatalog = STRIDE_PLAN_CATALOG;
 
 function internalTrialEnd(startedAt: Date) {
   return new Date(startedAt.getTime() + V1_TRIAL_DAYS * 24 * 60 * 60 * 1000);
@@ -50,6 +37,13 @@ function dateOrNull(value: string | null | undefined) {
   if (!value) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function moneyCents(value: string | undefined): number | null {
+  if (!value) return null;
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return null;
+  return Math.round(amount * 100);
 }
 
 export class BillingService {
@@ -159,7 +153,7 @@ export class BillingService {
     return {
       mode: 'SHOPIFY_APP_PRICING' as const,
       url: this.appPricing.planSelectionUrl(store.myshopifyDomain),
-      message: 'Plan selection and payment are managed securely by Shopify.',
+      message: 'Plan selection, upgrade, downgrade, trial and payment are managed by Shopify.',
     };
   }
 
@@ -264,7 +258,7 @@ export class BillingService {
   async requireEntitlement(storeId: string, entitlement: V1Entitlement) {
     const billing = await this.requireActive(storeId);
     const allowed =
-      entitlement === 'MULTI_AD_CHANNEL'
+      entitlement === 'MULTI_AD_CHANNEL' || entitlement === 'CROSS_CHANNEL_INTELLIGENCE'
         ? billing.entitlements.maxAdChannels === null || billing.entitlements.maxAdChannels > 1
         : entitlement === 'VISITOR_JOURNEYS'
           ? billing.entitlements.visitorJourneys
@@ -390,6 +384,7 @@ export class BillingService {
         startedAt: subscription.trialStartedAt,
         endsAt: subscription.trialEndsAt,
         days: V1_TRIAL_DAYS,
+        grantsProEntitlements: trialActive,
       },
       accessActive: trialActive || paidActive,
       currentPeriodEndsAt: subscription.currentPeriodEndsAt,
@@ -405,8 +400,14 @@ export class BillingService {
         maxAdChannels: plan.maxAdChannels,
         recommendationLimit: plan.recommendationLimit,
         sessionExplorer: plan.sessionExplorer,
+        storefrontFunnels: plan.storefrontFunnels,
+        productAds: plan.productAds,
+        inventoryIntelligence: plan.inventoryIntelligence,
+        readOnlyMcp: plan.readOnlyMcp,
         visitorJourneys: plan.visitorJourneys,
         advancedAttribution: plan.advancedAttribution,
+        crossChannelIntelligence: plan.crossChannelIntelligence,
+        serverSideConversions: plan.serverSideConversions,
       },
     };
   }
@@ -510,24 +511,72 @@ export class BillingService {
     });
   }
 
-  private remotePlanHandle(remote: ShopifyAppPricingSubscription) {
+  private remotePlanItem(remote: ShopifyAppPricingSubscription) {
     const handles = this.appPricing.planHandles();
-    return remote.items.find(
-      (item) => item.handle === handles.ESSENTIALS || item.handle === handles.PRO,
-    )?.handle ?? null;
+    return (
+      remote.items.find(
+        (item) => item.handle === handles.ESSENTIALS || item.handle === handles.PRO,
+      ) ?? null
+    );
+  }
+
+  private remotePlanHandle(remote: ShopifyAppPricingSubscription) {
+    return this.remotePlanItem(remote)?.handle ?? null;
   }
 
   private planFromRemote(remote: ShopifyAppPricingSubscription): V1BillingPlan {
-    const handle = this.remotePlanHandle(remote);
+    const item = this.remotePlanItem(remote);
     const handles = this.appPricing.planHandles();
-    if (handle === handles.ESSENTIALS) return 'ESSENTIALS';
-    if (handle === handles.PRO) return 'PRO';
-    throw new AppError(
-      'Shopify returned an active Stride subscription with an unrecognized plan handle.',
-      503,
-      'SHOPIFY_PLAN_UNRECOGNIZED',
-      { handles: remote.items.map((item) => item.handle).filter(Boolean) },
-    );
+    const selectedPlan: V1BillingPlan | null =
+      item?.handle === handles.ESSENTIALS
+        ? 'ESSENTIALS'
+        : item?.handle === handles.PRO
+          ? 'PRO'
+          : null;
+
+    if (!selectedPlan || !item) {
+      throw new AppError(
+        'Shopify returned an active Stride subscription with an unrecognized plan handle.',
+        503,
+        'SHOPIFY_PLAN_UNRECOGNIZED',
+        { handles: remote.items.map((remoteItem) => remoteItem.handle).filter(Boolean) },
+      );
+    }
+
+    const expected = planCatalog[selectedPlan];
+    const expectedCents = Math.round(expected.monthlyUsd * 100);
+    const actualCents = moneyCents(item.price.amount);
+    const contractMatches =
+      remote.billingPeriod === expected.billingPeriod &&
+      item.price.__typename === 'FlatRatePrice' &&
+      item.price.active === true &&
+      item.price.currency === expected.currency &&
+      actualCents === expectedCents;
+
+    if (!contractMatches) {
+      throw new AppError(
+        'Shopify App Pricing configuration does not match Stride’s launch pricing contract.',
+        503,
+        'SHOPIFY_PLAN_CONFIGURATION_MISMATCH',
+        {
+          plan: selectedPlan,
+          expected: {
+            amount: expected.monthlyUsd.toFixed(2),
+            currency: expected.currency,
+            billingPeriod: expected.billingPeriod,
+          },
+          actual: {
+            amount: item.price.amount ?? null,
+            currency: item.price.currency,
+            billingPeriod: remote.billingPeriod,
+            priceType: item.price.__typename,
+            active: item.price.active,
+          },
+        },
+      );
+    }
+
+    return selectedPlan;
   }
 }
 
