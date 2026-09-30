@@ -71,7 +71,7 @@ function remoteSubscription(
           __typename: 'FlatRatePrice',
           active: true,
           currency: 'USD',
-          amount: handle === 'stride-pro' ? '99.00' : '49.00',
+          amount: handle === 'stride-pro' ? '84.99' : '49.99',
         },
       },
     ],
@@ -95,11 +95,13 @@ function pricingClient() {
 }
 
 function makeUpdateReturn(current: ReturnType<typeof localSubscription>) {
-  subscriptionRepository.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
-    ...current,
-    ...data,
-    updatedAt: now,
-  }));
+  subscriptionRepository.update.mockImplementation(
+    async ({ data }: { data: Record<string, unknown> }) => ({
+      ...current,
+      ...data,
+      updatedAt: now,
+    }),
+  );
 }
 
 describe('BillingService Shopify App Pricing verification', () => {
@@ -108,7 +110,7 @@ describe('BillingService Shopify App Pricing verification', () => {
     storeRepository.findUnique.mockResolvedValue({ shopifyShopId: 'gid://shopify/Shop/123' });
   });
 
-  it('maps a verified Shopify Pro subscription into active local billing state', async () => {
+  it('maps a verified $84.99 Shopify Pro subscription into active local billing state', async () => {
     const current = localSubscription();
     const client = pricingClient();
     subscriptionRepository.findUnique.mockResolvedValue(current);
@@ -145,10 +147,18 @@ describe('BillingService Shopify App Pricing verification', () => {
         lastVerifiedAt: now,
         stale: false,
       },
+      entitlements: {
+        maxAdChannels: null,
+        recommendationLimit: 50,
+        visitorJourneys: true,
+        advancedAttribution: true,
+        crossChannelIntelligence: true,
+        serverSideConversions: 'ALL_CONFIGURED_PROVIDERS',
+      },
     });
   });
 
-  it('maps an active Essentials subscription by configured plan handle', async () => {
+  it('maps a verified $49.99 Essentials subscription by configured plan handle', async () => {
     const current = localSubscription({ provider: 'SHOPIFY' });
     const client = pricingClient();
     subscriptionRepository.findUnique.mockResolvedValue(current);
@@ -168,6 +178,36 @@ describe('BillingService Shopify App Pricing verification', () => {
       effectivePlan: 'ESSENTIALS',
       status: 'ACTIVE',
       accessActive: true,
+      entitlements: {
+        maxAdChannels: 1,
+        recommendationLimit: 10,
+        visitorJourneys: false,
+        advancedAttribution: false,
+        crossChannelIntelligence: false,
+        serverSideConversions: 'SELECTED_PROVIDER',
+      },
+    });
+  });
+
+  it('grants Pro entitlements while a Shopify-hosted trial is active', async () => {
+    const current = localSubscription({ provider: 'SHOPIFY' });
+    const client = pricingClient();
+    subscriptionRepository.findUnique.mockResolvedValue(current);
+    makeUpdateReturn(current);
+    vi.mocked(client.activeSubscription).mockResolvedValue(
+      remoteSubscription('stride-essentials', { trialEndsAt: '2026-09-25T01:00:00.000Z' }),
+    );
+
+    const result = await new BillingService(client).read(storeId, now, {
+      fresh: true,
+      failOnVerificationError: true,
+    });
+
+    expect(result).toMatchObject({
+      selectedPlan: 'ESSENTIALS',
+      effectivePlan: 'PRO',
+      trial: { active: true, days: 14, grantsProEntitlements: true },
+      entitlements: { maxAdChannels: null, recommendationLimit: 50 },
     });
   });
 
@@ -227,5 +267,73 @@ describe('BillingService Shopify App Pricing verification', () => {
     });
 
     expect(subscriptionRepository.update).not.toHaveBeenCalled();
+  });
+
+  it('fails closed if the Shopify plan handle exists but the configured price is stale', async () => {
+    const current = localSubscription({ provider: 'SHOPIFY' });
+    const client = pricingClient();
+    subscriptionRepository.findUnique.mockResolvedValue(current);
+    vi.mocked(client.activeSubscription).mockResolvedValue(
+      remoteSubscription('stride-pro', {
+        items: [
+          {
+            handle: 'stride-pro',
+            description: null,
+            price: {
+              __typename: 'FlatRatePrice',
+              active: true,
+              currency: 'USD',
+              amount: '99.00',
+            },
+          },
+        ],
+      }),
+    );
+
+    await expect(
+      new BillingService(client).read(storeId, now, {
+        fresh: true,
+        failOnVerificationError: true,
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 503,
+      code: 'SHOPIFY_PLAN_CONFIGURATION_MISMATCH',
+      details: expect.objectContaining({
+        plan: 'PRO',
+        expected: expect.objectContaining({ amount: '84.99', currency: 'USD' }),
+      }),
+    });
+
+    expect(subscriptionRepository.update).not.toHaveBeenCalled();
+  });
+
+  it('fails closed if currency or billing period differs from the launch contract', async () => {
+    const current = localSubscription({ provider: 'SHOPIFY' });
+    const client = pricingClient();
+    subscriptionRepository.findUnique.mockResolvedValue(current);
+    vi.mocked(client.activeSubscription).mockResolvedValue(
+      remoteSubscription('stride-essentials', {
+        billingPeriod: 'ANNUAL',
+        items: [
+          {
+            handle: 'stride-essentials',
+            description: null,
+            price: {
+              __typename: 'FlatRatePrice',
+              active: true,
+              currency: 'EUR',
+              amount: '49.99',
+            },
+          },
+        ],
+      }),
+    );
+
+    await expect(
+      new BillingService(client).read(storeId, now, {
+        fresh: true,
+        failOnVerificationError: true,
+      }),
+    ).rejects.toMatchObject({ code: 'SHOPIFY_PLAN_CONFIGURATION_MISMATCH' });
   });
 });
