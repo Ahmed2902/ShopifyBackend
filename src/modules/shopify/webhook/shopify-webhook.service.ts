@@ -289,7 +289,7 @@ export class ShopifyWebhookService {
       case 'orders/delete': {
         const resource = shopifyResourceWebhookSchema.parse(payload);
         const orderId = shopifyGid('Order', resource.admin_graphql_api_id ?? resource.id);
-        await this.repository.deleteOrder(context.store.id, orderId);
+        await this.repository.deleteOrder(context.storeId, orderId);
         return true;
       }
 
