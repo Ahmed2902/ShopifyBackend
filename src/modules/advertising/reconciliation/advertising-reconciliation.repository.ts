@@ -5,12 +5,14 @@ export type ProviderConnectionSnapshot = {
   status: string | null;
   configured: boolean;
   catalogConfigured: boolean;
+  updatedAt: Date | null;
 };
 
 type ConfiguredConnection = {
   storeId: string;
   provider: AdvertisingProvider;
   catalogConfigured: boolean;
+  updatedAt: Date;
 };
 
 export class AdvertisingReconciliationRepository {
@@ -18,15 +20,25 @@ export class AdvertisingReconciliationRepository {
     const [meta, tiktok, google] = await Promise.all([
       prisma.metaConnection.findMany({
         where: { status: 'ACTIVE' },
-        select: { storeId: true, selectedAdAccountIds: true, selectedCatalogIds: true },
+        select: {
+          storeId: true,
+          selectedAdAccountIds: true,
+          selectedCatalogIds: true,
+          updatedAt: true,
+        },
       }),
       prisma.tikTokConnection.findMany({
         where: { status: 'ACTIVE' },
-        select: { storeId: true, selectedAdvertiserIds: true, selectedCatalogIds: true },
+        select: {
+          storeId: true,
+          selectedAdvertiserIds: true,
+          selectedCatalogIds: true,
+          updatedAt: true,
+        },
       }),
       prisma.googleAdsConnection.findMany({
         where: { status: 'ACTIVE' },
-        select: { storeId: true, selectedCustomerIds: true },
+        select: { storeId: true, selectedCustomerIds: true, updatedAt: true },
       }),
     ]);
 
@@ -37,6 +49,7 @@ export class AdvertisingReconciliationRepository {
           storeId: connection.storeId,
           provider: 'META' as const,
           catalogConfigured: connection.selectedCatalogIds.length > 0,
+          updatedAt: connection.updatedAt,
         })),
       ...tiktok
         .filter((connection) => connection.selectedAdvertiserIds.length > 0)
@@ -44,6 +57,7 @@ export class AdvertisingReconciliationRepository {
           storeId: connection.storeId,
           provider: 'TIKTOK' as const,
           catalogConfigured: connection.selectedCatalogIds.length > 0,
+          updatedAt: connection.updatedAt,
         })),
       ...google
         .filter((connection) => connection.selectedCustomerIds.length > 0)
@@ -51,6 +65,7 @@ export class AdvertisingReconciliationRepository {
           storeId: connection.storeId,
           provider: 'GOOGLE_ADS' as const,
           catalogConfigured: false,
+          updatedAt: connection.updatedAt,
         })),
     ];
   }
@@ -62,33 +77,46 @@ export class AdvertisingReconciliationRepository {
     if (provider === 'META') {
       const connection = await prisma.metaConnection.findUnique({
         where: { storeId },
-        select: { status: true, selectedAdAccountIds: true, selectedCatalogIds: true },
+        select: {
+          status: true,
+          selectedAdAccountIds: true,
+          selectedCatalogIds: true,
+          updatedAt: true,
+        },
       });
       return {
         status: connection?.status ?? null,
         configured: (connection?.selectedAdAccountIds.length ?? 0) > 0,
         catalogConfigured: (connection?.selectedCatalogIds.length ?? 0) > 0,
+        updatedAt: connection?.updatedAt ?? null,
       };
     }
     if (provider === 'TIKTOK') {
       const connection = await prisma.tikTokConnection.findUnique({
         where: { storeId },
-        select: { status: true, selectedAdvertiserIds: true, selectedCatalogIds: true },
+        select: {
+          status: true,
+          selectedAdvertiserIds: true,
+          selectedCatalogIds: true,
+          updatedAt: true,
+        },
       });
       return {
         status: connection?.status ?? null,
         configured: (connection?.selectedAdvertiserIds.length ?? 0) > 0,
         catalogConfigured: (connection?.selectedCatalogIds.length ?? 0) > 0,
+        updatedAt: connection?.updatedAt ?? null,
       };
     }
     const connection = await prisma.googleAdsConnection.findUnique({
       where: { storeId },
-      select: { status: true, selectedCustomerIds: true },
+      select: { status: true, selectedCustomerIds: true, updatedAt: true },
     });
     return {
       status: connection?.status ?? null,
       configured: (connection?.selectedCustomerIds.length ?? 0) > 0,
       catalogConfigured: false,
+      updatedAt: connection?.updatedAt ?? null,
     };
   }
 
@@ -97,6 +125,7 @@ export class AdvertisingReconciliationRepository {
     provider: AdvertisingProvider;
     nextDailyAt: Date;
     nextCatalogAt: Date | null;
+    connectionUpdatedAt: Date | null;
   }) {
     const existing = await prisma.advertisingReconciliationState.findUnique({
       where: { storeId_provider: { storeId: input.storeId, provider: input.provider } },
@@ -112,16 +141,25 @@ export class AdvertisingReconciliationRepository {
       });
     }
 
-    const reactivate = existing.status === 'SUSPENDED';
+    const reconnectedAfterSuspension =
+      existing.status === 'SUSPENDED' &&
+      input.connectionUpdatedAt !== null &&
+      input.connectionUpdatedAt > existing.updatedAt;
+    if (existing.status === 'SUSPENDED' && !reconnectedAfterSuspension) return existing;
+
     const needsDaily = existing.nextDailyAt === null;
     const needsCatalog = input.nextCatalogAt !== null && existing.nextCatalogAt === null;
     const removeCatalog = input.nextCatalogAt === null && existing.nextCatalogAt !== null;
-    if (!reactivate && !needsDaily && !needsCatalog && !removeCatalog) return existing;
+    if (!reconnectedAfterSuspension && !needsDaily && !needsCatalog && !removeCatalog) {
+      return existing;
+    }
 
     return prisma.advertisingReconciliationState.update({
       where: { id: existing.id },
       data: {
-        ...(reactivate ? { status: 'IDLE', suspendedReason: null, lastError: null } : {}),
+        ...(reconnectedAfterSuspension
+          ? { status: 'IDLE', suspendedReason: null, lastError: null }
+          : {}),
         ...(needsDaily ? { nextDailyAt: input.nextDailyAt } : {}),
         ...(needsCatalog ? { nextCatalogAt: input.nextCatalogAt } : {}),
         ...(removeCatalog ? { nextCatalogAt: null } : {}),
@@ -177,12 +215,7 @@ export class AdvertisingReconciliationRepository {
       }
       await tx.advertisingReconciliationState.update({
         where: { id: state.id },
-        data: {
-          manualRequestedAt: now,
-          retryAt: null,
-          status: 'IDLE',
-          lastError: null,
-        },
+        data: { manualRequestedAt: now },
       });
       return { kind: 'QUEUED' as const, stateId: state.id, queuedAt: now };
     });
@@ -211,7 +244,7 @@ export class AdvertisingReconciliationRepository {
       const urgentKinds = [...new Set([...state.urgentKinds, ...kinds])];
       return tx.advertisingReconciliationState.update({
         where: { id: state.id },
-        data: { urgentAt, urgentKinds, retryAt: null, status: 'IDLE' },
+        data: { urgentAt, urgentKinds },
       });
     });
   }
