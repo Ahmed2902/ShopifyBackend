@@ -61,6 +61,8 @@ export class ShopifyWebhookService {
     const shopDomain = normalizeShopDomain(headers.shopDomain);
     const topic = headers.topic.toLowerCase();
     const parsedPayload = parseShopifyWebhookJson(rawBody);
+    // Compliance webhooks can contain customer email/phone. Validate the exact Shopify body, then
+    // remove those fields before the durable inbox sees the payload.
     const payload = this.privacyService.sanitizeForInbox(topic, parsedPayload);
     const connection = await this.repository.findConnectionByShopDomain(shopDomain);
     const result = await this.repository.createDelivery({
@@ -165,6 +167,9 @@ export class ShopifyWebhookService {
     const handled = await this.dispatch(delivery.id, delivery.topic, delivery.payload, context);
     if (handled) {
       await this.repository.markProcessed(delivery.id);
+      // A normal webhook mutates commerce/inventory/catalog facts directly. Bulk completion is the
+      // exception: completeSyncRun already advances the Store generation after the backfill commit,
+      // so avoid paying for a second pair of Redis generation bumps here.
       if (delivery.topic !== 'bulk_operations/finish') {
         await invalidateStoreDecisionCaches(context.storeId);
       }
@@ -260,39 +265,96 @@ export class ShopifyWebhookService {
       case 'orders/updated': {
         const resource = shopifyResourceWebhookSchema.parse(payload);
         const orderId = shopifyGid('Order', resource.admin_graphql_api_id ?? resource.id);
-        await this.orderService.reconcileOrder(context, orderId);
-        return true;
-      }
-
-      case 'orders/cancelled': {
-        const resource = shopifyResourceWebhookSchema.parse(payload);
-        const orderId = shopifyGid('Order', resource.admin_graphql_api_id ?? resource.id);
-        await this.orderService.reconcileOrder(context, orderId);
+        const reconciled = await this.orderService.reconcileOrder(context, orderId);
+        if (!reconciled.found) {
+          await this.repository.deleteOrder(context.storeId, orderId);
+        }
         return true;
       }
 
       case 'refunds/create': {
         const refund = shopifyRefundWebhookSchema.parse(payload);
-        await this.orderService.reconcileRefund(
-          context,
-          shopifyGid('Refund', refund.admin_graphql_api_id ?? refund.id),
-          refund.order_id ? shopifyGid('Order', refund.order_id) : null,
-        );
+        const orderId = shopifyGid('Order', refund.order_id);
+        const reconciled = await this.orderService.reconcileOrder(context, orderId);
+        if (!reconciled.found) {
+          throw new AppError(
+            'Shopify refund webhook references an order that could not be loaded',
+            502,
+            'SHOPIFY_ORDER_INCONSISTENT',
+          );
+        }
         return true;
       }
 
-      case 'bulk_operations/finish': {
-        const bulk = shopifyBulkOperationWebhookSchema.parse(payload);
-        await this.integrationService.completeShopifyBulkOperation(
-          context.storeId,
-          context.connectionId,
-          bulk.admin_graphql_api_id,
-        );
+      case 'orders/delete': {
+        const resource = shopifyResourceWebhookSchema.parse(payload);
+        const orderId = shopifyGid('Order', resource.admin_graphql_api_id ?? resource.id);
+        await this.repository.deleteOrder(context.store.id, orderId);
         return true;
       }
+
+      case 'bulk_operations/finish':
+        await this.finishOrderHistoryBackfill(deliveryId, payload, context);
+        return true;
 
       default:
         return false;
     }
+  }
+
+  private async finishOrderHistoryBackfill(
+    deliveryId: string,
+    payload: unknown,
+    context: ShopifyRequestContext,
+  ): Promise<void> {
+    const operation = shopifyBulkOperationWebhookSchema.parse(payload);
+    const operationId = shopifyGid(
+      'BulkOperation',
+      operation.admin_graphql_api_id ?? operation.id!,
+    );
+    const syncRun = await this.repository.findOrderBackfillByOperation(
+      context.connectionId,
+      operationId,
+    );
+    if (!syncRun || syncRun.status !== 'RUNNING') return;
+
+    const syncContext: ShopifySyncContext = { ...context, syncRunId: syncRun.id };
+    const inspection = await this.orderService.inspectBulkBackfill(syncContext, operationId);
+    if (inspection.state === 'RUNNING') {
+      throw new AppError(
+        'Shopify bulk operation finish webhook arrived before final status was readable',
+        503,
+        'SHOPIFY_BULK_NOT_READY',
+      );
+    }
+
+    if (inspection.state === 'FAILED') {
+      const error = new AppError(
+        inspection.errorCode
+          ? `Shopify bulk order backfill failed: ${inspection.errorCode}`
+          : `Shopify bulk order backfill ended with ${inspection.providerStatus}`,
+        502,
+        'SHOPIFY_BULK_FAILED',
+      );
+      await this.integrationService.failSyncRun(syncRun.id, error);
+      return;
+    }
+
+    await this.integrationService.completeSyncRun(syncRun.id, {
+      recordsRead: inspection.recordsRead,
+      recordsWritten: inspection.recordsWritten,
+    });
+    await this.integrationService.recordExternalPayload({
+      provider: 'SHOPIFY',
+      resourceType: 'OrderHistoryBulkCompletion',
+      externalId: operationId,
+      apiVersion: context.apiVersion,
+      payload: {
+        providerStatus: inspection.providerStatus,
+        breakdown: inspection.breakdown,
+      },
+      syncRunId: syncRun.id,
+      webhookDeliveryId: deliveryId,
+    });
   }
 }
