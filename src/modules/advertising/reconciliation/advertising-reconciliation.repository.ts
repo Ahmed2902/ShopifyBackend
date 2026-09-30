@@ -127,19 +127,16 @@ export class AdvertisingReconciliationRepository {
     nextCatalogAt: Date | null;
     connectionUpdatedAt: Date | null;
   }) {
-    const existing = await prisma.advertisingReconciliationState.findUnique({
+    const existing = await prisma.advertisingReconciliationState.upsert({
       where: { storeId_provider: { storeId: input.storeId, provider: input.provider } },
+      create: {
+        storeId: input.storeId,
+        provider: input.provider,
+        nextDailyAt: input.nextDailyAt,
+        nextCatalogAt: input.nextCatalogAt,
+      },
+      update: {},
     });
-    if (!existing) {
-      return prisma.advertisingReconciliationState.create({
-        data: {
-          storeId: input.storeId,
-          provider: input.provider,
-          nextDailyAt: input.nextDailyAt,
-          nextCatalogAt: input.nextCatalogAt,
-        },
-      });
-    }
 
     const reconnectedAfterSuspension =
       existing.status === 'SUSPENDED' &&
@@ -319,6 +316,7 @@ export class AdvertisingReconciliationRepository {
     id: string;
     claimToken: string;
     nextDailyAt: Date;
+    nextCatalogAt: Date | null;
     reason: string;
   }) {
     return prisma.advertisingReconciliationState.updateMany({
@@ -330,6 +328,7 @@ export class AdvertisingReconciliationRepository {
         retryAt: null,
         failureCount: 0,
         nextDailyAt: input.nextDailyAt,
+        nextCatalogAt: input.nextCatalogAt,
         manualRequestedAt: null,
         urgentAt: null,
         urgentKinds: [],
