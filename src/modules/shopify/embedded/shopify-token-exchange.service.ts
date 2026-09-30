@@ -49,15 +49,16 @@ export class ShopifyTokenExchangeService {
     parse: (payload: unknown) => T,
   ): Promise<T> {
     const shop = normalizeShopDomain(requestedShop);
-    const body = new URLSearchParams({
+    const values: Record<string, string> = {
       grant_type: TOKEN_EXCHANGE_GRANT,
       subject_token: idToken,
       subject_token_type: ID_TOKEN_TYPE,
       requested_token_type: requestedTokenType,
       client_id: env.SHOPIFY_CLIENT_ID,
       client_secret: env.SHOPIFY_CLIENT_SECRET,
-      expiring: '1',
-    });
+    };
+    if (requestedTokenType === OFFLINE_TOKEN_TYPE) values.expiring = '1';
+    const body = new URLSearchParams(values);
 
     let response: Response;
     try {
