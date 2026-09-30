@@ -1,5 +1,6 @@
 import type { AdvertisingProvider, ConversionDeliveryStatus } from '../../generated/prisma/client.js';
 import { AppError } from '../../errors/app-error.js';
+import { billingService, type BillingService, type V1AdProvider } from '../billing/billing.service.js';
 import { encryptSecret } from '../integrations/integration.utils.js';
 import { ConversionDeliveryRepository } from './conversion-delivery.repository.js';
 import type { ConfigureDestinationInput, DeliveryClaim, PurchaseCandidate } from './conversion-delivery.types.js';
@@ -14,6 +15,7 @@ const MAX_ATTEMPTS = 8;
 const CLAIM_STALE_MS = 10 * 60_000;
 const RETRY_BASE_MS = 60_000;
 const RETRY_MAX_MS = 6 * 60 * 60_000;
+const BILLING_RETRY_MS = 6 * 60 * 60_000;
 
 function retryDelayMs(attempt: number) {
   return Math.min(RETRY_BASE_MS * 2 ** Math.min(Math.max(attempt - 1, 0), 8), RETRY_MAX_MS);
@@ -35,10 +37,15 @@ function publicProviderName(provider: AdvertisingProvider) {
   return 'Google Ads';
 }
 
+function billingProvider(provider: AdvertisingProvider): V1AdProvider {
+  return provider;
+}
+
 export class ConversionDeliveryService {
   constructor(
     private readonly repository: ConversionDeliveryRepository = new ConversionDeliveryRepository(),
     private readonly now: () => Date = () => new Date(),
+    private readonly billing: BillingService = billingService,
   ) {}
 
   listDestinations(storeId: string) {
@@ -46,6 +53,8 @@ export class ConversionDeliveryService {
   }
 
   async configureDestination(storeId: string, input: ConfigureDestinationInput) {
+    await this.billing.requireAdProvider(storeId, billingProvider(input.provider));
+
     if (input.provider !== 'GOOGLE_ADS' && !input.accessToken) {
       throw new AppError(
         `${publicProviderName(input.provider)} server-side conversion setup requires an Events Manager access token`,
@@ -100,10 +109,25 @@ export class ConversionDeliveryService {
       destinationsByStore.set(destination.storeId, items);
     }
 
+    const billingAllowed = new Map<string, boolean>();
+    const isAllowed = async (storeId: string, provider: AdvertisingProvider) => {
+      const key = `${storeId}:${provider}`;
+      if (billingAllowed.has(key)) return billingAllowed.get(key)!;
+      try {
+        await this.billing.requireAdProviderReadOnly(storeId, billingProvider(provider));
+        billingAllowed.set(key, true);
+        return true;
+      } catch {
+        billingAllowed.set(key, false);
+        return false;
+      }
+    };
+
     let eligible = 0;
     let enqueued = 0;
     for (const candidate of candidates) {
       for (const destination of destinationsByStore.get(candidate.storeId) ?? []) {
+        if (!(await isAllowed(candidate.storeId, destination.provider))) continue;
         const attribution = attributionFor(candidate, destination.provider);
         if (!attribution.clickId) continue;
         eligible += 1;
@@ -133,11 +157,41 @@ export class ConversionDeliveryService {
     const now = this.now();
     await this.repository.recoverStaleClaims(new Date(now.getTime() - CLAIM_STALE_MS));
     const claims = await this.repository.claimDue(bounded, now);
+    const billingAllowed = new Map<string, boolean>();
     let delivered = 0;
     let retrying = 0;
     let dead = 0;
 
     for (const claim of claims) {
+      const key = `${claim.storeId}:${claim.provider}`;
+      let allowed = billingAllowed.get(key);
+      if (allowed === undefined) {
+        try {
+          await this.billing.requireAdProviderReadOnly(
+            claim.storeId,
+            billingProvider(claim.provider),
+          );
+          allowed = true;
+        } catch {
+          allowed = false;
+        }
+        billingAllowed.set(key, allowed);
+      }
+
+      if (!allowed) {
+        // Billing/plan changes are reversible. Keep the delivery retryable without applying the
+        // provider-attempt death threshold; an upgrade or Essentials channel selection can make it
+        // eligible again later.
+        await this.repository.markFailed(
+          claim.id,
+          'RETRY',
+          new Date(this.now().getTime() + BILLING_RETRY_MS),
+          'Delivery paused because the current Stride subscription does not authorize this provider',
+        );
+        retrying += 1;
+        continue;
+      }
+
       try {
         const result = await this.deliver(claim);
         await this.repository.markDelivered(claim.id, result.providerRequestId, this.now());
