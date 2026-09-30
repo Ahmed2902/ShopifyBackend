@@ -106,7 +106,9 @@ describe('AdvertisingReconciliationService', () => {
     expect(meta.syncCatalogs).not.toHaveBeenCalled();
     expect(repository.completeSuccess).toHaveBeenCalledTimes(1);
     const input = repository.completeSuccess.mock.calls[0]![0];
-    expect(input.nextDailyAt.getTime()).toBeGreaterThanOrEqual(now.getTime() + 24 * 60 * 60 * 1_000);
+    expect(input.nextDailyAt.getTime()).toBeGreaterThanOrEqual(
+      now.getTime() + 24 * 60 * 60 * 1_000,
+    );
     expect(input.nextDailyAt.getTime()).toBeLessThan(now.getTime() + 25 * 60 * 60 * 1_000);
   });
 
@@ -182,6 +184,24 @@ describe('AdvertisingReconciliationService', () => {
     );
   });
 
+  it('reschedules configured catalog work when billing skips a provider', async () => {
+    const claimed = state('META', { nextCatalogAt: new Date(now.getTime() - 1) });
+    const { service, repository } = build({
+      claimed: [claimed],
+      connection: { status: 'ACTIVE', configured: true, catalogConfigured: true },
+      billingError: new AppError('Essentials channel mismatch', 403, 'PLAN_AD_CHANNEL_LIMIT'),
+    });
+
+    await service.processDue();
+
+    expect(repository.completeSkipped).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nextDailyAt: new Date(now.getTime() + 24 * 60 * 60 * 1_000),
+        nextCatalogAt: new Date(now.getTime() + 72 * 60 * 60 * 1_000),
+      }),
+    );
+  });
+
   it('suspends an inactive or reauthorization-required provider before any external call', async () => {
     const claimed = state('META');
     const { service, repository, billing, meta } = build({
@@ -252,5 +272,18 @@ describe('AdvertisingReconciliationService', () => {
       reconciliationId: 'state-1',
     });
     expect(meta.syncInsights).not.toHaveBeenCalled();
+  });
+
+  it('does not queue a manual sync while reauth suspension is still active', async () => {
+    const { service, repository } = build();
+    repository.ensureState.mockResolvedValueOnce({
+      status: 'SUSPENDED',
+      suspendedReason: 'META_REAUTH_REQUIRED',
+    });
+
+    await expect(service.requestManual('store-1', 'META')).rejects.toMatchObject({
+      code: 'AD_PROVIDER_REAUTH_REQUIRED',
+    });
+    expect(repository.requestManual).not.toHaveBeenCalled();
   });
 });
