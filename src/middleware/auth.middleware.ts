@@ -25,9 +25,14 @@ function looksLikeShopifyIdToken(token: string): boolean {
   }
 }
 
-async function authenticateShopify(req: Request, res: Response, token: string) {
+async function authenticateShopify(
+  req: Request,
+  res: Response,
+  token: string,
+  refreshIdentity = false,
+) {
   try {
-    const session = await shopifyEmbeddedAuthService.authenticate(token);
+    const session = await shopifyEmbeddedAuthService.authenticate(token, { refreshIdentity });
     req.context.userId = session.userId;
     req.context.storeId = session.storeId;
     req.context.role = session.role;
@@ -67,9 +72,12 @@ export const requireAuth: RequestHandler = async (req, res, next) => {
   next();
 };
 
-/** Require the request to come from an authenticated Shopify embedded session. */
+/**
+ * Require a Shopify embedded session and refresh Shopify's account-owner signal. The frontend calls
+ * this once when App Bridge boots; ordinary API calls can then use the cached identity mapping.
+ */
 export const requireShopifyAppAuth: RequestHandler = async (req, res, next) => {
   const token = bearerToken(req);
-  await authenticateShopify(req, res, token);
+  await authenticateShopify(req, res, token, true);
   next();
 };
