@@ -303,6 +303,7 @@ export class AdvertisingReconciliationService {
           id: state.id,
           claimToken,
           nextDailyAt: nextDaily(now),
+          nextCatalogAt: connection.catalogConfigured ? nextCatalog(now) : null,
           reason: error.code,
         });
         return 'SKIPPED' as const;
