@@ -57,10 +57,11 @@ model User {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  memberships     StoreMembership[]
-  sessions        RefreshSession[]
-  authTokens      AuthToken[]
-  emailDeliveries AuthEmailDelivery[]
+  memberships      StoreMembership[]
+  shopifyIdentities ShopifyUserIdentity[]
+  sessions         RefreshSession[]
+  authTokens       AuthToken[]
+  emailDeliveries  AuthEmailDelivery[]
 
   @@index([createdAt])
 }
@@ -135,6 +136,26 @@ model StoreMembership {
   @@index([storeId, role])
 }
 
+model ShopifyUserIdentity {
+  id             String   @id @default(uuid()) @db.Uuid
+  storeId        String   @db.Uuid
+  userId         String   @db.Uuid
+  shopifyUserId  String
+  accountOwner   Boolean  @default(false)
+  collaborator   Boolean  @default(false)
+  emailVerified  Boolean  @default(false)
+  lastSeenAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, shopifyUserId])
+  @@index([userId])
+  @@index([storeId, lastSeenAt])
+}
+
 model StoreSubscription {
   id                       String             @id @default(uuid()) @db.Uuid
   storeId                  String             @unique @db.Uuid
@@ -179,6 +200,7 @@ model Store {
 
   subscription                    StoreSubscription?
   memberships                     StoreMembership[]
+  shopifyUsers                    ShopifyUserIdentity[]
   shopifyConnection               ShopifyConnection?
   metaConnection                  MetaConnection?
   tiktokConnection                TikTokConnection?
