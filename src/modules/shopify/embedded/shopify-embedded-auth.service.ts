@@ -11,6 +11,7 @@ import {
   type EmbeddedOfflineCredentials,
   type ShopifyEmbeddedAuthRepository,
 } from './shopify-embedded-auth.repository.js';
+import type { ShopifyOnlineAccessTokenResponse } from './shopify-embedded.schema.js';
 import { verifyShopifyIdToken } from './shopify-id-token.js';
 import {
   shopifyTokenExchangeService,
@@ -58,24 +59,48 @@ export class ShopifyEmbeddedAuthService {
     this.apiService = new ShopifyApiService(new ShopifyRepository());
   }
 
-  async authenticate(idToken: string): Promise<ShopifyEmbeddedSession> {
+  async authenticate(
+    idToken: string,
+    options: { refreshIdentity?: boolean } = {},
+  ): Promise<ShopifyEmbeddedSession> {
     const tokenContext = await verifyShopifyIdToken(idToken);
     const existingStore = await this.repository.findStoreByShop(tokenContext.shop);
+    let online: ShopifyOnlineAccessTokenResponse | undefined;
 
     if (existingStore?.shopifyConnection?.status === 'ACTIVE') {
-      const identity = await this.repository.findIdentity(
-        existingStore.id,
-        tokenContext.shopifyUserId,
-      );
-      if (identity) {
-        await this.billing.ensureSubscription(existingStore.id);
-        return this.session({
-          storeId: existingStore.id,
-          userId: identity.userId,
-          role: identity.role,
-          shop: tokenContext.shop,
-          shopifyUserId: tokenContext.shopifyUserId,
-        });
+      if (options.refreshIdentity) {
+        online = await this.tokenExchange.exchangeOnline(tokenContext.shop, idToken);
+        this.assertSameShopifyUser(online, tokenContext.shopifyUserId);
+        const refreshed = await this.repository.refreshIdentity(
+          existingStore.id,
+          tokenContext.shopifyUserId,
+          online.associated_user,
+        );
+        if (refreshed) {
+          await this.billing.ensureSubscription(existingStore.id);
+          return this.session({
+            storeId: existingStore.id,
+            userId: refreshed.userId,
+            role: refreshed.role,
+            shop: tokenContext.shop,
+            shopifyUserId: tokenContext.shopifyUserId,
+          });
+        }
+      } else {
+        const identity = await this.repository.findIdentity(
+          existingStore.id,
+          tokenContext.shopifyUserId,
+        );
+        if (identity) {
+          await this.billing.ensureSubscription(existingStore.id);
+          return this.session({
+            storeId: existingStore.id,
+            userId: identity.userId,
+            role: identity.role,
+            shop: tokenContext.shop,
+            shopifyUserId: tokenContext.shopifyUserId,
+          });
+        }
       }
     }
 
@@ -83,14 +108,8 @@ export class ShopifyEmbeddedAuthService {
     // token belongs to the shop and powers background work; the online token is used only to map
     // this authenticated Shopify staff identity into Stride's existing membership boundary.
     const offline = await this.tokenExchange.exchangeOffline(tokenContext.shop, idToken);
-    const online = await this.tokenExchange.exchangeOnline(tokenContext.shop, idToken);
-    if (String(online.associated_user.id) !== tokenContext.shopifyUserId) {
-      throw new AppError(
-        'Shopify returned a different staff identity during token exchange',
-        401,
-        'SHOPIFY_USER_IDENTITY_MISMATCH',
-      );
-    }
+    online ??= await this.tokenExchange.exchangeOnline(tokenContext.shop, idToken);
+    this.assertSameShopifyUser(online, tokenContext.shopifyUserId);
 
     const profile = await this.apiService.fetchShopProfile(
       tokenContext.shop,
@@ -123,6 +142,19 @@ export class ShopifyEmbeddedAuthService {
       shop: canonicalShop,
       shopifyUserId: tokenContext.shopifyUserId,
     });
+  }
+
+  private assertSameShopifyUser(
+    online: ShopifyOnlineAccessTokenResponse,
+    shopifyUserId: string,
+  ) {
+    if (String(online.associated_user.id) !== shopifyUserId) {
+      throw new AppError(
+        'Shopify returned a different staff identity during token exchange',
+        401,
+        'SHOPIFY_USER_IDENTITY_MISMATCH',
+      );
+    }
   }
 
   private session(input: {
