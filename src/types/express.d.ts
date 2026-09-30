@@ -8,6 +8,9 @@ declare module 'express-serve-static-core' {
       storeId?: string;
       role?: StoreRoleClaim;
       storeAccess?: StoreAccessClaim[];
+      authSource?: 'STRIDE_JWT' | 'SHOPIFY_ID_TOKEN';
+      shopifyUserId?: string;
+      shopifyShopDomain?: string;
     };
   }
 }
