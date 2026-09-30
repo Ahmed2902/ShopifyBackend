@@ -59,7 +59,7 @@ npm run start:worker
 
 The worker process owns the persistent Shopify webhook, TikTok webhook, Shopify reconciliation, paid-media reconciliation, server-side conversion delivery, Pixel journey, Pixel behavior, Pixel attribution, and Pixel retention pollers.
 
-Paid-media reconciliation checks its indexed due-work queue once per minute and claims at most two Store/provider states per pass. The normal provider cadence is 24 hours plus deterministic jitter, with Meta/TikTok catalogs on a 72-hour cadence. TikTok webhook bursts are persisted first and coalesced into a delayed dirty-provider refresh instead of executing one provider sync per webhook.
+Paid-media reconciliation checks its indexed due-work queue once per minute and claims at most two Store/provider states per pass. New Store/provider schedules are deterministically phase-spread by up to one hour, then successful provider reconciliation recurs at an exact 24-hour interval; Meta/TikTok catalogs recur every 72 hours. TikTok webhook bursts are persisted first and coalesced into a delayed dirty-provider refresh instead of executing one provider sync per webhook.
 
 Start with one worker replica during merchant testing. Increase worker concurrency only after the claim/lease behavior for each queue has been deliberately load-tested.
 
