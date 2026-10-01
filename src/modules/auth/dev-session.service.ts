@@ -87,6 +87,14 @@ export async function createDevelopmentAutoSession() {
     ?? store.memberships.find((entry) => entry.role === 'ADMIN')
     ?? store.memberships[0];
 
+  if (!membership) {
+    throw new AppError(
+      'The development Store has no membership that can own a session.',
+      503,
+      'DEV_AUTO_SESSION_MEMBERSHIP_REQUIRED',
+    );
+  }
+
   const stores = [{ storeId: store.id, role: membership.role }];
   const accessToken = await issueAccessToken(membership.userId, stores);
 
