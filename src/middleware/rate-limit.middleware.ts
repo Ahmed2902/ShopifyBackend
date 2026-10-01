@@ -58,19 +58,25 @@ export function authIdentity(req: Request): string {
   return sourceIdentity(req);
 }
 
+function consumeLocal(key: string, windowMs: number): { count: number; ttlMs: number } {
+  const now = Date.now();
+  const current = localBuckets.get(key);
+  const bucket = current && current.resetAt > now
+    ? current
+    : { count: 0, resetAt: now + windowMs };
+  bucket.count += 1;
+  localBuckets.set(key, bucket);
+  return { count: bucket.count, ttlMs: Math.max(1, bucket.resetAt - now) };
+}
+
+function localFallbackOrThrow(key: string, windowMs: number): { count: number; ttlMs: number } {
+  if (env.NODE_ENV === 'development') return consumeLocal(key, windowMs);
+  throw new AppError('Rate limiter unavailable', 503, 'RATE_LIMIT_UNAVAILABLE');
+}
+
 async function consume(key: string, windowMs: number): Promise<{ count: number; ttlMs: number }> {
   if (!env.REDIS_REST_URL || !env.REDIS_REST_TOKEN) {
-    if (env.NODE_ENV !== 'development') {
-      throw new AppError('Rate limiter unavailable', 503, 'RATE_LIMIT_UNAVAILABLE');
-    }
-
-    const now = Date.now();
-    const current = localBuckets.get(key);
-    const bucket =
-      current && current.resetAt > now ? current : { count: 0, resetAt: now + windowMs };
-    bucket.count += 1;
-    localBuckets.set(key, bucket);
-    return { count: bucket.count, ttlMs: Math.max(1, bucket.resetAt - now) };
+    return localFallbackOrThrow(key, windowMs);
   }
 
   let response: Response;
@@ -85,18 +91,18 @@ async function consume(key: string, windowMs: number): Promise<{ count: number; 
       signal: AbortSignal.timeout(3_000),
     });
   } catch {
-    throw new AppError('Rate limiter unavailable', 503, 'RATE_LIMIT_UNAVAILABLE');
+    return localFallbackOrThrow(key, windowMs);
   }
 
   const payload = (await response.json().catch(() => null)) as RedisResult | null;
   if (!response.ok || !payload || payload.error || !Array.isArray(payload.result)) {
-    throw new AppError('Rate limiter unavailable', 503, 'RATE_LIMIT_UNAVAILABLE');
+    return localFallbackOrThrow(key, windowMs);
   }
 
   const count = Number(payload.result[0]);
   const ttlMs = Number(payload.result[1]);
   if (!Number.isFinite(count) || !Number.isFinite(ttlMs)) {
-    throw new AppError('Rate limiter unavailable', 503, 'RATE_LIMIT_UNAVAILABLE');
+    return localFallbackOrThrow(key, windowMs);
   }
 
   return { count, ttlMs: Math.max(1, ttlMs) };
