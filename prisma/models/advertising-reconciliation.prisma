@@ -15,6 +15,7 @@ model AdvertisingReconciliationState {
   manualRequestedAt      DateTime?
   urgentAt               DateTime?
   urgentKinds            String[]                         @default([])
+  urgentRevision         Int                              @default(0)
   claimedAt              DateTime?
   claimToken             String?
   lastStartedAt          DateTime?

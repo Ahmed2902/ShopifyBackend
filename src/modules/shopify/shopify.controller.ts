@@ -29,6 +29,7 @@ export class ShopifyController {
         shop: req.context.shopifyShop!,
       },
       user: {
+        id: req.context.userId!,
         shopifyUserId: req.context.shopifyUserId!,
         role: req.context.role!,
       },

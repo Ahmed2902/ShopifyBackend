@@ -182,11 +182,9 @@ export class ConversionDeliveryService {
         // Billing/plan changes are reversible. Keep the delivery retryable without applying the
         // provider-attempt death threshold; an upgrade or Essentials channel selection can make it
         // eligible again later.
-        await this.repository.markFailed(
+        await this.repository.pauseForBilling(
           claim.id,
-          'RETRY',
           new Date(this.now().getTime() + BILLING_RETRY_MS),
-          'Delivery paused because the current Stride subscription does not authorize this provider',
         );
         retrying += 1;
         continue;

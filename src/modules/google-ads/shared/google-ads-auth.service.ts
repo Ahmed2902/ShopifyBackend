@@ -1,5 +1,6 @@
 import { env } from '../../../config/env.js';
 import { AppError } from '../../../errors/app-error.js';
+import { billingService, type BillingService } from '../../billing/billing.service.js';
 import { decryptSecret, encryptSecret } from '../../integrations/integration.utils.js';
 import type { GoogleAdsRepository } from '../google-ads.repository.js';
 import type { GoogleAdsApiContext } from '../google-ads.types.js';
@@ -14,16 +15,19 @@ export class GoogleAdsAuthService {
   constructor(
     private readonly repository: GoogleAdsRepository,
     private readonly api: GoogleAdsApiService,
+    private readonly billing: Pick<BillingService, 'requireAdProvider' | 'confirmAdProvider'> = billingService,
   ) {}
 
   async startInstall(userId: string, storeId: string) {
     await this.assertCanManageStore(userId, storeId);
+    await this.billing.requireAdProvider(storeId, 'GOOGLE_ADS');
     return buildGoogleAdsAuthorizationUrl(userId, storeId);
   }
 
   async completeInstall(code: string, state: string) {
     const oauth = verifyGoogleAdsOAuthState(state);
     await this.assertCanManageStore(oauth.userId, oauth.storeId);
+    await this.billing.requireAdProvider(oauth.storeId, 'GOOGLE_ADS');
     const exchanged = await this.api.exchangeAuthorizationCode(code);
     if (!exchanged.scopes.includes(GOOGLE_ADS_OAUTH_SCOPE)) {
       throw new AppError(
@@ -43,6 +47,7 @@ export class GoogleAdsAuthService {
         'GOOGLE_ADS_CUSTOMER_ACCESS_REQUIRED',
       );
     }
+    await this.billing.confirmAdProvider(oauth.storeId, 'GOOGLE_ADS');
     const connection = await this.repository.upsertConnection({
       storeId: oauth.storeId,
       accessTokenCiphertext: encryptSecret(exchanged.accessToken),

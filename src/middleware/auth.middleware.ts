@@ -53,8 +53,7 @@ async function authenticateShopify(
  * Migration-compatible application authentication.
  *
  * Embedded Shopify requests use App Bridge ID tokens and are the authoritative production path.
- * Existing Stride JWTs remain temporarily accepted so the current standalone frontend can be cut
- * over without breaking Meta/TikTok/Google/MCP setup flows mid-stack.
+ * Legacy Stride JWTs are accepted only when the explicit rollback flag is enabled.
  */
 export const requireAuth: RequestHandler = async (req, res, next) => {
   const token = bearerToken(req);
@@ -65,6 +64,9 @@ export const requireAuth: RequestHandler = async (req, res, next) => {
     return;
   }
 
+  if (!env.LEGACY_MERCHANT_AUTH_ENABLED) {
+    throw new AppError('Open Stride from Shopify Admin to sign in.', 401, 'SHOPIFY_AUTH_REQUIRED');
+  }
   const context = await verifyAccessToken(token);
   req.context.userId = context.userId;
   req.context.storeAccess = context.stores;

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Prisma } from '../../../generated/prisma/client.js';
+import { Prisma } from '../../../generated/prisma/client.js';
 import { prisma } from '../../../lib/prisma.js';
 import type { ShopifyShopProfile } from '../shopify.schema.js';
 import type { ShopifyAssociatedUser } from './shopify-embedded.schema.js';
@@ -100,6 +100,24 @@ export class ShopifyEmbeddedAuthRepository {
   }
 
   async provision(input: {
+    shop: string;
+    shopifyUserId: string;
+    profile: ShopifyShopProfile;
+    associatedUser: ShopifyAssociatedUser;
+    apiVersion: string;
+    credentials?: EmbeddedOfflineCredentials;
+  }) {
+    // Retry unique-key races only after the losing transaction has rolled back.
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.provisionTransaction(input);
+      } catch (error) {
+        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002' || attempt >= 2) throw error;
+      }
+    }
+  }
+
+  private provisionTransaction(input: {
     shop: string;
     shopifyUserId: string;
     profile: ShopifyShopProfile;

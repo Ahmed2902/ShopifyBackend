@@ -22,6 +22,7 @@ function state(
     manualRequestedAt: null,
     urgentAt: null,
     urgentKinds: [],
+    urgentRevision: 0,
     claimedAt: now,
     claimToken: 'claim',
     lastStartedAt: now,
@@ -42,6 +43,7 @@ function build(input: {
   connection?: { status: string | null; configured: boolean; catalogConfigured: boolean };
   billingError?: Error;
   metaError?: Error;
+  clock?: () => Date;
 } = {}) {
   const repository = {
     listConfiguredActiveConnections: vi.fn().mockResolvedValue([]),
@@ -90,12 +92,25 @@ function build(input: {
     google as never,
     mappings as never,
     invalidate,
-    () => now,
+    input.clock ?? (() => now),
   );
   return { service, repository, billing, meta, tiktok, google, mappings, invalidate };
 }
 
 describe('AdvertisingReconciliationService', () => {
+  it('schedules daily and catalog recurrence from actual successful completion', async () => {
+    let current = now;
+    const completedAt = new Date(now.getTime() + 30 * 60_000);
+    const { service, repository, meta } = build({ claimed: [state('META', { nextCatalogAt: now })],
+      connection: { status: 'ACTIVE', configured: true, catalogConfigured: true }, clock: () => current });
+    meta.syncCatalogs.mockImplementation(async () => { current = completedAt; return {}; });
+    await service.processDue();
+    expect(repository.completeSuccess).toHaveBeenCalledWith(expect.objectContaining({
+      now: completedAt,
+      nextDailyAt: new Date(completedAt.getTime() + 24 * 60 * 60_000),
+      nextCatalogAt: new Date(completedAt.getTime() + 72 * 60 * 60_000),
+    }));
+  });
   it('runs Meta daily reconciliation through the rolling Insights path and schedules the next day', async () => {
     const claimed = state('META');
     const { service, repository, meta } = build({ claimed: [claimed] });

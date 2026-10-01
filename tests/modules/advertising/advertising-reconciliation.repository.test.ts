@@ -30,6 +30,25 @@ afterEach(async () => {
 });
 
 describeDatabase('AdvertisingReconciliationRepository', () => {
+  it('retains even same-kind/same-time webhook work added after the urgent claim', async () => {
+    const store = await createStore();
+    const repository = new AdvertisingReconciliationRepository();
+    const now = new Date();
+    await prisma.advertisingReconciliationState.create({ data: { storeId: store.id, provider: 'TIKTOK' } });
+    await repository.markUrgent(store.id, 'TIKTOK', ['INSIGHTS'], now);
+    const [claim] = await repository.claimDue(1, now, new Date(now.getTime() - 3600_000), 'test-claim');
+    expect(claim).toBeDefined();
+    await repository.markUrgent(store.id, 'TIKTOK', ['INSIGHTS'], now);
+    await repository.completeSuccess({ id: claim!.id, claimToken: 'test-claim', now,
+      clearManual: false, clearUrgent: true, claimedUrgentRevision: claim!.urgentRevision, catalogSucceeded: false });
+    const persisted = await repository.getState(store.id, 'TIKTOK');
+    expect(persisted?.urgentAt).toEqual(now);
+    expect(persisted?.urgentKinds).toEqual(['INSIGHTS']);
+    const [next] = await repository.claimDue(1, now, new Date(now.getTime() - 3600_000), 'next-claim');
+    await repository.completeSuccess({ id: next!.id, claimToken: 'next-claim', now,
+      clearManual: false, clearUrgent: true, claimedUrgentRevision: next!.urgentRevision, catalogSucceeded: false });
+    expect((await repository.getState(store.id, 'TIKTOK'))?.urgentAt).toBeNull();
+  });
   it('queues manual work without erasing an active retry backoff', async () => {
     const store = await createStore();
     const repository = new AdvertisingReconciliationRepository();

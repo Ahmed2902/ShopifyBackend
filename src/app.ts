@@ -28,7 +28,11 @@ function requestId(value: unknown): string {
 
 export function createApp() {
   const app = express();
-  const applicationCors = cors({ origin: env.CORS_ORIGIN, credentials: true });
+  const applicationCors = cors({
+    origin: env.CORS_ORIGIN,
+    credentials: true,
+    exposedHeaders: ['X-Shopify-Retry-Invalid-Session-Request'],
+  });
   const pixelCors = cors({
     origin: '*',
     credentials: false,

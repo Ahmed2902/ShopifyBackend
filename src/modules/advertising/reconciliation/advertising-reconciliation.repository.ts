@@ -241,7 +241,7 @@ export class AdvertisingReconciliationRepository {
       const urgentKinds = [...new Set([...state.urgentKinds, ...kinds])];
       return tx.advertisingReconciliationState.update({
         where: { id: state.id },
-        data: { urgentAt, urgentKinds },
+        data: { urgentAt, urgentKinds, urgentRevision: { increment: 1 } },
       });
     });
   }
@@ -282,7 +282,7 @@ export class AdvertisingReconciliationRepository {
     });
   }
 
-  completeSuccess(input: {
+  async completeSuccess(input: {
     id: string;
     claimToken: string;
     now: Date;
@@ -290,9 +290,19 @@ export class AdvertisingReconciliationRepository {
     nextCatalogAt?: Date;
     clearManual: boolean;
     clearUrgent: boolean;
+    claimedUrgentRevision: number;
     catalogSucceeded: boolean;
   }) {
-    return prisma.advertisingReconciliationState.updateMany({
+    return prisma.$transaction(async (tx) => {
+      // Only consume the webhook batch observed by this claim. A new event can have the same
+      // timestamp/kind as the old one, so a monotonic revision is required rather than date equality.
+      if (input.clearUrgent) {
+        await tx.advertisingReconciliationState.updateMany({
+          where: { id: input.id, claimToken: input.claimToken, urgentRevision: input.claimedUrgentRevision },
+          data: { urgentAt: null, urgentKinds: [] },
+        });
+      }
+      return tx.advertisingReconciliationState.updateMany({
       where: { id: input.id, claimToken: input.claimToken },
       data: {
         status: 'IDLE',
@@ -307,8 +317,8 @@ export class AdvertisingReconciliationRepository {
         ...(input.nextDailyAt ? { nextDailyAt: input.nextDailyAt } : {}),
         ...(input.nextCatalogAt ? { nextCatalogAt: input.nextCatalogAt } : {}),
         ...(input.clearManual ? { manualRequestedAt: null } : {}),
-        ...(input.clearUrgent ? { urgentAt: null, urgentKinds: [] } : {}),
       },
+      });
     });
   }
 

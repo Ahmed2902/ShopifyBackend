@@ -313,14 +313,16 @@ export class AdvertisingReconciliationService {
 
     try {
       const result = await this.executePlan(state, connection.catalogConfigured, now);
+      const completedAt = this.now();
       await this.repository.completeSuccess({
         id: state.id,
         claimToken,
-        now,
-        ...(result.dailyRan || state.manualRequestedAt ? { nextDailyAt: nextDaily(now) } : {}),
-        ...(result.catalogRan ? { nextCatalogAt: nextCatalog(now) } : {}),
+        now: completedAt,
+        ...(result.dailyRan || state.manualRequestedAt ? { nextDailyAt: nextDaily(completedAt) } : {}),
+        ...(result.catalogRan ? { nextCatalogAt: nextCatalog(completedAt) } : {}),
         clearManual: state.manualRequestedAt !== null,
         clearUrgent: result.urgentRan,
+        claimedUrgentRevision: state.urgentRevision,
         catalogSucceeded: result.catalogRan,
       });
       return 'SUCCEEDED' as const;

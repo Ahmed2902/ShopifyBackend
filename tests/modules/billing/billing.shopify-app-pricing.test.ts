@@ -105,6 +105,20 @@ function makeUpdateReturn(current: ReturnType<typeof localSubscription>) {
 }
 
 describe('BillingService Shopify App Pricing verification', () => {
+  it('revokes a previously active cached grant when background reconciliation sees a deterministic price mismatch', async () => {
+    let persisted = localSubscription({ provider: 'SHOPIFY', status: 'ACTIVE', selectedPlan: 'PRO',
+      lastVerifiedAt: new Date(now.getTime() - 86400_000) });
+    const client = pricingClient();
+    subscriptionRepository.findUnique.mockImplementation(async () => persisted);
+    subscriptionRepository.update.mockImplementation(async ({ data }) => { persisted = { ...persisted, ...data }; return persisted; });
+    const remote = remoteSubscription('stride-pro');
+    remote.items[0]!.price.amount = '99.00';
+    vi.mocked(client.activeSubscription).mockResolvedValue(remote);
+    const service = new BillingService(client);
+    await expect(service.refreshFromShopify(storeId)).rejects.toMatchObject({ code: 'SHOPIFY_PLAN_CONFIGURATION_MISMATCH' });
+    expect(persisted.status).toBe('EXPIRED');
+    await expect(service.requireActive(storeId)).rejects.toMatchObject({ code: 'SUBSCRIPTION_REQUIRED' });
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     storeRepository.findUnique.mockResolvedValue({ shopifyShopId: 'gid://shopify/Shop/123' });
@@ -266,7 +280,8 @@ describe('BillingService Shopify App Pricing verification', () => {
       code: 'SHOPIFY_PLAN_UNRECOGNIZED',
     });
 
-    expect(subscriptionRepository.update).not.toHaveBeenCalled();
+    expect(subscriptionRepository.update).toHaveBeenCalledWith({ where: { storeId },
+      data: expect.objectContaining({ status: 'EXPIRED', trialEndsAt: now, lastVerifiedAt: now }) });
   });
 
   it('fails closed if the Shopify plan handle exists but the configured price is stale', async () => {
@@ -304,7 +319,8 @@ describe('BillingService Shopify App Pricing verification', () => {
       }),
     });
 
-    expect(subscriptionRepository.update).not.toHaveBeenCalled();
+    expect(subscriptionRepository.update).toHaveBeenCalledWith({ where: { storeId },
+      data: expect.objectContaining({ status: 'EXPIRED', trialEndsAt: now, lastVerifiedAt: now }) });
   });
 
   it('fails closed if currency or billing period differs from the launch contract', async () => {

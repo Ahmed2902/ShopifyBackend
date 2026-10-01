@@ -83,7 +83,7 @@ export function buildMetaAuthorizationUrl(
 }
 
 function metaFrontendRedirect(storeId: string, status: 'connected' | 'error', errorCode?: string): string {
-  const destination = new URL(frontendUrl('/app/integrations'));
+  const destination = new URL(frontendUrl(env.LEGACY_MERCHANT_AUTH_ENABLED ? '/app/integrations' : '/integrations/complete'));
   destination.searchParams.set('meta', status);
   destination.searchParams.set('storeId', storeId);
   if (errorCode) destination.searchParams.set('metaError', errorCode);

@@ -98,7 +98,7 @@ export function buildGoogleAdsAuthorizationUrl(userId: string, storeId: string) 
 }
 
 export function buildGoogleAdsSuccessRedirect(storeId: string) {
-  const url = new URL('/settings/integrations', `${env.FRONTEND_URL}/`);
+  const url = new URL(env.LEGACY_MERCHANT_AUTH_ENABLED ? '/settings/integrations' : '/integrations/complete', `${env.FRONTEND_URL}/`);
   url.searchParams.set('provider', 'GOOGLE_ADS');
   url.searchParams.set('status', 'connected');
   url.searchParams.set('storeId', storeId);
@@ -106,7 +106,7 @@ export function buildGoogleAdsSuccessRedirect(storeId: string) {
 }
 
 export function buildGoogleAdsErrorRedirect(storeId: string, code: string) {
-  const url = new URL('/settings/integrations', `${env.FRONTEND_URL}/`);
+  const url = new URL(env.LEGACY_MERCHANT_AUTH_ENABLED ? '/settings/integrations' : '/integrations/complete', `${env.FRONTEND_URL}/`);
   url.searchParams.set('provider', 'GOOGLE_ADS');
   url.searchParams.set('status', 'error');
   url.searchParams.set('code', code);

@@ -77,6 +77,7 @@ function repository(input: {
     recoverStaleClaims: vi.fn().mockResolvedValue({ count: 0 }),
     claimDue: vi.fn().mockResolvedValue(input.claims ?? []),
     markFailed: vi.fn().mockResolvedValue(undefined),
+    pauseForBilling: vi.fn().mockResolvedValue(undefined),
     markDelivered: vi.fn().mockResolvedValue(undefined),
     upsertDestination: vi.fn().mockResolvedValue({ id: 'destination-1' }),
   };
@@ -223,12 +224,11 @@ describe('ConversionDeliveryService worker billing enforcement', () => {
       dead: 0,
     });
 
-    expect(repo.markFailed).toHaveBeenCalledWith(
+    expect(repo.pauseForBilling).toHaveBeenCalledWith(
       'delivery-1',
-      'RETRY',
       new Date('2026-09-28T18:00:00.000Z'),
-      expect.stringContaining('current Stride subscription'),
     );
+    expect(repo.markFailed).not.toHaveBeenCalled();
     expect(repo.markDelivered).not.toHaveBeenCalled();
   });
 });

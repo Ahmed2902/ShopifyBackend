@@ -118,6 +118,9 @@ export class BillingService {
             options.fresh === true,
           );
         } catch (error) {
+          if (error instanceof AppError && (
+            error.code === 'SHOPIFY_PLAN_CONFIGURATION_MISMATCH' || error.code === 'SHOPIFY_PLAN_UNRECOGNIZED'
+          )) throw error;
           if (options.failOnVerificationError || !subscription.lastVerifiedAt) throw error;
           verificationStale = true;
           logger.warn(
@@ -487,7 +490,23 @@ export class BillingService {
       });
     }
 
-    const selectedPlan = this.planFromRemote(remote);
+    let selectedPlan: V1BillingPlan;
+    try {
+      selectedPlan = this.planFromRemote(remote);
+    } catch (error) {
+      if (error instanceof AppError && (
+        error.code === 'SHOPIFY_PLAN_CONFIGURATION_MISMATCH' || error.code === 'SHOPIFY_PLAN_UNRECOGNIZED'
+      )) {
+        // A deterministic invalid contract must revoke the cached grant even when a scheduled
+        // reconciliation is the caller. Transient Partner API errors keep their existing policy.
+        await prisma.storeSubscription.update({
+          where: { storeId },
+          data: { provider: 'SHOPIFY', status: 'EXPIRED', trialEndsAt: now,
+            currentPeriodEndsAt: null, lastVerifiedAt: now },
+        });
+      }
+      throw error;
+    }
     const trialEndsAt = dateOrNull(remote.trialEndsAt) ?? now;
     const currentPeriodEndsAt =
       dateOrNull(remote.currentBillingCycle?.endTime) ?? (trialEndsAt > now ? trialEndsAt : null);
