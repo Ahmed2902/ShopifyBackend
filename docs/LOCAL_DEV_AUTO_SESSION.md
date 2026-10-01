@@ -8,9 +8,9 @@ When the backend runs with `NODE_ENV=development`, Stride can mint a short-lived
 
 The frontend calls `POST /v1/auth/dev-session`, the backend chooses a real local Store membership, and returns the same access-token shape used by the legacy local auth path. Normal store-membership middleware still protects every store-scoped request.
 
-If the local database contains exactly one Store with a membership, no extra configuration is required.
+No additional setting is required as long as the local database contains at least one Store with a membership. When several Stores exist, Stride opens the most recently updated Store automatically.
 
-If it contains multiple Stores, set:
+To pin local development to a specific Store instead, set:
 
 ```env
 DEV_AUTO_SESSION_STORE_ID=<uuid of the Store to open locally>
