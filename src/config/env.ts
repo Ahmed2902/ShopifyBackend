@@ -4,7 +4,7 @@ import { z } from 'zod';
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LEGACY_MERCHANT_AUTH_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
-  DEV_AUTO_SESSION_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  DEV_AUTO_SESSION_ENABLED: z.enum(['true', 'false']).optional().transform((value) => value === undefined ? undefined : value === 'true'),
   DEV_AUTO_SESSION_STORE_ID: z.string().uuid().optional(),
   PORT: z.coerce.number().int().positive().max(65535).default(3001),
   APP_URL: z.string().url().optional(), FRONTEND_URL: z.string().url().optional(), DATABASE_URL: z.string().min(1),
@@ -25,8 +25,9 @@ const envSchema = z.object({
 });
 
 const parsedEnv = envSchema.parse(process.env);
-if (parsedEnv.DEV_AUTO_SESSION_ENABLED && parsedEnv.NODE_ENV !== 'development') {
-  throw new Error('DEV_AUTO_SESSION_ENABLED is permitted only when NODE_ENV=development');
+const devAutoSessionEnabled = parsedEnv.DEV_AUTO_SESSION_ENABLED ?? parsedEnv.NODE_ENV === 'development';
+if (devAutoSessionEnabled && parsedEnv.NODE_ENV !== 'development') {
+  throw new Error('DEV_AUTO_SESSION_ENABLED=true is permitted only when NODE_ENV=development');
 }
 const vercelProductionUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : undefined;
 const appUrl = parsedEnv.APP_URL ?? vercelProductionUrl ?? `http://localhost:${parsedEnv.PORT}`;
@@ -40,7 +41,7 @@ if (parsedEnv.NODE_ENV === 'production') {
   if (isLoopbackUrl(parsedEnv.SHOPIFY_REDIRECT_URI)) throw new Error('SHOPIFY_REDIRECT_URI must be a public callback URL in production');
 }
 export const env = {
-  ...parsedEnv, APP_URL: appUrl, FRONTEND_URL: frontendOrigin, CORS_ORIGIN: corsOrigin,
+  ...parsedEnv, DEV_AUTO_SESSION_ENABLED: devAutoSessionEnabled, APP_URL: appUrl, FRONTEND_URL: frontendOrigin, CORS_ORIGIN: corsOrigin,
   EMAIL_VERIFICATION_URL: parsedEnv.EMAIL_VERIFICATION_URL ?? new URL('/auth/verify-email', `${frontendOrigin}/`).toString(),
   PASSWORD_RESET_URL: parsedEnv.PASSWORD_RESET_URL ?? new URL('/auth/reset-password', `${frontendOrigin}/`).toString(),
   TIKTOK_WEBHOOK_URL: parsedEnv.TIKTOK_WEBHOOK_URL ?? new URL('/v1/integrations/tiktok/webhooks', `${backendOrigin}/`).toString(),
