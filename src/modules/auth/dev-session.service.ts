@@ -52,29 +52,21 @@ async function resolveCandidate(): Promise<DevelopmentCandidate> {
     return store as DevelopmentCandidate;
   }
 
-  const stores = await prisma.store.findMany({
+  const store = await prisma.store.findFirst({
     where: { memberships: { some: {} } },
     select: candidateSelect,
-    orderBy: { createdAt: 'asc' },
-    take: 2,
+    orderBy: { updatedAt: 'desc' },
   });
 
-  if (stores.length === 0) {
+  if (!store) {
     throw new AppError(
       'No local Store with a membership exists. Seed or connect a development store first.',
       503,
       'DEV_AUTO_SESSION_STORE_REQUIRED',
     );
   }
-  if (stores.length > 1) {
-    throw new AppError(
-      'Multiple local Stores exist. Set DEV_AUTO_SESSION_STORE_ID to choose which dashboard to open.',
-      503,
-      'DEV_AUTO_SESSION_STORE_AMBIGUOUS',
-    );
-  }
 
-  return stores[0] as DevelopmentCandidate;
+  return store as DevelopmentCandidate;
 }
 
 export async function createDevelopmentAutoSession() {
