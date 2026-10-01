@@ -8,6 +8,7 @@ import {
   verifyEmailSchema,
 } from './auth.schema.js';
 import { authService, type AuthService } from './auth.service.js';
+import { createDevelopmentAutoSession } from './dev-session.service.js';
 import {
   clearRefreshCookie,
   REFRESH_COOKIE_NAME,
@@ -21,6 +22,11 @@ function noStore(res: Response): void {
 
 export class AuthController {
   constructor(private readonly service: AuthService) {}
+
+  devSession = async (_req: Request, res: Response) => {
+    noStore(res);
+    res.status(200).json(await createDevelopmentAutoSession());
+  };
 
   register = async (req: Request, res: Response) => {
     noStore(res);
