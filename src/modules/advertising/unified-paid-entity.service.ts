@@ -1,4 +1,6 @@
 import { AppError } from '../../errors/app-error.js';
+import { CanonicalCreativeVideoRetentionService } from '../analytics/canonical-creative-video-retention.service.js';
+import type { CreativeVideoRetentionService } from '../analytics/creative-video-retention.service.js';
 import { pagination } from '../analytics/analytics.shared.js';
 import { resolveAnalyticsWindows } from '../analytics/analytics.dates.js';
 import { percentChange } from '../analytics/analytics.metrics.js';
@@ -144,7 +146,8 @@ export function unifiedPaidEntitySignals(
     values.push({
       code: 'NO_CONVERSION_SPEND',
       severity: 'WARNING',
-      conclusion: 'Provider-reported spend is present with zero reported conversions in the current period.',
+      conclusion:
+        'Provider-reported spend is present with zero reported conversions in the current period.',
       evidence: { spend: current.spend, providerConversions: current.providerConversions },
     });
   }
@@ -189,11 +192,13 @@ export function unifiedPaidEntitySignals(
       evidence: { ctrChange: ctrDelta, currentCtr: current.ctr, comparisonCtr: comparison.ctr },
     });
   }
-  const conversionsDelta = relative(
-    current.providerConversions,
-    comparison.providerConversions,
-  );
-  if (spendDelta !== null && conversionsDelta !== null && spendDelta > 0.1 && conversionsDelta < -0.1) {
+  const conversionsDelta = relative(current.providerConversions, comparison.providerConversions);
+  if (
+    spendDelta !== null &&
+    conversionsDelta !== null &&
+    spendDelta > 0.1 &&
+    conversionsDelta < -0.1
+  ) {
     values.push({
       code: 'CONVERSIONS_DOWN_SPEND_UP',
       severity: 'HIGH',
@@ -213,7 +218,8 @@ export function unifiedPaidEntitySignals(
     values.push({
       code: 'STRONG_PROVIDER_EFFICIENCY',
       severity: 'INFO',
-      conclusion: 'Provider-reported efficiency improved with a non-trivial conversion and delivery sample.',
+      conclusion:
+        'Provider-reported efficiency improved with a non-trivial conversion and delivery sample.',
       evidence: {
         providerRoas: current.providerRoas,
         comparisonProviderRoas: comparison.providerRoas,
@@ -240,10 +246,7 @@ function changes(current: PaidEntityMetrics, comparison: PaidEntityMetrics) {
     ctr: percentChange(current.ctr, comparison.ctr),
     cpc: percentChange(current.cpc, comparison.cpc),
     cpm: percentChange(current.cpm, comparison.cpm),
-    providerConversions: percentChange(
-      current.providerConversions,
-      comparison.providerConversions,
-    ),
+    providerConversions: percentChange(current.providerConversions, comparison.providerConversions),
     providerConversionValue: percentChange(
       current.providerConversionValue,
       comparison.providerConversionValue,
@@ -252,10 +255,7 @@ function changes(current: PaidEntityMetrics, comparison: PaidEntityMetrics) {
   };
 }
 
-function item(
-  identity: UnifiedPaidEntityIdentity,
-  rows: UnifiedPaidEntityMetricRow[],
-) {
+function item(identity: UnifiedPaidEntityIdentity, rows: UnifiedPaidEntityMetricRow[]) {
   const currency = identity.account.currency;
   const current = aggregate(
     rows.filter(
@@ -266,9 +266,7 @@ function item(
   const comparison = aggregate(
     rows.filter(
       (row) =>
-        row.entityId === identity.id &&
-        row.period === 'COMPARISON' &&
-        row.currency === currency,
+        row.entityId === identity.id && row.period === 'COMPARISON' && row.currency === currency,
     ),
   );
   return {
@@ -296,8 +294,8 @@ export class UnifiedPaidEntityService {
   constructor(
     private readonly scope: UnifiedAdvertisingScopeService = unifiedAdvertisingScopeService,
     private readonly repository: UnifiedPaidEntityRepository = new UnifiedPaidEntityRepository(),
-    private readonly context: IntelligenceContextReadRepository =
-      new IntelligenceContextReadRepository(),
+    private readonly context: IntelligenceContextReadRepository = new IntelligenceContextReadRepository(),
+    private readonly videoRetention: CreativeVideoRetentionService = new CanonicalCreativeVideoRetentionService(),
   ) {}
 
   async list(
@@ -325,15 +323,32 @@ export class UnifiedPaidEntityService {
       page: query.page,
       limit: query.limit,
     });
-    const rows = await this.repository.metrics({
-      kind,
-      entityIds: page.items.map((entity) => entity.id),
-      currentFrom: windows.current.metaFrom,
-      currentTo: windows.current.metaTo,
-      comparisonFrom: windows.comparison.metaFrom,
-      comparisonTo: windows.comparison.metaTo,
-      currency: query.currency,
-    });
+    const metaCreatives =
+      kind === 'CREATIVE' ? page.items.filter((entity) => entity.account.provider === 'META') : [];
+    const [rows, retention] = await Promise.all([
+      this.repository.metrics({
+        kind,
+        entityIds: page.items.map((entity) => entity.id),
+        currentFrom: windows.current.metaFrom,
+        currentTo: windows.current.metaTo,
+        comparisonFrom: windows.comparison.metaFrom,
+        comparisonTo: windows.comparison.metaTo,
+        currency: query.currency,
+      }),
+      metaCreatives.length > 0
+        ? this.videoRetention.forCreatives({
+            storeId,
+            selectedAccountIds: [
+              ...new Set(metaCreatives.map((entity) => entity.account.providerEntityId)),
+            ],
+            windows,
+            creatives: metaCreatives.map((entity) => ({
+              id: entity.id,
+              videoId: typeof entity.metadata.videoId === 'string' ? entity.metadata.videoId : null,
+            })),
+          })
+        : Promise.resolve(new Map()),
+    ]);
     return {
       schemaVersion: '2.0',
       entityKind: kind,
@@ -349,7 +364,10 @@ export class UnifiedPaidEntityService {
       },
       attributionMeaning:
         'Conversions, conversion value and ROAS are provider-reported attribution evidence, not Shopify revenue.',
-      items: page.items.map((identity) => item(identity, rows)),
+      items: page.items.map((identity) => ({
+        ...item(identity, rows),
+        ...(kind === 'CREATIVE' ? { videoRetention: retention.get(identity.id) ?? null } : {}),
+      })),
       pagination: pagination(query.page, query.limit, page.total),
       capabilities: {
         groupVocabulary: 'GROUP',
