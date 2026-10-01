@@ -4,6 +4,8 @@ import { z } from 'zod';
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LEGACY_MERCHANT_AUTH_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  DEV_AUTO_SESSION_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  DEV_AUTO_SESSION_STORE_ID: z.string().uuid().optional(),
   PORT: z.coerce.number().int().positive().max(65535).default(3001),
   APP_URL: z.string().url().optional(), FRONTEND_URL: z.string().url().optional(), DATABASE_URL: z.string().min(1),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
@@ -23,6 +25,9 @@ const envSchema = z.object({
 });
 
 const parsedEnv = envSchema.parse(process.env);
+if (parsedEnv.DEV_AUTO_SESSION_ENABLED && parsedEnv.NODE_ENV !== 'development') {
+  throw new Error('DEV_AUTO_SESSION_ENABLED is permitted only when NODE_ENV=development');
+}
 const vercelProductionUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : undefined;
 const appUrl = parsedEnv.APP_URL ?? vercelProductionUrl ?? `http://localhost:${parsedEnv.PORT}`;
 const frontendUrl = parsedEnv.FRONTEND_URL ?? parsedEnv.CORS_ORIGIN ?? 'http://localhost:3000';
