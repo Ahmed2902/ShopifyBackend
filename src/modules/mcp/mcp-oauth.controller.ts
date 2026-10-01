@@ -1,9 +1,17 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
+import { AppError } from '../../errors/app-error.js';
 import { mcpOAuthService, type McpOAuthService } from './mcp-oauth.service.js';
 
-const pkceVerifier = z.string().min(43).max(128).regex(/^[A-Za-z0-9._~-]+$/);
-const pkceChallenge = z.string().length(43).regex(/^[A-Za-z0-9_-]+$/);
+const pkceVerifier = z
+  .string()
+  .min(43)
+  .max(128)
+  .regex(/^[A-Za-z0-9._~-]+$/);
+const pkceChallenge = z
+  .string()
+  .length(43)
+  .regex(/^[A-Za-z0-9_-]+$/);
 const publicUrl = z.string().max(2048).url();
 
 const authorizeSchema = z.object({
@@ -83,13 +91,27 @@ export class McpOAuthController {
   authorizationRequest = async (req: Request, res: Response) => {
     noStore(res);
     const { requestId } = requestParamsSchema.parse(req.params);
-    res.status(200).json(await this.service.authorizationRequest(req.context.userId!, requestId));
+    if (req.context.authSource === 'SHOPIFY' && !req.context.storeId) {
+      throw new AppError('Shopify store context missing', 401, 'MCP_STORE_FORBIDDEN');
+    }
+    res
+      .status(200)
+      .json(
+        await this.service.authorizationRequest(
+          req.context.userId!,
+          requestId,
+          req.context.authSource === 'SHOPIFY' ? req.context.storeId : undefined,
+        ),
+      );
   };
 
   approve = async (req: Request, res: Response) => {
     noStore(res);
     const { requestId } = requestParamsSchema.parse(req.params);
     const { storeId } = approvalSchema.parse(req.body);
+    if (req.context.authSource === 'SHOPIFY' && storeId !== req.context.storeId) {
+      throw new AppError('Authorize only the current Shopify store', 403, 'MCP_STORE_FORBIDDEN');
+    }
     res.status(200).json({
       redirectUrl: await this.service.approve(req.context.userId!, requestId, storeId),
     });

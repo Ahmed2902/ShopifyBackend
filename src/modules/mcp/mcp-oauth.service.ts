@@ -30,7 +30,10 @@ const MAX_CLIENT_METADATA_BYTES = 64 * 1024;
 const MAX_CLIENT_REDIRECT_URIS = 20;
 
 function normalizeIp(address: string) {
-  const withoutBrackets = address.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  const withoutBrackets = address
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '');
   const zoneIndex = withoutBrackets.indexOf('%');
   return zoneIndex >= 0 ? withoutBrackets.slice(0, zoneIndex) : withoutBrackets;
 }
@@ -45,7 +48,10 @@ function nonPublicIp(address: string): boolean {
   const family = isIP(normalized);
   if (family === 4) {
     const parts = normalized.split('.').map(Number);
-    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    if (
+      parts.length !== 4 ||
+      parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+    ) {
       return true;
     }
     const [first, second, third] = parts as [number, number, number, number];
@@ -137,7 +143,8 @@ async function readBoundedJson(response: Response): Promise<Record<string, unkno
   }
   try {
     const parsed = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('object required');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+      throw new Error('object required');
     return parsed as Record<string, unknown>;
   } catch {
     throw new AppError('Invalid MCP client metadata document', 400, 'MCP_INVALID_CLIENT');
@@ -186,7 +193,11 @@ export class McpOAuthService {
       (grant) => grant !== 'authorization_code' && grant !== 'refresh_token',
     );
     if (unsupportedGrant) {
-      throw new AppError(`Unsupported grant type: ${unsupportedGrant}`, 400, 'MCP_INVALID_CLIENT_METADATA');
+      throw new AppError(
+        `Unsupported grant type: ${unsupportedGrant}`,
+        400,
+        'MCP_INVALID_CLIENT_METADATA',
+      );
     }
     const unsupportedResponse = input.response_types?.find((type) => type !== 'code');
     if (unsupportedResponse) {
@@ -221,7 +232,11 @@ export class McpOAuthService {
     codeChallengeMethod: string;
   }) {
     if (input.responseType !== 'code') {
-      throw new AppError('Only response_type=code is supported', 400, 'MCP_UNSUPPORTED_RESPONSE_TYPE');
+      throw new AppError(
+        'Only response_type=code is supported',
+        400,
+        'MCP_UNSUPPORTED_RESPONSE_TYPE',
+      );
     }
     if (input.codeChallengeMethod !== 'S256' || !input.codeChallenge) {
       throw new AppError('PKCE S256 is required', 400, 'MCP_PKCE_REQUIRED');
@@ -258,14 +273,19 @@ export class McpOAuthService {
     return consentUrl.toString();
   }
 
-  async authorizationRequest(userId: string, requestId: string) {
+  async authorizationRequest(userId: string, requestId: string, authenticatedStoreId?: string) {
     const request = await this.requirePendingRequest(requestId);
     const stores = await this.repository.listUserStores(userId);
     return {
       id: request.id,
       client: { id: request.clientId, name: request.clientName },
+      redirectUri: request.redirectUri,
       scopes: request.scopes,
-      stores: stores.map((membership) => ({ ...membership.store, role: membership.role })),
+      stores: stores
+        .filter(
+          (membership) => !authenticatedStoreId || membership.store.id === authenticatedStoreId,
+        )
+        .map((membership) => ({ ...membership.store, role: membership.role })),
       expiresAt: request.expiresAt,
     };
   }
@@ -305,7 +325,14 @@ export class McpOAuthService {
   async deny(userId: string, requestId: string) {
     const request = await this.requirePendingRequest(requestId);
     void userId;
-    await this.repository.deleteAuthorizationRequest(request.id);
+    const claimed = await this.repository.deleteAuthorizationRequest(request.id);
+    if (claimed.count !== 1) {
+      throw new AppError(
+        'Authorization request has already been used',
+        400,
+        'MCP_AUTH_REQUEST_EXPIRED',
+      );
+    }
     const redirect = new URL(request.redirectUri);
     redirect.searchParams.set('error', 'access_denied');
     redirect.searchParams.set('error_description', 'The merchant declined Stride MCP access.');
@@ -479,7 +506,9 @@ export class McpOAuthService {
     return {
       clientId,
       clientName:
-        typeof metadata.client_name === 'string' ? metadata.client_name.slice(0, 120) : url.hostname,
+        typeof metadata.client_name === 'string'
+          ? metadata.client_name.slice(0, 120)
+          : url.hostname,
       redirectUris,
     };
   }
@@ -492,8 +521,8 @@ export class McpOAuthService {
       throw new AppError('Invalid MCP redirect URI', 400, 'MCP_INVALID_REDIRECT_URI');
     }
     const loopback =
-      url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1';
-    if (url.protocol !== 'https:' && !loopback) {
+      url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]';
+    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) {
       throw new AppError(
         'MCP redirect URI must use HTTPS or loopback',
         400,
