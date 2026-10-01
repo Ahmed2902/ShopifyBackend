@@ -6,7 +6,8 @@ export class StoreController {
 
   list = async (req: Request, res: Response) => {
     const stores = await this.service.listForUser(req.context.userId!);
-    res.status(200).json({ stores });
+    res.status(200).json({ stores: req.context.authSource === 'SHOPIFY'
+      ? stores.filter(store => store.id === req.context.storeId) : stores });
   };
 
   getById = async (req: Request, res: Response) => {

@@ -1,4 +1,6 @@
 process.env.NODE_ENV = 'test';
+// Existing auth suites explicitly test the temporary migration rollback path.
+process.env.LEGACY_MERCHANT_AUTH_ENABLED ??= 'true';
 process.env.APP_URL ??= 'http://localhost:3001';
 process.env.FRONTEND_URL ??= 'http://localhost:3000';
 process.env.DATABASE_URL ??= 'postgresql://postgres:postgres@localhost:5432/shopify_intelligence_test';

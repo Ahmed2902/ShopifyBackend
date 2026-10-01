@@ -214,8 +214,13 @@ export class ConversionDeliveryRepository {
           AND d."nextAttemptAt" <= ${now}
           AND dest."status" = 'ACTIVE'
           AND sub."status" IN ('TRIALING', 'ACTIVE')
+          AND (sub."status" = 'ACTIVE' OR (sub."provider" = 'INTERNAL' AND sub."trialEndsAt" > ${now}))
           AND (
-            sub."selectedPlan" = 'PRO'
+            (sub."trialEndsAt" > ${now} AND (
+              (sub."provider" = 'INTERNAL' AND sub."status" = 'TRIALING')
+              OR (sub."provider" = 'SHOPIFY' AND sub."status" = 'ACTIVE')
+            ))
+            OR sub."selectedPlan" = 'PRO'
             OR (
               sub."selectedPlan" = 'ESSENTIALS'
               AND sub."essentialsAdProvider" IS NOT NULL
@@ -271,6 +276,18 @@ export class ConversionDeliveryRepository {
         processingStartedAt: null,
         nextAttemptAt,
         lastError: error.slice(0, 2_000),
+      },
+    });
+  }
+
+  pauseForBilling(id: string, nextAttemptAt: Date) {
+    return prisma.conversionDelivery.update({
+      where: { id },
+      data: {
+        status: 'RETRY',
+        processingStartedAt: null,
+        nextAttemptAt,
+        lastError: 'Delivery paused because the current Stride subscription does not authorize this provider',
       },
     });
   }

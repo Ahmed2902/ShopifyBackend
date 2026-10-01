@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../../errors/app-error.js';
+import { advertisingReconciliationService } from '../advertising/reconciliation/advertising-reconciliation.service.js';
 import { billingService, type BillingService } from '../billing/billing.service.js';
 import {
   tiktokAdGroupListQuerySchema,
@@ -91,7 +92,8 @@ export class TikTokController {
   };
 
   sync = async (req: Request, res: Response) => {
-    res.status(200).json(await this.service.syncAdsHierarchy(req.context.storeId!));
+    const result = await advertisingReconciliationService.requestManual(req.context.storeId!, 'TIKTOK');
+    res.status(result.status === 'COOLDOWN' ? 200 : 202).json(result);
   };
 
   syncCatalogs = async (req: Request, res: Response) => {

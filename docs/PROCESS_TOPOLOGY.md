@@ -57,7 +57,9 @@ The readiness endpoint verifies PostgreSQL connectivity.
 npm run start:worker
 ```
 
-The worker process owns the persistent Shopify webhook, TikTok webhook, scheduled reconciliation, Pixel journey, Pixel behavior, Pixel attribution, and Pixel retention pollers.
+The worker process owns the persistent Shopify webhook, TikTok webhook, Shopify reconciliation, paid-media reconciliation, server-side conversion delivery, Pixel journey, Pixel behavior, Pixel attribution, and Pixel retention pollers.
+
+Paid-media reconciliation checks its indexed due-work queue once per minute and claims at most two Store/provider states per pass. New Store/provider schedules are deterministically phase-spread by up to one hour, then successful provider reconciliation recurs at an exact 24-hour interval; Meta/TikTok catalogs recur every 72 hours. TikTok webhook bursts are persisted first and coalesced into a delayed dirty-provider refresh instead of executing one provider sync per webhook.
 
 Start with one worker replica during merchant testing. Increase worker concurrency only after the claim/lease behavior for each queue has been deliberately load-tested.
 
@@ -94,7 +96,7 @@ Persistent backend host
 PostgreSQL / Supabase
 Redis REST
 Resend
-Shopify / Meta / optional TikTok
+Shopify / Meta / TikTok / Google Ads
 ```
 
 Both backend services must use the same application revision and the same database/integration environment values. Only the API service needs an externally reachable HTTP port.

@@ -1,5 +1,6 @@
 import { logger } from './lib/logger.js';
 import { PollingWorker } from './lib/polling-worker.js';
+import { advertisingReconciliationService } from './modules/advertising/reconciliation/advertising-reconciliation.service.js';
 import { authEmailDeliveryService } from './modules/auth/auth.email-delivery.js';
 import { billingReconciliationService } from './modules/billing/billing-reconciliation.service.js';
 import { conversionDeliveryService } from './modules/conversion-delivery/conversion-delivery.service.js';
@@ -64,6 +65,15 @@ const reconciliationWorker = new PollingWorker(
     if (result.claimed > 0) logger.info(result, 'Processed scheduled reconciliation batch');
   },
   'Scheduled reconciliation worker failed',
+);
+
+const advertisingReconciliationWorker = new PollingWorker(
+  60_000,
+  async () => {
+    const result = await advertisingReconciliationService.processDue(2);
+    if (result.claimed > 0) logger.info(result, 'Processed paid-media reconciliation batch');
+  },
+  'Paid-media reconciliation worker failed',
 );
 
 const pixelJourneyWorker = new PollingWorker(
@@ -157,6 +167,7 @@ const workers = [
   authEmailWorker,
   billingReconciliationWorker,
   reconciliationWorker,
+  advertisingReconciliationWorker,
   pixelJourneyWorker,
   conversionEnqueueWorker,
   conversionDeliveryWorker,

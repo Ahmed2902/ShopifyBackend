@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../../errors/app-error.js';
+import { advertisingReconciliationService } from '../advertising/reconciliation/advertising-reconciliation.service.js';
 import { googleAdsMappingService } from './google-ads-mapping.service.js';
 import { GoogleAdsRepository } from './google-ads.repository.js';
 import {
@@ -81,9 +82,17 @@ export class GoogleAdsController {
 
   sync = async (req: Request, res: Response) => {
     const { mode } = googleAdsSyncSchema.parse(req.body ?? {});
-    const sync = await googleAdsService.sync(req.context.storeId!, mode);
-    const mappings = await googleAdsMappingService.projectDeterministicFinalUrls(req.context.storeId!);
-    res.status(200).json({ ...sync, mappings });
+    if (mode === 'HISTORICAL') {
+      const sync = await googleAdsService.sync(req.context.storeId!, mode);
+      const mappings = await googleAdsMappingService.projectDeterministicFinalUrls(req.context.storeId!);
+      res.status(200).json({ ...sync, mappings });
+      return;
+    }
+    const result = await advertisingReconciliationService.requestManual(
+      req.context.storeId!,
+      'GOOGLE_ADS',
+    );
+    res.status(result.status === 'COOLDOWN' ? 200 : 202).json(result);
   };
 
   disconnect = async (req: Request, res: Response) => {

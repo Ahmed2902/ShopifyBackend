@@ -1,6 +1,8 @@
 import { env } from '../../../config/env.js';
-import { AppError } from '../../../errors/app-error.js';
-import { tiktokService, type TikTokService } from '../tiktok.service.js';
+import {
+  advertisingReconciliationService,
+  type AdvertisingReconciliationService,
+} from '../../advertising/reconciliation/advertising-reconciliation.service.js';
 import {
   asRecord,
   deriveTikTokDeliveryId,
@@ -12,11 +14,12 @@ import {
 import { TikTokWebhookRepository } from './tiktok-webhook.repository.js';
 
 const STALE_PROCESSING_MS = 5 * 60_000;
+type ReconciliationScheduler = Pick<AdvertisingReconciliationService, 'markTikTokUrgent'>;
 
 export class TikTokWebhookService {
   constructor(
     private readonly repository: TikTokWebhookRepository,
-    private readonly tiktokService: TikTokService,
+    private readonly reconciliation: ReconciliationScheduler,
   ) {}
 
   async receive(input: {
@@ -101,10 +104,11 @@ export class TikTokWebhookService {
       try {
         const storeId = delivery.tiktokConnection.storeId;
         const topic = delivery.topic.toUpperCase();
+        let kinds: string[] | null = null;
         if (topic === 'REPORT_DATA_CHANGE') {
-          await this.tiktokService.syncInsights(storeId, 2);
+          kinds = ['INSIGHTS'];
         } else if (topic.includes('CATALOG') || topic.includes('PRODUCT')) {
-          await this.tiktokService.syncCatalogs(storeId);
+          kinds = ['CATALOG'];
         } else if (
           topic === 'AD_REVIEW' ||
           topic === 'AD_GROUP_REVIEW' ||
@@ -112,9 +116,18 @@ export class TikTokWebhookService {
           topic.includes('AD_ACCOUNT') ||
           topic.startsWith('WEBHOOK_')
         ) {
-          await this.tiktokService.syncAdsHierarchy(storeId);
-        } else {
+          kinds = ['HIERARCHY'];
+        }
+
+        if (!kinds) {
           await this.repository.markIgnored(id, `No reconciliation handler for ${delivery.topic}`);
+          ignored += 1;
+          continue;
+        }
+
+        const scheduled = await this.reconciliation.markTikTokUrgent(storeId, kinds);
+        if (!scheduled) {
+          await this.repository.markIgnored(id, 'TikTok connection is inactive or not configured');
           ignored += 1;
           continue;
         }
@@ -122,16 +135,8 @@ export class TikTokWebhookService {
         processed += 1;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (
-          error instanceof AppError &&
-          ['TIKTOK_NOT_CONNECTED', 'TIKTOK_CONNECTION_INACTIVE'].includes(error.code)
-        ) {
-          await this.repository.markIgnored(id, message);
-          ignored += 1;
-        } else {
-          await this.repository.markFailed(id, delivery.attempts, message);
-          failed += 1;
-        }
+        await this.repository.markFailed(id, delivery.attempts, message);
+        failed += 1;
       }
     }
 
@@ -141,5 +146,5 @@ export class TikTokWebhookService {
 
 export const tiktokWebhookService = new TikTokWebhookService(
   new TikTokWebhookRepository(),
-  tiktokService,
+  advertisingReconciliationService,
 );
