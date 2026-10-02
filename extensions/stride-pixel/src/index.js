@@ -171,6 +171,7 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
   if (!collectorUrl || !installationId || !collectorToken) return;
 
   let privacy = init.customerPrivacy;
+  let privacyRevision = 0;
   let sessionId = await browser.sessionStorage.getItem(SESSION_KEY);
   let lastActivityAtMs = 0;
   const storedLastActivity = await browser.sessionStorage.getItem(SESSION_LAST_ACTIVITY_KEY);
@@ -200,6 +201,7 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
   let handling = Promise.resolve();
 
   customerPrivacy.subscribe('visitorConsentCollected', (event) => {
+    privacyRevision += 1;
     privacy = event.customerPrivacy;
     // Re-check queued events when consent changes before transmitting them.
     for (const batch of [queue, inFlightBatch ?? []]) {
@@ -328,17 +330,20 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
 
   async function handle(event) {
     if (!privacy?.analyticsProcessingAllowed) return;
+    const revision = privacyRevision;
 
     const eventName = mapEventName(event.name);
     if (!eventName) return;
 
     await ensureSession(event);
+    if (revision !== privacyRevision || !privacy?.analyticsProcessingAllowed) return;
     lastVisitorId = event.clientId || lastVisitorId;
     lastSessionId = sessionId;
     await Promise.all([
       ...(lastVisitorId ? [browser.sessionStorage.setItem(PRIVACY_VISITOR_KEY, lastVisitorId)] : []),
       browser.sessionStorage.setItem(PRIVACY_SESSION_KEY, lastSessionId),
     ]);
+    if (revision !== privacyRevision || !privacy?.analyticsProcessingAllowed) return;
 
     const current = safeUrl(event.context?.document?.location?.href);
     if (!landing || hasAttribution(current.attribution)) {
@@ -346,6 +351,7 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
       await browser.sessionStorage.setItem(LANDING_KEY, JSON.stringify(landing));
     }
     const referrer = safeUrl(event.context?.document?.referrer);
+    if (revision !== privacyRevision || !privacy?.analyticsProcessingAllowed) return;
 
     queue.push({
       eventId: event.id,

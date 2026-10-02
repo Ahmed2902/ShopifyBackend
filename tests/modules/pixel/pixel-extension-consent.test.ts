@@ -2,8 +2,10 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 
-async function pixel(privacy: Record<string, boolean>, storage = new Map<string, string>()) {
+async function pixel(privacy: Record<string, boolean>, storage = new Map<string, string>(), pauseSessionWrite = false) {
   const subscriptions = new Map<string, (event: unknown) => void>();
+  let resumeSession: () => void = () => undefined;
+  const sessionGate = pauseSessionWrite ? new Promise<void>(resolve => { resumeSession = resolve; }) : Promise.resolve();
   const timers: Array<() => void> = [];
   const fetch = vi.fn().mockResolvedValue({ ok: true });
   let registered: Promise<void> | undefined;
@@ -39,6 +41,7 @@ async function pixel(privacy: Record<string, boolean>, storage = new Map<string,
           sessionStorage: {
             getItem: async (key: string) => storage.get(key) ?? null,
             setItem: async (key: string, value: string) => {
+              if (key === 'stride_pixel_session_id') await sessionGate;
               storage.set(key, value);
             },
             removeItem: async (key: string) => {
@@ -59,6 +62,7 @@ async function pixel(privacy: Record<string, boolean>, storage = new Map<string,
     fetch,
     update,
     storage,
+    resumeSession,
     eventRequests: () =>
       fetch.mock.calls.filter((call) => JSON.parse(call[1].body).events.length > 0),
     withdrawals: () => fetch.mock.calls.filter((call) => JSON.parse(call[1].body).withdrawal),
@@ -67,7 +71,7 @@ async function pixel(privacy: Record<string, boolean>, storage = new Map<string,
         id: 'test-event',
         name: 'page_viewed',
         timestamp: new Date().toISOString(),
-        clientId: 'visitor',
+        clientId: 'visitor-test',
         context: { document: { location: { href: 'https://store.test/?fbclid=click' } } },
       });
       // Allow the extension's serial handling and storage promises to complete.
@@ -217,7 +221,7 @@ describe('Durable privacy-only withdrawal', () => {
       expect(request[1].keepalive).toBe(true);
       expect(JSON.parse(request[1].body)).toMatchObject({
         events: [],
-        withdrawal: { anonymousVisitorId: 'visitor', sessionId: 'test-event' },
+        withdrawal: { anonymousVisitorId: 'visitor-test', sessionId: 'test-event' },
       });
       expect(request[1].body).not.toContain('metaClickId');
       expect(request[1].body).not.toContain('pageUrl');
@@ -238,8 +242,20 @@ describe('Durable privacy-only withdrawal', () => {
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(reopened.eventRequests()).toHaveLength(0);
     expect(JSON.parse(reopened.withdrawals()[0]![1].body).withdrawal).toEqual({
-      anonymousVisitorId: 'visitor',
+      anonymousVisitorId: 'visitor-test',
       sessionId: 'test-event',
     });
   });
+});
+
+
+it('does not capture an old event whose storage awaits span withdrawal and regrant', async () => {
+  const allowed = { analyticsProcessingAllowed: true, marketingAllowed: true, saleOfDataAllowed: true };
+  const extension = await pixel(allowed, new Map(), true);
+  await extension.event();
+  extension.update({ customerPrivacy: { ...allowed, analyticsProcessingAllowed: false } });
+  extension.update({ customerPrivacy: allowed });
+  extension.resumeSession();
+  await new Promise<void>(resolve => setImmediate(resolve)); await extension.flush();
+  expect(extension.eventRequests()).toHaveLength(0);
 });
