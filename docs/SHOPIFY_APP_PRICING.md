@@ -4,6 +4,8 @@ Stride uses **Shopify App Pricing** for public App Store billing. Do not add Str
 
 ## Launch plans
 
+Ahmed confirmed these prices and 14 trial days on both plans on 2026-10-03 (Africa/Cairo). Source catalogs already match. Actual hosted plans remain an account task; use [account setup](SHOPIFY_APP_ACCOUNT_SETUP.md) for exact value/environment mappings. Shopify determines returning-store trial eligibility.
+
 Configure these as public monthly plans in Shopify's Partner/Dev Dashboard:
 
 | Plan | Price | Billing | Trial |

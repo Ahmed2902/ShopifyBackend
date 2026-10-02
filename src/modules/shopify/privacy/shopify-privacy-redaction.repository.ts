@@ -16,140 +16,157 @@ export class ShopifyPrivacyRedactionRepository {
     sessionsDeleted: number;
     eventsDeleted: number;
   }> {
-    return prisma.$transaction(
-      async (tx) => {
-        if (orderExternalIds.length > 0) {
-          await tx.shopifyOrderRedaction.createMany({
-            data: orderExternalIds.map((shopifyOrderId) => ({
-              storeId,
-              shopifyOrderId,
-              sourceWebhookDeliveryId: deliveryId,
-            })),
-            skipDuplicates: true,
-          });
-        }
+    return prisma.$transaction(async (tx) => {
+      if (orderExternalIds.length > 0) {
+        await tx.shopifyOrderRedaction.createMany({
+          data: orderExternalIds.map((shopifyOrderId) => ({
+            storeId,
+            shopifyOrderId,
+            sourceWebhookDeliveryId: deliveryId,
+          })),
+          skipDuplicates: true,
+        });
+      }
 
-        const orders = await tx.order.findMany({
-          where: { storeId, shopifyOrderId: { in: orderExternalIds } },
+      const orders = await tx.order.findMany({
+        where: { storeId, shopifyOrderId: { in: orderExternalIds } },
+        select: { id: true },
+      });
+      const orderIds = orders.map((order) => order.id);
+
+      // Conversion-delivery rows can retain click identifiers while pending/retrying. Erase them
+      // with the customer/order redaction rather than waiting for generic storefront retention.
+      await tx.conversionDelivery.deleteMany({
+        where: {
+          storeId,
+          OR: [
+            { shopifyOrderId: { in: orderExternalIds } },
+            ...(orderIds.length > 0 ? [{ sourceOrderId: { in: orderIds } }] : []),
+          ],
+        },
+      });
+
+      const rawOrderEvents = await tx.storefrontEvent.findMany({
+        where: { storeId, shopifyOrderExternalId: { in: orderExternalIds } },
+        select: { sessionId: true, anonymousVisitorId: true },
+      });
+      const rawBrowserSessionIds = uniqueStrings(rawOrderEvents.map((event) => event.sessionId));
+
+      const sessions = await tx.storefrontSession.findMany({
+        where: {
+          storeId,
+          OR: [
+            { shopifyOrderExternalId: { in: orderExternalIds } },
+            ...(orderIds.length > 0 ? [{ orderId: { in: orderIds } }] : []),
+            ...(rawBrowserSessionIds.length > 0
+              ? [{ browserSessionId: { in: rawBrowserSessionIds } }]
+              : []),
+          ],
+        },
+        select: { id: true, browserSessionId: true, anonymousVisitorId: true },
+      });
+      const sessionIds = sessions.map((session) => session.id);
+      const browserSessionIds = uniqueStrings([
+        ...rawBrowserSessionIds,
+        ...sessions.map((session) => session.browserSessionId),
+      ]);
+
+      const relatedVisitorEvents =
+        browserSessionIds.length > 0
+          ? await tx.storefrontEvent.findMany({
+              where: { storeId, sessionId: { in: browserSessionIds } },
+              select: { anonymousVisitorId: true },
+            })
+          : [];
+      const withdrawalKeys = [
+        ...new Set([
+          ...browserSessionIds.map((id) => `session:${id}`),
+          ...[...rawOrderEvents, ...sessions, ...relatedVisitorEvents].flatMap((event) =>
+            event.anonymousVisitorId ? [`visitor:${event.anonymousVisitorId}`] : [],
+          ),
+        ]),
+      ];
+      if (withdrawalKeys.length > 0)
+        await tx.storefrontConsentWithdrawal.deleteMany({
+          where: { storeId, scopeKey: { in: withdrawalKeys } },
+        });
+
+      const events = await tx.storefrontEvent.deleteMany({
+        where: {
+          storeId,
+          OR: [
+            { shopifyOrderExternalId: { in: orderExternalIds } },
+            ...(browserSessionIds.length > 0 ? [{ sessionId: { in: browserSessionIds } }] : []),
+          ],
+        },
+      });
+      if (browserSessionIds.length > 0) {
+        await tx.storefrontSessionRepair.deleteMany({
+          where: { storeId, browserSessionId: { in: browserSessionIds } },
+        });
+      }
+      const deletedSessions = await tx.storefrontSession.deleteMany({
+        where: { id: { in: sessionIds }, storeId },
+      });
+
+      await tx.shopifyDataRequest.deleteMany({
+        where: {
+          storeId,
+          requestedOrderIds: { hasSome: orderExternalIds },
+        },
+      });
+
+      if (orderIds.length > 0) {
+        const refunds = await tx.refund.findMany({
+          where: { orderId: { in: orderIds } },
           select: { id: true },
         });
-        const orderIds = orders.map((order) => order.id);
-
-        // Conversion-delivery rows can retain click identifiers while pending/retrying. Erase them
-        // with the customer/order redaction rather than waiting for generic storefront retention.
-        await tx.conversionDelivery.deleteMany({
-          where: {
-            storeId,
-            OR: [
-              { shopifyOrderId: { in: orderExternalIds } },
-              ...(orderIds.length > 0 ? [{ sourceOrderId: { in: orderIds } }] : []),
-            ],
-          },
-        });
-
-        const rawOrderEvents = await tx.storefrontEvent.findMany({
-          where: { storeId, shopifyOrderExternalId: { in: orderExternalIds } },
-          select: { sessionId: true },
-        });
-        const rawBrowserSessionIds = uniqueStrings(rawOrderEvents.map((event) => event.sessionId));
-
-        const sessions = await tx.storefrontSession.findMany({
-          where: {
-            storeId,
-            OR: [
-              { shopifyOrderExternalId: { in: orderExternalIds } },
-              ...(orderIds.length > 0 ? [{ orderId: { in: orderIds } }] : []),
-              ...(rawBrowserSessionIds.length > 0
-                ? [{ browserSessionId: { in: rawBrowserSessionIds } }]
-                : []),
-            ],
-          },
-          select: { id: true, browserSessionId: true },
-        });
-        const sessionIds = sessions.map((session) => session.id);
-        const browserSessionIds = uniqueStrings([
-          ...rawBrowserSessionIds,
-          ...sessions.map((session) => session.browserSessionId),
-        ]);
-
-        const events = await tx.storefrontEvent.deleteMany({
-          where: {
-            storeId,
-            OR: [
-              { shopifyOrderExternalId: { in: orderExternalIds } },
-              ...(browserSessionIds.length > 0 ? [{ sessionId: { in: browserSessionIds } }] : []),
-            ],
-          },
-        });
-        if (browserSessionIds.length > 0) {
-          await tx.storefrontSessionRepair.deleteMany({
-            where: { storeId, browserSessionId: { in: browserSessionIds } },
-          });
+        const refundIds = refunds.map((refund) => refund.id);
+        if (refundIds.length > 0) {
+          await tx.refundLineItem.deleteMany({ where: { refundId: { in: refundIds } } });
+          await tx.refund.deleteMany({ where: { id: { in: refundIds } } });
         }
-        const deletedSessions = await tx.storefrontSession.deleteMany({
-          where: { id: { in: sessionIds }, storeId },
-        });
+        await tx.orderLineItem.deleteMany({ where: { orderId: { in: orderIds } } });
+        await tx.order.deleteMany({ where: { id: { in: orderIds }, storeId } });
+      }
 
-        await tx.shopifyDataRequest.deleteMany({
-          where: {
-            storeId,
-            requestedOrderIds: { hasSome: orderExternalIds },
-          },
-        });
-
-        if (orderIds.length > 0) {
-          const refunds = await tx.refund.findMany({
-            where: { orderId: { in: orderIds } },
-            select: { id: true },
-          });
-          const refundIds = refunds.map((refund) => refund.id);
-          if (refundIds.length > 0) {
-            await tx.refundLineItem.deleteMany({ where: { refundId: { in: refundIds } } });
-            await tx.refund.deleteMany({ where: { id: { in: refundIds } } });
-          }
-          await tx.orderLineItem.deleteMany({ where: { orderId: { in: orderIds } } });
-          await tx.order.deleteMany({ where: { id: { in: orderIds }, storeId } });
-        }
-
-        const historicalDeliveries = await findMatchingOrderWebhookDeliveries(
-          tx,
-          storeId,
-          orderExternalIds,
-        );
-        const historicalDeliveryIds = historicalDeliveries.map((item) => item.id);
-        if (historicalDeliveryIds.length > 0) {
-          await tx.webhookDelivery.updateMany({
-            where: { id: { in: historicalDeliveryIds } },
-            data: {
-              payload: jsonValue({
-                redacted: true,
-                reason: 'customers/redact',
-              }),
-            },
-          });
-        }
-
-        await tx.webhookDelivery.update({
-          where: { id: deliveryId },
+      const historicalDeliveries = await findMatchingOrderWebhookDeliveries(
+        tx,
+        storeId,
+        orderExternalIds,
+      );
+      const historicalDeliveryIds = historicalDeliveries.map((item) => item.id);
+      if (historicalDeliveryIds.length > 0) {
+        await tx.webhookDelivery.updateMany({
+          where: { id: { in: historicalDeliveryIds } },
           data: {
-            payload: {
-              complianceTopic: 'customers/redact',
-              processed: true,
-              ordersDeleted: orderIds.length,
-              sessionsDeleted: deletedSessions.count,
-              eventsDeleted: events.count,
-              webhookPayloadsScrubbed: historicalDeliveryIds.length,
-            },
+            payload: jsonValue({
+              redacted: true,
+              reason: 'customers/redact',
+            }),
           },
         });
+      }
 
-        return {
-          ordersDeleted: orderIds.length,
-          sessionsDeleted: deletedSessions.count,
-          eventsDeleted: events.count,
-        };
-      },
-      PRIVACY_TRANSACTION_OPTIONS,
-    );
+      await tx.webhookDelivery.update({
+        where: { id: deliveryId },
+        data: {
+          payload: {
+            complianceTopic: 'customers/redact',
+            processed: true,
+            ordersDeleted: orderIds.length,
+            sessionsDeleted: deletedSessions.count,
+            eventsDeleted: events.count,
+            webhookPayloadsScrubbed: historicalDeliveryIds.length,
+          },
+        },
+      });
+
+      return {
+        ordersDeleted: orderIds.length,
+        sessionsDeleted: deletedSessions.count,
+        eventsDeleted: events.count,
+      };
+    }, PRIVACY_TRANSACTION_OPTIONS);
   }
 }

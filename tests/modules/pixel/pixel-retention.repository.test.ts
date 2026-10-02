@@ -29,6 +29,19 @@ afterEach(async () => {
 });
 
 describeDatabase('Pixel retention repository', () => {
+  it('keeps withdrawal cutoffs monotonic and cleans only a bounded set of expired privacy markers', async () => {
+    const store = await createStore(); const repo = new PixelRepository(); const now = new Date();
+    const later = new Date(now.getTime() + 60_000); const expiry = new Date(now.getTime() + 86400_000);
+    await repo.withdrawAdvertisingConsent(store.id, { sessionId: 'session-revoked' }, later, expiry);
+    await repo.withdrawAdvertisingConsent(store.id, { sessionId: 'session-revoked' }, now, new Date(now.getTime() + 1000));
+    expect(await prisma.storefrontConsentWithdrawal.findUnique({ where: { storeId_scopeKey: { storeId: store.id, scopeKey: 'session:session-revoked' } } })).toMatchObject({ revokedBefore: later, retentionExpiresAt: expiry });
+    await prisma.storefrontConsentWithdrawal.createMany({ data: ['session:expired-a', 'session:expired-b'].map(scopeKey => ({ storeId: store.id, scopeKey, revokedBefore: now, retentionExpiresAt: new Date(now.getTime() - 1000) })) });
+    expect(await repo.cleanupExpiredWithdrawals(now, 1)).toBe(1);
+    expect(await prisma.storefrontConsentWithdrawal.count({ where: { storeId: store.id } })).toBe(2);
+    expect(await repo.cleanupExpiredWithdrawals(now, 1)).toBe(1);
+    expect(await prisma.storefrontConsentWithdrawal.count({ where: { storeId: store.id } })).toBe(1);
+  });
+
   it('deletes expired source evidence even with a repair marker and rotates repair for surviving events', async () => {
     const store = await createStore();
     const repository = new PixelRepository();

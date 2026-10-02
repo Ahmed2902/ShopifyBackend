@@ -233,22 +233,40 @@ export class PixelService {
 
   async ingest(batch: PixelIngestBatchInput) {
     const installation = await this.repository.findInstallationForIngress(batch.installationId);
-    const acceptedStatus = installation?.status === 'ACTIVE' || installation?.status === 'PROVISIONING';
+    const acceptedStatus =
+      installation?.status === 'ACTIVE' || installation?.status === 'PROVISIONING';
     const credentialMatches = Boolean(
       installation &&
-        (tokenMatches(batch.collectorToken, installation.collectorTokenHash) ||
-          tokenMatches(batch.collectorToken, installation.pendingCollectorTokenHash)),
+      (tokenMatches(batch.collectorToken, installation.collectorTokenHash) ||
+        tokenMatches(batch.collectorToken, installation.pendingCollectorTokenHash)),
     );
     if (!installation || !acceptedStatus || !credentialMatches) {
       throw new AppError('Pixel collector credentials are invalid', 401, 'PIXEL_UNAUTHORIZED');
     }
 
     const receivedAt = this.now();
+    if (batch.withdrawal) {
+      // Privacy-only ingress remains usable after analytics consent is withdrawn. Include the
+      // accepted client-clock window so an old in-flight event cannot arrive just after revocation.
+      await this.repository.withdrawAdvertisingConsent(
+        installation.storeId,
+        batch.withdrawal,
+        new Date(receivedAt.getTime() + MAX_EVENT_FUTURE_SKEW_MS),
+        calculatePixelRetentionExpiresAt(
+          receivedAt,
+          Math.max(40, env.PIXEL_RAW_EVENT_RETENTION_DAYS),
+        ),
+      );
+    }
     const eligible = batch.events.filter((event) =>
       isStorefrontBehaviorCaptureAllowed(event.consentState),
     );
     const normalized = eligible.map((event) => this.normalizeEvent(event, receivedAt));
-    const inserted = await this.repository.insertEvents(installation.storeId, normalized, receivedAt);
+    const inserted = await this.repository.insertEvents(
+      installation.storeId,
+      normalized,
+      receivedAt,
+    );
 
     if (eligible.length > 0) {
       const latestEventAt = eligible.reduce((latest, event) => {
@@ -297,6 +315,7 @@ export class PixelService {
     const boundedLimit = Math.min(Math.max(1, Math.trunc(limit)), 10_000);
     const ids = await this.repository.findExpiredEventIds(this.now(), boundedLimit);
     const deleted = await this.repository.deleteEventsByIds(ids);
+    await this.repository.cleanupExpiredWithdrawals(this.now(), boundedLimit);
     return { selected: ids.length, deleted };
   }
 
@@ -327,7 +346,8 @@ export class PixelService {
       anonymousVisitorId: event.anonymousVisitorId ?? null,
       sessionId: event.sessionId ?? null,
       consentState: event.consentState,
-      adSharingAllowed: isStorefrontBehaviorCaptureAllowed(event.consentState) && event.adSharingAllowed === true,
+      adSharingAllowed:
+        isStorefrontBehaviorCaptureAllowed(event.consentState) && event.adSharingAllowed === true,
       pageUrl: sanitizeStorefrontUrl(event.pageUrl),
       referrerUrl: sanitizeStorefrontUrl(event.referrerUrl),
       landingPageUrl: sanitizeStorefrontUrl(event.landingPageUrl),

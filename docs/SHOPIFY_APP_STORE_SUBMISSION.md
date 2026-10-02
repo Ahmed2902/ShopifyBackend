@@ -2,6 +2,8 @@
 
 This is the launch gate for Stride as a public embedded Shopify app.
 
+Commercial terms are confirmed: Essentials $49.99 / Pro $84.99 USD every 30 days and 14 trial days on both plans for eligible stores. Use [account setup](SHOPIFY_APP_ACCOUNT_SETUP.md), [the protected-data application draft](SHOPIFY_PROTECTED_DATA_APPLICATION.md), and the frontend listing package. Contacts/domain remain pending; account configuration and approvals have not been performed.
+
 Run first:
 
 ```bash
@@ -168,3 +170,12 @@ For this PR, real TLS/link availability, Partner plan configuration, protected-d
 Billing grants, absent-subscription results and invalid-contract revocations all compare the connection generation captured before the Partner request; a response from an old install cannot modify a newer verified reinstall. Scope webhook updates compare their delivery time against the installation inside the atomic database write.
 
 Pixel retries rebuild their body from current buyer permissions. Withdrawal permanently downgrades or drops the in-flight batch, even if permission is later granted again. Duplicate collector retries can only downgrade an already retained event's advertising permission, without duplicating its analytics facts or reauthorizing historical permission. An outbound request already accepted by a collector/provider cannot be recalled; validate withdrawal timing and provider deletion in the real storefront journey.
+
+
+## Fresh installation identity and durable withdrawal
+
+Embedded bootstrap always exchanges current credentials and reads `currentAppInstallation.id`, even when the prior connection appears ACTIVE. A changed or unknown installation identity advances the generation, expires cached Shopify billing and disables prior Pixel/conversion destinations and MCP grants. The same installation preserves its generation. Older overlapping bootstrap responses cannot replace newer verification. Generation comparison ignores delayed old uninstall/scope notifications while still applying an actual current uninstall.
+
+Migration 51 adds this installation identity/proof timestamp and tenant-scoped privacy-only revocation markers. Withdrawal sends a minimal visitor/session signal independently of analytics events; its durable collector acknowledgment makes it visible to provider delivery checks. Existing source permissions are downgraded, late batches consult the markers, and provider queries also consult the markers to cover overlapping ingestion. New post-regrant events cannot reauthorize an old purchase through a later click. The accepted ten-minute future-client-clock window is conservatively withheld after withdrawal; reporting continues, while fresh advertising permission applies only to new evidence beyond that cutoff. No historical permission is backfilled.
+
+Deploy migrations 50 and 51 before the updated extension. On first verification of a previously untracked installation, re-enable the Pixel and any purchase destinations after billing verification; old OAuth/MCP grants remain revoked. Verify acknowledgment, reload/checkout-boundary withdrawal, network failure and already-delivered provider deletion in the real review store. A disconnected browser cannot guarantee immediate server acknowledgment of a revocation.

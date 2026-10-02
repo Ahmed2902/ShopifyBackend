@@ -7,6 +7,8 @@ const SESSION_INACTIVITY_MS = 30 * 60 * 1000;
 const SESSION_KEY = 'stride_pixel_session_id';
 const SESSION_LAST_ACTIVITY_KEY = 'stride_pixel_session_last_activity_at';
 const LANDING_KEY = 'stride_pixel_landing';
+const PRIVACY_VISITOR_KEY = 'stride_pixel_privacy_visitor_id';
+const PRIVACY_SESSION_KEY = 'stride_pixel_privacy_session_id';
 
 const EVENT_NAMES = [
   'page_viewed',
@@ -193,6 +195,8 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
   let flushTimer = null;
   let flushing = false;
   let inFlightBatch = null;
+  let lastVisitorId = await browser.sessionStorage.getItem(PRIVACY_VISITOR_KEY);
+  let lastSessionId = await browser.sessionStorage.getItem(PRIVACY_SESSION_KEY) || sessionId;
   let handling = Promise.resolve();
 
   customerPrivacy.subscribe('visitorConsentCollected', (event) => {
@@ -202,11 +206,30 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
       for (const queued of batch) queued.adSharingAllowed = queued.adSharingAllowed && adSharingAllowed();
       if (!privacy?.analyticsProcessingAllowed) batch.length = 0;
     }
+    if (!adSharingAllowed() && (lastVisitorId || lastSessionId)) {
+      // A privacy operation, not an analytics event. It must reach the collector even when
+      // no subsequent storefront event occurs or analytics permission has been withdrawn.
+      void deliverWithdrawal({
+        ...(lastVisitorId ? {anonymousVisitorId: lastVisitorId} : {}),
+        ...(lastSessionId ? {sessionId: lastSessionId} : {}),
+      });
+    }
   });
 
   function adSharingAllowed() {
     return privacy?.analyticsProcessingAllowed === true &&
       privacy?.marketingAllowed === true && privacy?.saleOfDataAllowed === true;
+  }
+
+  async function deliverWithdrawal(withdrawal) {
+    const body = JSON.stringify({installationId, collectorToken, events: [], withdrawal});
+    for (let attempt = 0; attempt < MAX_DELIVERY_ATTEMPTS; attempt += 1) {
+      try {
+        const response = await fetch(collectorUrl, {method: 'POST', body, keepalive: true});
+        if (response.ok || (response.status < 500 && response.status !== 429)) return;
+      } catch { /* Retry a minimal privacy signal without capturing new behavior. */ }
+      if (attempt < MAX_DELIVERY_ATTEMPTS - 1) await delay(250 * 2 ** attempt);
+    }
   }
 
   async function deliver(events) {
@@ -310,6 +333,12 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
     if (!eventName) return;
 
     await ensureSession(event);
+    lastVisitorId = event.clientId || lastVisitorId;
+    lastSessionId = sessionId;
+    await Promise.all([
+      ...(lastVisitorId ? [browser.sessionStorage.setItem(PRIVACY_VISITOR_KEY, lastVisitorId)] : []),
+      browser.sessionStorage.setItem(PRIVACY_SESSION_KEY, lastSessionId),
+    ]);
 
     const current = safeUrl(event.context?.document?.location?.href);
     if (!landing || hasAttribution(current.attribution)) {

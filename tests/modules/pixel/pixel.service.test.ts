@@ -54,6 +54,8 @@ function buildService(input?: {
     touchInstallation: vi.fn().mockResolvedValue({ id: installationId }),
     findExpiredEventIds: vi.fn().mockResolvedValue(['event-db-id']),
     deleteEventsByIds: vi.fn().mockResolvedValue(1),
+    cleanupExpiredWithdrawals: vi.fn().mockResolvedValue(0),
+    withdrawAdvertisingConsent: vi.fn().mockResolvedValue(undefined),
   } as unknown as PixelRepository;
 
   const shopifyProvisioner = {
@@ -73,6 +75,28 @@ function buildService(input?: {
 }
 
 describe('PixelService', () => {
+  it('accepts an authenticated privacy-only withdrawal without recording analytics', async () => {
+    const collectorToken = 'P'.repeat(43);
+    const { repository, journeyService, service } = buildService({ installation: {
+      id: installationId, storeId, status: 'ACTIVE', collectorTokenHash: tokenHash(collectorToken),
+    }, inserted: 0 });
+    const withdrawal = { anonymousVisitorId: 'visitor-withdrawn', sessionId: 'session-withdrawn' };
+    const input = pixelIngestBatchSchema.parse({ installationId, collectorToken, events: [], withdrawal });
+    expect(await service.ingest(input)).toEqual({ received: 0, persisted: 0, duplicates: 0, suppressedForConsent: 0 });
+    expect(repository.withdrawAdvertisingConsent).toHaveBeenCalledWith(storeId, withdrawal,
+      new Date(fixedNow.getTime() + 10 * 60_000), new Date(fixedNow.getTime() + 90 * 86400_000));
+    expect(journeyService.materializeSessions).not.toHaveBeenCalled();
+    expect(repository.touchInstallation).not.toHaveBeenCalled();
+  });
+
+  it('does not persist a withdrawal with invalid collector credentials', async () => {
+    const { repository, service } = buildService();
+    await expect(service.ingest(pixelIngestBatchSchema.parse({ installationId,
+      collectorToken: 'P'.repeat(43), events: [], withdrawal: { sessionId: 'session-withdrawn' },
+    }))).rejects.toMatchObject({ code: 'PIXEL_UNAUTHORIZED' });
+    expect(repository.withdrawAdvertisingConsent).not.toHaveBeenCalled();
+  });
+
   it('stages and then promotes only the collector credential owned by this install request', async () => {
     const { repository, shopifyProvisioner, service } = buildService();
 

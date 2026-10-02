@@ -5,11 +5,7 @@ import { SHOP_QUERY } from '../shopify.queries.js';
 import { shopifyGraphqlResponseSchema, shopifyProfileSchema } from '../shopify.schema.js';
 import type { ShopifyShopProfile } from '../shopify.schema.js';
 import type { ShopifyShopQueryData } from '../shopify.types.js';
-import {
-  calculateShopifyThrottleDelayMs,
-  parseRetryAfterMs,
-  sleep,
-} from '../shopify.utils.js';
+import { calculateShopifyThrottleDelayMs, parseRetryAfterMs, sleep } from '../shopify.utils.js';
 
 const SHOPIFY_REQUEST_TIMEOUT_MS = 10_000;
 const SHOPIFY_REQUEST_ATTEMPTS = 3;
@@ -40,6 +36,28 @@ function removeUnitCostSelection(query: string) {
 
 export class ShopifyApiService {
   constructor(private readonly repository: ShopifyRepository) {}
+
+  async fetchCurrentInstallationId(
+    shop: string,
+    accessToken: string,
+    apiVersion: string,
+  ): Promise<string> {
+    const data = await this.requestAdminGraphql<{ currentAppInstallation?: { id?: unknown } }>({
+      shop,
+      accessToken,
+      apiVersion,
+      query: 'query StrideCurrentInstallation { currentAppInstallation { id } }',
+    });
+    const id = data.currentAppInstallation?.id;
+    if (typeof id !== 'string' || !/^gid:\/\/shopify\/AppInstallation\/\d+$/.test(id)) {
+      throw new AppError(
+        'Shopify installation identity is unavailable',
+        502,
+        'SHOPIFY_INSTALLATION_ID_INVALID',
+      );
+    }
+    return id;
+  }
 
   async fetchShopProfile(
     shop: string,
@@ -191,11 +209,7 @@ export class ShopifyApiService {
     try {
       return await response.json();
     } catch {
-      throw new AppError(
-        'Shopify returned an invalid JSON response',
-        502,
-        'SHOPIFY_BAD_RESPONSE',
-      );
+      throw new AppError('Shopify returned an invalid JSON response', 502, 'SHOPIFY_BAD_RESPONSE');
     }
   }
 }

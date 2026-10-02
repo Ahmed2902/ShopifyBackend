@@ -123,6 +123,13 @@ export class ConversionDeliveryRepository {
           AND e."metaClickId" IS NOT NULL
           AND e."consentState" IN ('GRANTED', 'NOT_REQUIRED')
           AND e."adSharingAllowed" = TRUE
+          AND e."eventAt" <= COALESCE(o."processedAt", o."shopifyCreatedAt")
+          AND NOT EXISTS (
+            SELECT 1 FROM "StorefrontConsentWithdrawal" w
+            WHERE w."storeId" = e."storeId" AND e."eventAt" <= w."revokedBefore"
+              AND (w."scopeKey" = 'session:' || e."sessionId" OR
+                w."scopeKey" = 'visitor:' || e."anonymousVisitorId")
+          )
         ORDER BY e."eventAt" DESC, e."receivedAt" DESC
         LIMIT 1
       ) meta_event ON TRUE
@@ -134,6 +141,13 @@ export class ConversionDeliveryRepository {
           AND e."googleClickId" IS NOT NULL
           AND e."consentState" IN ('GRANTED', 'NOT_REQUIRED')
           AND e."adSharingAllowed" = TRUE
+          AND e."eventAt" <= COALESCE(o."processedAt", o."shopifyCreatedAt")
+          AND NOT EXISTS (
+            SELECT 1 FROM "StorefrontConsentWithdrawal" w
+            WHERE w."storeId" = e."storeId" AND e."eventAt" <= w."revokedBefore"
+              AND (w."scopeKey" = 'session:' || e."sessionId" OR
+                w."scopeKey" = 'visitor:' || e."anonymousVisitorId")
+          )
         ORDER BY e."eventAt" DESC, e."receivedAt" DESC
         LIMIT 1
       ) google_event ON TRUE
@@ -145,6 +159,13 @@ export class ConversionDeliveryRepository {
           AND e."tiktokClickId" IS NOT NULL
           AND e."consentState" IN ('GRANTED', 'NOT_REQUIRED')
           AND e."adSharingAllowed" = TRUE
+          AND e."eventAt" <= COALESCE(o."processedAt", o."shopifyCreatedAt")
+          AND NOT EXISTS (
+            SELECT 1 FROM "StorefrontConsentWithdrawal" w
+            WHERE w."storeId" = e."storeId" AND e."eventAt" <= w."revokedBefore"
+              AND (w."scopeKey" = 'session:' || e."sessionId" OR
+                w."scopeKey" = 'visitor:' || e."anonymousVisitorId")
+          )
         ORDER BY e."eventAt" DESC, e."receivedAt" DESC
         LIMIT 1
       ) tiktok_event ON TRUE
