@@ -14,7 +14,7 @@ The Shopify app configuration must subscribe to:
 
 ```toml
 [[webhooks.subscriptions]]
-uri = "/v1/integrations/shopify/webhooks"
+uri = "https://YOUR_BACKEND_HOST/v1/integrations/shopify/webhooks"
 compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
 ```
 
@@ -22,7 +22,7 @@ The app should also subscribe to uninstall notifications:
 
 ```toml
 [[webhooks.subscriptions]]
-uri = "/v1/integrations/shopify/webhooks"
+uri = "https://YOUR_BACKEND_HOST/v1/integrations/shopify/webhooks"
 topics = ["app/uninstalled"]
 ```
 
@@ -75,7 +75,7 @@ The redaction path does not require a usable Shopify access token and continues 
 Shop redaction erases the whole tenant graph, including:
 
 - Shopify commerce/catalog/inventory data
-- Meta and TikTok provider data associated with the tenant
+- Meta, TikTok and Google Ads provider data associated with the tenant
 - provider mapping and insight data
 - sync runs, old webhook deliveries, and raw external payloads
 - generated Shopify data-request exports and order-redaction tombstones
@@ -100,3 +100,19 @@ Before public submission, verify all of the following against a disposable Shopi
 7. Simulate a worker retry after the privacy operation committed but before delivery status transition; confirm the scrubbed completion marker is replay-safe.
 8. Run `shop/redact` only against a disposable store and confirm all tenant/provider data is gone while other stores remain intact.
 9. Pull/validate the Shopify app configuration and confirm the active/released version contains the compliance subscriptions before production review.
+
+
+## Advertising disclosure permission
+
+Analytics permission alone does not authorize sending purchases to Meta, TikTok or Google Ads. The updated pixel uses Shopify Customer Privacy `analyticsProcessingAllowed`, `marketingAllowed` and `saleOfDataAllowed`; all three must be true for `adSharingAllowed`. Missing permission (including older pixel clients and historical rows) defaults to false. The extension declaration must match these purposes. Revoking analytics clears queued pixel events; revoking marketing removes queued sharing permission.
+
+Candidates and claimed retries require retained permitted attribution and the latest recorded visitor/session permission immediately before delivery. Every provider awaits a final durable permission check after credential preparation, including Google OAuth refresh, before starting its HTTP request. If either is unavailable the queued disclosure is discarded and its identifiers cleared. Already delivered conversions cannot be recalled by this local gate: customer erasure must include the provider's applicable deletion/support process. Verify consent transitions in the live storefront before submission.
+
+
+### Durable privacy-only revocation
+
+The Pixel sends `events: []` plus a minimal `withdrawal` visitor/session identifier to the existing authenticated `/v1/pixel/events` collector. This remains a privacy operation when analytics permission is absent, and contains no page/click/checkout payload. Recently captured privacy subjects survive page reload and checkout-session clearing so no new behavior event is required to identify the withdrawal.
+
+`StorefrontConsentWithdrawal` is store-scoped and records only scope identity, a monotonic revocation cutoff and expiration. The cutoff includes the accepted ten-minute future-clock window to cover old in-flight events. Withdrawal downgrades retained source permission; ingress and all provider candidate/delivery checks consult durable markers. A later regrant does not authorize an old source or an advertising click after the purchase. New events beyond the cutoff can support new purchases.
+
+Markers are included in related privacy exports, erased by matching customer redaction and cascade on shop purge. Bounded cleanup retains them for at least 40 days or the longer configured raw-event period. Live consent verification must check collector acknowledgment; bounded browser retries are not a guarantee when the client stays offline.

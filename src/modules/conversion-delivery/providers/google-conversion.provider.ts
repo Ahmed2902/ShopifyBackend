@@ -2,7 +2,7 @@ import { AppError } from '../../../errors/app-error.js';
 import { GoogleAdsRepository } from '../../google-ads/google-ads.repository.js';
 import { GoogleAdsAuthService } from '../../google-ads/shared/google-ads-auth.service.js';
 import { GoogleAdsApiService } from '../../google-ads/shared/google-ads-api.service.js';
-import type { ConversionDestinationConfig, DeliveryClaim, ProviderDeliveryResult } from '../conversion-delivery.types.js';
+import type { BeforeConversionSend, ConversionDestinationConfig, DeliveryClaim, ProviderDeliveryResult } from '../conversion-delivery.types.js';
 import { GOOGLE_DATA_MANAGER_SCOPE } from '../conversion-delivery.types.js';
 import { ConversionProviderError } from './conversion-provider.error.js';
 
@@ -39,7 +39,7 @@ function configFor(delivery: DeliveryClaim) {
   return config;
 }
 
-export async function deliverGooglePurchase(delivery: DeliveryClaim): Promise<ProviderDeliveryResult> {
+export async function deliverGooglePurchase(delivery: DeliveryClaim, beforeSend: BeforeConversionSend): Promise<ProviderDeliveryResult> {
   if (!delivery.clickId) {
     throw new ConversionProviderError(
       'Google Purchase has no consented gclid match identifier',
@@ -99,6 +99,8 @@ export async function deliverGooglePurchase(delivery: DeliveryClaim): Promise<Pr
     };
   }
 
+  // OAuth refresh can take place above. Recheck durable permission after it finishes.
+  await beforeSend();
   let response: Response;
   try {
     response = await fetch(GOOGLE_DATA_MANAGER_ENDPOINT, {

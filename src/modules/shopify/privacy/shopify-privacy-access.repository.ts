@@ -28,7 +28,9 @@ export class ShopifyPrivacyAccessRepository {
       where: { storeId, shopifyOrderExternalId: { in: requestedOrderIds } },
       select: { sessionId: true },
     });
-    const rawBrowserSessionIds = uniqueStrings(directlyLinkedEvents.map((event) => event.sessionId));
+    const rawBrowserSessionIds = uniqueStrings(
+      directlyLinkedEvents.map((event) => event.sessionId),
+    );
 
     const sessions = await prisma.storefrontSession.findMany({
       where: {
@@ -77,6 +79,25 @@ export class ShopifyPrivacyAccessRepository {
       findMatchingOrderWebhookDeliveries(prisma, storeId, requestedOrderIds),
     ]);
 
+    const withdrawalKeys = [
+      ...new Set([
+        ...browserSessionIds.map((id) => `session:${id}`),
+        ...events.flatMap((event) =>
+          event.anonymousVisitorId ? [`visitor:${event.anonymousVisitorId}`] : [],
+        ),
+        ...sessions.flatMap((session) =>
+          session.anonymousVisitorId ? [`visitor:${session.anonymousVisitorId}`] : [],
+        ),
+      ]),
+    ];
+    const consentWithdrawals =
+      withdrawalKeys.length > 0
+        ? await prisma.storefrontConsentWithdrawal.findMany({
+            where: { storeId, scopeKey: { in: withdrawalKeys } },
+            orderBy: { scopeKey: 'asc' },
+          })
+        : [];
+
     const exportJson = jsonValue({
       generatedAt: new Date().toISOString(),
       disclosure: {
@@ -88,6 +109,7 @@ export class ShopifyPrivacyAccessRepository {
       orders,
       storefrontSessions: sessions,
       storefrontEvents: events,
+      storefrontConsentWithdrawals: consentWithdrawals,
       storefrontSessionRepairs: repairs,
       orderRedactionTombstones: redactions,
       historicalShopifyWebhookDeliveries: webhookDeliveries,

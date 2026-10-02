@@ -79,3 +79,8 @@ Before a merchant beta, verify in a Shopify development store:
 7. denied analytics consent produces no persisted behavioral event;
 8. persisted URLs contain no query string;
 9. expired raw events are removed by the retention worker.
+
+
+## Advertising consent and upgrade
+
+The extension purpose declaration includes analytics, marketing and sale-of-data. Deploy the updated declaration and JavaScript with the backend migration. This conservatively means Shopify can withhold pixel execution until the declared permissions are available. Each event also records explicit `adSharingAllowed` only when Shopify reports all three permissions. Legacy/missing flags and historical events remain false; do not backfill them as authorized. Purchase workers re-check the latest retained visitor/session permission before provider delivery. Test regional consent rules and withdrawal in a real storefront before review.

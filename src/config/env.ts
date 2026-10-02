@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { z } from 'zod';
+import { assertShopifyProductionConfig } from './shopify-production.js';
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -35,6 +36,7 @@ const frontendUrl = parsedEnv.FRONTEND_URL ?? parsedEnv.CORS_ORIGIN ?? 'http://l
 const backendOrigin = new URL(appUrl).origin; const frontendOrigin = new URL(frontendUrl).origin; const corsOrigin = new URL(parsedEnv.CORS_ORIGIN ?? frontendOrigin).origin;
 function isLoopbackUrl(value: string): boolean { const hostname = new URL(value).hostname.toLowerCase(); return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'; }
 if (parsedEnv.NODE_ENV === 'production') {
+  assertShopifyProductionConfig(parsedEnv, [appUrl, frontendUrl, corsOrigin]);
   if (isLoopbackUrl(appUrl)) throw new Error('APP_URL must be a public backend URL in production');
   if (isLoopbackUrl(frontendUrl)) throw new Error('FRONTEND_URL (or CORS_ORIGIN) must be a public frontend URL in production');
   if (isLoopbackUrl(corsOrigin)) throw new Error('CORS_ORIGIN must not point to localhost in production');

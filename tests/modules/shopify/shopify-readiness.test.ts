@@ -5,12 +5,12 @@ const configuration = {
   SHOPIFY_CLIENT_ID: 'client', SHOPIFY_CLIENT_SECRET: 'secret', SHOPIFY_PARTNER_ORG_ID: '123',
   SHOPIFY_PARTNER_API_ACCESS_TOKEN: 'token', SHOPIFY_PARTNER_APP_ID: 'gid://shopify/App/1',
   SHOPIFY_APP_HANDLE: 'stride', SHOPIFY_ESSENTIALS_PLAN_HANDLE: 'essentials', SHOPIFY_PRO_PLAN_HANDLE: 'pro',
-  SHOPIFY_SUPPORT_EMAIL: 'support@example.com', SHOPIFY_REVIEW_CONTACT_EMAIL: 'review@example.com',
-  SHOPIFY_EMERGENCY_CONTACT_EMAIL: 'emergency@example.com', SHOPIFY_PRIVACY_POLICY_URL: 'https://app.example.com/privacy',
-  SHOPIFY_TERMS_URL: 'https://app.example.com/terms', SHOPIFY_APP_URL: 'https://app.example.com/app',
-  APP_URL: 'https://api.example.com', FRONTEND_URL: 'https://app.example.com', CORS_ORIGIN: 'https://app.example.com',
-  SHOPIFY_REDIRECT_URI: 'https://app.example.com/api/shopify/callback', PIXEL_COLLECTOR_URL: 'https://api.example.com/v1/pixel/events',
-  SHOPIFY_SCOPES: 'read_products,read_inventory,read_locations,read_orders,write_pixels,read_customer_events',
+  SHOPIFY_SUPPORT_EMAIL: 'support@stridecommerce.io', SHOPIFY_REVIEW_CONTACT_EMAIL: 'review@stridecommerce.io',
+  SHOPIFY_EMERGENCY_CONTACT_EMAIL: 'emergency@stridecommerce.io', SHOPIFY_PRIVACY_POLICY_URL: 'https://app.stridecommerce.io/privacy',
+  SHOPIFY_TERMS_URL: 'https://app.stridecommerce.io/terms', SHOPIFY_APP_URL: 'https://app.stridecommerce.io/app',
+  APP_URL: 'https://api.stridecommerce.io', FRONTEND_URL: 'https://app.stridecommerce.io', CORS_ORIGIN: 'https://app.stridecommerce.io',
+  SHOPIFY_REDIRECT_URI: 'https://app.stridecommerce.io/api/shopify/callback', PIXEL_COLLECTOR_URL: 'https://api.stridecommerce.io/v1/pixel/events',
+  SHOPIFY_SCOPES: 'read_products,read_inventory,read_locations,read_orders,read_pixels,write_pixels,read_customer_events',
 };
 function check(overrides: Record<string, string> = {}) {
   return spawnSync(process.execPath, ['scripts/check-shopify-app-store-readiness.mjs'], { encoding: 'utf8', env: { ...process.env, ...configuration, ...overrides } });

@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { readFile } from 'node:fs/promises';
 import process from 'node:process';
+import { renderShopifyAppConfig, requiredScopes } from './shopify-app-config.mjs';
 
 const failures = [];
 const warnings = [];
@@ -17,7 +18,7 @@ function requireTrue(name) {
 }
 function requireEmail(name) {
   const value = requireEnv(name);
-  if (value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) fail(`${name} is not a valid email address`);
+  if (value && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) || /@(?:example\.(?:com|org|net)|.+\.(?:test|invalid))$/i.test(value))) fail(`${name} must be a real monitored email address`);
 }
 function requireHttpsUrl(name) {
   const value = requireEnv(name);
@@ -25,7 +26,7 @@ function requireHttpsUrl(name) {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:') fail(`${name} must use https`);
-    if (['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) fail(`${name} must use a public host`);
+    if (['localhost', '127.0.0.1', '[::1]', 'example.com', 'example.org', 'example.net'].includes(url.hostname) || /\.(?:test|invalid)$/.test(url.hostname)) fail(`${name} must use a real public host`);
     if (url.username || url.password) fail(`${name} must not contain credentials`);
   } catch {
     fail(`${name} is not a valid URL`);
@@ -44,6 +45,8 @@ if (process.env.LEGACY_MERCHANT_AUTH_ENABLED === 'true') fail('Legacy merchant a
   'SHOPIFY_ESSENTIALS_PLAN_HANDLE',
   'SHOPIFY_PRO_PLAN_HANDLE',
 ].forEach(requireEnv);
+if (process.env.SHOPIFY_ESSENTIALS_PLAN_HANDLE && process.env.SHOPIFY_ESSENTIALS_PLAN_HANDLE === process.env.SHOPIFY_PRO_PLAN_HANDLE) fail('Shopify plan handles must be distinct');
+try { renderShopifyAppConfig(); } catch (error) { fail(error.message); }
 requireEmail('SHOPIFY_SUPPORT_EMAIL');
 requireEmail('SHOPIFY_REVIEW_CONTACT_EMAIL');
 requireEmail('SHOPIFY_EMERGENCY_CONTACT_EMAIL');
@@ -59,7 +62,7 @@ try {
 } catch { /* Invalid URLs are reported above. */ }
 
 const scopes = new Set((requireEnv('SHOPIFY_SCOPES') ?? '').split(',').map((value) => value.trim()).filter(Boolean));
-for (const required of ['read_products', 'read_inventory', 'read_locations', 'read_orders', 'write_pixels', 'read_customer_events']) {
+for (const required of requiredScopes) {
   if (!scopes.has(required)) fail(`SHOPIFY_SCOPES is missing ${required}`);
 }
 if (scopes.has('read_customers')) {

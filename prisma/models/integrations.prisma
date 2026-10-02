@@ -39,6 +39,8 @@ model ShopifyConnection {
   scopes                        String[]         @default([])
   apiVersion                    String
   installedAt                   DateTime         @default(now())
+  shopifyAppInstallationId       String?          @db.VarChar(128)
+  installationVerifiedAt        DateTime?
   uninstalledAt                 DateTime?
   lastSyncedAt                  DateTime?
   reconciliationIntervalMinutes Int              @default(1440)

@@ -3,6 +3,7 @@ import { AppError } from '../../errors/app-error.js';
 import { InFlightCoalescer } from '../../lib/in-flight-coalescer.js';
 import { logger } from '../../lib/logger.js';
 import { prisma } from '../../lib/prisma.js';
+import { verifyShopifyDevelopmentStore } from './shopify-development-store.js';
 import {
   STRIDE_PLAN_CATALOG,
   V1_TRIAL_DAYS,
@@ -40,7 +41,7 @@ function dateOrNull(value: string | null | undefined) {
 }
 
 function moneyCents(value: string | undefined): number | null {
-  if (!value) return null;
+  if (!value || !/^\d+(?:\.\d{1,2})?$/.test(value)) return null;
   const amount = Number(value);
   if (!Number.isFinite(amount)) return null;
   return Math.round(amount * 100);
@@ -49,7 +50,10 @@ function moneyCents(value: string | undefined): number | null {
 export class BillingService {
   private readonly verificationReads = new InFlightCoalescer(250);
 
-  constructor(private readonly appPricing: ShopifyAppPricingClient = shopifyAppPricingClient) {}
+  constructor(
+    private readonly appPricing: ShopifyAppPricingClient = shopifyAppPricingClient,
+    private readonly verifyDevelopmentStore = verifyShopifyDevelopmentStore,
+  ) {}
 
   async ensureSubscription(storeId: string, now = new Date()) {
     let subscription = await prisma.storeSubscription.findUnique({ where: { storeId } });
@@ -231,12 +235,15 @@ export class BillingService {
     let billing = await this.readLocal(storeId, now);
 
     if (this.appPricing.isEnabled()) {
-      const hasNeverVerified = !billing.verification.lastVerifiedAt;
-      const inactiveNeedsRefresh = !billing.accessActive && billing.verification.stale;
-
-      if (hasNeverVerified || inactiveNeedsRefresh) {
+      const store = await prisma.store.findUnique({
+        where: { id: storeId }, select: { shopifyConnection: { select: { status: true } } },
+      });
+      if (store?.shopifyConnection?.status !== 'ACTIVE') {
+        throw new AppError('Reopen the installed Stride app from Shopify Admin.',
+          402, 'SHOPIFY_INSTALL_REQUIRED');
+      }
+      if (billing.verification.stale || billing.provider !== 'SHOPIFY') {
         billing = await this.read(storeId, now, {
-          fresh: true,
           failOnVerificationError: true,
         });
       }
@@ -352,7 +359,7 @@ export class BillingService {
     now: Date,
   ) {
     return (
-      !subscription.lastVerifiedAt ||
+      subscription.provider !== 'SHOPIFY' || !subscription.lastVerifiedAt ||
       now.getTime() - subscription.lastVerifiedAt.getTime() >=
         env.SHOPIFY_BILLING_VERIFY_TTL_SECONDS * 1000
     );
@@ -364,6 +371,7 @@ export class BillingService {
     verificationStale: boolean,
   ) {
     const internalTrialActive =
+      !this.appPricing.isEnabled() &&
       subscription.provider === 'INTERNAL' &&
       subscription.status === 'TRIALING' &&
       subscription.trialEndsAt > now;
@@ -372,7 +380,8 @@ export class BillingService {
       subscription.status === 'ACTIVE' &&
       subscription.trialEndsAt > now;
     const trialActive = internalTrialActive || shopifyTrialActive;
-    const paidActive = subscription.status === 'ACTIVE';
+    const paidActive = subscription.status === 'ACTIVE' &&
+      (!this.appPricing.isEnabled() || subscription.provider === 'SHOPIFY');
     const effectivePlan: V1BillingPlan = trialActive ? 'PRO' : subscription.selectedPlan;
     const plan = planCatalog[effectivePlan];
 
@@ -468,14 +477,23 @@ export class BillingService {
   ) {
     const store = await prisma.store.findUnique({
       where: { id: storeId },
-      select: { shopifyShopId: true },
+      select: { shopifyShopId: true, myshopifyDomain: true, shopifyConnection: { select: { status: true, installedAt: true } } },
     });
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
 
-    const remote = await this.appPricing.activeSubscription(store.shopifyShopId);
+    // Every result belongs to the connection generation read before the provider call.
+    // Fence negative and invalid-contract writes as well as successful grants.
+    const verificationWhere = { storeId, lastVerifiedAt: current.lastVerifiedAt, store: { shopifyConnection: { is:
+      store.shopifyConnection ? {
+        status: store.shopifyConnection.status, installedAt: store.shopifyConnection.installedAt,
+      } : null,
+    } } };
+
+    const remote = store.shopifyConnection?.status === 'ACTIVE'
+      ? await this.appPricing.activeSubscription(store.shopifyShopId) : null;
     if (!remote) {
       return prisma.storeSubscription.update({
-        where: { storeId },
+        where: verificationWhere,
         data: {
           provider: 'SHOPIFY',
           status: current.provider === 'SHOPIFY' && current.status === 'ACTIVE' ? 'CANCELED' : 'EXPIRED',
@@ -492,7 +510,16 @@ export class BillingService {
 
     let selectedPlan: V1BillingPlan;
     try {
-      selectedPlan = this.planFromRemote(remote);
+      if (remote.shop.id !== store.shopifyShopId ||
+          remote.shop.myshopifyDomain.toLowerCase() !== store.myshopifyDomain.toLowerCase()) {
+        throw new AppError('Shopify billing returned a contract for a different store.',
+          503, 'SHOPIFY_PLAN_CONFIGURATION_MISMATCH');
+      }
+      // Shopify App Pricing creates zero-dollar contracts on eligible Partner development
+      // stores. Never infer this exemption from a browser flag or the zero price itself.
+      const isDevelopmentStore = remote.items.some((item) => moneyCents(item.price.amount) === 0)
+        ? await this.verifyDevelopmentStore(storeId, store.shopifyShopId) : false;
+      selectedPlan = this.planFromRemote(remote, isDevelopmentStore);
     } catch (error) {
       if (error instanceof AppError && (
         error.code === 'SHOPIFY_PLAN_CONFIGURATION_MISMATCH' || error.code === 'SHOPIFY_PLAN_UNRECOGNIZED'
@@ -500,7 +527,7 @@ export class BillingService {
         // A deterministic invalid contract must revoke the cached grant even when a scheduled
         // reconciliation is the caller. Transient Partner API errors keep their existing policy.
         await prisma.storeSubscription.update({
-          where: { storeId },
+          where: verificationWhere,
           data: { provider: 'SHOPIFY', status: 'EXPIRED', trialEndsAt: now,
             currentPeriodEndsAt: null, lastVerifiedAt: now },
         });
@@ -512,7 +539,9 @@ export class BillingService {
       dateOrNull(remote.currentBillingCycle?.endTime) ?? (trialEndsAt > now ? trialEndsAt : null);
 
     return prisma.storeSubscription.update({
-      where: { storeId },
+      // Do not resurrect a grant from a Partner API request that started before an
+      // uninstall/reinstall completed while the request was in flight.
+      where: verificationWhere,
       data: {
         provider: 'SHOPIFY',
         selectedPlan,
@@ -543,7 +572,7 @@ export class BillingService {
     return this.remotePlanItem(remote)?.handle ?? null;
   }
 
-  private planFromRemote(remote: ShopifyAppPricingSubscription): V1BillingPlan {
+  private planFromRemote(remote: ShopifyAppPricingSubscription, isDevelopmentStore = false): V1BillingPlan {
     const item = this.remotePlanItem(remote);
     const handles = this.appPricing.planHandles();
     const selectedPlan: V1BillingPlan | null =
@@ -570,7 +599,8 @@ export class BillingService {
       item.price.__typename === 'FlatRatePrice' &&
       item.price.active === true &&
       item.price.currency === expected.currency &&
-      actualCents === expectedCents;
+      (actualCents === expectedCents || (isDevelopmentStore && actualCents === 0)) &&
+      remote.items.length === 1;
 
     if (!contractMatches) {
       throw new AppError(

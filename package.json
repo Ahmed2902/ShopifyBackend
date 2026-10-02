@@ -37,6 +37,7 @@
     "smoke:v1-release": "node scripts/v1-release-smoke.mjs",
     "smoke:mcp-release": "node scripts/mcp-release-smoke.mjs",
     "shopify:app-store:check": "node scripts/check-shopify-app-store-readiness.mjs",
+    "shopify:app-config": "node scripts/shopify-app-config.mjs",
     "smoke:v1-release:check": "node --check scripts/v1-release-smoke.mjs && node --check scripts/mcp-release-smoke.mjs",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",

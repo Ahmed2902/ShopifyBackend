@@ -29,6 +29,19 @@ afterEach(async () => {
 });
 
 describeDatabase('Pixel retention repository', () => {
+  it('keeps withdrawal cutoffs monotonic and cleans only a bounded set of expired privacy markers', async () => {
+    const store = await createStore(); const repo = new PixelRepository(); const now = new Date();
+    const later = new Date(now.getTime() + 60_000); const expiry = new Date(now.getTime() + 86400_000);
+    await repo.withdrawAdvertisingConsent(store.id, { sessionId: 'session-revoked' }, later, expiry);
+    await repo.withdrawAdvertisingConsent(store.id, { sessionId: 'session-revoked' }, now, new Date(now.getTime() + 1000));
+    expect(await prisma.storefrontConsentWithdrawal.findUnique({ where: { storeId_scopeKey: { storeId: store.id, scopeKey: 'session:session-revoked' } } })).toMatchObject({ revokedBefore: later, retentionExpiresAt: expiry });
+    await prisma.storefrontConsentWithdrawal.createMany({ data: ['session:expired-a', 'session:expired-b'].map(scopeKey => ({ storeId: store.id, scopeKey, revokedBefore: now, retentionExpiresAt: new Date(now.getTime() - 1000) })) });
+    expect(await repo.cleanupExpiredWithdrawals(now, 1)).toBe(1);
+    expect(await prisma.storefrontConsentWithdrawal.count({ where: { storeId: store.id } })).toBe(2);
+    expect(await repo.cleanupExpiredWithdrawals(now, 1)).toBe(1);
+    expect(await prisma.storefrontConsentWithdrawal.count({ where: { storeId: store.id } })).toBe(1);
+  });
+
   it('deletes expired source evidence even with a repair marker and rotates repair for surviving events', async () => {
     const store = await createStore();
     const repository = new PixelRepository();
@@ -213,5 +226,23 @@ describeDatabase('Pixel retention repository', () => {
     await expect(prisma.storefrontSession.findUnique({ where: { id: session.id } })).resolves.toMatchObject({
       id: session.id,
     });
+  });
+});
+
+describeDatabase('Retried Pixel advertising consent', () => {
+  it('downgrades an already persisted event on a duplicate retry without duplicating facts or regranting old permission', async () => {
+    const store = await createStore();
+    const other = await createStore();
+    const repository = new PixelRepository();
+    const now = new Date();
+    const event = { eventId: randomUUID(), eventName: 'PAGE_VIEW' as const, eventAt: now,
+      receivedAt: now, consentState: 'GRANTED' as const, adSharingAllowed: true,
+      retentionExpiresAt: new Date(now.getTime() + 86400_000) };
+    expect(await repository.insertEvents(store.id, [event], now)).toBe(1);
+    expect(await repository.insertEvents(other.id, [event], now)).toBe(1);
+    expect(await repository.insertEvents(store.id, [{ ...event, adSharingAllowed: false }], now)).toBe(0);
+    expect(await repository.insertEvents(store.id, [event], now)).toBe(0);
+    expect(await prisma.storefrontEvent.findMany({ where: { storeId: store.id, eventId: event.eventId } })).toMatchObject([{ adSharingAllowed: false }]);
+    expect(await prisma.storefrontEvent.findMany({ where: { storeId: other.id, eventId: event.eventId } })).toMatchObject([{ adSharingAllowed: true }]);
   });
 });

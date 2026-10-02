@@ -27,7 +27,12 @@ const shopifyOrderExternalIdSchema = z
   .string()
   .trim()
   .transform((value) => (/^\d+$/.test(value) ? `gid://shopify/Order/${value}` : value))
-  .pipe(z.string().max(128).regex(/^gid:\/\/shopify\/Order\/\d+$/));
+  .pipe(
+    z
+      .string()
+      .max(128)
+      .regex(/^gid:\/\/shopify\/Order\/\d+$/),
+  );
 const providerNumericIdSchema = z.string().trim().regex(/^\d+$/).max(128);
 const attributionValueSchema = z.string().trim().min(1).max(255);
 const clickIdSchema = z.string().trim().min(1).max(512);
@@ -64,6 +69,7 @@ export const storefrontEventSchema = z
     anonymousVisitorId: opaqueIdSchema.optional(),
     sessionId: opaqueIdSchema.optional(),
     consentState: z.enum(STOREFRONT_CONSENT_STATES),
+    adSharingAllowed: z.boolean().default(false),
     pageUrl: urlSchema.optional(),
     referrerUrl: urlSchema.optional(),
     landingPageUrl: urlSchema.optional(),
@@ -135,13 +141,27 @@ export const storefrontEventSchema = z
     }
   });
 
+export const pixelConsentWithdrawalSchema = z
+  .object({
+    anonymousVisitorId: opaqueIdSchema.optional(),
+    sessionId: opaqueIdSchema.optional(),
+  })
+  .strict()
+  .refine((value) => Boolean(value.anonymousVisitorId || value.sessionId), {
+    message: 'A consent withdrawal needs a visitor or session identifier',
+  });
+
 export const pixelIngestBatchSchema = z
   .object({
     installationId: z.string().uuid(),
     collectorToken: collectorTokenSchema,
-    events: z.array(storefrontEventSchema).min(1).max(PIXEL_MAX_BATCH_SIZE),
+    events: z.array(storefrontEventSchema).max(PIXEL_MAX_BATCH_SIZE),
+    withdrawal: pixelConsentWithdrawalSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine((value) => value.events.length > 0 || Boolean(value.withdrawal), {
+    message: 'A collector batch needs events or a consent withdrawal',
+  });
 
 export const pixelDebugBatchSchema = z
   .object({

@@ -7,6 +7,8 @@ const SESSION_INACTIVITY_MS = 30 * 60 * 1000;
 const SESSION_KEY = 'stride_pixel_session_id';
 const SESSION_LAST_ACTIVITY_KEY = 'stride_pixel_session_last_activity_at';
 const LANDING_KEY = 'stride_pixel_landing';
+const PRIVACY_VISITOR_KEY = 'stride_pixel_privacy_visitor_id';
+const PRIVACY_SESSION_KEY = 'stride_pixel_privacy_session_id';
 
 const EVENT_NAMES = [
   'page_viewed',
@@ -169,6 +171,7 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
   if (!collectorUrl || !installationId || !collectorToken) return;
 
   let privacy = init.customerPrivacy;
+  let privacyRevision = 0;
   let sessionId = await browser.sessionStorage.getItem(SESSION_KEY);
   let lastActivityAtMs = 0;
   const storedLastActivity = await browser.sessionStorage.getItem(SESSION_LAST_ACTIVITY_KEY);
@@ -192,16 +195,51 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
   const queue = [];
   let flushTimer = null;
   let flushing = false;
+  let inFlightBatch = null;
+  let lastVisitorId = await browser.sessionStorage.getItem(PRIVACY_VISITOR_KEY);
+  let lastSessionId = await browser.sessionStorage.getItem(PRIVACY_SESSION_KEY) || sessionId;
   let handling = Promise.resolve();
 
   customerPrivacy.subscribe('visitorConsentCollected', (event) => {
+    privacyRevision += 1;
     privacy = event.customerPrivacy;
+    // Re-check queued events when consent changes before transmitting them.
+    for (const batch of [queue, inFlightBatch ?? []]) {
+      for (const queued of batch) queued.adSharingAllowed = queued.adSharingAllowed && adSharingAllowed();
+      if (!privacy?.analyticsProcessingAllowed) batch.length = 0;
+    }
+    if (!adSharingAllowed() && (lastVisitorId || lastSessionId)) {
+      // A privacy operation, not an analytics event. It must reach the collector even when
+      // no subsequent storefront event occurs or analytics permission has been withdrawn.
+      void deliverWithdrawal({
+        ...(lastVisitorId ? {anonymousVisitorId: lastVisitorId} : {}),
+        ...(lastSessionId ? {sessionId: lastSessionId} : {}),
+      });
+    }
   });
 
-  async function deliver(events) {
-    const body = JSON.stringify({installationId, collectorToken, events});
+  function adSharingAllowed() {
+    return privacy?.analyticsProcessingAllowed === true &&
+      privacy?.marketingAllowed === true && privacy?.saleOfDataAllowed === true;
+  }
 
+  async function deliverWithdrawal(withdrawal) {
+    const body = JSON.stringify({installationId, collectorToken, events: [], withdrawal});
     for (let attempt = 0; attempt < MAX_DELIVERY_ATTEMPTS; attempt += 1) {
+      try {
+        const response = await fetch(collectorUrl, {method: 'POST', body, keepalive: true});
+        if (response.ok || (response.status < 500 && response.status !== 429)) return;
+      } catch { /* Retry a minimal privacy signal without capturing new behavior. */ }
+      if (attempt < MAX_DELIVERY_ATTEMPTS - 1) await delay(250 * 2 ** attempt);
+    }
+  }
+
+  async function deliver(events) {
+    for (let attempt = 0; attempt < MAX_DELIVERY_ATTEMPTS; attempt += 1) {
+      if (!privacy?.analyticsProcessingAllowed || events.length === 0) return;
+      // A retry must use current permission, and withdrawal is sticky for this batch.
+      for (const event of events) event.adSharingAllowed = event.adSharingAllowed && adSharingAllowed();
+      const body = JSON.stringify({installationId, collectorToken, events});
       try {
         const response = await fetch(collectorUrl, {
           method: 'POST',
@@ -231,7 +269,8 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
     try {
       while (queue.length > 0) {
         const batch = queue.splice(0, MAX_BATCH_SIZE);
-        await deliver(batch);
+        inFlightBatch = batch;
+        try { await deliver(batch); } finally { inFlightBatch = null; }
       }
     } finally {
       flushing = false;
@@ -291,11 +330,20 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
 
   async function handle(event) {
     if (!privacy?.analyticsProcessingAllowed) return;
+    const revision = privacyRevision;
 
     const eventName = mapEventName(event.name);
     if (!eventName) return;
 
     await ensureSession(event);
+    if (revision !== privacyRevision || !privacy?.analyticsProcessingAllowed) return;
+    lastVisitorId = event.clientId || lastVisitorId;
+    lastSessionId = sessionId;
+    await Promise.all([
+      ...(lastVisitorId ? [browser.sessionStorage.setItem(PRIVACY_VISITOR_KEY, lastVisitorId)] : []),
+      browser.sessionStorage.setItem(PRIVACY_SESSION_KEY, lastSessionId),
+    ]);
+    if (revision !== privacyRevision || !privacy?.analyticsProcessingAllowed) return;
 
     const current = safeUrl(event.context?.document?.location?.href);
     if (!landing || hasAttribution(current.attribution)) {
@@ -303,6 +351,7 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
       await browser.sessionStorage.setItem(LANDING_KEY, JSON.stringify(landing));
     }
     const referrer = safeUrl(event.context?.document?.referrer);
+    if (revision !== privacyRevision || !privacy?.analyticsProcessingAllowed) return;
 
     queue.push({
       eventId: event.id,
@@ -312,6 +361,7 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
       anonymousVisitorId: event.clientId || undefined,
       sessionId: sessionId || undefined,
       consentState: 'GRANTED',
+      adSharingAllowed: adSharingAllowed(),
       pageUrl: current.url,
       referrerUrl: referrer.url,
       landingPageUrl: landing?.url,

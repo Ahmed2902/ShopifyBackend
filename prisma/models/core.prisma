@@ -225,6 +225,7 @@ model Store {
   orders                          Order[]
   restocks                        Restock[]
   storefrontEvents                StorefrontEvent[]
+  storefrontConsentWithdrawals    StorefrontConsentWithdrawal[]
   storefrontSessionRepairs        StorefrontSessionRepair[]
   storefrontSessions              StorefrontSession[]
   storefrontBehaviorDaily         StorefrontBehaviorDaily[]

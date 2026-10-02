@@ -1,4 +1,5 @@
 import { AppError } from '../../../errors/app-error.js';
+import { z } from 'zod';
 import { invalidateStoreDecisionCaches } from '../../../lib/store-decision-cache.js';
 import type { IntegrationService } from '../../integrations/integration.service.js';
 import { toErrorMessage } from '../../integrations/integration.utils.js';
@@ -138,7 +139,16 @@ export class ShopifyWebhookService {
     }
 
     if (delivery.topic === 'app/uninstalled') {
-      await this.repository.markConnectionUninstalled(connection.id);
+      const payload = shopifyResourceWebhookSchema.parse(delivery.payload);
+      if (shopifyGid('Shop', payload.id) !== connection.store.shopifyShopId) {
+        throw new AppError('Uninstall webhook shop identity does not match its delivery.',
+          401, 'SHOPIFY_WEBHOOK_SHOP_MISMATCH');
+      }
+      const revoked = await this.repository.markConnectionUninstalled(connection.id, delivery.triggeredAt ?? delivery.receivedAt);
+      if (revoked === false) {
+        await this.repository.markIgnored(delivery.id, 'Uninstall predates the current installation');
+        return;
+      }
       await this.repository.markProcessed(delivery.id);
       await invalidateStoreDecisionCaches(connection.store.id);
       return;
@@ -149,6 +159,20 @@ export class ShopifyWebhookService {
         delivery.id,
         `Shopify connection is ${connection.status.toLowerCase()}`,
       );
+      return;
+    }
+
+    if (delivery.topic === 'app/scopes_update') {
+      const payload = z.object({ current: z.array(z.string().min(1)) }).parse(delivery.payload);
+      const updated = await this.repository.updateConnectionScopes(
+        connection.id, payload.current, delivery.triggeredAt ?? delivery.receivedAt,
+      );
+      if (!updated) {
+        await this.repository.markIgnored(delivery.id, 'Scope update predates the current installation');
+        return;
+      }
+      await this.repository.markProcessed(delivery.id);
+      await invalidateStoreDecisionCaches(connection.store.id);
       return;
     }
 

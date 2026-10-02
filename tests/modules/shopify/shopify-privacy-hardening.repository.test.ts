@@ -141,7 +141,9 @@ describeDatabase('Shopify privacy hardening', () => {
       },
     });
 
+    await prisma.storefrontConsentWithdrawal.create({ data: { storeId: store.id, scopeKey: 'session:raw-session-789', revokedBefore: now, retentionExpiresAt: expiresAt } });
     await repository.redactCustomerOrders(store.id, redactDelivery.id, [orderId]);
+    expect(await prisma.storefrontConsentWithdrawal.count({ where: { storeId: store.id } })).toBe(0);
 
     expect(await prisma.storefrontEvent.count({ where: { storeId: store.id } })).toBe(0);
     expect(await prisma.storefrontSessionRepair.count({ where: { storeId: store.id } })).toBe(0);
@@ -251,8 +253,10 @@ describeDatabase('Shopify privacy hardening', () => {
       },
     });
 
+    await prisma.storefrontConsentWithdrawal.createMany({ data: ['session:access-session-990', 'visitor:visitor-990'].map(scopeKey => ({ storeId: store.id, scopeKey, revokedBefore: now, retentionExpiresAt: expiresAt })) });
     const request = await repository.createDataRequestExport(store.id, requestDelivery.id, [orderId]);
     const exported = request.exportJson as Record<string, unknown>;
+    expect(exported.storefrontConsentWithdrawals).toMatchObject([{ scopeKey: 'session:access-session-990' }, { scopeKey: 'visitor:visitor-990' }]);
     const exportedOrders = exported.orders as Array<Record<string, unknown>>;
     const exportedSessions = exported.storefrontSessions as Array<Record<string, unknown>>;
     const exportedEvents = exported.storefrontEvents as Array<Record<string, unknown>>;
