@@ -3,6 +3,7 @@ import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireRole, requireStoreMembership } from '../../middleware/store.middleware.js';
 import { requireActiveSubscription } from '../billing/billing.middleware.js';
 import { conversionDeliveryController } from './conversion-delivery.controller.js';
+import { managedConversionSetupController } from './managed-conversion-setup.controller.js';
 
 const ownerOrAdmin = requireRole('OWNER', 'ADMIN');
 
@@ -11,7 +12,9 @@ conversionDeliveryRouter.use(requireAuth, requireStoreMembership, requireActiveS
 
 conversionDeliveryRouter.get('/destinations', conversionDeliveryController.destinations);
 conversionDeliveryRouter.get('/deliveries', conversionDeliveryController.deliveries);
+conversionDeliveryRouter.get('/setup-options', ownerOrAdmin, managedConversionSetupController.options);
 conversionDeliveryRouter.put('/destinations', ownerOrAdmin, conversionDeliveryController.configure);
+conversionDeliveryRouter.post('/managed-destinations', ownerOrAdmin, managedConversionSetupController.enable);
 conversionDeliveryRouter.post(
   '/destinations/:destinationId/disable',
   ownerOrAdmin,
