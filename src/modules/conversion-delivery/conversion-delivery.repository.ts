@@ -94,7 +94,7 @@ export class ConversionDeliveryRepository {
     });
   }
 
-  async findPurchaseCandidates(limit: number): Promise<PurchaseCandidate[]> {
+  async findPurchaseCandidates(limit: number, sourceOrderId?: string): Promise<PurchaseCandidate[]> {
     return prisma.$queryRaw<PurchaseCandidate[]>(PrismaSql.sql`
       SELECT DISTINCT ON (o."id")
         o."id" AS "orderId",
@@ -122,6 +122,7 @@ export class ConversionDeliveryRepository {
           AND e."sessionId" = s."browserSessionId"
           AND e."metaClickId" IS NOT NULL
           AND e."consentState" IN ('GRANTED', 'NOT_REQUIRED')
+          AND e."adSharingAllowed" = TRUE
         ORDER BY e."eventAt" DESC, e."receivedAt" DESC
         LIMIT 1
       ) meta_event ON TRUE
@@ -132,6 +133,7 @@ export class ConversionDeliveryRepository {
           AND e."sessionId" = s."browserSessionId"
           AND e."googleClickId" IS NOT NULL
           AND e."consentState" IN ('GRANTED', 'NOT_REQUIRED')
+          AND e."adSharingAllowed" = TRUE
         ORDER BY e."eventAt" DESC, e."receivedAt" DESC
         LIMIT 1
       ) google_event ON TRUE
@@ -142,10 +144,19 @@ export class ConversionDeliveryRepository {
           AND e."sessionId" = s."browserSessionId"
           AND e."tiktokClickId" IS NOT NULL
           AND e."consentState" IN ('GRANTED', 'NOT_REQUIRED')
+          AND e."adSharingAllowed" = TRUE
         ORDER BY e."eventAt" DESC, e."receivedAt" DESC
         LIMIT 1
       ) tiktok_event ON TRUE
       WHERE o."isTest" = FALSE
+        ${sourceOrderId ? PrismaSql.sql`AND o."id" = ${sourceOrderId}::uuid` : PrismaSql.empty}
+        AND (
+          SELECT latest."adSharingAllowed" FROM "StorefrontEvent" latest
+          WHERE latest."storeId" = o."storeId"
+            AND (latest."sessionId" = s."browserSessionId" OR
+              (s."anonymousVisitorId" IS NOT NULL AND latest."anonymousVisitorId" = s."anonymousVisitorId"))
+          ORDER BY latest."eventAt" DESC, latest."receivedAt" DESC, latest."id" DESC LIMIT 1
+        ) = TRUE
         AND o."cancelledAt" IS NULL
         AND o."currentTotalAmount" IS NOT NULL
         AND COALESCE(o."processedAt", o."shopifyCreatedAt") >= NOW() - INTERVAL '30 days'
@@ -157,6 +168,18 @@ export class ConversionDeliveryRepository {
       ORDER BY o."id", s."endedAt" DESC, s."id" DESC
       LIMIT ${limit}
     `);
+  }
+
+  async hasAdvertisingConsent(claim: { sourceOrderId: string; storeId: string; provider: AdvertisingProvider; clickId: string | null }) {
+    if (!claim.clickId) return false;
+    const candidates = await this.findPurchaseCandidates(1, claim.sourceOrderId);
+    return candidates.some((candidate) => candidate.storeId === claim.storeId &&
+      (claim.provider === 'META' ? candidate.metaClickId : claim.provider === 'TIKTOK' ? candidate.tiktokClickId : candidate.googleClickId) === claim.clickId);
+  }
+
+  async discardForConsent(id: string) {
+    return prisma.conversionDelivery.update({ where: { id }, data: { status: 'DEAD', processingStartedAt: null,
+      lastError: 'Advertising consent or source attribution is no longer available', clickId: null, attributionEventAt: null, eventSourceUrl: null } });
   }
 
   async enqueue(input: {

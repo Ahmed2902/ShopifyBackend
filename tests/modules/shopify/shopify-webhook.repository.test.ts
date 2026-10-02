@@ -114,4 +114,25 @@ describeDatabase('ShopifyWebhookRepository', () => {
     expect(failed.nextAttemptAt).not.toBeNull();
     expect(failed.lastError).toBe('temporary failure');
   });
+  it('atomically clears credentials, cancels access and revokes MCP grants on uninstall', async () => {
+    const store = await createConnectedStore(); const repository = new ShopifyWebhookRepository();
+    const before = new Date(Date.now() - 1000); const now = new Date();
+    await prisma.shopifyConnection.update({ where: { id: store.shopifyConnection!.id }, data: { installedAt: before, refreshTokenCiphertext: 'refresh', refreshTokenExpiresAt: new Date(Date.now() + 86400_000) } });
+    await prisma.storeSubscription.create({ data: { storeId: store.id, provider: 'SHOPIFY', status: 'ACTIVE', selectedPlan: 'PRO', trialStartedAt: before, trialEndsAt: before, lastVerifiedAt: before } });
+    const token = await prisma.mcpRefreshToken.create({ data: { tokenHash: randomUUID(), userId: randomUUID(), storeId: store.id, clientId: 'test', resource: 'test', scopes: [], expiresAt: new Date(Date.now() + 86400_000) } });
+    try {
+      expect(await repository.markConnectionUninstalled(store.shopifyConnection!.id, now)).toBe(true);
+      expect(await prisma.shopifyConnection.findUnique({ where: { id: store.shopifyConnection!.id } })).toMatchObject({ status: 'UNINSTALLED', accessTokenCiphertext: '', refreshTokenCiphertext: null, nextReconciliationAt: null });
+      expect(await prisma.storeSubscription.findUnique({ where: { storeId: store.id } })).toMatchObject({ status: 'CANCELED', lastVerifiedAt: null, trialEndsAt: now });
+      expect(await prisma.mcpRefreshToken.findUnique({ where: { id: token.id } })).toMatchObject({ revokedAt: now });
+    } finally { await prisma.mcpRefreshToken.delete({ where: { id: token.id } }); }
+  });
+
+  it('leaves a newer reinstall untouched when an older uninstall arrives', async () => {
+    const store = await createConnectedStore(); const repository = new ShopifyWebhookRepository();
+    const eventAt = new Date(Date.now() - 86400_000);
+    expect(await repository.markConnectionUninstalled(store.shopifyConnection!.id, eventAt)).toBe(false);
+    expect(await prisma.shopifyConnection.findUnique({ where: { id: store.shopifyConnection!.id } })).toMatchObject({ status: 'ACTIVE', accessTokenCiphertext: 'test-token' });
+  });
+
 });

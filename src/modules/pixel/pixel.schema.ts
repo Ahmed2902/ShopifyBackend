@@ -64,6 +64,7 @@ export const storefrontEventSchema = z
     anonymousVisitorId: opaqueIdSchema.optional(),
     sessionId: opaqueIdSchema.optional(),
     consentState: z.enum(STOREFRONT_CONSENT_STATES),
+    adSharingAllowed: z.boolean().default(false),
     pageUrl: urlSchema.optional(),
     referrerUrl: urlSchema.optional(),
     landingPageUrl: urlSchema.optional(),

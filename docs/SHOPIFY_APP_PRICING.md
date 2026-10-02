@@ -71,7 +71,11 @@ The Partner API credential must be kept server-side and have the permissions nee
 - the old local `PATCH /plan` endpoint refuses direct plan mutation while App Pricing is enabled and returns the hosted plan URL;
 - the backend periodically reconciles the active Shopify subscription and also supports an owner-triggered fresh read;
 - if Shopify reports no active subscription, paid access fails closed;
-- a stale previously verified active subscription may continue briefly according to the verification TTL if Shopify is temporarily unavailable, but never before a store has completed its first successful verification.
+- verified grants remain cached only within the verification TTL (default 300 seconds); once stale, every paid API/MCP/worker guard requires successful reconciliation and fails closed on an outage;
+- the billing display may retain stale data with its stale indicator during a transient Partner API outage; displayed state never bypasses paid guards;
+- uninstall immediately clears Shopify credentials, cancels cached entitlement, disables Pixel/conversion destinations and revokes MCP refresh grants;
+- in-flight verification can grant access only to the same active installation generation; a reinstall invalidates the old billing verification;
+- a zero-dollar priced contract is accepted only after the authenticated Admin API verifies that the same shop is a partner development store. Live stores still require the exact paid price.
 
 ## Configuration drift protection
 

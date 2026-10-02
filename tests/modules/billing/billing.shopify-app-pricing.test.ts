@@ -105,6 +105,13 @@ function makeUpdateReturn(current: ReturnType<typeof localSubscription>) {
 }
 
 describe('BillingService Shopify App Pricing verification', () => {
+  it('rejects even a freshly verified cached grant after uninstall', async () => {
+    const client = pricingClient();
+    subscriptionRepository.findUnique.mockResolvedValue(localSubscription({ provider: 'SHOPIFY', status: 'ACTIVE', lastVerifiedAt: new Date() }));
+    storeRepository.findUnique.mockResolvedValue({ shopifyConnection: { status: 'UNINSTALLED' } });
+    await expect(new BillingService(client).requireActive(storeId)).rejects.toMatchObject({ code: 'SHOPIFY_INSTALL_REQUIRED' });
+    expect(client.activeSubscription).not.toHaveBeenCalled();
+  });
   it('revokes a previously active cached grant when background reconciliation sees a deterministic price mismatch', async () => {
     let persisted = localSubscription({ provider: 'SHOPIFY', status: 'ACTIVE', selectedPlan: 'PRO',
       lastVerifiedAt: new Date(now.getTime() - 86400_000) });
@@ -121,7 +128,7 @@ describe('BillingService Shopify App Pricing verification', () => {
   });
   beforeEach(() => {
     vi.clearAllMocks();
-    storeRepository.findUnique.mockResolvedValue({ shopifyShopId: 'gid://shopify/Shop/123' });
+    storeRepository.findUnique.mockResolvedValue({ shopifyShopId: 'gid://shopify/Shop/123', myshopifyDomain: 'stride-test.myshopify.com', shopifyConnection: { status: 'ACTIVE' } });
   });
 
   it('maps a verified $84.99 Shopify Pro subscription into active local billing state', async () => {
@@ -138,7 +145,7 @@ describe('BillingService Shopify App Pricing verification', () => {
 
     expect(client.activeSubscription).toHaveBeenCalledWith('gid://shopify/Shop/123');
     expect(subscriptionRepository.update).toHaveBeenCalledWith({
-      where: { storeId },
+      where: expect.objectContaining({ storeId }),
       data: expect.objectContaining({
         provider: 'SHOPIFY',
         selectedPlan: 'PRO',
@@ -352,4 +359,47 @@ describe('BillingService Shopify App Pricing verification', () => {
       }),
     ).rejects.toMatchObject({ code: 'SHOPIFY_PLAN_CONFIGURATION_MISMATCH' });
   });
+  it.each(['id', 'myshopifyDomain'] as const)('revokes a contract belonging to a different shop (%s)', async (field) => {
+    const current = localSubscription({ provider: 'SHOPIFY', status: 'ACTIVE' });
+    subscriptionRepository.findUnique.mockResolvedValue(current); makeUpdateReturn(current);
+    const client = pricingClient(); const remote = remoteSubscription('stride-pro');
+    remote.shop[field] = field === 'id' ? 'gid://shopify/Shop/9999' : 'other.myshopify.com';
+    vi.mocked(client.activeSubscription).mockResolvedValue(remote);
+    await expect(new BillingService(client).read(storeId, now, { fresh: true })).rejects.toMatchObject({ code: 'SHOPIFY_PLAN_CONFIGURATION_MISMATCH' });
+    expect(subscriptionRepository.update).toHaveBeenCalledWith({ where: { storeId }, data: expect.objectContaining({ status: 'EXPIRED' }) });
+  });
+
+  it.each([true, false])('accepts a zero-dollar contract only when the Admin API verifies a development store (%s)', async (development) => {
+    const current = localSubscription(); subscriptionRepository.findUnique.mockResolvedValue(current); makeUpdateReturn(current);
+    const client = pricingClient(); const remote = remoteSubscription('stride-pro'); remote.items[0]!.price.amount = '0.00';
+    vi.mocked(client.activeSubscription).mockResolvedValue(remote);
+    const verify = vi.fn().mockResolvedValue(development);
+    const result = new BillingService(client, verify).read(storeId, now, { fresh: true, failOnVerificationError: true });
+    if (development) await expect(result).resolves.toMatchObject({ selectedPlan: 'PRO', accessActive: true });
+    else await expect(result).rejects.toMatchObject({ code: 'SHOPIFY_PLAN_CONFIGURATION_MISMATCH' });
+    expect(verify).toHaveBeenCalledWith(storeId, 'gid://shopify/Shop/123');
+  });
+
+  it('fails closed if development-store verification is unavailable', async () => {
+    const current = localSubscription(); subscriptionRepository.findUnique.mockResolvedValue(current);
+    const client = pricingClient(); const remote = remoteSubscription('stride-pro'); remote.items[0]!.price.amount = '0';
+    vi.mocked(client.activeSubscription).mockResolvedValue(remote);
+    await expect(new BillingService(client, vi.fn().mockRejectedValue(new Error('offline'))).read(storeId, now, { fresh: true, failOnVerificationError: true })).rejects.toThrow('offline');
+    expect(subscriptionRepository.update).not.toHaveBeenCalled();
+  });
+
+  it('does not contact Partner API or grant access to an uninstalled store', async () => {
+    const current = localSubscription({ provider: 'SHOPIFY', status: 'ACTIVE' });
+    subscriptionRepository.findUnique.mockResolvedValue(current); makeUpdateReturn(current);
+    storeRepository.findUnique.mockResolvedValue({ shopifyShopId: 'gid://shopify/Shop/123', myshopifyDomain: 'stride-test.myshopify.com', shopifyConnection: { status: 'UNINSTALLED' } });
+    const client = pricingClient();
+    await expect(new BillingService(client).read(storeId, now, { fresh: true })).resolves.toMatchObject({ accessActive: false });
+    expect(client.activeSubscription).not.toHaveBeenCalled();
+  });
+
+  it('never grants the old internal trial once Shopify App Pricing is enabled', async () => {
+    subscriptionRepository.findUnique.mockResolvedValue(localSubscription({ status: 'TRIALING', trialEndsAt: new Date(now.getTime() + 86400_000) }));
+    await expect(new BillingService(pricingClient()).readLocal(storeId, now)).resolves.toMatchObject({ accessActive: false, trial: { active: false } });
+  });
+
 });

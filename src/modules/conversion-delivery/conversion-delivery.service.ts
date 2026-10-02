@@ -191,6 +191,12 @@ export class ConversionDeliveryService {
       }
 
       try {
+        // Consent and retained attribution are checked again immediately before provider delivery.
+        if (!(await this.repository.hasAdvertisingConsent(claim))) {
+          await this.repository.discardForConsent(claim.id);
+          dead += 1;
+          continue;
+        }
         const result = await this.deliver(claim);
         await this.repository.markDelivered(claim.id, result.providerRequestId, this.now());
         delivered += 1;

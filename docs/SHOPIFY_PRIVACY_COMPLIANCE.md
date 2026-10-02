@@ -14,7 +14,7 @@ The Shopify app configuration must subscribe to:
 
 ```toml
 [[webhooks.subscriptions]]
-uri = "/v1/integrations/shopify/webhooks"
+uri = "https://YOUR_BACKEND_HOST/v1/integrations/shopify/webhooks"
 compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
 ```
 
@@ -22,7 +22,7 @@ The app should also subscribe to uninstall notifications:
 
 ```toml
 [[webhooks.subscriptions]]
-uri = "/v1/integrations/shopify/webhooks"
+uri = "https://YOUR_BACKEND_HOST/v1/integrations/shopify/webhooks"
 topics = ["app/uninstalled"]
 ```
 
@@ -100,3 +100,10 @@ Before public submission, verify all of the following against a disposable Shopi
 7. Simulate a worker retry after the privacy operation committed but before delivery status transition; confirm the scrubbed completion marker is replay-safe.
 8. Run `shop/redact` only against a disposable store and confirm all tenant/provider data is gone while other stores remain intact.
 9. Pull/validate the Shopify app configuration and confirm the active/released version contains the compliance subscriptions before production review.
+
+
+## Advertising disclosure permission
+
+Analytics permission alone does not authorize sending purchases to Meta, TikTok or Google Ads. The updated pixel uses Shopify Customer Privacy `analyticsProcessingAllowed`, `marketingAllowed` and `saleOfDataAllowed`; all three must be true for `adSharingAllowed`. Missing permission (including older pixel clients and historical rows) defaults to false. The extension declaration must match these purposes. Revoking analytics clears queued pixel events; revoking marketing removes queued sharing permission.
+
+Candidates and claimed retries require retained permitted attribution and the latest recorded visitor/session permission immediately before delivery. If either is unavailable the queued disclosure is discarded and its identifiers cleared. Already delivered conversions cannot be recalled by this local gate: customer erasure must include the provider's applicable deletion/support process. Verify consent transitions in the live storefront before submission.

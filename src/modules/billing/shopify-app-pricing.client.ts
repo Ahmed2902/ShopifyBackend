@@ -1,4 +1,5 @@
 import { env } from '../../config/env.js';
+import { z } from 'zod';
 import { AppError } from '../../errors/app-error.js';
 import { measureRequestPerformanceSpan } from '../../observability/request-performance.js';
 
@@ -33,6 +34,25 @@ type PartnerApiResponse = {
   };
   errors?: Array<{ message?: string; extensions?: { code?: string | number } }>;
 };
+
+const subscriptionResponseSchema = z.object({
+  data: z.object({
+    activeSubscription: z.object({
+      shop: z.object({ id: z.string().min(1), myshopifyDomain: z.string().min(1) }),
+      billingPeriod: z.string(), cancelAtEndOfCycle: z.boolean(),
+      trialEndsAt: z.string().datetime({ offset: true }).nullable(),
+      currentBillingCycle: z.object({
+        startTime: z.string().datetime({ offset: true }),
+        endTime: z.string().datetime({ offset: true }),
+      }).nullable(),
+      items: z.array(z.object({
+        handle: z.string().nullable(), description: z.string().nullable(),
+        price: z.object({ __typename: z.string(), active: z.boolean(), currency: z.string(), amount: z.string().optional() }),
+      })),
+      legacySubscriptionId: z.string().nullable(),
+    }).nullable(),
+  }),
+});
 
 const ACTIVE_SUBSCRIPTION_QUERY = `
   query ActiveSubscription($appId: ID!, $shopId: ID!) {
@@ -151,8 +171,8 @@ export class ShopifyAppPricingClient {
       );
     }
 
-    if (!response.ok || payload.errors?.length) {
-      const providerCode = payload.errors?.[0]?.extensions?.code;
+    if (!response.ok || payload?.errors?.length) {
+      const providerCode = payload?.errors?.[0]?.extensions?.code;
       throw new AppError(
         'Shopify billing status could not be verified right now.',
         503,
@@ -161,7 +181,12 @@ export class ShopifyAppPricingClient {
       );
     }
 
-    return payload.data?.activeSubscription ?? null;
+    const parsed = subscriptionResponseSchema.safeParse(payload);
+    if (!parsed.success) {
+      throw new AppError('Shopify billing status returned an unexpected response.',
+        503, 'SHOPIFY_BILLING_UNAVAILABLE');
+    }
+    return parsed.data.data.activeSubscription;
   }
 }
 

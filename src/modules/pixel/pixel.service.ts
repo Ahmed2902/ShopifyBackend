@@ -327,6 +327,7 @@ export class PixelService {
       anonymousVisitorId: event.anonymousVisitorId ?? null,
       sessionId: event.sessionId ?? null,
       consentState: event.consentState,
+      adSharingAllowed: isStorefrontBehaviorCaptureAllowed(event.consentState) && event.adSharingAllowed === true,
       pageUrl: sanitizeStorefrontUrl(event.pageUrl),
       referrerUrl: sanitizeStorefrontUrl(event.referrerUrl),
       landingPageUrl: sanitizeStorefrontUrl(event.landingPageUrl),

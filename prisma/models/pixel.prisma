@@ -98,6 +98,7 @@ model StorefrontEvent {
   anonymousVisitorId     String?                  @db.VarChar(128)
   sessionId              String?                  @db.VarChar(128)
   consentState           StorefrontConsentState
+  adSharingAllowed       Boolean                  @default(false)
   pageUrl                String?                  @db.Text
   referrerUrl            String?                  @db.Text
   landingPageUrl         String?                  @db.Text

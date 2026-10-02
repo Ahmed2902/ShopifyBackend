@@ -133,7 +133,7 @@ export class ShopifyEmbeddedAuthRepository {
             { myshopifyDomain: input.shop },
           ],
         },
-        select: { id: true },
+        select: { id: true, shopifyConnection: { select: { status: true } } },
         take: 2,
       });
       if (candidates.length > 1) {
@@ -189,6 +189,15 @@ export class ShopifyEmbeddedAuthRepository {
             reconciliationClaimedAt: null,
           },
         });
+
+        if (candidates[0] && candidates[0].shopifyConnection?.status !== 'ACTIVE') {
+          await tx.storeSubscription.updateMany({
+            where: { storeId: store.id, provider: 'SHOPIFY' },
+            data: { status: 'EXPIRED', trialEndsAt: now, currentPeriodEndsAt: null,
+              lastVerifiedAt: null, canceledAt: null, cancelAtEndOfCycle: false,
+              shopifyAppSubscriptionId: null, shopifyPlanHandle: null },
+          });
+        }
 
         await tx.externalPayload.create({
           data: {

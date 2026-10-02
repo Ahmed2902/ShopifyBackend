@@ -61,11 +61,12 @@ Configure public monthly plans in Partner Dashboard:
 
 - Essentials — **$49.99 USD/month**
 - Pro — **$84.99 USD/month**
-- 14-day Pro trial
+- 14-day eligible trial on both plans, with Pro-equivalent Stride access
 
 Confirm:
 
-- new install → trial
+- new install with no approved plan → hosted pricing; declined approval keeps billing/support usable
+- approved plan → Shopify-confirmed trial when eligible
 - plan selection is Shopify-hosted
 - Essentials → Pro
 - Pro → Essentials
@@ -139,7 +140,7 @@ Run locally against the exact submission revision:
 npm run prisma:validate
 npm run lint
 npm run typecheck
-npm test
+RUN_DB_TESTS=true npm run ci
 npm run smoke:v1-release:check
 npm run shopify:app-store:check
 ```
@@ -149,3 +150,14 @@ Then manually test the entire merchant journey in a development store using the 
 ## Not required for initial listing
 
 Built for Shopify is a later quality milestone, not a prerequisite for first App Store publication. Treat it as a post-launch goal after Stride has real active installs and reviews.
+
+
+## Deployment configuration and account gates
+
+Run `npm run shopify:app-config` with real deployment environment values. It writes an ignored `shopify.app.toml` containing only public app identifiers/URLs, minimal scopes, managed installation, operational webhooks and all three compliance topics. Keep the actual Shopify-generated extension UID. Validate with `shopify app config validate --json` in the linked app project before deploying an app version. Configuration validation requires the real app/account context; renderer tests do not replace it.
+
+Production now refuses to start with internal billing, missing App Pricing credentials/handles, legacy merchant authentication or non-HTTPS URLs. Set these before deploying this change. A 14-day Dashboard trial cannot be inferred from Partner API price data; manually check both plans and their eligibility rules.
+
+The pixel extension declares analytics, marketing and sale-of-data purposes. New events explicitly record `adSharingAllowed` only when Shopify reports analytics, marketing and sale-of-data permission. Historical events default to false and are not retroactively authorized. Purchase delivery checks permission at enqueue and again immediately before sending; the latest retained event for the matching visitor/session must still permit sharing. Deploy the updated extension together with the backend migration. Analytics/advertising consent withdrawal and already-delivered provider data require real storefront verification and the documented provider deletion procedure.
+
+For this PR, real TLS/link availability, Partner plan configuration, protected-data approval, linked Shopify CLI validation, published extension metadata, live install/reinstall/trial/upgrade/downgrade and authenticated V1/MCP runtime checks remain account/environment gates. Do not mark them passed based on mocked tests or script syntax checks. See `SHOPIFY_APP_STORE_REVIEW.md` for requirement-by-requirement findings.

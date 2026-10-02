@@ -196,7 +196,15 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
 
   customerPrivacy.subscribe('visitorConsentCollected', (event) => {
     privacy = event.customerPrivacy;
+    // Re-check queued events when consent changes before transmitting them.
+    for (const queued of queue) queued.adSharingAllowed = queued.adSharingAllowed && adSharingAllowed();
+    if (!privacy?.analyticsProcessingAllowed) queue.length = 0;
   });
+
+  function adSharingAllowed() {
+    return privacy?.analyticsProcessingAllowed === true &&
+      privacy?.marketingAllowed === true && privacy?.saleOfDataAllowed === true;
+  }
 
   async function deliver(events) {
     const body = JSON.stringify({installationId, collectorToken, events});
@@ -312,6 +320,7 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
       anonymousVisitorId: event.clientId || undefined,
       sessionId: sessionId || undefined,
       consentState: 'GRANTED',
+      adSharingAllowed: adSharingAllowed(),
       pageUrl: current.url,
       referrerUrl: referrer.url,
       landingPageUrl: landing?.url,

@@ -76,6 +76,8 @@ function repository(input: {
     }),
     recoverStaleClaims: vi.fn().mockResolvedValue({ count: 0 }),
     claimDue: vi.fn().mockResolvedValue(input.claims ?? []),
+    hasAdvertisingConsent: vi.fn().mockResolvedValue(true),
+    discardForConsent: vi.fn().mockResolvedValue(undefined),
     markFailed: vi.fn().mockResolvedValue(undefined),
     pauseForBilling: vi.fn().mockResolvedValue(undefined),
     markDelivered: vi.fn().mockResolvedValue(undefined),
@@ -164,6 +166,18 @@ describe('ConversionDeliveryService purchase enqueue', () => {
 
     await expect(service.enqueuePurchases()).resolves.toMatchObject({ eligible: 0, enqueued: 0 });
     expect(repo.enqueue).not.toHaveBeenCalled();
+  });
+});
+
+describe('ConversionDeliveryService advertising consent', () => {
+  it('discards a queued purchase before provider delivery when permission is missing or withdrawn', async () => {
+    const repo = repository({ claims: [claim()] });
+    repo.hasAdvertisingConsent.mockResolvedValue(false);
+    const service = new ConversionDeliveryService(repo as never, () => now, billing() as never);
+    await expect(service.processDue()).resolves.toMatchObject({ delivered: 0, dead: 1 });
+    expect(repo.discardForConsent).toHaveBeenCalledWith('delivery-1');
+    expect(repo.markDelivered).not.toHaveBeenCalled();
+    expect(repo.markFailed).not.toHaveBeenCalled();
   });
 });
 

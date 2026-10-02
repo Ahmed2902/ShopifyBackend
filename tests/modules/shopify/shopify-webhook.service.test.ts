@@ -22,7 +22,7 @@ const connection = {
   refreshTokenExpiresAt: null,
   scopes: ['read_products', 'read_inventory', 'read_locations', 'read_orders'],
   apiVersion: '2026-07',
-  store: { id: storeId, myshopifyDomain: 'example-store.myshopify.com' },
+  store: { id: storeId, shopifyShopId: 'gid://shopify/Shop/1', myshopifyDomain: 'example-store.myshopify.com' },
 };
 
 function delivery(topic: string, payload: unknown, attempts = 1) {
@@ -33,6 +33,8 @@ function delivery(topic: string, payload: unknown, attempts = 1) {
     payload,
     attempts,
     shopifyConnectionId: connectionId,
+    triggeredAt: new Date("2026-10-02T00:00:00Z"),
+    receivedAt: new Date("2026-10-02T00:00:01Z"),
   };
 }
 
@@ -196,7 +198,7 @@ describe('ShopifyWebhookService', () => {
 
     await service.processDueDeliveries();
 
-    expect(repository.markConnectionUninstalled).toHaveBeenCalledWith(connectionId);
+    expect(repository.markConnectionUninstalled).toHaveBeenCalledWith(connectionId, new Date("2026-10-02T00:00:00Z"));
     expect(authService.resolveAccessToken).not.toHaveBeenCalled();
     expect(repository.markProcessed).toHaveBeenCalledWith(deliveryId);
   });
