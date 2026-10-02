@@ -481,11 +481,19 @@ export class BillingService {
     });
     if (!store) throw new AppError('Store not found', 404, 'STORE_NOT_FOUND');
 
+    // Every result belongs to the connection generation read before the provider call.
+    // Fence negative and invalid-contract writes as well as successful grants.
+    const verificationWhere = { storeId, store: { shopifyConnection: { is:
+      store.shopifyConnection ? {
+        status: store.shopifyConnection.status, installedAt: store.shopifyConnection.installedAt,
+      } : null,
+    } } };
+
     const remote = store.shopifyConnection?.status === 'ACTIVE'
       ? await this.appPricing.activeSubscription(store.shopifyShopId) : null;
     if (!remote) {
       return prisma.storeSubscription.update({
-        where: { storeId },
+        where: verificationWhere,
         data: {
           provider: 'SHOPIFY',
           status: current.provider === 'SHOPIFY' && current.status === 'ACTIVE' ? 'CANCELED' : 'EXPIRED',
@@ -519,7 +527,7 @@ export class BillingService {
         // A deterministic invalid contract must revoke the cached grant even when a scheduled
         // reconciliation is the caller. Transient Partner API errors keep their existing policy.
         await prisma.storeSubscription.update({
-          where: { storeId },
+          where: verificationWhere,
           data: { provider: 'SHOPIFY', status: 'EXPIRED', trialEndsAt: now,
             currentPeriodEndsAt: null, lastVerifiedAt: now },
         });
@@ -533,9 +541,7 @@ export class BillingService {
     return prisma.storeSubscription.update({
       // Do not resurrect a grant from a Partner API request that started before an
       // uninstall/reinstall completed while the request was in flight.
-      where: { storeId, store: { shopifyConnection: { is: {
-        status: 'ACTIVE', installedAt: store.shopifyConnection!.installedAt,
-      } } } },
+      where: verificationWhere,
       data: {
         provider: 'SHOPIFY',
         selectedPlan,

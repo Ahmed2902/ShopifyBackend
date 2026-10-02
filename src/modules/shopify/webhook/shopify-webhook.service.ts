@@ -164,7 +164,13 @@ export class ShopifyWebhookService {
 
     if (delivery.topic === 'app/scopes_update') {
       const payload = z.object({ current: z.array(z.string().min(1)) }).parse(delivery.payload);
-      await this.repository.updateConnectionScopes(connection.id, payload.current);
+      const updated = await this.repository.updateConnectionScopes(
+        connection.id, payload.current, delivery.triggeredAt ?? delivery.receivedAt,
+      );
+      if (!updated) {
+        await this.repository.markIgnored(delivery.id, 'Scope update predates the current installation');
+        return;
+      }
       await this.repository.markProcessed(delivery.id);
       await invalidateStoreDecisionCaches(connection.store.id);
       return;

@@ -215,3 +215,21 @@ describeDatabase('Pixel retention repository', () => {
     });
   });
 });
+
+describeDatabase('Retried Pixel advertising consent', () => {
+  it('downgrades an already persisted event on a duplicate retry without duplicating facts or regranting old permission', async () => {
+    const store = await createStore();
+    const other = await createStore();
+    const repository = new PixelRepository();
+    const now = new Date();
+    const event = { eventId: randomUUID(), eventName: 'PAGE_VIEW' as const, eventAt: now,
+      receivedAt: now, consentState: 'GRANTED' as const, adSharingAllowed: true,
+      retentionExpiresAt: new Date(now.getTime() + 86400_000) };
+    expect(await repository.insertEvents(store.id, [event], now)).toBe(1);
+    expect(await repository.insertEvents(other.id, [event], now)).toBe(1);
+    expect(await repository.insertEvents(store.id, [{ ...event, adSharingAllowed: false }], now)).toBe(0);
+    expect(await repository.insertEvents(store.id, [event], now)).toBe(0);
+    expect(await prisma.storefrontEvent.findMany({ where: { storeId: store.id, eventId: event.eventId } })).toMatchObject([{ adSharingAllowed: false }]);
+    expect(await prisma.storefrontEvent.findMany({ where: { storeId: other.id, eventId: event.eventId } })).toMatchObject([{ adSharingAllowed: true }]);
+  });
+});

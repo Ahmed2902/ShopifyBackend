@@ -136,3 +136,16 @@ describeDatabase('ShopifyWebhookRepository', () => {
   });
 
 });
+
+describeDatabase('Scope updates across reinstall', () => {
+  it('rejects old scope changes and accepts a current delivery against the actual connection generation', async () => {
+    const store = await createConnectedStore();
+    const repository = new ShopifyWebhookRepository();
+    const installedAt = new Date();
+    await prisma.shopifyConnection.update({ where: { id: store.shopifyConnection!.id }, data: { installedAt, scopes: ['read_orders'] } });
+    expect(await repository.updateConnectionScopes(store.shopifyConnection!.id, ['write_products'], new Date(installedAt.getTime() - 1))).toBe(false);
+    expect(await prisma.shopifyConnection.findUniqueOrThrow({ where: { id: store.shopifyConnection!.id } })).toMatchObject({ scopes: ['read_orders'] });
+    expect(await repository.updateConnectionScopes(store.shopifyConnection!.id, ['read_products'], installedAt)).toBe(true);
+    expect(await prisma.shopifyConnection.findUniqueOrThrow({ where: { id: store.shopifyConnection!.id } })).toMatchObject({ scopes: ['read_products'] });
+  });
+});

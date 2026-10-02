@@ -204,10 +204,11 @@ export class ShopifyWebhookRepository {
     });
   }
 
-  updateConnectionScopes(connectionId: string, scopes: string[]) {
-    return prisma.shopifyConnection.updateMany({
-      where: { id: connectionId, status: 'ACTIVE' }, data: { scopes },
+  async updateConnectionScopes(connectionId: string, scopes: string[], eventAt: Date) {
+    const result = await prisma.shopifyConnection.updateMany({
+      where: { id: connectionId, status: 'ACTIVE', installedAt: { lte: eventAt } }, data: { scopes },
     });
+    return result.count > 0;
   }
 
   markProductDeleted(storeId: string, shopifyProductId: string) {

@@ -161,3 +161,10 @@ Production now refuses to start with internal billing, missing App Pricing crede
 The pixel extension declares analytics, marketing and sale-of-data purposes. New events explicitly record `adSharingAllowed` only when Shopify reports analytics, marketing and sale-of-data permission. Historical events default to false and are not retroactively authorized. Purchase delivery checks permission at enqueue and again immediately before sending; the latest retained event for the matching visitor/session must still permit sharing. Deploy the updated extension together with the backend migration. Analytics/advertising consent withdrawal and already-delivered provider data require real storefront verification and the documented provider deletion procedure.
 
 For this PR, real TLS/link availability, Partner plan configuration, protected-data approval, linked Shopify CLI validation, published extension metadata, live install/reinstall/trial/upgrade/downgrade and authenticated V1/MCP runtime checks remain account/environment gates. Do not mark them passed based on mocked tests or script syntax checks. See `SHOPIFY_APP_STORE_REVIEW.md` for requirement-by-requirement findings.
+
+
+## Reviewed concurrency and retry boundaries
+
+Billing grants, absent-subscription results and invalid-contract revocations all compare the connection generation captured before the Partner request; a response from an old install cannot modify a newer verified reinstall. Scope webhook updates compare their delivery time against the installation inside the atomic database write.
+
+Pixel retries rebuild their body from current buyer permissions. Withdrawal permanently downgrades or drops the in-flight batch, even if permission is later granted again. Duplicate collector retries can only downgrade an already retained event's advertising permission, without duplicating its analytics facts or reauthorizing historical permission. An outbound request already accepted by a collector/provider cannot be recalled; validate withdrawal timing and provider deletion in the real storefront journey.

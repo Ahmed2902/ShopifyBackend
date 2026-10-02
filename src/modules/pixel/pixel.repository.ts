@@ -197,6 +197,16 @@ export class PixelRepository {
         skipDuplicates: true,
       });
 
+      // A timed-out first attempt may already have persisted the event. Retried consent
+      // withdrawal must downgrade that row despite event-id dedupe; never reauthorize it.
+      const withdrawnIds = events.filter((event) => event.adSharingAllowed !== true).map((event) => event.eventId);
+      if (withdrawnIds.length > 0) {
+        await tx.storefrontEvent.updateMany({
+          where: { storeId, eventId: { in: withdrawnIds }, adSharingAllowed: true },
+          data: { adSharingAllowed: false },
+        });
+      }
+
       const sessionIds = [
         ...new Set(
           events

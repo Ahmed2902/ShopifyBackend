@@ -63,3 +63,36 @@ describe('Pixel advertising permission from Shopify customer privacy', () => {
     expect(extension.fetch).not.toHaveBeenCalled();
   });
 });
+
+describe('Pixel in-flight consent withdrawal', () => {
+  it.each(['network', '500', '429'])('downgrades an in-flight %s retry even after permission is granted again', async (failure) => {
+    const allowed = { analyticsProcessingAllowed: true, marketingAllowed: true, saleOfDataAllowed: true };
+    const extension = await pixel(allowed);
+    let finish!: (response: { ok: boolean; status: number }) => void;
+    let fail!: (error: Error) => void;
+    extension.fetch.mockImplementationOnce(() => new Promise((resolve, reject) => { finish = resolve; fail = reject; }));
+    await extension.event(); await extension.flush();
+    expect(extension.fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(extension.fetch.mock.calls[0]![1].body).events[0].adSharingAllowed).toBe(true);
+    extension.update({ customerPrivacy: { ...allowed, marketingAllowed: false } });
+    extension.update({ customerPrivacy: allowed });
+    if (failure === 'network') fail(new Error('connection lost')); else finish({ ok: false, status: Number(failure) });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    await extension.flush();
+    expect(extension.fetch).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(extension.fetch.mock.calls[1]![1].body).events[0].adSharingAllowed).toBe(false);
+  });
+
+  it.each([false, true])('drops in-flight analytics permanently for the batch on withdrawal (regrant=%s)', async (regrant) => {
+    const allowed = { analyticsProcessingAllowed: true, marketingAllowed: true, saleOfDataAllowed: true };
+    const extension = await pixel(allowed);
+    let finish!: (response: { ok: boolean; status: number }) => void;
+    extension.fetch.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await extension.event(); await extension.flush();
+    extension.update({ customerPrivacy: { ...allowed, analyticsProcessingAllowed: false } });
+    if (regrant) extension.update({ customerPrivacy: allowed });
+    finish({ ok: false, status: 500 });
+    await new Promise<void>(resolve => setImmediate(resolve)); await extension.flush();
+    expect(extension.fetch).toHaveBeenCalledTimes(1);
+  });
+});

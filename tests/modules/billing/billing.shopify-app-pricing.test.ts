@@ -251,7 +251,7 @@ describe('BillingService Shopify App Pricing verification', () => {
     });
 
     expect(subscriptionRepository.update).toHaveBeenCalledWith({
-      where: { storeId },
+      where: expect.objectContaining({ storeId, store: expect.any(Object) }),
       data: expect.objectContaining({
         provider: 'SHOPIFY',
         status: 'CANCELED',
@@ -287,7 +287,7 @@ describe('BillingService Shopify App Pricing verification', () => {
       code: 'SHOPIFY_PLAN_UNRECOGNIZED',
     });
 
-    expect(subscriptionRepository.update).toHaveBeenCalledWith({ where: { storeId },
+    expect(subscriptionRepository.update).toHaveBeenCalledWith({ where: expect.objectContaining({ storeId, store: expect.any(Object) }),
       data: expect.objectContaining({ status: 'EXPIRED', trialEndsAt: now, lastVerifiedAt: now }) });
   });
 
@@ -326,7 +326,7 @@ describe('BillingService Shopify App Pricing verification', () => {
       }),
     });
 
-    expect(subscriptionRepository.update).toHaveBeenCalledWith({ where: { storeId },
+    expect(subscriptionRepository.update).toHaveBeenCalledWith({ where: expect.objectContaining({ storeId, store: expect.any(Object) }),
       data: expect.objectContaining({ status: 'EXPIRED', trialEndsAt: now, lastVerifiedAt: now }) });
   });
 
@@ -366,7 +366,7 @@ describe('BillingService Shopify App Pricing verification', () => {
     remote.shop[field] = field === 'id' ? 'gid://shopify/Shop/9999' : 'other.myshopify.com';
     vi.mocked(client.activeSubscription).mockResolvedValue(remote);
     await expect(new BillingService(client).read(storeId, now, { fresh: true })).rejects.toMatchObject({ code: 'SHOPIFY_PLAN_CONFIGURATION_MISMATCH' });
-    expect(subscriptionRepository.update).toHaveBeenCalledWith({ where: { storeId }, data: expect.objectContaining({ status: 'EXPIRED' }) });
+    expect(subscriptionRepository.update).toHaveBeenCalledWith({ where: expect.objectContaining({ storeId, store: expect.any(Object) }), data: expect.objectContaining({ status: 'EXPIRED' }) });
   });
 
   it.each([true, false])('accepts a zero-dollar contract only when the Admin API verifies a development store (%s)', async (development) => {

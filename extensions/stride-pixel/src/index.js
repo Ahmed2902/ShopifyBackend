@@ -192,13 +192,16 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
   const queue = [];
   let flushTimer = null;
   let flushing = false;
+  let inFlightBatch = null;
   let handling = Promise.resolve();
 
   customerPrivacy.subscribe('visitorConsentCollected', (event) => {
     privacy = event.customerPrivacy;
     // Re-check queued events when consent changes before transmitting them.
-    for (const queued of queue) queued.adSharingAllowed = queued.adSharingAllowed && adSharingAllowed();
-    if (!privacy?.analyticsProcessingAllowed) queue.length = 0;
+    for (const batch of [queue, inFlightBatch ?? []]) {
+      for (const queued of batch) queued.adSharingAllowed = queued.adSharingAllowed && adSharingAllowed();
+      if (!privacy?.analyticsProcessingAllowed) batch.length = 0;
+    }
   });
 
   function adSharingAllowed() {
@@ -207,9 +210,11 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
   }
 
   async function deliver(events) {
-    const body = JSON.stringify({installationId, collectorToken, events});
-
     for (let attempt = 0; attempt < MAX_DELIVERY_ATTEMPTS; attempt += 1) {
+      if (!privacy?.analyticsProcessingAllowed || events.length === 0) return;
+      // A retry must use current permission, and withdrawal is sticky for this batch.
+      for (const event of events) event.adSharingAllowed = event.adSharingAllowed && adSharingAllowed();
+      const body = JSON.stringify({installationId, collectorToken, events});
       try {
         const response = await fetch(collectorUrl, {
           method: 'POST',
@@ -239,7 +244,8 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
     try {
       while (queue.length > 0) {
         const batch = queue.splice(0, MAX_BATCH_SIZE);
-        await deliver(batch);
+        inFlightBatch = batch;
+        try { await deliver(batch); } finally { inFlightBatch = null; }
       }
     } finally {
       flushing = false;
