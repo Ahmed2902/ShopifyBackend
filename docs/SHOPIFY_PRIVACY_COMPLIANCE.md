@@ -106,7 +106,7 @@ Before public submission, verify all of the following against a disposable Shopi
 
 Analytics permission alone does not authorize sending purchases to Meta, TikTok or Google Ads. The updated pixel uses Shopify Customer Privacy `analyticsProcessingAllowed`, `marketingAllowed` and `saleOfDataAllowed`; all three must be true for `adSharingAllowed`. Missing permission (including older pixel clients and historical rows) defaults to false. The extension declaration must match these purposes. Revoking analytics clears queued pixel events; revoking marketing removes queued sharing permission.
 
-Candidates and claimed retries require retained permitted attribution and the latest recorded visitor/session permission immediately before delivery. If either is unavailable the queued disclosure is discarded and its identifiers cleared. Already delivered conversions cannot be recalled by this local gate: customer erasure must include the provider's applicable deletion/support process. Verify consent transitions in the live storefront before submission.
+Candidates and claimed retries require retained permitted attribution and the latest recorded visitor/session permission immediately before delivery. Every provider awaits a final durable permission check after credential preparation, including Google OAuth refresh, before starting its HTTP request. If either is unavailable the queued disclosure is discarded and its identifiers cleared. Already delivered conversions cannot be recalled by this local gate: customer erasure must include the provider's applicable deletion/support process. Verify consent transitions in the live storefront before submission.
 
 
 ### Durable privacy-only revocation

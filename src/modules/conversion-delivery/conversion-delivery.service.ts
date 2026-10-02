@@ -6,7 +6,7 @@ import { ConversionDeliveryRepository } from './conversion-delivery.repository.j
 import type { ConfigureDestinationInput, DeliveryClaim, PurchaseCandidate } from './conversion-delivery.types.js';
 import { deliverGooglePurchase } from './providers/google-conversion.provider.js';
 import { deliverMetaPurchase } from './providers/meta-conversion.provider.js';
-import { ConversionProviderError, providerErrorMessage } from './providers/conversion-provider.error.js';
+import { ConversionConsentWithdrawnError, ConversionProviderError, providerErrorMessage } from './providers/conversion-provider.error.js';
 import { deliverTikTokPurchase } from './providers/tiktok-conversion.provider.js';
 
 const MAX_ENQUEUE_BATCH = 1_000;
@@ -191,7 +191,7 @@ export class ConversionDeliveryService {
       }
 
       try {
-        // Consent and retained attribution are checked again immediately before provider delivery.
+        // Avoid preparing credentials when retained permission is already absent.
         if (!(await this.repository.hasAdvertisingConsent(claim))) {
           await this.repository.discardForConsent(claim.id);
           dead += 1;
@@ -201,6 +201,11 @@ export class ConversionDeliveryService {
         await this.repository.markDelivered(claim.id, result.providerRequestId, this.now());
         delivered += 1;
       } catch (error) {
+        if (error instanceof ConversionConsentWithdrawnError) {
+          await this.repository.discardForConsent(claim.id);
+          dead += 1;
+          continue;
+        }
         const attempt = claim.attempts + 1;
         const explicitlyPermanent = error instanceof ConversionProviderError && !error.retryable;
         const isDead = explicitlyPermanent || attempt >= MAX_ATTEMPTS;
@@ -226,9 +231,14 @@ export class ConversionDeliveryService {
   }
 
   private deliver(claim: DeliveryClaim) {
-    if (claim.provider === 'META') return deliverMetaPurchase(claim);
-    if (claim.provider === 'TIKTOK') return deliverTikTokPurchase(claim);
-    return deliverGooglePurchase(claim);
+    const beforeSend = async () => {
+      if (!(await this.repository.hasAdvertisingConsent(claim))) {
+        throw new ConversionConsentWithdrawnError();
+      }
+    };
+    if (claim.provider === 'META') return deliverMetaPurchase(claim, beforeSend);
+    if (claim.provider === 'TIKTOK') return deliverTikTokPurchase(claim, beforeSend);
+    return deliverGooglePurchase(claim, beforeSend);
   }
 }
 

@@ -39,6 +39,9 @@ export type ProviderDeliveryResult = {
   providerRequestId: string | null;
 };
 
+// Required after any asynchronous credential preparation and before the provider HTTP request.
+export type BeforeConversionSend = () => Promise<void>;
+
 export type ConfigureDestinationInput = {
   provider: AdvertisingProvider;
   externalId: string;

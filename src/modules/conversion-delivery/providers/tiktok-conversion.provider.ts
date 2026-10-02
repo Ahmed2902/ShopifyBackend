@@ -1,5 +1,6 @@
 import { decryptSecret } from '../../integrations/integration.utils.js';
 import type {
+  BeforeConversionSend,
   ConversionDestinationConfig,
   DeliveryClaim,
   ProviderDeliveryResult,
@@ -25,6 +26,7 @@ async function responseJson(response: Response): Promise<TikTokResponse> {
 
 export async function deliverTikTokPurchase(
   delivery: DeliveryClaim,
+  beforeSend: BeforeConversionSend,
 ): Promise<ProviderDeliveryResult> {
   const tokenCiphertext = delivery.destination.accessTokenCiphertext;
   if (!tokenCiphertext) {
@@ -64,6 +66,7 @@ export async function deliverTikTokPurchase(
   };
   if (config.testEventCode) body.test_event_code = config.testEventCode;
 
+  await beforeSend();
   let response: Response;
   try {
     response = await fetch(TIKTOK_EVENTS_ENDPOINT, {

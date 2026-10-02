@@ -1,6 +1,6 @@
 import { env } from '../../../config/env.js';
 import { decryptSecret } from '../../integrations/integration.utils.js';
-import type { ConversionDestinationConfig, DeliveryClaim, ProviderDeliveryResult } from '../conversion-delivery.types.js';
+import type { BeforeConversionSend, ConversionDestinationConfig, DeliveryClaim, ProviderDeliveryResult } from '../conversion-delivery.types.js';
 import { ConversionProviderError } from './conversion-provider.error.js';
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -24,7 +24,7 @@ async function responseJson(response: Response): Promise<MetaResponse> {
   }
 }
 
-export async function deliverMetaPurchase(delivery: DeliveryClaim): Promise<ProviderDeliveryResult> {
+export async function deliverMetaPurchase(delivery: DeliveryClaim, beforeSend: BeforeConversionSend): Promise<ProviderDeliveryResult> {
   const tokenCiphertext = delivery.destination.accessTokenCiphertext;
   if (!tokenCiphertext) {
     throw new ConversionProviderError(
@@ -68,6 +68,7 @@ export async function deliverMetaPurchase(delivery: DeliveryClaim): Promise<Prov
   };
   if (config.testEventCode) body.test_event_code = config.testEventCode;
 
+  await beforeSend();
   let response: Response;
   try {
     response = await fetch(endpoint, {
