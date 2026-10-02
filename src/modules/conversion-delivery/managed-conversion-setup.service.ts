@@ -74,13 +74,14 @@ export class ManagedConversionSetupService {
 
     const { api, auth } = this.metaServices();
     const context = await auth.getApiContext(storeId);
-    if (context.selectedAdAccountIds.length === 0) {
+    const needsPermission = !context.scopes.includes('ads_management');
+    if (context.selectedAdAccountIds.length === 0 || needsPermission) {
       return {
         provider,
         automaticSetupAvailable: true,
         ready: false,
-        needsPermission: !context.scopes.includes('ads_management'),
-        needsAdAccountSelection: true,
+        needsPermission,
+        needsAdAccountSelection: context.selectedAdAccountIds.length === 0,
         options: [],
       };
     }
@@ -117,12 +118,11 @@ export class ManagedConversionSetupService {
     }
 
     options.sort((a, b) => a.name.localeCompare(b.name) || a.accountName.localeCompare(b.accountName));
-    const needsPermission = !context.scopes.includes('ads_management');
     return {
       provider,
       automaticSetupAvailable: true,
-      ready: !needsPermission && options.length > 0,
-      needsPermission,
+      ready: options.length > 0,
+      needsPermission: false,
       needsAdAccountSelection: false,
       options,
     };
