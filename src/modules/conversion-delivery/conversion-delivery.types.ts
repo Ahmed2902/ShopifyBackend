@@ -7,12 +7,15 @@ import type {
 export const GOOGLE_DATA_MANAGER_SCOPE = 'https://www.googleapis.com/auth/datamanager';
 
 export type GoogleConsentMode = 'ACCOUNT_DEFAULT' | 'GRANTED';
+export type ConversionAuthSource = 'META_CONNECTION';
 
 export type ConversionDestinationConfig = {
   testEventCode?: string;
   customerId?: string;
   loginCustomerId?: string;
   googleConsentMode?: GoogleConsentMode;
+  authSource?: ConversionAuthSource;
+  adAccountId?: string;
 };
 
 export type PurchaseCandidate = {
