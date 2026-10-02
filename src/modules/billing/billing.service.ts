@@ -483,7 +483,7 @@ export class BillingService {
 
     // Every result belongs to the connection generation read before the provider call.
     // Fence negative and invalid-contract writes as well as successful grants.
-    const verificationWhere = { storeId, store: { shopifyConnection: { is:
+    const verificationWhere = { storeId, lastVerifiedAt: current.lastVerifiedAt, store: { shopifyConnection: { is:
       store.shopifyConnection ? {
         status: store.shopifyConnection.status, installedAt: store.shopifyConnection.installedAt,
       } : null,

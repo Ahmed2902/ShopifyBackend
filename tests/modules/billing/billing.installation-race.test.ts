@@ -19,7 +19,7 @@ function client(read: () => Promise<ShopifyAppPricingSubscription | null>) {
 }
 
 describeDatabase('Billing verification across installation generations', () => {
-  it.each(['absent', 'invalid', 'grant'])('does not overwrite a newer verified reinstall with an old %s result', async (result) => {
+  it.each(['absent', 'invalid', 'grant'].flatMap(result => [true, false].map(reinstall => ({ result, reinstall }))))('does not overwrite newer verification with an old $result result (reinstall=$reinstall)', async ({ result, reinstall }) => {
     const unique = randomUUID();
     const oldInstalledAt = new Date(Date.now() - 86400_000);
     const store = await prisma.store.create({ data: {
@@ -48,10 +48,12 @@ describeDatabase('Billing verification across installation generations', () => {
     })).read(store.id, new Date(), { fresh: true, failOnVerificationError: true });
     await started;
     const reinstalledAt = new Date();
-    await prisma.shopifyConnection.update({ where: { id: store.shopifyConnection!.id },
-      data: { installedAt: reinstalledAt, status: 'ACTIVE', accessTokenCiphertext: 'new-token' } });
-    await prisma.storeSubscription.update({ where: { storeId: store.id },
-      data: { status: 'EXPIRED', lastVerifiedAt: null } });
+    if (reinstall) {
+      await prisma.shopifyConnection.update({ where: { id: store.shopifyConnection!.id },
+        data: { installedAt: reinstalledAt, status: 'ACTIVE', accessTokenCiphertext: 'new-token' } });
+      await prisma.storeSubscription.update({ where: { storeId: store.id },
+        data: { status: 'EXPIRED', lastVerifiedAt: null } });
+    }
     await new BillingService(client(async () => remote('stride-pro'))).read(store.id, reinstalledAt,
       { fresh: true, failOnVerificationError: true });
     release(result === 'absent' ? null : remote(result === 'invalid' ? 'unrecognized' : 'stride-essentials'));
