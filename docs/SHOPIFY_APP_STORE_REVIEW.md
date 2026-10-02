@@ -25,7 +25,7 @@ Sources: the canonical Shopify AI requirements document was fetched using Shopif
 | 1.2.2 Correct billing lifecycle | Needs review | Exact prices/handles/tenant, trusted development-store zero contracts, stale guard fail-closed, uninstall/reinstall invalidation covered; real accept/decline/reinstall still needed. |
 | 1.2.3 Plan changes | Needs review | Owner/admin opens Shopify hosted pricing; verify live upgrade/downgrade/deferred-change behavior. |
 | 2.2.1 Shopify APIs | Likely passing | Commerce uses Shopify GraphQL with tenant-specific credentials. |
-| 2.2.3 Latest App Bridge | Needs review | Latest unversioned CDN configured with Next beforeInteractive and API-key meta; inspect final deployed document/script ordering and SDK initialization inside Shopify. Next streaming emits framework tags before its script queue; do not infer literal first-script compliance from mocked tests. |
+| 2.2.3 Latest App Bridge | Failing | Latest unversioned CDN configured with Next beforeInteractive and API-key meta; inspect final deployed document/script ordering and SDK initialization inside Shopify. The inspected Next streaming output emits framework tags before its script queue, which does not satisfy literal first-script ordering. Repair document delivery and verify the actual embedded runtime before submission. |
 | 2.2.4 GraphQL Admin | Likely passing | GraphQL Admin client; no core REST dependency. |
 | 2.2.6 No admin-extension ads | Likely passing | No promotions/ad placements in admin extensions. |
 | 2.2.7 Merchant-initiated Max modal | Likely passing | No Max modal calls. |
@@ -40,7 +40,7 @@ Sources: the canonical Shopify AI requirements document was fetched using Shopif
 | 3.2.4 read_advanced_dom_pixel_events | Likely passing | Not requested. |
 | 3.2.5 read_checkout_extensions_chat | Likely passing | Not requested. |
 
-Counts: **19 likely passing / 0 known failing / 12 needs review / 31 core requirements**. None of the needs-review items is certified complete by this PR.
+Counts: **19 likely passing / 1 failing / 11 needs review / 31 core requirements**. The App Bridge document-ordering gap and the needs-review items are not certified complete by this PR.
 
 ## Conditional groups skipped
 
@@ -54,4 +54,4 @@ All commerce data is minimized; no order email/phone/name/address query is intro
 
 ## Submission decision
 
-**Hold submission until the needs-review gates have evidence.** Do not replace a real authenticated install/billing/storefront/MCP journey with mocked UI tests or `node --check` smoke syntax checks. Use the submission runbook and reviewer instructions for exact procedures.
+**Hold submission until the App Bridge ordering repair and needs-review gates have evidence.** Do not replace a real authenticated install/billing/storefront/MCP journey with mocked UI tests or `node --check` smoke syntax checks. Use the submission runbook and reviewer instructions for exact procedures.
