@@ -7,7 +7,10 @@ import type { ShopifyAppPricingClient, ShopifyAppPricingSubscription } from '../
 const describeDatabase = process.env.RUN_DB_TESTS === 'true' ? describe : describe.skip;
 const stores: string[] = [];
 afterEach(async () => {
-  for (const id of stores.splice(0)) await prisma.store.delete({ where: { id } });
+  for (const id of stores.splice(0)) {
+    await prisma.shopifyConnection.deleteMany({ where: { storeId: id } });
+    await prisma.store.delete({ where: { id } });
+  }
 });
 
 function client(read: () => Promise<ShopifyAppPricingSubscription | null>) {
