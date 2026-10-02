@@ -1,4 +1,5 @@
 import { env } from '../../../config/env.js';
+import { prisma } from '../../../lib/prisma.js';
 import { decryptSecret } from '../../integrations/integration.utils.js';
 import type { ConversionDestinationConfig, DeliveryClaim, ProviderDeliveryResult } from '../conversion-delivery.types.js';
 import { ConversionProviderError } from './conversion-provider.error.js';
@@ -24,15 +25,54 @@ async function responseJson(response: Response): Promise<MetaResponse> {
   }
 }
 
-export async function deliverMetaPurchase(delivery: DeliveryClaim): Promise<ProviderDeliveryResult> {
+async function resolveMetaAccessToken(delivery: DeliveryClaim): Promise<string> {
   const tokenCiphertext = delivery.destination.accessTokenCiphertext;
-  if (!tokenCiphertext) {
+  if (tokenCiphertext) return decryptSecret(tokenCiphertext);
+
+  const config = (delivery.destination.configJson ?? {}) as ConversionDestinationConfig;
+  if (config.authSource !== 'META_CONNECTION') {
     throw new ConversionProviderError(
-      'Meta Conversions API destination is missing an Events Manager access token',
+      'Meta purchase sharing is not connected to a usable Meta account',
       false,
       'META_CAPI_TOKEN_MISSING',
     );
   }
+
+  const connection = await prisma.metaConnection.findUnique({
+    where: { storeId: delivery.storeId },
+    select: {
+      status: true,
+      scopes: true,
+      accessTokenCiphertext: true,
+      tokenExpiresAt: true,
+    },
+  });
+  if (!connection || connection.status !== 'ACTIVE') {
+    throw new ConversionProviderError(
+      'Meta needs to be reconnected before purchase sharing can continue',
+      true,
+      'META_CAPI_CONNECTION_INACTIVE',
+    );
+  }
+  if (!connection.scopes.includes('ads_management')) {
+    throw new ConversionProviderError(
+      'Meta permission for purchase sharing is no longer available',
+      true,
+      'META_CAPI_PERMISSION_REQUIRED',
+    );
+  }
+  if (connection.tokenExpiresAt && connection.tokenExpiresAt.getTime() <= Date.now()) {
+    throw new ConversionProviderError(
+      'Meta needs to be reconnected before purchase sharing can continue',
+      true,
+      'META_CAPI_REAUTH_REQUIRED',
+    );
+  }
+
+  return decryptSecret(connection.accessTokenCiphertext);
+}
+
+export async function deliverMetaPurchase(delivery: DeliveryClaim): Promise<ProviderDeliveryResult> {
   if (!delivery.clickId) {
     throw new ConversionProviderError(
       'Meta Purchase has no consented fbclid/fbc match identifier',
@@ -45,7 +85,7 @@ export async function deliverMetaPurchase(delivery: DeliveryClaim): Promise<Prov
   const endpoint = new URL(
     `https://graph.facebook.com/${env.META_API_VERSION}/${encodeURIComponent(delivery.destination.externalId)}/events`,
   );
-  endpoint.searchParams.set('access_token', decryptSecret(tokenCiphertext));
+  endpoint.searchParams.set('access_token', await resolveMetaAccessToken(delivery));
 
   const body: Record<string, unknown> = {
     data: [
@@ -84,7 +124,11 @@ export async function deliverMetaPurchase(delivery: DeliveryClaim): Promise<Prov
   if (!response.ok || payload.error) {
     const code = payload.error?.code ? String(payload.error.code) : String(response.status);
     const message = payload.error?.message ?? `Meta Conversions API returned HTTP ${response.status}`;
-    const retryable = response.status === 429 || response.status >= 500 || payload.error?.is_transient === true;
+    const retryable =
+      response.status === 429 ||
+      response.status >= 500 ||
+      payload.error?.is_transient === true ||
+      payload.error?.code === 190;
     throw new ConversionProviderError(message, retryable, code);
   }
   if ((payload.events_received ?? 0) < 1) {
