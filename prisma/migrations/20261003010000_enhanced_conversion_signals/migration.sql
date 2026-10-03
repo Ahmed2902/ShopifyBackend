@@ -1,5 +1,5 @@
--- DropForeignKey
-ALTER TABLE "ConversionDelivery" DROP CONSTRAINT "ConversionDelivery_destinationId_fkey";
+-- Atomic migration: failed uniqueness/tenant validation leaves the previous schema intact.
+BEGIN;
 
 -- AlterTable
 ALTER TABLE "ConversionDelivery" ADD COLUMN     "clickIdKind" VARCHAR(16),
@@ -76,6 +76,9 @@ CREATE UNIQUE INDEX "Order_id_storeId_key" ON "Order"("id", "storeId");
 -- CreateIndex
 CREATE INDEX "StorefrontEvent_browserMatchExpiresAt_idx" ON "StorefrontEvent"("browserMatchExpiresAt");
 
+-- Replace destination ownership constraint only after the referenced unique index exists.
+ALTER TABLE "ConversionDelivery" DROP CONSTRAINT "ConversionDelivery_destinationId_fkey";
+
 -- AddForeignKey
 ALTER TABLE "ConversionDelivery" ADD CONSTRAINT "ConversionDelivery_destinationId_storeId_provider_fkey" FOREIGN KEY ("destinationId", "storeId", "provider") REFERENCES "ConversionDestination"("id", "storeId", "provider") ON DELETE CASCADE ON UPDATE CASCADE;
 
@@ -87,3 +90,10 @@ ALTER TABLE "StorefrontCustomerLink" ADD CONSTRAINT "StorefrontCustomerLink_stor
 
 -- AddForeignKey
 ALTER TABLE "StorefrontCustomerLink" ADD CONSTRAINT "StorefrontCustomerLink_sourceOrderId_storeId_fkey" FOREIGN KEY ("sourceOrderId", "storeId") REFERENCES "Order"("id", "storeId") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- Bound tenant diagnostics, retention scans and per-session touch-window reads.
+CREATE INDEX "ConversionDelivery_storeId_createdAt_idx" ON "ConversionDelivery"("storeId", "createdAt");
+CREATE INDEX "ConversionDelivery_status_eventAt_idx" ON "ConversionDelivery"("status", "eventAt");
+CREATE INDEX "StorefrontSessionTouch_sessionId_eventAt_idx" ON "StorefrontSessionTouch"("sessionId", "eventAt");
+
+COMMIT;

@@ -258,6 +258,7 @@ model StorefrontSessionTouch {
   session StorefrontSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@unique([sessionId, ordinal])
+  @@index([sessionId, eventAt])
   @@index([metaAdId, eventAt])
   @@index([metaAdSetId, eventAt])
   @@index([metaCampaignId, eventAt])

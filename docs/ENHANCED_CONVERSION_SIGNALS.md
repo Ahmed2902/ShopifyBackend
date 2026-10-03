@@ -68,3 +68,21 @@ Raw customer fields, canonical client IP and provider customer hashes: worker me
 Apply migration 52 after the #150 chain; it adds nullable fields, two identity tables and tenant constraints without dropping rows. Validate against a production-sized shadow database before deployment: strengthened foreign keys and unique indexes intentionally reject existing invalid/duplicate rows rather than silently deleting them. Deploy backend before companion UI. Keep enhanced matching off until Shopify approval, merchant disclosures, encrypted backups, staff access controls/logging, incident response and environment separation are verified. Those operational approvals are not fulfilled by an environment variable.
 
 Live provider testing must cover test-event codes, managed Meta dataset ownership, TikTok pixel token ownership, Google conversion-action type and online/enhanced-conversion eligibility, Data Manager scope/access, hashed normalization, consent, deduplication, expiry, withdrawal races and provider diagnostics. No live provider traffic was authorized/configured in this implementation session. TikTok and Google destination auto-discovery remains unavailable in the existing managed setup API; pre-existing configured destinations can use enriched signals. This does not promise universal matching, cookie creation, recovery of denied/blocked visitors, native integration deduplication, every provider's proprietary score, or WeTracked-like causal/revenue claims.
+
+## Deployment validation
+
+The migration runs atomically. If legacy rows violate the strengthened constraints, the previous schema remains intact. Before deployment, inspect duplicate Purchase keys and mismatched destinations in a read-only production snapshot; investigate them rather than deleting customer or commerce records automatically.
+
+```sql
+SELECT "destinationId", "sourceOrderId", "eventName", COUNT(*)
+FROM "ConversionDelivery"
+GROUP BY "destinationId", "sourceOrderId", "eventName"
+HAVING COUNT(*) > 1 LIMIT 50;
+
+SELECT d."id"
+FROM "ConversionDelivery" d JOIN "ConversionDestination" dest ON dest."id" = d."destinationId"
+WHERE d."storeId" <> dest."storeId" OR d."provider" <> dest."provider"
+LIMIT 50;
+```
+
+Measure index/constraint creation locks on a production-sized shadow before scheduling deployment. Report reads use bounded windows and tenant/session indexes; the acquisition sample is capped at 10,000 results, while queue health counts all rows in the 30-day tenant window. Extremely high-volume stores still need capacity/load verification for those window counts. Collector transactions take shared installation locks so parallel batches remain concurrent while privacy and lifecycle writes serialize; no Shopify/provider HTTP calls occur in collection. Enrichment performs two canonical queries per unique verified Purchase per bounded worker batch, rather than independently for every provider.

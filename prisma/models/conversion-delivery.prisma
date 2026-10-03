@@ -73,6 +73,8 @@ model ConversionDelivery {
   @@unique([destinationId, sourceOrderId, eventName])
   @@index([status, nextAttemptAt, createdAt])
   @@index([storeId, provider, createdAt])
+  @@index([storeId, createdAt])
+  @@index([status, eventAt])
   @@index([sourceOrderId])
   @@index([sourceEventId])
 }

@@ -92,8 +92,10 @@ function safeUrl(value) {
 
     parsed.username = '';
     parsed.password = '';
-    if (/^\/(?:checkouts?|account)(?:\/|$)/i.test(parsed.pathname))
-      parsed.pathname = '/' + parsed.pathname.split('/')[1];
+    const path = decodeURIComponent(parsed.pathname);
+    const privatePath = path.match(/^\/(?:\d+\/)?(checkouts?|account|orders)(?:\/|$)/i);
+    if (privatePath) parsed.pathname = '/' + privatePath[1].toLowerCase();
+    else if (/^\/cart\/c(?:\/|$)/i.test(path)) parsed.pathname = '/cart';
     parsed.search = '';
     parsed.hash = '';
     return { url: parsed.toString(), attribution };

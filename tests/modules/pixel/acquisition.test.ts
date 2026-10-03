@@ -69,3 +69,16 @@ describe('normalized acquisition', () => {
     );
   });
 });
+
+describe('known Shopify tokenized URL paths', () => {
+  it.each([
+    ['/12345/checkouts/secret-token', '/checkouts'],
+    ['/%63heckouts/secret-token', '/checkouts'],
+    ['/12345/orders/secret-token', '/orders'],
+    ['/cart/c/secret-token', '/cart'],
+    ['/account/orders/secret-token', '/account'],
+  ])('sanitizes %s without retaining the token', (path, canonical) => {
+    expect(sanitizeStorefrontUrl('https://shop.example' + path + '?token=secret#private'))
+      .toBe('https://shop.example' + canonical);
+  });
+});

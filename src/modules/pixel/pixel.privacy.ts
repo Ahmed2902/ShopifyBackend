@@ -57,8 +57,10 @@ export function sanitizeStorefrontUrl(value: string | null | undefined): string 
 
     url.username = '';
     url.password = '';
-    if (/^\/(?:checkouts?|account)(?:\/|$)/i.test(url.pathname))
-      url.pathname = '/' + url.pathname.split('/')[1];
+    const path = decodeURIComponent(url.pathname);
+    const privatePath = path.match(/^\/(?:\d+\/)?(checkouts?|account|orders)(?:\/|$)/i);
+    if (privatePath) url.pathname = '/' + privatePath[1]!.toLowerCase();
+    else if (/^\/cart\/c(?:\/|$)/i.test(path)) url.pathname = '/cart';
     url.search = '';
     url.hash = '';
 
