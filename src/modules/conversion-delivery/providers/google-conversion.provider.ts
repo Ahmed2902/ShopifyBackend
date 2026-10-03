@@ -1,3 +1,4 @@
+import { assertCanonicalPurchase } from './conversion-event.validation.js';
 import { AppError } from '../../../errors/app-error.js';
 import { GoogleAdsRepository } from '../../google-ads/google-ads.repository.js';
 import { GoogleAdsAuthService } from '../../google-ads/shared/google-ads-auth.service.js';
@@ -48,6 +49,7 @@ export async function deliverGooglePurchase(
   delivery: DeliveryClaim,
   beforeSend: BeforeConversionSend,
 ): Promise<ProviderDeliveryResult> {
+  assertCanonicalPurchase(delivery);
   if (delivery.eventName && delivery.eventName !== 'PURCHASE')
     throw new ConversionProviderError(
       'Google Ads requires an explicitly configured conversion action',
@@ -62,7 +64,6 @@ export async function deliverGooglePurchase(
     );
   }
 
-  if (delivery.value === null || delivery.value === undefined || !delivery.currencyCode || !delivery.shopifyOrderId || !Number.isFinite(Number(delivery.value))) throw new ConversionProviderError('Canonical Purchase money or order is unavailable', false, 'COMMERCE_TRUTH_MISSING');
   const config = configFor(delivery);
   let context;
   try {

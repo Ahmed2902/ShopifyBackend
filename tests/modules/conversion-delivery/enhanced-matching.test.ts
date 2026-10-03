@@ -132,3 +132,18 @@ describe('provider-specific matching edge cases', () => {
     expect(metaUserData({}, 'fb.raw-click', at).fbc).toBe(`fb.1.${at.getTime()}.fb.raw-click`);
   });
 });
+
+describe('actual Meta click-cookie evidence', () => {
+  const at = new Date('2026-10-03T00:00:00Z');
+  const cookie = 'fb.1.1790985600000.actual-click';
+  it('uses an actual fbc cookie without requiring a fabricated click', () => {
+    expect(metaUserData({ fbc: cookie }, null, at)).toEqual({ fbc: cookie });
+    expect(signalCoverage({ fbc: cookie }, 'META', null).clickId).toBe(true);
+    expect(tiktokUserData({ fbc: cookie }, null)).toEqual({});
+  });
+  it('preserves a matching cookie timestamp, but a stale cookie cannot replace a new click', () => {
+    expect(metaUserData({ fbc: cookie }, 'actual-click', new Date(at.getTime() + 1000)).fbc).toBe(cookie);
+    expect(metaUserData({ fbc: cookie }, 'new-click', at).fbc).toBe(`fb.1.${at.getTime()}.new-click`);
+    expect(metaUserData({ fbc: 'invalid-cookie' }, null, at)).toEqual({});
+  });
+});

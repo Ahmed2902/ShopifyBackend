@@ -248,3 +248,22 @@ db('identity privacy transaction races', () => {
     expect(await repo.hasAdvertisingConsent({ ...f.claim, matchingIntent: true })).toBe(false);
   });
 });
+
+db('collector durability privacy races', () => {
+  it('does not persist an advertising bundle when collection races withdrawal', async () => {
+    const f = await fixture();
+    const eventId = randomUUID();
+    await Promise.all([
+      new PixelRepository().insertEvents(f.store.id, [{
+        eventId, eventName: 'PAGE_VIEW', eventAt: f.now, sessionId: f.event.sessionId,
+        anonymousVisitorId: 'same-visitor', consentState: 'GRANTED', adSharingAllowed: true,
+        browserMatchCiphertext: 'encrypted-late-bundle', browserMatchExpiresAt: new Date(Date.now() + 3600_000),
+        retentionExpiresAt: new Date(Date.now() + 86400_000),
+      }], new Date()),
+      new PixelRepository().withdrawAdvertisingConsent(f.store.id, { anonymousVisitorId: 'same-visitor' },
+        new Date(f.now.getTime() + 1000), new Date(Date.now() + 40 * 86400_000)),
+    ]);
+    expect(await prisma.storefrontEvent.findUnique({ where: { storeId_eventId: { storeId: f.store.id, eventId } } }))
+      .toMatchObject({ adSharingAllowed: false, browserMatchCiphertext: null });
+  });
+});

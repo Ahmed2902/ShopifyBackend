@@ -85,6 +85,7 @@ export const storefrontEventSchema = z
     adSharingAllowed: z.boolean().default(false),
     browserMatch: z
       .object({
+        fbc: z.string().max(600).regex(/^fb\.[0-2]\.\d{13}\.[A-Za-z0-9._~-]+$/).optional(),
         fbp: z
           .string()
           .max(128)

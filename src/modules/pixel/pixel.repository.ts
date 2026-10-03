@@ -192,6 +192,11 @@ export class PixelRepository {
     if (events.length === 0) return 0;
 
     return prisma.$transaction(async (tx) => {
+      // Shared collection locks permit concurrent batches but serialize privacy/lifecycle writes.
+      // Reading withdrawal markers without this barrier could persist a stale encrypted bundle.
+      const connections = await tx.$queryRaw<Array<{ status: string; installedAt: Date }>>`SELECT "status", "installedAt" FROM "ShopifyConnection" WHERE "storeId" = ${storeId}::uuid FOR SHARE`;
+      const connection = connections[0];
+      if (connection && connection.status !== 'ACTIVE') return 0;
       const keys = [
         ...new Set(
           events.flatMap((event) => [
@@ -215,12 +220,14 @@ export class PixelRepository {
         ];
         const withdrawn =
           event.adSharingAllowed !== true ||
+          Boolean(connection && new Date(event.eventAt) < connection.installedAt) ||
           cutoffs.some((cutoff) => cutoff && new Date(event.eventAt) <= cutoff);
         return {
           ...event,
           ...(withdrawn ? { browserMatchCiphertext: null, browserMatchExpiresAt: null } : {}),
           adSharingAllowed:
             event.adSharingAllowed === true &&
+            (!connection || new Date(event.eventAt) >= connection.installedAt) &&
             !cutoffs.some((cutoff) => cutoff && new Date(event.eventAt) <= cutoff),
         };
       });

@@ -11,7 +11,7 @@ export type CustomerMatchInput = {
   country?: string | null;
   externalId?: string | null;
 };
-export type BrowserMatchInput = { fbp?: string; ttp?: string; userAgent?: string; clientIp?: string };
+export type BrowserMatchInput = { fbc?: string; fbp?: string; ttp?: string; userAgent?: string; clientIp?: string };
 export type MatchEvidence = BrowserMatchInput & {
   meta?: Record<string, unknown>;
   tiktok?: Record<string, unknown>;
@@ -119,14 +119,18 @@ export function metaUserData(
   clickId: string | null,
   clickAt: Date,
 ): Record<string, unknown> {
+  const cookieFbc = match.fbc && /^fb\.[0-2]\.\d{13}\.[A-Za-z0-9._~-]+$/.test(match.fbc) ? match.fbc : undefined;
+  const fbc = clickId
+    ? cookieFbc?.split('.').slice(3).join('.') === clickId
+      ? cookieFbc
+      : /^fb\.\d\.\d{13}\.[A-Za-z0-9._~-]+$/.test(clickId) ? clickId : `fb.1.${clickAt.getTime()}.${clickId}`
+    : cookieFbc;
   return {
     ...(match.meta ?? {}),
     ...(match.fbp ? { fbp: match.fbp } : {}),
     ...(match.userAgent ? { client_user_agent: match.userAgent } : {}),
     ...(match.clientIp ? { client_ip_address: match.clientIp } : {}),
-    ...(clickId
-      ? { fbc: /^fb\.\d\.\d{13}\.[A-Za-z0-9_-]+$/.test(clickId) ? clickId : `fb.1.${clickAt.getTime()}.${clickId}` }
-      : {}),
+    ...(fbc ? { fbc } : {}),
   };
 }
 export function tiktokUserData(
@@ -143,7 +147,7 @@ export function tiktokUserData(
 }
 export function signalCoverage(match: MatchEvidence, provider: string, clickId: string | null): Record<string, boolean> {
   const fields = provider === 'META' ? match.meta : provider === 'TIKTOK' ? match.tiktok : undefined;
-  return { clickId: Boolean(clickId), browserId: Boolean(provider === 'META' ? match.fbp : provider === 'TIKTOK' ? match.ttp : false),
+  return { clickId: Boolean(clickId || (provider === 'META' && match.fbc)), browserId: Boolean(provider === 'META' ? match.fbp : provider === 'TIKTOK' ? match.ttp : false),
     email: provider === 'GOOGLE_ADS' ? Boolean(match.google?.userIdentifiers.some(i => i.emailAddress)) : Boolean(fields?.em || fields?.email),
     phone: provider === 'GOOGLE_ADS' ? Boolean(match.google?.userIdentifiers.some(i => i.phoneNumber)) : Boolean(fields?.ph || fields?.phone),
     externalId: Boolean(fields?.external_id), ip: provider !== 'GOOGLE_ADS' && Boolean(match.clientIp), userAgent: provider !== 'GOOGLE_ADS' && Boolean(match.userAgent) };

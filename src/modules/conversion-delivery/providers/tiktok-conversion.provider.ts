@@ -1,3 +1,4 @@
+import { assertCanonicalPurchase } from './conversion-event.validation.js';
 import { tiktokUserData } from '../matching.js';
 import { decryptSecret } from '../../integrations/integration.utils.js';
 import type {
@@ -29,6 +30,7 @@ export async function deliverTikTokPurchase(
   delivery: DeliveryClaim,
   beforeSend: BeforeConversionSend,
 ): Promise<ProviderDeliveryResult> {
+  assertCanonicalPurchase(delivery);
   if (
     !['PRODUCT_VIEW', 'ADD_TO_CART', 'BEGIN_CHECKOUT', 'PURCHASE'].includes(
       delivery.eventName ?? 'PURCHASE',

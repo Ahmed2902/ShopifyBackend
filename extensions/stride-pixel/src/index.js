@@ -442,9 +442,10 @@ register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
           return undefined;
         }
       };
-      const [fbp, ttp] = await Promise.all([readCookie('_fbp'), readCookie('_ttp')]);
+      const [fbp, ttp, fbc] = await Promise.all([readCookie('_fbp'), readCookie('_ttp'), readCookie('_fbc')]);
       const userAgent = event.context?.navigator?.userAgent;
       browserMatch = {
+        ...(typeof fbc === 'string' && /^fb\.[0-2]\.\d{13}\.[A-Za-z0-9._~-]{1,512}$/.test(fbc) ? { fbc } : {}),
         ...(typeof fbp === 'string' && /^fb\.[0-2]\.\d{13}\.\d+$/.test(fbp) ? { fbp } : {}),
         ...(typeof ttp === 'string' && /^[A-Za-z0-9_.-]{1,512}$/.test(ttp) ? { ttp } : {}),
         ...(typeof userAgent === 'string' &&

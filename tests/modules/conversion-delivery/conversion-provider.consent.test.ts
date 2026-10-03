@@ -132,6 +132,7 @@ describe('conversion provider send-time consent', () => {
     expect(repository.markFailed).not.toHaveBeenCalled();
   });
   it.each([
+    ['META', deliverMetaPurchase, { fbc: 'fb.1.1790985600000.actual-click' }],
     ['META', deliverMetaPurchase, { fbp: 'fb.1.1790985600000.123' }],
     [
       'META',
@@ -193,6 +194,34 @@ describe('conversion provider send-time consent', () => {
       expect(body.data[0].custom_data ?? body.data[0].properties).toEqual({});
     },
   );
+  it.each([
+    ['META', deliverMetaPurchase], ['TIKTOK', deliverTikTokPurchase], ['GOOGLE_ADS', deliverGooglePurchase],
+  ] as const)('rejects missing %s Purchase money without silently turning it into zero', async (provider, deliver) => {
+    await expect(deliver({ ...claim(provider), value: null } as DeliveryClaim, async () => undefined))
+      .rejects.toHaveProperty('providerCode', 'COMMERCE_TRUTH_MISSING');
+    expect(fetch).not.toHaveBeenCalled();
+    await deliver({ ...claim(provider), value: '0' } as unknown as DeliveryClaim, async () => undefined);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it('pauses a claim if billing is revoked during OAuth refresh without consuming a provider attempt', async () => {
+    let finishRefresh!: (value: typeof context) => void;
+    getApiContext.mockReturnValue(new Promise(resolve => { finishRefresh = resolve; }));
+    let allowed = true;
+    const repository = {
+      recoverStaleClaims: vi.fn().mockResolvedValue(undefined), claimDue: vi.fn().mockResolvedValue([claim('GOOGLE_ADS')]),
+      hasAdvertisingConsent: vi.fn().mockResolvedValue(true), discardForConsent: vi.fn(),
+      markDelivered: vi.fn(), markFailed: vi.fn(), pauseForBilling: vi.fn().mockResolvedValue(undefined),
+    };
+    const billing = { requireAdProviderReadOnly: vi.fn(async () => { if (!allowed) throw new Error('revoked'); }) };
+    const service = new ConversionDeliveryService(repository as never, () => now, billing as never);
+    const pending = service.processDue();
+    await vi.waitFor(() => expect(getApiContext).toHaveBeenCalledOnce());
+    allowed = false; finishRefresh(context);
+    await expect(pending).resolves.toEqual({ claimed: 1, delivered: 0, retrying: 1, dead: 0 });
+    expect(repository.pauseForBilling).toHaveBeenCalledOnce();
+    expect(repository.markFailed).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it('rejects unsupported TikTok PageView and Google funnel uploads without HTTP', async () => {
     await expect(
       deliverTikTokPurchase(
