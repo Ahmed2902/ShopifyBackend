@@ -250,6 +250,27 @@ export class ShopifyEmbeddedAuthRepository {
             data: { revokedAt: now },
           });
           await tx.mcpAuthorizationCode.deleteMany({ where: { storeId: store.id } });
+          await tx.storeSignalIdentityKey.deleteMany({ where: { storeId: store.id } });
+          await tx.storefrontCustomerLink.deleteMany({ where: { storeId: store.id } });
+          await tx.storefrontEvent.updateMany({
+            where: { storeId: store.id },
+            data: {
+              browserMatchCiphertext: null,
+              browserMatchExpiresAt: null,
+              adSharingAllowed: false,
+            },
+          });
+          await tx.conversionDelivery.updateMany({
+            where: { storeId: store.id, status: { in: ['PENDING', 'RETRY', 'PROCESSING'] } },
+            data: {
+              status: 'DEAD',
+              reasonCode: 'INSTALLATION_REVOKED',
+              clickId: null,
+              eventSourceUrl: null,
+              attributionEventAt: null,
+              processingStartedAt: null,
+            },
+          });
           await tx.conversionDestination.updateMany({
             where: { storeId: store.id },
             data: { status: 'DISABLED' },

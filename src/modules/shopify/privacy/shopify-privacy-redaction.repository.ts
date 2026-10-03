@@ -91,6 +91,24 @@ export class ShopifyPrivacyRedactionRepository {
           where: { storeId, scopeKey: { in: withdrawalKeys } },
         });
 
+      await tx.conversionDelivery.deleteMany({
+        where: {
+          storeId,
+          OR: [
+            { shopifyOrderId: { in: orderExternalIds } },
+            {
+              sourceEventId: {
+                in: (
+                  await tx.storefrontEvent.findMany({
+                    where: { storeId, sessionId: { in: browserSessionIds } },
+                    select: { id: true },
+                  })
+                ).map((e) => e.id),
+              },
+            },
+          ],
+        },
+      });
       const events = await tx.storefrontEvent.deleteMany({
         where: {
           storeId,

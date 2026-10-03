@@ -13,8 +13,9 @@ enum RestockStatus {
 }
 
 model Order {
-  id                               String    @id @default(uuid()) @db.Uuid
-  storeId                          String    @db.Uuid
+  signalCustomerLink               StorefrontCustomerLink?
+  id                               String                  @id @default(uuid()) @db.Uuid
+  storeId                          String                  @db.Uuid
   shopifyOrderId                   String
   name                             String
   shopifyCreatedAt                 DateTime
@@ -23,29 +24,30 @@ model Order {
   cancelledAt                      DateTime?
   cancelReason                     String?
   sourceName                       String?
-  isTest                           Boolean   @default(false)
+  isTest                           Boolean                 @default(false)
   currencyCode                     String
   presentmentCurrencyCode          String?
   displayFinancialStatus           String?
   displayFulfillmentStatus         String?
   currentSubtotalLineItemsQuantity Int?
-  currentSubtotalAmount            Decimal?  @db.Decimal(20, 6)
-  currentShippingAmount            Decimal?  @db.Decimal(20, 6)
-  currentTotalDiscountsAmount      Decimal?  @db.Decimal(20, 6)
-  currentTotalTaxAmount            Decimal?  @db.Decimal(20, 6)
-  currentTotalAmount               Decimal?  @db.Decimal(20, 6)
-  discountCodes                    String[]   @default([])
+  currentSubtotalAmount            Decimal?                @db.Decimal(20, 6)
+  currentShippingAmount            Decimal?                @db.Decimal(20, 6)
+  currentTotalDiscountsAmount      Decimal?                @db.Decimal(20, 6)
+  currentTotalTaxAmount            Decimal?                @db.Decimal(20, 6)
+  currentTotalAmount               Decimal?                @db.Decimal(20, 6)
+  discountCodes                    String[]                @default([])
   customerOrderIndex               Int?
   daysToConversion                 Int?
   customerJourneyReady             Boolean?
   rawJson                          Json?
-  createdAt                        DateTime   @default(now())
-  updatedAt                        DateTime   @updatedAt
+  createdAt                        DateTime                @default(now())
+  updatedAt                        DateTime                @updatedAt
 
   store     Store           @relation(fields: [storeId], references: [id], onDelete: Restrict)
   lineItems OrderLineItem[]
   refunds   Refund[]
 
+  @@unique([id, storeId])
   @@unique([storeId, shopifyOrderId])
   @@index([storeId, shopifyCreatedAt])
   @@index([storeId, isTest, shopifyCreatedAt])
@@ -95,9 +97,9 @@ model OrderLineItem {
   createdAt                            DateTime @default(now())
   updatedAt                            DateTime @updatedAt
 
-  order       Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  product     Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
-  variant     ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  order       Order            @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  product     Product?         @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variant     ProductVariant?  @relation(fields: [variantId], references: [id], onDelete: SetNull)
   refundLines RefundLineItem[]
 
   @@unique([orderId, shopifyLineItemId])
@@ -138,8 +140,8 @@ model RefundLineItem {
   price               Decimal? @db.Decimal(20, 6)
   subtotal            Decimal? @db.Decimal(20, 6)
   tax                 Decimal? @db.Decimal(20, 6)
-  rawJson              Json?
-  createdAt            DateTime @default(now())
+  rawJson             Json?
+  createdAt           DateTime @default(now())
 
   refund        Refund        @relation(fields: [refundId], references: [id], onDelete: Restrict)
   orderLineItem OrderLineItem @relation(fields: [orderLineItemId], references: [id], onDelete: Restrict)

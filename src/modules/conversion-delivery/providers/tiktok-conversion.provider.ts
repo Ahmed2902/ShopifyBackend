@@ -1,3 +1,4 @@
+import { tiktokUserData } from '../matching.js';
 import { decryptSecret } from '../../integrations/integration.utils.js';
 import type {
   BeforeConversionSend,
@@ -28,6 +29,16 @@ export async function deliverTikTokPurchase(
   delivery: DeliveryClaim,
   beforeSend: BeforeConversionSend,
 ): Promise<ProviderDeliveryResult> {
+  if (
+    !['PRODUCT_VIEW', 'ADD_TO_CART', 'BEGIN_CHECKOUT', 'PURCHASE'].includes(
+      delivery.eventName ?? 'PURCHASE',
+    )
+  )
+    throw new ConversionProviderError(
+      'Unsupported TikTok standard event',
+      false,
+      'TIKTOK_EVENT_UNSUPPORTED',
+    );
   const tokenCiphertext = delivery.destination.accessTokenCiphertext;
   if (!tokenCiphertext) {
     throw new ConversionProviderError(
@@ -36,7 +47,8 @@ export async function deliverTikTokPurchase(
       'TIKTOK_EVENTS_TOKEN_MISSING',
     );
   }
-  if (!delivery.clickId) {
+  const user = tiktokUserData(delivery.match ?? {}, delivery.clickId);
+  if (!delivery.clickId && !user.ttp && !user.email && !user.phone && !user.external_id) {
     throw new ConversionProviderError(
       'TikTok Purchase has no consented ttclid match identifier',
       false,
@@ -51,15 +63,24 @@ export async function deliverTikTokPurchase(
     data: [
       {
         // TikTok renamed CompletePayment to Purchase for new Web/Events API integrations in 2025.
-        event: 'Purchase',
+        event: (
+          {
+            PRODUCT_VIEW: 'ViewContent',
+            ADD_TO_CART: 'AddToCart',
+            BEGIN_CHECKOUT: 'InitiateCheckout',
+            PURCHASE: 'Purchase',
+          } as Record<string, string>
+        )[delivery.eventName ?? 'PURCHASE'],
         event_time: Math.floor(delivery.eventAt.getTime() / 1000),
         event_id: delivery.eventKey,
-        user: { ttclid: delivery.clickId },
+        user,
         ...(delivery.eventSourceUrl ? { page: { url: delivery.eventSourceUrl } } : {}),
         properties: {
-          currency: delivery.currencyCode,
-          value: Number(delivery.value),
-          order_id: delivery.shopifyOrderId,
+          ...(delivery.currencyCode ? { currency: delivery.currencyCode } : {}),
+          ...(delivery.value !== null && delivery.value !== undefined
+            ? { value: Number(delivery.value) }
+            : {}),
+          ...(delivery.shopifyOrderId ? { order_id: delivery.shopifyOrderId } : {}),
         },
       },
     ],
@@ -89,7 +110,7 @@ export async function deliverTikTokPurchase(
   const payload = await responseJson(response);
   if (!response.ok || payload.code !== 0) {
     const code = payload.code !== undefined ? String(payload.code) : String(response.status);
-    const message = payload.message ?? `TikTok Events API returned HTTP ${response.status}`;
+    const message = `TikTok rejected conversion delivery (HTTP ${response.status})`;
     const retryable = response.status === 429 || response.status >= 500;
     throw new ConversionProviderError(message, retryable, code);
   }

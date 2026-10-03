@@ -147,3 +147,7 @@ Workers:
 - every 2 seconds: claim and send a bounded delivery batch.
 
 Only non-test, non-cancelled Shopify orders with a non-null total are eligible. Initial discovery is limited to purchases from the last 30 days to avoid unexpectedly backfilling old conversions when a destination is enabled.
+
+## Enhanced signals extension
+
+See [Enhanced conversion signals](ENHANCED_CONVERSION_SIGNALS.md) for current acquisition dimensions, deterministic identity, opt-in matching/funnel delivery, consent and retention contracts. Older Purchase-only descriptions above describe the prior foundation. The extension preserves commerce/provider/first-party evidence separation.

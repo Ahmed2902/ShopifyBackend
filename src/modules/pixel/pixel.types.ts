@@ -13,12 +13,7 @@ export const STOREFRONT_EVENT_NAMES = [
 
 export type StorefrontEventName = (typeof STOREFRONT_EVENT_NAMES)[number];
 
-export const STOREFRONT_CONSENT_STATES = [
-  'UNKNOWN',
-  'GRANTED',
-  'DENIED',
-  'NOT_REQUIRED',
-] as const;
+export const STOREFRONT_CONSENT_STATES = ['UNKNOWN', 'GRANTED', 'DENIED', 'NOT_REQUIRED'] as const;
 
 export type StorefrontConsentState = (typeof STOREFRONT_CONSENT_STATES)[number];
 
@@ -50,6 +45,8 @@ export interface StorefrontAttributionInput {
   metaClickId?: string;
   googleClickId?: string;
   tiktokClickId?: string;
+  googleBraidedClickId?: string;
+  googleWebBraidedClickId?: string;
   metaCampaignExternalId?: string;
   metaAdSetExternalId?: string;
   metaAdExternalId?: string;

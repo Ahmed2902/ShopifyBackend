@@ -1,3 +1,4 @@
+import { sanitizeAttributionValue } from './pixel.privacy.js';
 import { z } from 'zod';
 import {
   PIXEL_EVENT_VERSION,
@@ -34,8 +35,18 @@ const shopifyOrderExternalIdSchema = z
       .regex(/^gid:\/\/shopify\/Order\/\d+$/),
   );
 const providerNumericIdSchema = z.string().trim().regex(/^\d+$/).max(128);
-const attributionValueSchema = z.string().trim().min(1).max(255);
-const clickIdSchema = z.string().trim().min(1).max(512);
+const attributionValueSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(255)
+  .transform((value) => sanitizeAttributionValue(value));
+const clickIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(512)
+  .transform((value) => sanitizeAttributionValue(value, true));
 const urlSchema = z.string().url().max(2048);
 const collectorTokenSchema = z
   .string()
@@ -54,6 +65,8 @@ export const storefrontAttributionSchema = z
     metaClickId: clickIdSchema.optional(),
     googleClickId: clickIdSchema.optional(),
     tiktokClickId: clickIdSchema.optional(),
+    googleBraidedClickId: clickIdSchema.optional(),
+    googleWebBraidedClickId: clickIdSchema.optional(),
     metaCampaignExternalId: providerNumericIdSchema.optional(),
     metaAdSetExternalId: providerNumericIdSchema.optional(),
     metaAdExternalId: providerNumericIdSchema.optional(),
@@ -70,6 +83,28 @@ export const storefrontEventSchema = z
     sessionId: opaqueIdSchema.optional(),
     consentState: z.enum(STOREFRONT_CONSENT_STATES),
     adSharingAllowed: z.boolean().default(false),
+    browserMatch: z
+      .object({
+        fbp: z
+          .string()
+          .max(128)
+          .regex(/^fb\.[0-2]\.\d{13}\.\d+$/)
+          .optional(),
+        ttp: z
+          .string()
+          .min(1)
+          .max(512)
+          .regex(/^[A-Za-z0-9_.-]+$/)
+          .optional(),
+        userAgent: z
+          .string()
+          .min(1)
+          .max(1024)
+          .refine((value) => ![...value].some((char) => char.charCodeAt(0) < 32))
+          .optional(),
+      })
+      .strict()
+      .optional(),
     pageUrl: urlSchema.optional(),
     referrerUrl: urlSchema.optional(),
     landingPageUrl: urlSchema.optional(),

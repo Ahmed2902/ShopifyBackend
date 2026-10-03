@@ -2,10 +2,18 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 
-async function pixel(privacy: Record<string, boolean>, storage = new Map<string, string>(), pauseSessionWrite = false) {
+async function pixel(
+  privacy: Record<string, boolean>,
+  storage = new Map<string, string>(),
+  pauseSessionWrite = false,
+) {
   const subscriptions = new Map<string, (event: unknown) => void>();
   let resumeSession: () => void = () => undefined;
-  const sessionGate = pauseSessionWrite ? new Promise<void>(resolve => { resumeSession = resolve; }) : Promise.resolve();
+  const sessionGate = pauseSessionWrite
+    ? new Promise<void>((resolve) => {
+        resumeSession = resolve;
+      })
+    : Promise.resolve();
   const timers: Array<() => void> = [];
   const fetch = vi.fn().mockResolvedValue({ ok: true });
   let registered: Promise<void> | undefined;
@@ -38,6 +46,18 @@ async function pixel(privacy: Record<string, boolean>, storage = new Map<string,
           },
         },
         browser: {
+          localStorage: {
+            getItem: async (key: string) => storage.get(key) ?? null,
+            setItem: async (key: string, value: string) => {
+              storage.set(key, value);
+            },
+            removeItem: async (key: string) => {
+              storage.delete(key);
+            },
+          },
+          cookie: {
+            get: async (key: string) => (key === '_fbp' ? 'fb.1.1790985600000.123' : undefined),
+          },
           sessionStorage: {
             getItem: async (key: string) => storage.get(key) ?? null,
             setItem: async (key: string, value: string) => {
@@ -248,14 +268,56 @@ describe('Durable privacy-only withdrawal', () => {
   });
 });
 
-
 it('does not capture an old event whose storage awaits span withdrawal and regrant', async () => {
-  const allowed = { analyticsProcessingAllowed: true, marketingAllowed: true, saleOfDataAllowed: true };
+  const allowed = {
+    analyticsProcessingAllowed: true,
+    marketingAllowed: true,
+    saleOfDataAllowed: true,
+  };
   const extension = await pixel(allowed, new Map(), true);
   await extension.event();
   extension.update({ customerPrivacy: { ...allowed, analyticsProcessingAllowed: false } });
   extension.update({ customerPrivacy: allowed });
   extension.resumeSession();
-  await new Promise<void>(resolve => setImmediate(resolve)); await extension.flush();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await extension.flush();
   expect(extension.eventRequests()).toHaveLength(0);
+});
+
+it('persists failed withdrawals and acknowledges them after reload without a new event', async () => {
+  const allowed = {
+    analyticsProcessingAllowed: true,
+    marketingAllowed: true,
+    saleOfDataAllowed: true,
+  };
+  const first = await pixel(allowed);
+  await first.event();
+  await first.flush();
+  first.fetch.mockRejectedValue(new Error('offline'));
+  first.update({ customerPrivacy: { ...allowed, marketingAllowed: false } });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const pending = JSON.parse(first.storage.get('stride_pixel_withdrawal_test')!);
+  expect(pending).toEqual([{ anonymousVisitorId: 'visitor-test', sessionId: 'test-event' }]);
+  expect(JSON.stringify(pending)).not.toContain('click');
+  const reopened = await pixel(allowed, first.storage);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(reopened.withdrawals()).toHaveLength(1);
+  expect(reopened.eventRequests()).toHaveLength(0);
+  expect(reopened.storage.has('stride_pixel_withdrawal_test')).toBe(false);
+});
+
+it('removes matching evidence from queued batches when consent is withdrawn and regranted', async () => {
+  const allowed = {
+    analyticsProcessingAllowed: true,
+    marketingAllowed: true,
+    saleOfDataAllowed: true,
+  };
+  const extension = await pixel(allowed);
+  await extension.event();
+  extension.update({ customerPrivacy: { ...allowed, marketingAllowed: false } });
+  extension.update({ customerPrivacy: allowed });
+  await extension.flush();
+  const event = JSON.parse(extension.eventRequests()[0]![1].body).events[0];
+  expect(event.adSharingAllowed).toBe(false);
+  expect(event.browserMatch).toBeUndefined();
 });

@@ -274,3 +274,7 @@ Future first-touch/last-touch/path outputs are descriptive journey attribution e
 - stronger ad -> product/collection mapping evidence;
 - cross-channel assist evidence;
 - explicit methodology/coverage/limitations.
+
+## Enhanced signals extension
+
+See [Enhanced conversion signals](ENHANCED_CONVERSION_SIGNALS.md) for current acquisition dimensions, deterministic identity, opt-in matching/funnel delivery, consent and retention contracts. Older Purchase-only descriptions above describe the prior foundation. The extension preserves commerce/provider/first-party evidence separation.

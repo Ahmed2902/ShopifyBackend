@@ -2,7 +2,12 @@ import { AppError } from '../../../errors/app-error.js';
 import { GoogleAdsRepository } from '../../google-ads/google-ads.repository.js';
 import { GoogleAdsAuthService } from '../../google-ads/shared/google-ads-auth.service.js';
 import { GoogleAdsApiService } from '../../google-ads/shared/google-ads-api.service.js';
-import type { BeforeConversionSend, ConversionDestinationConfig, DeliveryClaim, ProviderDeliveryResult } from '../conversion-delivery.types.js';
+import type {
+  BeforeConversionSend,
+  ConversionDestinationConfig,
+  DeliveryClaim,
+  ProviderDeliveryResult,
+} from '../conversion-delivery.types.js';
 import { GOOGLE_DATA_MANAGER_SCOPE } from '../conversion-delivery.types.js';
 import { ConversionProviderError } from './conversion-provider.error.js';
 
@@ -39,8 +44,17 @@ function configFor(delivery: DeliveryClaim) {
   return config;
 }
 
-export async function deliverGooglePurchase(delivery: DeliveryClaim, beforeSend: BeforeConversionSend): Promise<ProviderDeliveryResult> {
-  if (!delivery.clickId) {
+export async function deliverGooglePurchase(
+  delivery: DeliveryClaim,
+  beforeSend: BeforeConversionSend,
+): Promise<ProviderDeliveryResult> {
+  if (delivery.eventName && delivery.eventName !== 'PURCHASE')
+    throw new ConversionProviderError(
+      'Google Ads requires an explicitly configured conversion action',
+      false,
+      'GOOGLE_FUNNEL_UNSUPPORTED',
+    );
+  if (!delivery.clickId && !delivery.match?.google) {
     throw new ConversionProviderError(
       'Google Purchase has no consented gclid match identifier',
       false,
@@ -66,6 +80,12 @@ export async function deliverGooglePurchase(delivery: DeliveryClaim, beforeSend:
     );
   }
 
+  if (context.selectedCustomerIds && !context.selectedCustomerIds.includes(config.customerId!))
+    throw new ConversionProviderError(
+      'Selected Google Ads account no longer authorizes this destination',
+      false,
+      'GOOGLE_DESTINATION_ACCOUNT_REVOKED',
+    );
   const destination = {
     operatingAccount: {
       accountType: 'GOOGLE_ADS',
@@ -85,14 +105,25 @@ export async function deliverGooglePurchase(delivery: DeliveryClaim, beforeSend:
         transactionId: delivery.shopifyOrderId,
         eventTimestamp: delivery.eventAt.toISOString(),
         eventSource: 'WEB',
-        adIdentifiers: { gclid: delivery.clickId },
+        ...(delivery.clickId
+          ? {
+              adIdentifiers: {
+                [delivery.clickIdKind &&
+                ['gclid', 'gbraid', 'wbraid'].includes(delivery.clickIdKind)
+                  ? delivery.clickIdKind
+                  : 'gclid']: delivery.clickId,
+              },
+            }
+          : {}),
+        ...(delivery.match?.google ? { userData: delivery.match.google } : {}),
         conversionValue: Number(delivery.value),
         currency: delivery.currencyCode,
       },
     ],
     validateOnly: false,
+    ...(delivery.match?.google ? { encoding: 'HEX' } : {}),
   };
-  if (config.googleConsentMode === 'GRANTED') {
+  if (config.googleConsentMode === 'GRANTED' || delivery.sourceEventId) {
     body.consent = {
       adUserData: 'CONSENT_GRANTED',
       adPersonalization: 'CONSENT_GRANTED',
@@ -122,8 +153,10 @@ export async function deliverGooglePurchase(delivery: DeliveryClaim, beforeSend:
 
   const payload = await responseJson(response);
   if (!response.ok || payload.error) {
-    const code = payload.error?.status ?? (payload.error?.code ? String(payload.error.code) : String(response.status));
-    const message = payload.error?.message ?? `Google Data Manager returned HTTP ${response.status}`;
+    const code =
+      payload.error?.status ??
+      (payload.error?.code ? String(payload.error.code) : String(response.status));
+    const message = `Google Data Manager rejected conversion delivery (HTTP ${response.status})`;
     const retryable = response.status === 429 || response.status >= 500;
     throw new ConversionProviderError(message, retryable, code);
   }

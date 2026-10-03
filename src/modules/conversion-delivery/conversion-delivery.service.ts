@@ -1,12 +1,32 @@
-import type { AdvertisingProvider, ConversionDeliveryStatus } from '../../generated/prisma/client.js';
+import { storefrontEventKey } from './funnel.repository.js';
+import { env } from '../../config/env.js';
+import { enrichConversionSignal } from './signal-enrichment.service.js';
+import { signalCoverage } from './matching.js';
+import type { ConversionDestinationConfig } from './conversion-delivery.types.js';
+import type {
+  AdvertisingProvider,
+  ConversionDeliveryStatus,
+} from '../../generated/prisma/client.js';
 import { AppError } from '../../errors/app-error.js';
-import { billingService, type BillingService, type V1AdProvider } from '../billing/billing.service.js';
+import {
+  billingService,
+  type BillingService,
+  type V1AdProvider,
+} from '../billing/billing.service.js';
 import { encryptSecret } from '../integrations/integration.utils.js';
 import { ConversionDeliveryRepository } from './conversion-delivery.repository.js';
-import type { ConfigureDestinationInput, DeliveryClaim, PurchaseCandidate } from './conversion-delivery.types.js';
+import type {
+  ConfigureDestinationInput,
+  DeliveryClaim,
+  PurchaseCandidate,
+} from './conversion-delivery.types.js';
 import { deliverGooglePurchase } from './providers/google-conversion.provider.js';
 import { deliverMetaPurchase } from './providers/meta-conversion.provider.js';
-import { ConversionConsentWithdrawnError, ConversionProviderError, providerErrorMessage } from './providers/conversion-provider.error.js';
+import {
+  ConversionConsentWithdrawnError,
+  ConversionProviderError,
+  providerErrorMessage,
+} from './providers/conversion-provider.error.js';
 import { deliverTikTokPurchase } from './providers/tiktok-conversion.provider.js';
 
 const MAX_ENQUEUE_BATCH = 1_000;
@@ -129,19 +149,29 @@ export class ConversionDeliveryService {
       for (const destination of destinationsByStore.get(candidate.storeId) ?? []) {
         if (!(await isAllowed(candidate.storeId, destination.provider))) continue;
         const attribution = attributionFor(candidate, destination.provider);
-        if (!attribution.clickId) continue;
+        const config = (destination.configJson ?? {}) as ConversionDestinationConfig;
+        if (
+          !attribution.clickId &&
+          !candidate.browserMatchAvailable &&
+          !(config.enhancedMatching && env.SHOPIFY_ENHANCED_MATCHING_APPROVED)
+        )
+          continue;
         eligible += 1;
         const result = await this.repository.enqueue({
           storeId: candidate.storeId,
           destinationId: destination.id,
           provider: destination.provider,
-          eventKey: `stride:purchase:${candidate.shopifyOrderId}`,
+          eventKey: storefrontEventKey(candidate.storeId, `purchase:${candidate.shopifyOrderId}`),
           sourceOrderId: candidate.orderId,
+          sourceEventId: candidate.sourceEventId,
+          sourceGenerationAt: candidate.sourceGenerationAt,
           shopifyOrderId: candidate.shopifyOrderId,
           eventAt: candidate.eventAt,
           value: candidate.value,
           currencyCode: candidate.currencyCode,
           clickId: attribution.clickId,
+          clickIdKind:
+            destination.provider === 'GOOGLE_ADS' ? (candidate.googleClickIdKind ?? 'gclid') : null,
           attributionEventAt: attribution.eventAt,
           eventSourceUrl: candidate.eventSourceUrl,
         });
@@ -156,7 +186,7 @@ export class ConversionDeliveryService {
     const bounded = Math.min(Math.max(1, Math.trunc(limit)), MAX_DELIVERY_BATCH);
     const now = this.now();
     await this.repository.recoverStaleClaims(new Date(now.getTime() - CLAIM_STALE_MS));
-    const claims = await this.repository.claimDue(bounded, now);
+    const claims: DeliveryClaim[] = await this.repository.claimDue(bounded, now);
     const billingAllowed = new Map<string, boolean>();
     let delivered = 0;
     let retrying = 0;
@@ -197,13 +227,51 @@ export class ConversionDeliveryService {
           dead += 1;
           continue;
         }
+        if (claim.sourceEventId) {
+          claim.match = await enrichConversionSignal(claim);
+          await this.repository.recordCoverage(
+            claim.id,
+            signalCoverage(claim.match, claim.provider, claim.clickId),
+          );
+        }
         const result = await this.deliver(claim);
         await this.repository.markDelivered(claim.id, result.providerRequestId, this.now());
+        if (claim.customerIdentityKey && claim.sourceOrderId && claim.sourceGenerationAt)
+          await this.repository.linkCustomerIdentity(claim);
         delivered += 1;
       } catch (error) {
+        if (
+          error instanceof AppError &&
+          /BILLING|SUBSCRIPTION|ENTITLEMENT|AD_PROVIDER/.test(error.code ?? '')
+        ) {
+          await this.repository.pauseForBilling(
+            claim.id,
+            new Date(this.now().getTime() + BILLING_RETRY_MS),
+          );
+          retrying += 1;
+          continue;
+        }
         if (error instanceof ConversionConsentWithdrawnError) {
           await this.repository.discardForConsent(claim.id);
           dead += 1;
+          continue;
+        }
+        if (
+          error instanceof ConversionProviderError &&
+          [
+            'META_CAPI_CONNECTION_INACTIVE',
+            'META_CAPI_PERMISSION_REQUIRED',
+            'META_CAPI_REAUTH_REQUIRED',
+            'GOOGLE_DATA_MANAGER_SCOPE_REQUIRED',
+            'GOOGLE_ADS_REAUTH_REQUIRED',
+            '190',
+          ].includes(error.providerCode ?? '')
+        ) {
+          await this.repository.pauseForConnection(
+            claim.id,
+            new Date(this.now().getTime() + BILLING_RETRY_MS),
+          );
+          retrying += 1;
           continue;
         }
         const attempt = claim.attempts + 1;
@@ -232,6 +300,11 @@ export class ConversionDeliveryService {
 
   private deliver(claim: DeliveryClaim) {
     const beforeSend = async () => {
+      if (claim.sourceEventId)
+        await this.billing.requireAdProviderReadOnly(
+          claim.storeId,
+          billingProvider(claim.provider),
+        );
       if (!(await this.repository.hasAdvertisingConsent(claim))) {
         throw new ConversionConsentWithdrawnError();
       }

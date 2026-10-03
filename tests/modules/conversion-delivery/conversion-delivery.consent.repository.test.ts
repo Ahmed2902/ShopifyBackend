@@ -8,6 +8,7 @@ const describeDatabase = process.env.RUN_DB_TESTS === 'true' ? describe : descri
 const stores: string[] = [];
 afterEach(async () => {
   for (const id of stores.splice(0)) {
+    await prisma.shopifyConnection.deleteMany({ where: { storeId: id } });
     await prisma.order.deleteMany({ where: { storeId: id } });
     await prisma.store.delete({ where: { id } });
   }
@@ -30,6 +31,15 @@ describeDatabase('Advertising consent for purchase sharing', () => {
         },
       });
       stores.push(store.id);
+      await prisma.shopifyConnection.create({
+        data: {
+          storeId: store.id,
+          accessTokenCiphertext: 'test',
+          apiVersion: '2026-10',
+          scopes: ['read_customer_events', 'read_orders'],
+          installedAt: new Date(now.getTime() - 86400_000),
+        },
+      });
       const order = await prisma.order.create({
         data: {
           storeId: store.id,

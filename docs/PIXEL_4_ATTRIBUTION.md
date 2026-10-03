@@ -89,3 +89,7 @@ The attribution worker watches `StorefrontSession.updatedAt`, so it reacts to:
 If an earlier session for a visitor changes, later linked-purchase dates within the 30-day lookback are rebuilt so first/last/assist evidence stays consistent.
 
 The attribution rollup runs before Pixel trace-retention cleanup.
+
+## Enhanced signals extension
+
+See [Enhanced conversion signals](ENHANCED_CONVERSION_SIGNALS.md) for current acquisition dimensions, deterministic identity, opt-in matching/funnel delivery, consent and retention contracts. Older Purchase-only descriptions above describe the prior foundation. The extension preserves commerce/provider/first-party evidence separation.
