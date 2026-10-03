@@ -108,3 +108,27 @@ describe('provider matching normalization', () => {
     expect(storefrontEventKey('a', '1')).not.toBe(storefrontEventKey('a', '2'));
   });
 });
+
+describe('provider-specific matching edge cases', () => {
+  it('uses a valid ISO country only and keeps Google postal extensions separate from Meta normalization', () => {
+    const match = normalizeCustomerMatching({ firstName: 'Jane', lastName: 'Doe', country: 'US', postalCode: ' 94043-1234 ' });
+    expect(match.meta?.zp).toEqual([sha256('94043')]);
+    expect(match.google?.userIdentifiers[0]).toMatchObject({ address: { regionCode: 'US', postalCode: '94043-1234' } });
+    const invalid = normalizeCustomerMatching({ firstName: 'Jane', lastName: 'Doe', country: 'ZZ', postalCode: '12345' });
+    expect(invalid.meta?.country).toBeUndefined();
+    expect(invalid.google).toBeUndefined();
+  });
+  it('measures the identifiers each provider can actually receive', () => {
+    const match = normalizeCustomerMatching({ emails: [' First.Last+shop@ gmail.com '] });
+    expect(signalCoverage(match, 'META', null).email).toBe(false);
+    expect(signalCoverage(match, 'TIKTOK', null).email).toBe(false);
+    expect(signalCoverage(match, 'GOOGLE_ADS', null).email).toBe(true);
+    const context = { clientIp: '203.0.113.9', userAgent: 'observed-agent' };
+    expect(signalCoverage(context, 'META', null)).toMatchObject({ ip: true, userAgent: true });
+    expect(signalCoverage(context, 'GOOGLE_ADS', null)).toMatchObject({ ip: false, userAgent: false });
+  });
+  it('does not mistake a raw click beginning with fb for an already formatted fbc', () => {
+    const at = new Date('2026-10-03T00:00:00Z');
+    expect(metaUserData({}, 'fb.raw-click', at).fbc).toBe(`fb.1.${at.getTime()}.fb.raw-click`);
+  });
+});

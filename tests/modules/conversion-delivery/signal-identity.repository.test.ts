@@ -227,3 +227,24 @@ db('deterministic signal identity and lifecycle', () => {
     expect(await prisma.storefrontCustomerLink.count({ where: { storeId: f.store.id } })).toBe(0);
   });
 });
+
+db('identity privacy transaction races', () => {
+  it('does not leave a customer link when linking races consent withdrawal', async () => {
+    const f = await fixture();
+    const repo = new ConversionDeliveryRepository();
+    await Promise.all([
+      repo.linkCustomerIdentity({ ...f.claim, customerIdentityKey: 'race-customer' }),
+      new PixelRepository().withdrawAdvertisingConsent(f.store.id, { anonymousVisitorId: 'same-visitor' },
+        new Date(f.now.getTime() + 1000), new Date(Date.now() + 40 * 86400_000)),
+    ]);
+    expect(await prisma.storefrontCustomerLink.count({ where: { storeId: f.store.id } })).toBe(0);
+    expect(await repo.hasAdvertisingConsent(f.claim)).toBe(false);
+  });
+  it('blocks prepared canonical IP when enhanced matching is disabled during processing', async () => {
+    const f = await fixture();
+    const repo = new ConversionDeliveryRepository();
+    await prisma.conversionDestination.update({ where: { id: f.destination.id }, data: { configJson: { enhancedMatching: false } } });
+    expect(await repo.hasAdvertisingConsent({ ...f.claim, match: { clientIp: '203.0.113.9' } })).toBe(false);
+    expect(await repo.hasAdvertisingConsent({ ...f.claim, matchingIntent: true })).toBe(false);
+  });
+});

@@ -56,12 +56,13 @@ export async function deliverGooglePurchase(
     );
   if (!delivery.clickId && !delivery.match?.google) {
     throw new ConversionProviderError(
-      'Google Purchase has no consented gclid match identifier',
+      'Google Purchase has no permitted supported matching identifier',
       false,
       'GOOGLE_MATCH_ID_MISSING',
     );
   }
 
+  if (delivery.value === null || delivery.value === undefined || !delivery.currencyCode || !delivery.shopifyOrderId || !Number.isFinite(Number(delivery.value))) throw new ConversionProviderError('Canonical Purchase money or order is unavailable', false, 'COMMERCE_TRUTH_MISSING');
   const config = configFor(delivery);
   let context;
   try {

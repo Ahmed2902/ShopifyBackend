@@ -25,7 +25,8 @@ export async function conversionSignalHealth(storeId: string) {
         phone: bigint;
         externalId: bigint;
         userAgent: bigint;
-        measured: bigint;
+        ip: bigint;
+    measured: bigint;
       }>
     >(Prisma.sql`
       SELECT "provider", "eventName", "status", "reasonCode", COUNT(*) AS total, MAX("deliveredAt") AS "lastDelivery",
@@ -35,7 +36,8 @@ export async function conversionSignalHealth(storeId: string) {
         COUNT(*) FILTER (WHERE "matchCoverage"->>'email' = 'true') AS email,
         COUNT(*) FILTER (WHERE "matchCoverage"->>'phone' = 'true') AS phone,
         COUNT(*) FILTER (WHERE "matchCoverage"->>'externalId' = 'true') AS "externalId",
-        COUNT(*) FILTER (WHERE "matchCoverage"->>'userAgent' = 'true') AS "userAgent"
+        COUNT(*) FILTER (WHERE "matchCoverage"->>'userAgent' = 'true') AS "userAgent",
+        COUNT(*) FILTER (WHERE "matchCoverage"->>'ip' = 'true') AS ip
       FROM "ConversionDelivery" WHERE "storeId" = ${storeId}::uuid AND "createdAt" >= ${since}
       GROUP BY "provider", "eventName", "status", "reasonCode"
     `),
@@ -114,13 +116,13 @@ export async function conversionSignalHealth(storeId: string) {
             phone: Number(f.phone),
             externalId: Number(f.externalId),
             userAgent: Number(f.userAgent),
-            ip: 0,
+            ip: Number(f.ip),
           },
         })),
     })),
     limitations: [
       'No official Meta EMQ integration',
-      'IP unavailable in the trusted Web Pixel contract',
+      'IP is available only from a verified canonical Shopify Purchase with explicit field approval',
       'Native integrations and other tracking apps do not share Stride event IDs',
       'No claim of causal attribution',
     ],

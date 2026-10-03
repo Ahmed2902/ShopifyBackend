@@ -282,6 +282,7 @@ export class PixelRepository {
       ...(input.sessionId ? [`session:${input.sessionId}`] : []),
     ];
     return prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "storeId" FROM "ShopifyConnection" WHERE "storeId" = ${storeId}::uuid FOR UPDATE`;
       for (const key of keys) {
         await tx.$executeRaw`
           INSERT INTO "StorefrontConsentWithdrawal" ("storeId", "scopeKey", "revokedBefore", "retentionExpiresAt")

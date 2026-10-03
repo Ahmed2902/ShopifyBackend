@@ -88,9 +88,9 @@ export async function deliverMetaPurchase(
     delivery.clickId,
     delivery.attributionEventAt ?? delivery.eventAt,
   );
-  if (!delivery.clickId && !userData.fbp && !userData.em && !userData.external_id && !userData.ph) {
+  if (!delivery.clickId && !userData.fbp && !userData.em && !userData.external_id && !userData.ph && !(userData.fn && userData.ln && userData.country && (userData.zp || userData.ct)) && !(userData.client_ip_address && userData.client_user_agent)) {
     throw new ConversionProviderError(
-      'Meta Purchase has no consented fbclid/fbc match identifier',
+      'Meta event has no permitted supported matching identifier',
       false,
       'META_CAPI_MATCH_ID_MISSING',
     );

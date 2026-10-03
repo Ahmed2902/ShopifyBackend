@@ -137,7 +137,7 @@ export class ConversionDeliveryRepository {
           AND e."eventAt" >= conn."installedAt" AND e."eventAt" <= COALESCE(o."processedAt", o."shopifyCreatedAt") + INTERVAL '10 minutes'
           AND e."adSharingAllowed" = TRUE AND e."consentState" IN ('GRANTED', 'NOT_REQUIRED')
           AND NOT EXISTS (SELECT 1 FROM "StorefrontConsentWithdrawal" w WHERE w."storeId" = e."storeId" AND e."eventAt" <= w."revokedBefore" AND (w."scopeKey" = 'session:' || e."sessionId" OR w."scopeKey" = 'visitor:' || e."anonymousVisitorId"))
-        ORDER BY e."eventAt" DESC, e."receivedAt" DESC LIMIT 1
+        ORDER BY (e."shopifyOrderExternalId" = o."shopifyOrderId" AND e."shopifyCheckoutToken" IS NOT NULL) DESC NULLS LAST, e."eventAt" DESC, e."receivedAt" DESC LIMIT 1
       ) identity_event ON TRUE
       LEFT JOIN LATERAL (
         SELECT e."metaClickId", e."eventAt"
@@ -209,6 +209,7 @@ export class ConversionDeliveryRepository {
           ORDER BY latest."eventAt" DESC, latest."receivedAt" DESC, latest."id" DESC LIMIT 1
         ) = TRUE
         AND o."cancelledAt" IS NULL
+        AND COALESCE(o."processedAt", o."shopifyCreatedAt") >= conn."installedAt"
         AND o."currentTotalAmount" IS NOT NULL
         AND COALESCE(o."processedAt", o."shopifyCreatedAt") >= NOW() - INTERVAL '30 days'
         AND (
@@ -240,6 +241,8 @@ export class ConversionDeliveryRepository {
     provider: AdvertisingProvider;
     clickId: string | null;
     destinationId?: string;
+    clickIdKind?: string | null;
+    matchingIntent?: boolean;
     eventName?: string;
     match?: unknown;
   }) {
@@ -319,8 +322,8 @@ export class ConversionDeliveryRepository {
       if (claim.eventName && claim.eventName !== 'PURCHASE' && config?.funnelEvents !== true)
         return false;
       const match = claim.match as
-        { meta?: unknown; tiktok?: unknown; google?: unknown } | undefined;
-      if ((match?.meta || match?.tiktok || match?.google) && config?.enhancedMatching !== true)
+        { meta?: unknown; tiktok?: unknown; google?: unknown; clientIp?: string } | undefined;
+      if ((claim.matchingIntent || match?.meta || match?.tiktok || match?.google || match?.clientIp) && config?.enhancedMatching !== true)
         return false;
       const providerConnection =
         claim.provider === 'META'
@@ -371,7 +374,8 @@ export class ConversionDeliveryRepository {
                 ? candidate.metaClickId
                 : claim.provider === 'TIKTOK'
                   ? candidate.tiktokClickId
-                  : candidate.googleClickId) === claim.clickId,
+                  : candidate.googleClickId) === claim.clickId &&
+              (claim.provider !== 'GOOGLE_ADS' || !claim.clickIdKind || candidate.googleClickIdKind === claim.clickIdKind),
           )
         )
           return false;
@@ -454,13 +458,23 @@ export class ConversionDeliveryRepository {
   }) {
     if (!claim.sourceOrderId || !claim.customerIdentityKey || !claim.sourceGenerationAt) return;
     if (!(await this.hasAdvertisingConsent(claim))) return;
-    await prisma.$executeRaw`INSERT INTO "StorefrontCustomerLink" ("sourceOrderId", "storeId", "customerKey", "expiresAt")
-      SELECT o."id", o."storeId", ${claim.customerIdentityKey}, NOW() + INTERVAL '90 days' FROM "Order" o JOIN "ShopifyConnection" c ON c."storeId" = o."storeId"
-      WHERE o."id" = ${claim.sourceOrderId}::uuid AND o."storeId" = ${claim.storeId}::uuid AND c."status" = 'ACTIVE' AND c."installedAt" = ${claim.sourceGenerationAt}
-      ON CONFLICT ("sourceOrderId") DO NOTHING`;
+    await prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT "storeId" FROM "ShopifyConnection" WHERE "storeId" = ${claim.storeId}::uuid FOR UPDATE`;
+      await tx.$executeRaw`INSERT INTO "StorefrontCustomerLink" ("sourceOrderId", "storeId", "customerKey", "expiresAt")
+        SELECT o."id", o."storeId", ${claim.customerIdentityKey}, NOW() + INTERVAL '90 days'
+        FROM "Order" o JOIN "ShopifyConnection" c ON c."storeId" = o."storeId"
+        JOIN "StorefrontEvent" e ON e."id" = ${claim.sourceEventId ?? null}::uuid AND e."storeId" = o."storeId"
+        JOIN "ConversionDestination" dest ON dest."id" = ${claim.destinationId}::uuid AND dest."storeId" = o."storeId" AND dest."provider"::text = ${claim.provider}
+        WHERE o."id" = ${claim.sourceOrderId}::uuid AND o."storeId" = ${claim.storeId}::uuid
+          AND c."status" = 'ACTIVE' AND c."installedAt" = ${claim.sourceGenerationAt}
+          AND dest."status" = 'ACTIVE' AND dest."configJson"->>'enhancedMatching' = 'true'
+          AND e."adSharingAllowed" = TRUE AND e."eventAt" >= c."installedAt"
+          AND NOT EXISTS (SELECT 1 FROM "StorefrontConsentWithdrawal" w WHERE w."storeId" = e."storeId" AND w."revokedBefore" >= e."eventAt" AND (w."scopeKey" = 'visitor:' || e."anonymousVisitorId" OR w."scopeKey" = 'session:' || e."sessionId"))
+        ON CONFLICT ("sourceOrderId") DO NOTHING`;
+    });
   }
-  recordCoverage(id: string, coverage: Record<string, boolean>) {
-    return prisma.conversionDelivery.update({ where: { id }, data: { matchCoverage: coverage } });
+  recordCoverage(id: string, coverage: Record<string, boolean>, reasonCode: string | null = null) {
+    return prisma.conversionDelivery.update({ where: { id }, data: { matchCoverage: coverage, reasonCode } });
   }
   pauseForConnection(id: string, nextAttemptAt: Date) {
     return prisma.conversionDelivery.update({
@@ -529,7 +543,7 @@ export class ConversionDeliveryRepository {
     });
   }
 
-  markDelivered(id: string, providerRequestId: string | null, deliveredAt: Date) {
+  markDelivered(id: string, providerRequestId: string | null, deliveredAt: Date, matchingReasonCode: string | null = null) {
     return prisma.conversionDelivery.update({
       where: { id },
       data: {
@@ -539,7 +553,7 @@ export class ConversionDeliveryRepository {
         deliveredAt,
         providerRequestId,
         lastError: null,
-        reasonCode: null,
+        reasonCode: matchingReasonCode,
         clickId: null,
         attributionEventAt: null,
         eventSourceUrl: null,
@@ -564,7 +578,7 @@ export class ConversionDeliveryRepository {
         ...(status === 'DEAD'
           ? { clickId: null, attributionEventAt: null, eventSourceUrl: null }
           : {}),
-        reasonCode: /MATCH_ID_MISSING/.test(error)
+        reasonCode: /EVENT_EXPIRED/.test(error) ? 'EVENT_EXPIRED' : /MATCH_ID_MISSING/.test(error)
           ? 'MISSING_MATCH_IDENTIFIER'
           : status === 'DEAD'
             ? 'PROVIDER_REJECTED'

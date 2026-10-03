@@ -87,6 +87,7 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((value) => value === 'true'),
+  SHOPIFY_ENHANCED_MATCHING_FIELDS: z.string().default('email,phone,name,address,customer_id').transform(value => value.split(',').map(field => field.trim()).filter(Boolean)).pipe(z.array(z.enum(['email', 'phone', 'name', 'address', 'customer_id', 'client_ip'])).min(1).max(6)),
   PIXEL_COLLECTOR_URL: z.string().url().optional(),
   PIXEL_RAW_EVENT_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(90),
   META_APP_ID: z.string().min(1),

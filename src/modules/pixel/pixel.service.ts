@@ -350,7 +350,7 @@ export class PixelService {
       referrerUrl: event.referrerUrl,
     });
     const permittedMatch =
-      event.adSharingAllowed && event.browserMatch && Object.keys(event.browserMatch).length > 0;
+      isStorefrontBehaviorCaptureAllowed(event.consentState) && eventAgeMs <= 48 * 60 * 60_000 && event.adSharingAllowed && event.browserMatch && Object.keys(event.browserMatch).length > 0;
 
     return {
       eventId: event.eventId,
@@ -384,6 +384,7 @@ export class PixelService {
         ? new Date(
             Math.min(
               receivedAt.getTime() + 48 * 60 * 60_000,
+              eventAt.getTime() + 48 * 60 * 60_000,
               calculatePixelRetentionExpiresAt(
                 receivedAt,
                 env.PIXEL_RAW_EVENT_RETENTION_DAYS,

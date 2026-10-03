@@ -11,7 +11,7 @@ export type CustomerMatchInput = {
   country?: string | null;
   externalId?: string | null;
 };
-export type BrowserMatchInput = { fbp?: string; ttp?: string; userAgent?: string };
+export type BrowserMatchInput = { fbp?: string; ttp?: string; userAgent?: string; clientIp?: string };
 export type MatchEvidence = BrowserMatchInput & {
   meta?: Record<string, unknown>;
   tiktok?: Record<string, unknown>;
@@ -24,6 +24,11 @@ export function customerIdentity(secret: string, storeId: string, shopifyCustome
   return createHmac('sha256', secret)
     .update(JSON.stringify(['stride-customer-v1', storeId, shopifyCustomerId]))
     .digest('hex');
+}
+const countryCodes = new Set('ad ae af ag ai al am ao aq ar as at au aw ax az ba bb bd be bf bg bh bi bj bl bm bn bo bq br bs bt bv bw by bz ca cc cd cf cg ch ci ck cl cm cn co cr cu cv cw cx cy cz de dj dk dm do dz ec ee eg eh er es et fi fj fk fm fo fr ga gb gd ge gf gg gh gi gl gm gn gp gq gr gs gt gu gw gy hk hm hn hr ht hu id ie il im in io iq ir is it je jm jo jp ke kg kh ki km kn kp kr kw ky kz la lb lc li lk lr ls lt lu lv ly ma mc md me mf mg mh mk ml mm mn mo mp mq mr ms mt mu mv mw mx my mz na nc ne nf ng ni nl no np nr nu nz om pa pe pf pg ph pk pl pm pn pr ps pt pw py qa re ro rs ru rw sa sb sc sd se sg sh si sj sk sl sm sn so sr ss st sv sx sy sz tc td tf tg th tj tk tl tm tn to tr tt tv tw tz ua ug um us uy uz va vc ve vg vi vn vu wf ws ye yt za zm zw'.split(' '));
+function country(value?: string | null) {
+  const v = value?.trim().toLowerCase();
+  return v && countryCodes.has(v) ? v : undefined;
 }
 function text(value?: string | null) {
   const v = value?.trim().toLowerCase();
@@ -78,8 +83,8 @@ export function normalizeCustomerMatching(input: CustomerMatchInput): MatchEvide
     ['ln', name(input.lastName)],
     ['ct', compact(input.city)],
     ['st', compact(input.region)],
-    ['zp', compact(input.postalCode)],
-    ['country', /^[a-z]{2}$/.test(text(input.country) ?? '') ? text(input.country) : undefined],
+    ['zp', text(input.postalCode)?.replace(/\s/gu, '').split('-')[0]],
+    ['country', country(input.country)],
   ] as const)
     if (v) meta[key] = [sha256(v)];
   if (input.externalId) {
@@ -92,7 +97,7 @@ export function normalizeCustomerMatching(input: CustomerMatchInput): MatchEvide
   ];
   const givenName = name(input.firstName);
   const familyName = name(input.lastName);
-  const regionCode = input.country?.trim().toUpperCase();
+  const regionCode = country(input.country)?.toUpperCase();
   const postalCode = input.postalCode?.trim();
   if (givenName && familyName && regionCode && /^[A-Z]{2}$/.test(regionCode) && postalCode)
     identifiers.push({
@@ -118,8 +123,9 @@ export function metaUserData(
     ...(match.meta ?? {}),
     ...(match.fbp ? { fbp: match.fbp } : {}),
     ...(match.userAgent ? { client_user_agent: match.userAgent } : {}),
+    ...(match.clientIp ? { client_ip_address: match.clientIp } : {}),
     ...(clickId
-      ? { fbc: clickId.startsWith('fb.') ? clickId : `fb.1.${clickAt.getTime()}.${clickId}` }
+      ? { fbc: /^fb\.\d\.\d{13}\.[A-Za-z0-9_-]+$/.test(clickId) ? clickId : `fb.1.${clickAt.getTime()}.${clickId}` }
       : {}),
   };
 }
@@ -131,27 +137,14 @@ export function tiktokUserData(
     ...(match.tiktok ?? {}),
     ...(match.ttp ? { ttp: match.ttp } : {}),
     ...(match.userAgent ? { user_agent: match.userAgent } : {}),
+    ...(match.clientIp ? { ip: match.clientIp } : {}),
     ...(clickId ? { ttclid: clickId } : {}),
   };
 }
-export function signalCoverage(
-  match: MatchEvidence,
-  provider: string,
-  clickId: string | null,
-): Record<string, boolean> {
-  const fields =
-    provider === 'META' ? match.meta : provider === 'TIKTOK' ? match.tiktok : undefined;
-  return {
-    clickId: Boolean(clickId),
-    browserId: Boolean(provider === 'META' ? match.fbp : provider === 'TIKTOK' ? match.ttp : false),
-    email: Boolean(
-      fields?.em || fields?.email || match.google?.userIdentifiers.some((i) => i.emailAddress),
-    ),
-    phone: Boolean(
-      fields?.ph || fields?.phone || match.google?.userIdentifiers.some((i) => i.phoneNumber),
-    ),
-    externalId: Boolean(fields?.external_id),
-    ip: false,
-    userAgent: Boolean(match.userAgent),
-  };
+export function signalCoverage(match: MatchEvidence, provider: string, clickId: string | null): Record<string, boolean> {
+  const fields = provider === 'META' ? match.meta : provider === 'TIKTOK' ? match.tiktok : undefined;
+  return { clickId: Boolean(clickId), browserId: Boolean(provider === 'META' ? match.fbp : provider === 'TIKTOK' ? match.ttp : false),
+    email: provider === 'GOOGLE_ADS' ? Boolean(match.google?.userIdentifiers.some(i => i.emailAddress)) : Boolean(fields?.em || fields?.email),
+    phone: provider === 'GOOGLE_ADS' ? Boolean(match.google?.userIdentifiers.some(i => i.phoneNumber)) : Boolean(fields?.ph || fields?.phone),
+    externalId: Boolean(fields?.external_id), ip: provider !== 'GOOGLE_ADS' && Boolean(match.clientIp), userAgent: provider !== 'GOOGLE_ADS' && Boolean(match.userAgent) };
 }

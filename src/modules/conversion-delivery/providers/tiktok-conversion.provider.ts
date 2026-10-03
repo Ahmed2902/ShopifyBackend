@@ -48,9 +48,9 @@ export async function deliverTikTokPurchase(
     );
   }
   const user = tiktokUserData(delivery.match ?? {}, delivery.clickId);
-  if (!delivery.clickId && !user.ttp && !user.email && !user.phone && !user.external_id) {
+  if (!delivery.clickId && !user.ttp && !user.email && !user.phone && !user.external_id && !(user.ip && user.user_agent)) {
     throw new ConversionProviderError(
-      'TikTok Purchase has no consented ttclid match identifier',
+      'TikTok event has no permitted supported matching identifier',
       false,
       'TIKTOK_MATCH_ID_MISSING',
     );

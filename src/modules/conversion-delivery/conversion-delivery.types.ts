@@ -44,6 +44,7 @@ export type PurchaseCandidate = {
 export type DeliveryClaim = ConversionDelivery & {
   destination: ConversionDestination;
   customerIdentityKey?: string;
+  matchingReasonCode?: string;
   match?: MatchEvidence;
 };
 
