@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { performance } from 'node:perf_hooks';
 import { writeFileSync } from 'node:fs';
-import { prepareConversionContents as before } from '../../../src/modules/conversion-delivery/conversion-content.before-benchmark.js';
+import { prepareConversionContents as before } from '../../fixtures/conversion-content-before.js';
 import { prepareConversionContents as after } from '../../../src/modules/conversion-delivery/conversion-content.js';
 const mocks = vi.hoisted(() => ({ order: vi.fn(), events: vi.fn(), meta: vi.fn() }));
 vi.mock('../../../src/lib/prisma.js', () => ({ prisma: { order: { findMany: mocks.order }, storefrontEvent: { findMany: mocks.events }, catalogItemVariantMapping: { findMany: mocks.meta }, tikTokCatalogItemVariantMapping: { findMany: vi.fn().mockResolvedValue([]) } } }));

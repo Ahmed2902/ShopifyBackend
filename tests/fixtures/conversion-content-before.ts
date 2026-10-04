@@ -1,6 +1,7 @@
-import { prisma } from '../../lib/prisma.js';
-import { Prisma } from '../../generated/prisma/client.js';
-import type { ConversionDestinationConfig, DeliveryClaim } from './conversion-delivery.types.js';
+// Historical implementation retained solely as a CPU benchmark baseline.
+import { prisma } from '../../src/lib/prisma.js';
+import { Prisma } from '../../src/generated/prisma/client.js';
+import type { ConversionDestinationConfig, DeliveryClaim } from '../../src/modules/conversion-delivery/conversion-delivery.types.js';
 
 type ObservedItem = { variantExternalId: string; quantity?: number; itemPrice?: number };
 type Mapping = {
