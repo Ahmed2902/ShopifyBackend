@@ -28,7 +28,9 @@ export async function enqueueFunnelEvents(limit = 200) {
       AND e."adSharingAllowed" = TRUE AND e."consentState" IN ('GRANTED', 'NOT_REQUIRED')
       AND e."eventAt" >= conn."installedAt" AND e."eventAt" >= NOW() - INTERVAL '48 hours'
       AND e."retentionExpiresAt" > NOW()
-      AND (e."metaClickId" IS NOT NULL OR e."tiktokClickId" IS NOT NULL OR e."browserMatchCiphertext" IS NOT NULL)
+      AND ((dest."provider" = 'META' AND e."metaClickId" IS NOT NULL)
+        OR (dest."provider" = 'TIKTOK' AND e."tiktokClickId" IS NOT NULL)
+        OR (e."browserMatchCiphertext" IS NOT NULL AND e."browserMatchExpiresAt" > NOW()))
       AND NOT EXISTS (SELECT 1 FROM "StorefrontConsentWithdrawal" w WHERE w."storeId" = e."storeId" AND w."revokedBefore" >= e."eventAt" AND (w."scopeKey" = 'session:' || e."sessionId" OR w."scopeKey" = 'visitor:' || e."anonymousVisitorId"))
       AND NOT EXISTS (SELECT 1 FROM "ConversionDelivery" d WHERE d."destinationId" = dest."id" AND d."sourceEventId" = e."id")
     ORDER BY e."receivedAt", e."id", dest."id" LIMIT ${Math.min(Math.max(Math.trunc(limit), 1), 1000)}

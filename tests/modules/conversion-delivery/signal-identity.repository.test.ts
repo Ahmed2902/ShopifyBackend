@@ -1,5 +1,7 @@
+import { billingService } from '../../../src/modules/billing/billing.service.js';
+import { enqueueFunnelEvents, storefrontEventKey } from '../../../src/modules/conversion-delivery/funnel.repository.js';
 import { randomUUID } from 'node:crypto';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { prisma } from '../../../src/lib/prisma.js';
 import { ConversionDeliveryRepository } from '../../../src/modules/conversion-delivery/conversion-delivery.repository.js';
 import { PixelRepository } from '../../../src/modules/pixel/pixel.repository.js';
@@ -265,5 +267,57 @@ db('collector durability privacy races', () => {
     ]);
     expect(await prisma.storefrontEvent.findUnique({ where: { storeId_eventId: { storeId: f.store.id, eventId } } }))
       .toMatchObject({ adSharingAllowed: false, browserMatchCiphertext: null });
+  });
+});
+
+afterEach(() => vi.restoreAllMocks());
+db('durable provider-specific funnel enqueue', () => {
+  async function funnelFixture() {
+    const f = await fixture();
+    vi.spyOn(billingService, 'requireAdProviderReadOnly').mockResolvedValue({} as never);
+    await prisma.conversionDestination.update({ where: { id: f.destination.id }, data: { configJson: { funnelEvents: true } } });
+    const tiktok = await prisma.conversionDestination.create({ data: {
+      storeId: f.store.id, provider: 'TIKTOK', externalId: randomUUID(), configJson: { funnelEvents: true },
+    } });
+    return { ...f, tiktok };
+  }
+  async function funnelEvent(f: Awaited<ReturnType<typeof funnelFixture>>, eventName: 'PAGE_VIEW' | 'ADD_TO_CART', tiktok = false) {
+    return prisma.storefrontEvent.create({ data: {
+      storeId: f.store.id, eventId: randomUUID(), eventName, eventAt: f.now,
+      sessionId: f.event.sessionId, anonymousVisitorId: 'same-visitor', consentState: 'GRANTED',
+      adSharingAllowed: true, metaClickId: 'meta-only-click', ...(tiktok ? { tiktokClickId: 'tiktok-click' } : {}),
+      retentionExpiresAt: new Date(Date.now() + 86400_000),
+    } });
+  }
+  it('uses matching evidence for the selected provider and never duplicates retries', async () => {
+    const f = await funnelFixture();
+    const event = await funnelEvent(f, 'ADD_TO_CART');
+    await enqueueFunnelEvents();
+    await enqueueFunnelEvents();
+    const rows = await prisma.conversionDelivery.findMany({ where: { storeId: f.store.id, sourceEventId: event.id } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ provider: 'META', eventName: 'ADD_TO_CART',
+      sourceGenerationAt: f.generation, eventKey: storefrontEventKey(f.store.id, event.eventId),
+      sourceOrderId: null, value: null, currencyCode: null });
+  });
+  it('enqueues Meta PageView but does not invent a TikTok PageView', async () => {
+    const f = await funnelFixture();
+    const event = await funnelEvent(f, 'PAGE_VIEW', true);
+    await enqueueFunnelEvents();
+    const rows = await prisma.conversionDelivery.findMany({ where: { storeId: f.store.id, sourceEventId: event.id } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.provider).toBe('META');
+  });
+  it('blocks queued funnel events after withdrawal and cannot enqueue them again', async () => {
+    const f = await funnelFixture();
+    const event = await funnelEvent(f, 'ADD_TO_CART', true);
+    await enqueueFunnelEvents();
+    const rows = await prisma.conversionDelivery.findMany({ where: { storeId: f.store.id, sourceEventId: event.id } });
+    expect(rows).toHaveLength(2);
+    await new PixelRepository().withdrawAdvertisingConsent(f.store.id, { anonymousVisitorId: 'same-visitor' },
+      new Date(f.now.getTime() + 1000), new Date(Date.now() + 40 * 86400_000));
+    for (const row of rows) expect(await new ConversionDeliveryRepository().hasAdvertisingConsent(row)).toBe(false);
+    await enqueueFunnelEvents();
+    expect(await prisma.conversionDelivery.count({ where: { storeId: f.store.id, sourceEventId: event.id } })).toBe(2);
   });
 });

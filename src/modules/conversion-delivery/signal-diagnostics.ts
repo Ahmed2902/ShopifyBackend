@@ -26,7 +26,7 @@ export async function conversionSignalHealth(storeId: string) {
         externalId: bigint;
         userAgent: bigint;
         ip: bigint;
-    measured: bigint;
+        measured: bigint;
       }>
     >(Prisma.sql`
       SELECT "provider", "eventName", "status", "reasonCode", COUNT(*) AS total, MAX("deliveredAt") AS "lastDelivery",
@@ -53,6 +53,8 @@ export async function conversionSignalHealth(storeId: string) {
       where: { storeId, isTest: false, cancelledAt: null, shopifyCreatedAt: { gte: since } },
     }),
   ]);
+  const managedMeta = destinations.some(d => d.provider === 'META' && d.status === 'ACTIVE' &&
+    (d.configJson as Record<string, unknown> | null)?.authSource === 'META_CONNECTION');
   return {
     since: since.toISOString(),
     until: new Date().toISOString(),
@@ -66,10 +68,10 @@ export async function conversionSignalHealth(storeId: string) {
         provider === 'META'
           ? {
               status: connections?.metaConnection?.status ?? 'NOT_CONNECTED',
-              permissionAvailable:
-                connections?.metaConnection?.scopes.includes('ads_management') ?? false,
+              credentialSource: managedMeta ? 'META_CONNECTION' : 'EVENTS_MANAGER_DESTINATION',
+              ...(managedMeta ? { permissionAvailable: connections?.metaConnection?.scopes.includes('ads_management') ?? false } : {}),
               tokenExpired: Boolean(
-                connections?.metaConnection?.tokenExpiresAt &&
+                managedMeta && connections?.metaConnection?.tokenExpiresAt &&
                 connections.metaConnection.tokenExpiresAt <= new Date(),
               ),
             }
