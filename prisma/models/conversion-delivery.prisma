@@ -29,6 +29,7 @@ model ConversionDestination {
   store      Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
   deliveries ConversionDelivery[]
 
+  @@unique([id, storeId, provider])
   @@unique([storeId, provider, externalId])
   @@index([storeId, provider, status])
 }
@@ -36,35 +37,44 @@ model ConversionDestination {
 /// Durable, idempotent server-side conversion delivery. Purchase truth always comes from Shopify
 /// Order; Stride Pixel contributes only consented attribution identifiers (fbclid/gclid/ttclid).
 model ConversionDelivery {
-  id                     String                   @id @default(uuid()) @db.Uuid
-  storeId                String                   @db.Uuid
-  destinationId          String                   @db.Uuid
-  provider               AdvertisingProvider
-  eventKey               String
-  eventName              String
-  sourceOrderId          String                   @db.Uuid
-  shopifyOrderId         String
-  eventAt                DateTime
-  value                  Decimal                  @db.Decimal(20, 6)
-  currencyCode           String
-  clickId                String?                  @db.VarChar(512)
-  attributionEventAt     DateTime?
-  eventSourceUrl         String?                  @db.Text
-  status                 ConversionDeliveryStatus @default(PENDING)
-  attempts               Int                      @default(0)
-  nextAttemptAt          DateTime                 @default(now())
-  processingStartedAt    DateTime?
-  deliveredAt            DateTime?
-  providerRequestId      String?
-  lastError              String?
-  createdAt              DateTime                 @default(now())
-  updatedAt              DateTime                 @updatedAt
+  id                  String                   @id @default(uuid()) @db.Uuid
+  storeId             String                   @db.Uuid
+  destinationId       String                   @db.Uuid
+  provider            AdvertisingProvider
+  eventKey            String
+  eventName           String
+  sourceEventId       String?                  @db.Uuid
+  sourceGenerationAt  DateTime?
+  matchCoverage       Json?
+  reasonCode          String?                  @db.VarChar(64)
+  sourceOrderId       String?                  @db.Uuid
+  shopifyOrderId      String?
+  eventAt             DateTime
+  value               Decimal?                 @db.Decimal(20, 6)
+  currencyCode        String?
+  clickIdKind         String?                  @db.VarChar(16)
+  clickId             String?                  @db.VarChar(512)
+  attributionEventAt  DateTime?
+  eventSourceUrl      String?                  @db.Text
+  status              ConversionDeliveryStatus @default(PENDING)
+  attempts            Int                      @default(0)
+  nextAttemptAt       DateTime                 @default(now())
+  processingStartedAt DateTime?
+  deliveredAt         DateTime?
+  providerRequestId   String?
+  lastError           String?
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
 
   store       Store                 @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  destination ConversionDestination @relation(fields: [destinationId], references: [id], onDelete: Cascade)
+  destination ConversionDestination @relation(fields: [destinationId, storeId, provider], references: [id, storeId, provider], onDelete: Cascade)
 
   @@unique([destinationId, eventKey])
+  @@unique([destinationId, sourceOrderId, eventName])
   @@index([status, nextAttemptAt, createdAt])
   @@index([storeId, provider, createdAt])
+  @@index([storeId, createdAt])
+  @@index([status, eventAt])
   @@index([sourceOrderId])
+  @@index([sourceEventId])
 }

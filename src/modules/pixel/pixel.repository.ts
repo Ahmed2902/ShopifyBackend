@@ -192,6 +192,11 @@ export class PixelRepository {
     if (events.length === 0) return 0;
 
     return prisma.$transaction(async (tx) => {
+      // Shared collection locks permit concurrent batches but serialize privacy/lifecycle writes.
+      // Reading withdrawal markers without this barrier could persist a stale encrypted bundle.
+      const connections = await tx.$queryRaw<Array<{ status: string; installedAt: Date }>>`SELECT "status", "installedAt" FROM "ShopifyConnection" WHERE "storeId" = ${storeId}::uuid FOR SHARE`;
+      const connection = connections[0];
+      if (connection && connection.status !== 'ACTIVE') return 0;
       const keys = [
         ...new Set(
           events.flatMap((event) => [
@@ -213,10 +218,16 @@ export class PixelRepository {
           cutoffByKey.get(`visitor:${event.anonymousVisitorId}`),
           cutoffByKey.get(`session:${event.sessionId}`),
         ];
+        const withdrawn =
+          event.adSharingAllowed !== true ||
+          Boolean(connection && new Date(event.eventAt) < connection.installedAt) ||
+          cutoffs.some((cutoff) => cutoff && new Date(event.eventAt) <= cutoff);
         return {
           ...event,
+          ...(withdrawn ? { browserMatchCiphertext: null, browserMatchExpiresAt: null } : {}),
           adSharingAllowed:
             event.adSharingAllowed === true &&
+            (!connection || new Date(event.eventAt) >= connection.installedAt) &&
             !cutoffs.some((cutoff) => cutoff && new Date(event.eventAt) <= cutoff),
         };
       });
@@ -233,7 +244,11 @@ export class PixelRepository {
       if (withdrawnIds.length > 0) {
         await tx.storefrontEvent.updateMany({
           where: { storeId, eventId: { in: withdrawnIds }, adSharingAllowed: true },
-          data: { adSharingAllowed: false },
+          data: {
+            adSharingAllowed: false,
+            browserMatchCiphertext: null,
+            browserMatchExpiresAt: null,
+          },
         });
       }
 
@@ -274,6 +289,7 @@ export class PixelRepository {
       ...(input.sessionId ? [`session:${input.sessionId}`] : []),
     ];
     return prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "storeId" FROM "ShopifyConnection" WHERE "storeId" = ${storeId}::uuid FOR UPDATE`;
       for (const key of keys) {
         await tx.$executeRaw`
           INSERT INTO "StorefrontConsentWithdrawal" ("storeId", "scopeKey", "revokedBefore", "retentionExpiresAt")
@@ -283,6 +299,9 @@ export class PixelRepository {
             "retentionExpiresAt" = GREATEST("StorefrontConsentWithdrawal"."retentionExpiresAt", EXCLUDED."retentionExpiresAt")
         `;
       }
+      await tx.$executeRaw`DELETE FROM "StorefrontCustomerLink" l USING "StorefrontSession" s
+        WHERE l."storeId" = ${storeId}::uuid AND s."storeId" = l."storeId" AND s."orderId" = l."sourceOrderId"
+          AND s."startedAt" <= ${revokedBefore} AND (s."anonymousVisitorId" = ${input.anonymousVisitorId ?? null} OR s."browserSessionId" = ${input.sessionId ?? null})`;
       await tx.storefrontEvent.updateMany({
         where: {
           storeId,
@@ -293,11 +312,20 @@ export class PixelRepository {
             ...(input.sessionId ? [{ sessionId: input.sessionId }] : []),
           ],
         },
-        data: { adSharingAllowed: false },
+        data: {
+          adSharingAllowed: false,
+          browserMatchCiphertext: null,
+          browserMatchExpiresAt: null,
+        },
       });
     });
   }
 
+  async cleanupMatchEvidence(now: Date, limit: number) {
+    await prisma.$executeRaw`UPDATE "StorefrontEvent" SET "browserMatchCiphertext" = NULL, "browserMatchExpiresAt" = NULL WHERE "id" IN (SELECT "id" FROM "StorefrontEvent" WHERE "browserMatchExpiresAt" <= ${now} LIMIT ${limit})`;
+    await prisma.$executeRaw`DELETE FROM "StorefrontCustomerLink" WHERE "sourceOrderId" IN (SELECT "sourceOrderId" FROM "StorefrontCustomerLink" WHERE "expiresAt" <= ${now} LIMIT ${limit})`;
+    await prisma.$executeRaw`UPDATE "ConversionDelivery" SET "clickId" = NULL, "eventSourceUrl" = NULL, "attributionEventAt" = NULL, "status" = 'DEAD', "reasonCode" = 'EVENT_EXPIRED', "processingStartedAt" = NULL WHERE "id" IN (SELECT "id" FROM "ConversionDelivery" WHERE "eventAt" < ${new Date(now.getTime() - 7 * 86400_000)} AND "status" IN ('PENDING', 'RETRY', 'PROCESSING') LIMIT ${limit})`;
+  }
   cleanupExpiredWithdrawals(now: Date, limit: number) {
     return prisma.$executeRaw`
       DELETE FROM "StorefrontConsentWithdrawal" w USING (

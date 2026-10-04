@@ -60,12 +60,14 @@ function claim(provider: 'META' | 'TIKTOK' | 'GOOGLE_ADS' = 'META') {
   };
 }
 
-function repository(input: {
-  destinations?: ReturnType<typeof destination>[];
-  candidates?: ReturnType<typeof candidate>[];
-  claims?: ReturnType<typeof claim>[];
-  enqueueCreated?: boolean;
-} = {}) {
+function repository(
+  input: {
+    destinations?: ReturnType<typeof destination>[];
+    candidates?: ReturnType<typeof candidate>[];
+    claims?: ReturnType<typeof claim>[];
+    enqueueCreated?: boolean;
+  } = {},
+) {
   return {
     activeDestinations: vi.fn().mockResolvedValue(input.destinations ?? []),
     findPurchaseCandidates: vi.fn().mockResolvedValue(input.candidates ?? []),
@@ -119,7 +121,7 @@ describe('ConversionDeliveryService purchase enqueue', () => {
     expect(repo.enqueue).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: 'META',
-        eventKey: 'stride:purchase:gid://shopify/Order/1001',
+        eventKey: expect.stringMatching(/^stride:event:[a-f0-9]{64}$/),
         clickId: 'meta-click',
         value: '129.99',
         currencyCode: 'USD',
@@ -197,7 +199,11 @@ describe('ConversionDeliveryService destination configuration', () => {
   });
 
   it('requires a provider Events API token for Meta and TikTok', async () => {
-    const service = new ConversionDeliveryService(repository() as never, () => now, billing() as never);
+    const service = new ConversionDeliveryService(
+      repository() as never,
+      () => now,
+      billing() as never,
+    );
 
     await expect(
       service.configureDestination('store-1', {
@@ -209,7 +215,11 @@ describe('ConversionDeliveryService destination configuration', () => {
   });
 
   it('requires a Google Ads customer id while keeping its OAuth token in the existing connection', async () => {
-    const service = new ConversionDeliveryService(repository() as never, () => now, billing() as never);
+    const service = new ConversionDeliveryService(
+      repository() as never,
+      () => now,
+      billing() as never,
+    );
 
     await expect(
       service.configureDestination('store-1', {

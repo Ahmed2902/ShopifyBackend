@@ -73,6 +73,8 @@ export class PixelJourneyRepository {
         utmTerm: true,
         metaClickId: true,
         googleClickId: true,
+        googleBraidedClickId: true,
+        googleWebBraidedClickId: true,
         tiktokClickId: true,
         metaCampaignExternalId: true,
         metaAdSetExternalId: true,
@@ -363,7 +365,9 @@ export class PixelJourneyRepository {
       `;
       if (candidates.length === 0) return { selected: 0, deleted: 0 };
 
-      const orderIds = [...new Set(candidates.flatMap((row) => (row.orderId ? [row.orderId] : [])))];
+      const orderIds = [
+        ...new Set(candidates.flatMap((row) => (row.orderId ? [row.orderId] : []))),
+      ];
       if (orderIds.length > 0) {
         const joinedOrderIds = PrismaSql.join(orderIds.map((id) => PrismaSql.sql`${id}::uuid`));
         await tx.$queryRaw`

@@ -22,6 +22,7 @@ function buildService(input?: {
   const installation = input?.installation === undefined ? null : input.installation;
 
   const repository = {
+    cleanupMatchEvidence: vi.fn().mockResolvedValue(undefined),
     findInstallationByStoreId: vi.fn().mockResolvedValue(installation),
     findInstallationForProvisioning: vi.fn().mockResolvedValue(installation),
     findInstallationForIngress: vi.fn().mockResolvedValue(installation),
@@ -77,23 +78,50 @@ function buildService(input?: {
 describe('PixelService', () => {
   it('accepts an authenticated privacy-only withdrawal without recording analytics', async () => {
     const collectorToken = 'P'.repeat(43);
-    const { repository, journeyService, service } = buildService({ installation: {
-      id: installationId, storeId, status: 'ACTIVE', collectorTokenHash: tokenHash(collectorToken),
-    }, inserted: 0 });
+    const { repository, journeyService, service } = buildService({
+      installation: {
+        id: installationId,
+        storeId,
+        status: 'ACTIVE',
+        collectorTokenHash: tokenHash(collectorToken),
+      },
+      inserted: 0,
+    });
     const withdrawal = { anonymousVisitorId: 'visitor-withdrawn', sessionId: 'session-withdrawn' };
-    const input = pixelIngestBatchSchema.parse({ installationId, collectorToken, events: [], withdrawal });
-    expect(await service.ingest(input)).toEqual({ received: 0, persisted: 0, duplicates: 0, suppressedForConsent: 0 });
-    expect(repository.withdrawAdvertisingConsent).toHaveBeenCalledWith(storeId, withdrawal,
-      new Date(fixedNow.getTime() + 10 * 60_000), new Date(fixedNow.getTime() + 90 * 86400_000));
+    const input = pixelIngestBatchSchema.parse({
+      installationId,
+      collectorToken,
+      events: [],
+      withdrawal,
+    });
+    expect(await service.ingest(input)).toEqual({
+      received: 0,
+      persisted: 0,
+      duplicates: 0,
+      suppressedForConsent: 0,
+    });
+    expect(repository.withdrawAdvertisingConsent).toHaveBeenCalledWith(
+      storeId,
+      withdrawal,
+      new Date(fixedNow.getTime() + 10 * 60_000),
+      new Date(fixedNow.getTime() + 90 * 86400_000),
+    );
     expect(journeyService.materializeSessions).not.toHaveBeenCalled();
     expect(repository.touchInstallation).not.toHaveBeenCalled();
   });
 
   it('does not persist a withdrawal with invalid collector credentials', async () => {
     const { repository, service } = buildService();
-    await expect(service.ingest(pixelIngestBatchSchema.parse({ installationId,
-      collectorToken: 'P'.repeat(43), events: [], withdrawal: { sessionId: 'session-withdrawn' },
-    }))).rejects.toMatchObject({ code: 'PIXEL_UNAUTHORIZED' });
+    await expect(
+      service.ingest(
+        pixelIngestBatchSchema.parse({
+          installationId,
+          collectorToken: 'P'.repeat(43),
+          events: [],
+          withdrawal: { sessionId: 'session-withdrawn' },
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'PIXEL_UNAUTHORIZED' });
     expect(repository.withdrawAdvertisingConsent).not.toHaveBeenCalled();
   });
 
@@ -180,7 +208,8 @@ describe('PixelService', () => {
 
     await expect(service.installShopifyPixel(storeId)).rejects.toThrow('database unavailable');
 
-    const stagedHash = vi.mocked(repository.stageInstallation).mock.calls[0]?.[0].collectorTokenHash;
+    const stagedHash = vi.mocked(repository.stageInstallation).mock.calls[0]?.[0]
+      .collectorTokenHash;
     expect(repository.stageInstallation).toHaveBeenCalledWith(
       expect.objectContaining({ id: installationId, storeId, status: 'PROVISIONING' }),
     );
@@ -211,7 +240,8 @@ describe('PixelService', () => {
 
     await expect(service.installShopifyPixel(storeId)).rejects.toThrow('provider failed');
 
-    const stagedHash = vi.mocked(repository.stageInstallation).mock.calls[0]?.[0].collectorTokenHash;
+    const stagedHash = vi.mocked(repository.stageInstallation).mock.calls[0]?.[0]
+      .collectorTokenHash;
     expect(repository.rollbackStagedInstallation).toHaveBeenCalledWith(
       installationId,
       stagedHash,
@@ -241,7 +271,8 @@ describe('PixelService', () => {
 
     await expect(service.installShopifyPixel(storeId)).rejects.toThrow('provider retry failed');
 
-    const stagedHash = vi.mocked(repository.stageInstallation).mock.calls[0]?.[0].collectorTokenHash;
+    const stagedHash = vi.mocked(repository.stageInstallation).mock.calls[0]?.[0]
+      .collectorTokenHash;
     expect(repository.findInstallationForProvisioning).toHaveBeenCalledWith(storeId);
     expect(repository.rollbackStagedInstallation).toHaveBeenCalledWith(
       installationId,
@@ -270,7 +301,8 @@ describe('PixelService', () => {
 
     await expect(service.installShopifyPixel(storeId)).rejects.toThrow('database unavailable');
 
-    const stagedHash = vi.mocked(repository.stageInstallation).mock.calls[0]?.[0].collectorTokenHash;
+    const stagedHash = vi.mocked(repository.stageInstallation).mock.calls[0]?.[0]
+      .collectorTokenHash;
     expect(repository.rollbackStagedInstallation).not.toHaveBeenCalled();
     expect(repository.recordInstallationError).toHaveBeenCalledWith(
       installationId,

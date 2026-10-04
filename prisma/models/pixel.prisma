@@ -101,38 +101,47 @@ model StorefrontConsentWithdrawal {
 }
 
 model StorefrontEvent {
-  id                     String                   @id @default(uuid()) @db.Uuid
-  storeId                String                   @db.Uuid
-  eventId                String                   @db.VarChar(128)
-  eventVersion           Int                      @default(1)
-  eventName              StorefrontEventName
-  eventAt                DateTime
-  receivedAt             DateTime                 @default(now())
-  anonymousVisitorId     String?                  @db.VarChar(128)
-  sessionId              String?                  @db.VarChar(128)
-  consentState           StorefrontConsentState
-  adSharingAllowed       Boolean                  @default(false)
-  pageUrl                String?                  @db.Text
-  referrerUrl            String?                  @db.Text
-  landingPageUrl         String?                  @db.Text
-  productExternalId      String?                  @db.VarChar(128)
-  variantExternalId      String?                  @db.VarChar(128)
-  collectionExternalId   String?                  @db.VarChar(128)
-  quantity               Int?
-  shopifyCheckoutToken   String?                  @db.VarChar(255)
-  shopifyOrderExternalId String?                  @db.VarChar(128)
-  utmSource              String?                  @db.VarChar(255)
-  utmMedium              String?                  @db.VarChar(255)
-  utmCampaign            String?                  @db.VarChar(255)
-  utmContent             String?                  @db.VarChar(255)
-  utmTerm                String?                  @db.VarChar(255)
-  metaClickId            String?                  @db.VarChar(512)
-  googleClickId          String?                  @db.VarChar(512)
-  tiktokClickId          String?                  @db.VarChar(512)
-  metaCampaignExternalId String?                  @db.VarChar(128)
-  metaAdSetExternalId    String?                  @db.VarChar(128)
-  metaAdExternalId       String?                  @db.VarChar(128)
-  retentionExpiresAt     DateTime
+  id                      String                 @id @default(uuid()) @db.Uuid
+  storeId                 String                 @db.Uuid
+  eventId                 String                 @db.VarChar(128)
+  eventVersion            Int                    @default(1)
+  eventName               StorefrontEventName
+  eventAt                 DateTime
+  receivedAt              DateTime               @default(now())
+  anonymousVisitorId      String?                @db.VarChar(128)
+  sessionId               String?                @db.VarChar(128)
+  consentState            StorefrontConsentState
+  adSharingAllowed        Boolean                @default(false)
+  pageUrl                 String?                @db.Text
+  referrerUrl             String?                @db.Text
+  landingPageUrl          String?                @db.Text
+  productExternalId       String?                @db.VarChar(128)
+  variantExternalId       String?                @db.VarChar(128)
+  collectionExternalId    String?                @db.VarChar(128)
+  quantity                Int?
+  shopifyCheckoutToken    String?                @db.VarChar(255)
+  shopifyOrderExternalId  String?                @db.VarChar(128)
+  utmSource               String?                @db.VarChar(255)
+  utmMedium               String?                @db.VarChar(255)
+  utmCampaign             String?                @db.VarChar(255)
+  utmContent              String?                @db.VarChar(255)
+  utmTerm                 String?                @db.VarChar(255)
+  metaClickId             String?                @db.VarChar(512)
+  googleClickId           String?                @db.VarChar(512)
+  tiktokClickId           String?                @db.VarChar(512)
+  metaCampaignExternalId  String?                @db.VarChar(128)
+  metaAdSetExternalId     String?                @db.VarChar(128)
+  metaAdExternalId        String?                @db.VarChar(128)
+  browserMatchCiphertext  String?                @db.Text
+  browserMatchExpiresAt   DateTime?
+  googleBraidedClickId    String?                @db.VarChar(512)
+  googleWebBraidedClickId String?                @db.VarChar(512)
+  acquisitionChannel      String?                @db.VarChar(32)
+  acquisitionProvider     String?                @db.VarChar(32)
+  acquisitionBasis        String?                @db.VarChar(32)
+  acquisitionPaid         Boolean?
+  acquisitionVersion      Int?
+  retentionExpiresAt      DateTime
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
@@ -144,6 +153,7 @@ model StorefrontEvent {
   @@index([storeId, sessionId, receivedAt])
   @@index([storeId, metaAdExternalId, eventAt])
   @@index([storeId, shopifyOrderExternalId])
+  @@index([browserMatchExpiresAt])
   @@index([retentionExpiresAt])
 }
 
@@ -199,7 +209,7 @@ model StorefrontSession {
   createdAt                  DateTime                  @default(now())
   updatedAt                  DateTime                  @updatedAt
 
-  store       Store                        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  store       Store                         @relation(fields: [storeId], references: [id], onDelete: Cascade)
   touches     StorefrontSessionTouch[]
   products    StorefrontSessionProduct[]
   collections StorefrontSessionCollection[]
@@ -218,6 +228,11 @@ model StorefrontSessionTouch {
   sessionId              String                     @db.Uuid
   ordinal                Int
   eventAt                DateTime
+  acquisitionChannel     String?                    @db.VarChar(32)
+  acquisitionProvider    String?                    @db.VarChar(32)
+  acquisitionBasis       String?                    @db.VarChar(32)
+  acquisitionPaid        Boolean?
+  acquisitionVersion     Int?
   source                 StorefrontJourneySource
   landingPageUrl         String?                    @db.Text
   referrerUrl            String?                    @db.Text
@@ -227,6 +242,8 @@ model StorefrontSessionTouch {
   utmContent             String?                    @db.VarChar(255)
   utmTerm                String?                    @db.VarChar(255)
   metaClickId            String?                    @db.VarChar(512)
+  googleBraidedClickId String? @db.VarChar(512)
+  googleWebBraidedClickId String? @db.VarChar(512)
   googleClickId          String?                    @db.VarChar(512)
   tiktokClickId          String?                    @db.VarChar(512)
   metaCampaignExternalId String?                    @db.VarChar(128)
@@ -241,6 +258,7 @@ model StorefrontSessionTouch {
   session StorefrontSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@unique([sessionId, ordinal])
+  @@index([sessionId, eventAt])
   @@index([metaAdId, eventAt])
   @@index([metaAdSetId, eventAt])
   @@index([metaCampaignId, eventAt])
@@ -294,45 +312,45 @@ model StorefrontSessionCollection {
 }
 
 model StorefrontBehaviorDaily {
-  id                               String                     @id @default(uuid()) @db.Uuid
-  storeId                          String                     @db.Uuid
-  bucketDate                       DateTime                   @db.Date
+  id                               String                      @id @default(uuid()) @db.Uuid
+  storeId                          String                      @db.Uuid
+  bucketDate                       DateTime                    @db.Date
   dimension                        StorefrontBehaviorDimension
-  dimensionKey                     String                     @db.VarChar(320)
-  productId                        String?                    @db.Uuid
-  variantId                        String?                    @db.Uuid
-  collectionId                     String?                    @db.Uuid
-  productExternalId                String?                    @db.VarChar(128)
-  variantExternalId                String?                    @db.VarChar(128)
-  collectionExternalId             String?                    @db.VarChar(128)
-  landingPageHash                  String?                    @db.VarChar(64)
-  landingPageUrl                   String?                    @db.Text
-  sessionCount                     Int                        @default(0)
-  pageViewCount                    Int                        @default(0)
-  productViewCount                 Int                        @default(0)
-  collectionViewCount              Int                        @default(0)
-  searchCount                      Int                        @default(0)
-  addToCartCount                   Int                        @default(0)
-  removeFromCartCount              Int                        @default(0)
-  cartViewCount                    Int                        @default(0)
-  productViewSessionCount          Int                        @default(0)
-  collectionViewSessionCount       Int                        @default(0)
-  searchSessionCount               Int                        @default(0)
-  addToCartSessionCount            Int                        @default(0)
-  cartViewSessionCount             Int                        @default(0)
-  cartViewCheckoutSessionCount     Int                        @default(0)
-  cartViewPurchaseSessionCount     Int                        @default(0)
-  checkoutStartSessionCount        Int                        @default(0)
-  checkoutCompletedSessionCount    Int                        @default(0)
-  linkedPurchaseSessionCount       Int                        @default(0)
-  conversionDelayMsTotal           BigInt                     @default(0)
-  conversionDelayCount             Int                        @default(0)
-  exactResolutionSessionCount      Int                        @default(0)
-  partialResolutionSessionCount    Int                        @default(0)
-  unresolvedResolutionSessionCount Int                        @default(0)
-  conflictResolutionSessionCount   Int                        @default(0)
-  createdAt                        DateTime                   @default(now())
-  updatedAt                        DateTime                   @updatedAt
+  dimensionKey                     String                      @db.VarChar(320)
+  productId                        String?                     @db.Uuid
+  variantId                        String?                     @db.Uuid
+  collectionId                     String?                     @db.Uuid
+  productExternalId                String?                     @db.VarChar(128)
+  variantExternalId                String?                     @db.VarChar(128)
+  collectionExternalId             String?                     @db.VarChar(128)
+  landingPageHash                  String?                     @db.VarChar(64)
+  landingPageUrl                   String?                     @db.Text
+  sessionCount                     Int                         @default(0)
+  pageViewCount                    Int                         @default(0)
+  productViewCount                 Int                         @default(0)
+  collectionViewCount              Int                         @default(0)
+  searchCount                      Int                         @default(0)
+  addToCartCount                   Int                         @default(0)
+  removeFromCartCount              Int                         @default(0)
+  cartViewCount                    Int                         @default(0)
+  productViewSessionCount          Int                         @default(0)
+  collectionViewSessionCount       Int                         @default(0)
+  searchSessionCount               Int                         @default(0)
+  addToCartSessionCount            Int                         @default(0)
+  cartViewSessionCount             Int                         @default(0)
+  cartViewCheckoutSessionCount     Int                         @default(0)
+  cartViewPurchaseSessionCount     Int                         @default(0)
+  checkoutStartSessionCount        Int                         @default(0)
+  checkoutCompletedSessionCount    Int                         @default(0)
+  linkedPurchaseSessionCount       Int                         @default(0)
+  conversionDelayMsTotal           BigInt                      @default(0)
+  conversionDelayCount             Int                         @default(0)
+  exactResolutionSessionCount      Int                         @default(0)
+  partialResolutionSessionCount    Int                         @default(0)
+  unresolvedResolutionSessionCount Int                         @default(0)
+  conflictResolutionSessionCount   Int                         @default(0)
+  createdAt                        DateTime                    @default(now())
+  updatedAt                        DateTime                    @updatedAt
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
@@ -344,42 +362,42 @@ model StorefrontBehaviorDaily {
 }
 
 model StorefrontBehaviorRollupState {
-  id                          String   @id @default(uuid()) @db.Uuid
-  storeId                     String   @unique(map: "StorefrontBehaviorRollupState_store_key") @db.Uuid
+  id                          String    @id @default(uuid()) @db.Uuid
+  storeId                     String    @unique(map: "StorefrontBehaviorRollupState_store_key") @db.Uuid
   rolledThroughMaterializedAt DateTime?
   lastRolledUpAt              DateTime?
-  lastError                   String?  @db.Text
-  createdAt                   DateTime @default(now())
-  updatedAt                   DateTime @updatedAt
+  lastError                   String?   @db.Text
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 }
 
 model StorefrontAttributionDaily {
-  id                              String                       @id @default(uuid()) @db.Uuid
-  storeId                         String                       @db.Uuid
-  bucketDate                      DateTime                     @db.Date
+  id                              String                         @id @default(uuid()) @db.Uuid
+  storeId                         String                         @db.Uuid
+  bucketDate                      DateTime                       @db.Date
   dimension                       StorefrontAttributionDimension
-  dimensionKey                    String                       @db.VarChar(320)
+  dimensionKey                    String                         @db.VarChar(320)
   source                          StorefrontJourneySource
-  metaCampaignId                  String?                      @db.Uuid
-  metaAdSetId                     String?                      @db.Uuid
-  metaAdId                        String?                      @db.Uuid
-  metaCampaignExternalId          String?                      @db.VarChar(128)
-  metaAdSetExternalId             String?                      @db.VarChar(128)
-  metaAdExternalId                String?                      @db.VarChar(128)
-  touchedSessionCount             Int                          @default(0)
-  linkedPurchaseSessionCount      Int                          @default(0)
-  firstTouchPurchaseSessionCount  Int                          @default(0)
-  lastTouchPurchaseSessionCount   Int                          @default(0)
-  assistedPurchaseSessionCount    Int                          @default(0)
-  singleTouchPurchaseSessionCount Int                          @default(0)
-  crossSessionPurchaseCount       Int                          @default(0)
-  conversionDelayMsTotal          BigInt                       @default(0)
-  conversionDelayCount            Int                          @default(0)
-  exactMetaResolutionSessionCount Int                          @default(0)
-  createdAt                       DateTime                     @default(now())
-  updatedAt                       DateTime                     @updatedAt
+  metaCampaignId                  String?                        @db.Uuid
+  metaAdSetId                     String?                        @db.Uuid
+  metaAdId                        String?                        @db.Uuid
+  metaCampaignExternalId          String?                        @db.VarChar(128)
+  metaAdSetExternalId             String?                        @db.VarChar(128)
+  metaAdExternalId                String?                        @db.VarChar(128)
+  touchedSessionCount             Int                            @default(0)
+  linkedPurchaseSessionCount      Int                            @default(0)
+  firstTouchPurchaseSessionCount  Int                            @default(0)
+  lastTouchPurchaseSessionCount   Int                            @default(0)
+  assistedPurchaseSessionCount    Int                            @default(0)
+  singleTouchPurchaseSessionCount Int                            @default(0)
+  crossSessionPurchaseCount       Int                            @default(0)
+  conversionDelayMsTotal          BigInt                         @default(0)
+  conversionDelayCount            Int                            @default(0)
+  exactMetaResolutionSessionCount Int                            @default(0)
+  createdAt                       DateTime                       @default(now())
+  updatedAt                       DateTime                       @updatedAt
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
@@ -440,13 +458,13 @@ model StorefrontMetaTargetEvidenceDaily {
 }
 
 model StorefrontAttributionRollupState {
-  id                            String   @id @default(uuid()) @db.Uuid
-  storeId                       String   @unique(map: "StorefrontAttributionRollupState_store_key") @db.Uuid
+  id                            String    @id @default(uuid()) @db.Uuid
+  storeId                       String    @unique(map: "StorefrontAttributionRollupState_store_key") @db.Uuid
   rolledThroughSessionUpdatedAt DateTime?
   lastRolledUpAt                DateTime?
-  lastError                     String?  @db.Text
-  createdAt                     DateTime @default(now())
-  updatedAt                     DateTime @updatedAt
+  lastError                     String?   @db.Text
+  createdAt                     DateTime  @default(now())
+  updatedAt                     DateTime  @updatedAt
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 }

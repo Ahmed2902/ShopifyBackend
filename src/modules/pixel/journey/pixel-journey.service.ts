@@ -1,3 +1,4 @@
+import { classifyAcquisition } from '../acquisition.js';
 import { AppError } from '../../../errors/app-error.js';
 import type { StorefrontJourneySource } from '../pixel.types.js';
 import {
@@ -14,12 +15,8 @@ const MAX_VISITOR_SESSIONS = 100;
 const ORDER_LINK_BASE_RETRY_MS = 5 * 60_000;
 const ORDER_LINK_MAX_RETRY_MS = 6 * 60 * 60_000;
 
-type JourneyEvent = Awaited<
-  ReturnType<PixelJourneyRepository['findSessionEvents']>
->[number];
-type JourneySession = NonNullable<
-  Awaited<ReturnType<PixelJourneyRepository['getSession']>>
->;
+type JourneyEvent = Awaited<ReturnType<PixelJourneyRepository['findSessionEvents']>>[number];
+type JourneySession = NonNullable<Awaited<ReturnType<PixelJourneyRepository['getSession']>>>;
 type SessionProductAggregate = SessionProductInput & {
   viewCount: number;
   addToCartCount: number;
@@ -58,9 +55,16 @@ function sourceFor(event: JourneyEvent): StorefrontJourneySource {
   ) {
     return 'META';
   }
-  if (event.googleClickId) return 'GOOGLE';
+  if (event.googleClickId || event.googleBraidedClickId || event.googleWebBraidedClickId)
+    return 'GOOGLE';
   if (event.tiktokClickId) return 'TIKTOK';
-  if (event.utmSource || event.utmMedium || event.utmCampaign || event.utmContent || event.utmTerm) {
+  if (
+    event.utmSource ||
+    event.utmMedium ||
+    event.utmCampaign ||
+    event.utmContent ||
+    event.utmTerm
+  ) {
     return 'UTM';
   }
   if (event.referrerUrl) return 'REFERRER';
@@ -80,6 +84,8 @@ function touchSignature(event: JourneyEvent): string {
     event.utmTerm,
     event.metaClickId,
     event.googleClickId,
+    event.googleBraidedClickId,
+    event.googleWebBraidedClickId,
     event.tiktokClickId,
     event.metaCampaignExternalId,
     event.metaAdSetExternalId,
@@ -96,10 +102,16 @@ function buildRawTouches(events: JourneyEvent[]): SessionTouchInput[] {
     if (touches.length > 0 && signature === previousSignature) continue;
     previousSignature = signature;
 
+    const acquisition = classifyAcquisition(event);
     touches.push({
       ordinal: touches.length + 1,
       eventAt: event.eventAt,
       source: sourceFor(event),
+      acquisitionChannel: acquisition.channel,
+      acquisitionProvider: acquisition.provider,
+      acquisitionBasis: acquisition.basis,
+      acquisitionPaid: acquisition.paid,
+      acquisitionVersion: acquisition.version,
       landingPageUrl: event.landingPageUrl,
       referrerUrl: event.referrerUrl,
       utmSource: event.utmSource,
@@ -109,6 +121,8 @@ function buildRawTouches(events: JourneyEvent[]): SessionTouchInput[] {
       utmTerm: event.utmTerm,
       metaClickId: event.metaClickId,
       googleClickId: event.googleClickId,
+      googleBraidedClickId: event.googleBraidedClickId,
+      googleWebBraidedClickId: event.googleWebBraidedClickId,
       tiktokClickId: event.tiktokClickId,
       metaCampaignExternalId: event.metaCampaignExternalId,
       metaAdSetExternalId: event.metaAdSetExternalId,
@@ -257,7 +271,9 @@ export class PixelJourneyService {
       ? await this.repository.findOrderByExternalId(storeId, shopifyOrderExternalId)
       : null;
     const checkoutStartedEvents = events.filter((event) => event.eventName === 'BEGIN_CHECKOUT');
-    const checkoutCompletedEvents = events.filter((event) => event.eventName === 'CHECKOUT_COMPLETED');
+    const checkoutCompletedEvents = events.filter(
+      (event) => event.eventName === 'CHECKOUT_COMPLETED',
+    );
     const materializedAt = this.now();
 
     const aggregate = {
@@ -273,7 +289,8 @@ export class PixelJourneyService {
       addToCartCount: events.filter((event) => event.eventName === 'ADD_TO_CART').length,
       removeFromCartCount: events.filter((event) => event.eventName === 'REMOVE_FROM_CART').length,
       cartViewCount: events.filter((event) => event.eventName === 'CART_VIEW').length,
-      checkoutProgressCount: events.filter((event) => event.eventName === 'CHECKOUT_PROGRESS').length,
+      checkoutProgressCount: events.filter((event) => event.eventName === 'CHECKOUT_PROGRESS')
+        .length,
       checkoutStartedAt:
         checkoutStartedEvents.length > 0
           ? minDate(checkoutStartedEvents.map((event) => event.eventAt))
@@ -399,15 +416,24 @@ export class PixelJourneyService {
 
   async getSession(storeId: string, sessionId: string) {
     const session = await this.repository.getSession(storeId, sessionId);
-    if (!session) throw new AppError('Storefront session not found', 404, 'PIXEL_SESSION_NOT_FOUND');
+    if (!session)
+      throw new AppError('Storefront session not found', 404, 'PIXEL_SESSION_NOT_FOUND');
     const [decorated] = await this.decorateSessions(storeId, [session]);
     const timeline = await this.repository.getSessionTimeline(storeId, session.browserSessionId);
     return { ...decorated, timeline };
   }
 
-  async getVisitorJourney(storeId: string, anonymousVisitorId: string, limit = MAX_VISITOR_SESSIONS) {
+  async getVisitorJourney(
+    storeId: string,
+    anonymousVisitorId: string,
+    limit = MAX_VISITOR_SESSIONS,
+  ) {
     const bounded = Math.min(Math.max(1, Math.trunc(limit)), MAX_VISITOR_SESSIONS);
-    const sessions = await this.repository.listVisitorSessions(storeId, anonymousVisitorId, bounded);
+    const sessions = await this.repository.listVisitorSessions(
+      storeId,
+      anonymousVisitorId,
+      bounded,
+    );
     if (sessions.length === 0) {
       throw new AppError('Storefront visitor journey not found', 404, 'PIXEL_JOURNEY_NOT_FOUND');
     }
@@ -452,7 +478,7 @@ export class PixelJourneyService {
       if (ad) {
         const campaignConflict = Boolean(
           touch.metaCampaignExternalId &&
-            touch.metaCampaignExternalId !== ad.campaign.metaCampaignId,
+          touch.metaCampaignExternalId !== ad.campaign.metaCampaignId,
         );
         const adSetConflict = Boolean(
           touch.metaAdSetExternalId && touch.metaAdSetExternalId !== ad.adSet.metaAdSetId,
@@ -467,7 +493,7 @@ export class PixelJourneyService {
       if (adSet) {
         const campaignConflict = Boolean(
           touch.metaCampaignExternalId &&
-            touch.metaCampaignExternalId !== adSet.campaign.metaCampaignId,
+          touch.metaCampaignExternalId !== adSet.campaign.metaCampaignId,
         );
         touch.metaAdSetId = adSet.id;
         touch.metaCampaignId = adSet.campaign.id;
@@ -548,18 +574,18 @@ export class PixelJourneyService {
       sessions.flatMap((session) => session.products.map((product) => product.variantId)),
     );
     const collectionIds = unique(
-      sessions.flatMap((session) => session.collections.map((collection) => collection.collectionId)),
+      sessions.flatMap((session) =>
+        session.collections.map((collection) => collection.collectionId),
+      ),
     );
-    const [orders, ads, products, variants, collections] = await this.repository.findDisplayEntities(
-      storeId,
-      {
+    const [orders, ads, products, variants, collections] =
+      await this.repository.findDisplayEntities(storeId, {
         orderIds,
         metaAdIds,
         productIds,
         variantIds,
         collectionIds,
-      },
-    );
+      });
     const orderMap = new Map(orders.map((row) => [row.id, row]));
     const adMap = new Map(ads.map((row) => [row.id, row]));
     const productMap = new Map(products.map((row) => [row.id, row]));
@@ -568,20 +594,20 @@ export class PixelJourneyService {
 
     return sessions.map((session) => ({
       ...session,
-      order: session.orderId ? orderMap.get(session.orderId) ?? null : null,
+      order: session.orderId ? (orderMap.get(session.orderId) ?? null) : null,
       touches: session.touches.map((touch) => ({
         ...touch,
-        metaAd: touch.metaAdId ? adMap.get(touch.metaAdId) ?? null : null,
+        metaAd: touch.metaAdId ? (adMap.get(touch.metaAdId) ?? null) : null,
       })),
       products: session.products.map((product) => ({
         ...product,
-        product: product.productId ? productMap.get(product.productId) ?? null : null,
-        variant: product.variantId ? variantMap.get(product.variantId) ?? null : null,
+        product: product.productId ? (productMap.get(product.productId) ?? null) : null,
+        variant: product.variantId ? (variantMap.get(product.variantId) ?? null) : null,
       })),
       collections: session.collections.map((collection) => ({
         ...collection,
         collection: collection.collectionId
-          ? collectionMap.get(collection.collectionId) ?? null
+          ? (collectionMap.get(collection.collectionId) ?? null)
           : null,
       })),
     }));

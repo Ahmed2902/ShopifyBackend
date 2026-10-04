@@ -1,3 +1,5 @@
+import { classifyAcquisition } from './acquisition.js';
+import { encryptSecret } from '../integrations/integration.utils.js';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { env } from '../../config/env.js';
@@ -301,7 +303,11 @@ export class PixelService {
     const receivedAt = this.now();
     const events = batch.events.map((event) => ({
       captureAllowed: isStorefrontBehaviorCaptureAllowed(event.consentState),
-      normalized: this.normalizeEvent(event, receivedAt),
+      normalized: Object.fromEntries(
+        Object.entries(this.normalizeEvent(event, receivedAt)).filter(
+          ([key]) => !key.startsWith('browserMatch'),
+        ),
+      ),
     }));
 
     return {
@@ -316,6 +322,7 @@ export class PixelService {
     const ids = await this.repository.findExpiredEventIds(this.now(), boundedLimit);
     const deleted = await this.repository.deleteEventsByIds(ids);
     await this.repository.cleanupExpiredWithdrawals(this.now(), boundedLimit);
+    await this.repository.cleanupMatchEvidence(this.now(), boundedLimit);
     return { selected: ids.length, deleted };
   }
 
@@ -336,6 +343,14 @@ export class PixelService {
     }
 
     const attribution = mergeAttribution(event);
+    const acquisition = classifyAcquisition({
+      ...attribution,
+      pageUrl: event.pageUrl,
+      landingPageUrl: event.landingPageUrl,
+      referrerUrl: event.referrerUrl,
+    });
+    const permittedMatch =
+      isStorefrontBehaviorCaptureAllowed(event.consentState) && eventAgeMs <= 48 * 60 * 60_000 && event.adSharingAllowed && event.browserMatch && Object.keys(event.browserMatch).length > 0;
 
     return {
       eventId: event.eventId,
@@ -362,6 +377,28 @@ export class PixelService {
       utmCampaign: attribution.utmCampaign ?? null,
       utmContent: attribution.utmContent ?? null,
       utmTerm: attribution.utmTerm ?? null,
+      browserMatchCiphertext: permittedMatch
+        ? encryptSecret(JSON.stringify(event.browserMatch))
+        : null,
+      browserMatchExpiresAt: permittedMatch
+        ? new Date(
+            Math.min(
+              receivedAt.getTime() + 48 * 60 * 60_000,
+              eventAt.getTime() + 48 * 60 * 60_000,
+              calculatePixelRetentionExpiresAt(
+                receivedAt,
+                env.PIXEL_RAW_EVENT_RETENTION_DAYS,
+              ).getTime(),
+            ),
+          )
+        : null,
+      googleBraidedClickId: attribution.googleBraidedClickId ?? null,
+      googleWebBraidedClickId: attribution.googleWebBraidedClickId ?? null,
+      acquisitionChannel: acquisition.channel,
+      acquisitionProvider: acquisition.provider,
+      acquisitionBasis: acquisition.basis,
+      acquisitionPaid: acquisition.paid,
+      acquisitionVersion: acquisition.version,
       metaClickId: attribution.metaClickId ?? null,
       googleClickId: attribution.googleClickId ?? null,
       tiktokClickId: attribution.tiktokClickId ?? null,

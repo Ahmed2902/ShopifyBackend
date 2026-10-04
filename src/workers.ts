@@ -1,3 +1,4 @@
+import { enqueueFunnelEvents } from './modules/conversion-delivery/funnel.repository.js';
 import { logger } from './lib/logger.js';
 import { PollingWorker } from './lib/polling-worker.js';
 import { advertisingReconciliationService } from './modules/advertising/reconciliation/advertising-reconciliation.service.js';
@@ -93,6 +94,7 @@ const pixelJourneyWorker = new PollingWorker(
 const conversionEnqueueWorker = new PollingWorker(
   30_000,
   async () => {
+    await enqueueFunnelEvents(200);
     const result = await conversionDeliveryService.enqueuePurchases(500);
     if (result.enqueued > 0) {
       logger.info(result, 'Queued Shopify-backed server-side purchase conversions');
