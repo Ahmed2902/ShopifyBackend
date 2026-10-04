@@ -112,6 +112,48 @@ function embed(
   };
 }
 describe('consent-aware theme app embed', () => {
+  it('blocks SDK loading if a private URL appears during the first authorization', async () => {
+    const e = embed();
+    e.window.location.href = 'https://shop.test/products/hero?email=private@example.com';
+    await vi.waitFor(() => expect(e.fetch).toHaveBeenCalledTimes(2));
+    expect(e.scripts).toHaveLength(0);
+    expect(e.calls).not.toHaveBeenCalled();
+    expect(JSON.parse(e.fetch.mock.calls[1]![1].body).browserFailureCode).toBe(
+      'BROWSER_CONTEXT_BLOCKED',
+    );
+    expect(JSON.stringify(e.fetch.mock.calls)).not.toContain('private@example.com');
+  });
+  it('blocks initialization if the storefront navigates to checkout during SDK loading', async () => {
+    const e = embed();
+    await vi.waitFor(() => expect(e.scripts).toHaveLength(1));
+    e.window.location.href = 'https://shop.test/checkout/private-token';
+    e.sdkReady();
+    await vi.waitFor(() => expect(e.fetch).toHaveBeenCalledTimes(2));
+    expect(e.calls.mock.calls.some((c) => c[0] === 'init' || c[0] === 'trackSingle')).toBe(false);
+    expect(JSON.parse(e.fetch.mock.calls[1]![1].body).browserFailureCode).toBe(
+      'BROWSER_CONTEXT_BLOCKED',
+    );
+  });
+  it('blocks dispatch if private context appears during the final authorization', async () => {
+    const e = embed();
+    await vi.waitFor(() => expect(e.scripts).toHaveLength(1));
+    e.fetch.mockImplementationOnce(async () => {
+      e.window.location.href = 'https://shop.test/products/hero#private-token';
+      return {
+        ok: true,
+        json: async () => ({
+          dispatches: [e.dispatch],
+          expiresAt: new Date(Date.now() + 5000).toISOString(),
+        }),
+      };
+    });
+    e.sdkReady();
+    await vi.waitFor(() => expect(e.fetch).toHaveBeenCalledTimes(3));
+    expect(e.calls.mock.calls.some((c) => c[0] === 'init' || c[0] === 'trackSingle')).toBe(false);
+    expect(JSON.parse(e.fetch.mock.calls[2]![1].body).browserFailureCode).toBe(
+      'BROWSER_CONTEXT_BLOCKED',
+    );
+  });
   it('authorizes again after SDK loading and uses the server event ID with trackSingle', async () => {
     const e = embed();
     await vi.waitFor(() => expect(e.scripts).toHaveLength(1));

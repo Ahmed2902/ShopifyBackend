@@ -69,6 +69,9 @@
       /* Browser storage may be unavailable. */
     }
   }
+  function safePageContext() {
+    return safeContext(window.location.href) && safeContext(document.referrer);
+  }
   function consentChanged() {
     revision++;
     clearBridge();
@@ -257,12 +260,16 @@
         )
           continue;
         const epoch = revision;
-        if (!safeContext(window.location.href) || !safeContext(document.referrer)) {
+        if (!safePageContext()) {
           await authorize(batch, undefined, 'BROWSER_CONTEXT_BLOCKED');
           continue;
         }
         let receipt = await authorize(batch);
         if (!receipt.dispatches?.length || !permitted() || epoch !== revision) continue;
+        if (!safePageContext()) {
+          await authorize(batch, undefined, 'BROWSER_CONTEXT_BLOCKED');
+          continue;
+        }
         try {
           await loadSdk();
         } catch (error) {
@@ -277,11 +284,21 @@
           continue;
         }
         if (!permitted() || epoch !== revision) continue;
+        if (!safePageContext()) {
+          await authorize(batch, undefined, 'BROWSER_CONTEXT_BLOCKED');
+          continue;
+        }
         // SDK loading is asynchronous. Reauthorize after it, before any init or track call.
         receipt = await authorize(batch);
         if (!permitted() || epoch !== revision || Date.parse(receipt.expiresAt) <= Date.now())
           continue;
         for (const dispatch of receipt.dispatches) {
+          // A storefront can replace its URL while authorization or SDK loading is pending.
+          // Recheck the actual location before every call that can transmit browser context.
+          if (!safePageContext()) {
+            await authorize(batch, undefined, 'BROWSER_CONTEXT_BLOCKED');
+            break;
+          }
           if (!validDispatch(dispatch)) continue;
           const unique = dispatch.destinationId + ':' + dispatch.eventId;
           if (

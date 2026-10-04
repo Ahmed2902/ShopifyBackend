@@ -27,6 +27,8 @@ The embed refuses an existing global Meta SDK rather than taking over another ap
 
 The SDK sends actual browser URL/referrer context. Therefore the embed refuses private checkout/account/order/cart-token surfaces, URL fragments, credentials, email-like values, and unreviewed URL/referrer parameters before loading or calling it. Supported parameters are the existing attribution allowlist plus numeric `variant`. This conservative guard reduces browser coverage on some link-shim/referral URLs; sanitizing the collector's URL alone cannot sanitize the browser SDK's location.
 
+The live URL and referrer are rechecked after each authorization response, after SDK loading, and before each dispatch. A storefront URL change during asynchronous work cannot authorize sending a newly private page context.
+
 On withdrawal the embed revokes its own SDK consent, clears its bridge and expires its own Meta cookies. Browser pairing remains stopped for that page lifecycle after regrant, because Stride cannot prove the SDK discarded its internal identifier cache. A fresh page load is required to resume. The Web Pixel retains a minimal installation-scoped cookie issuance cutoff; pre-withdrawal `_fbp`/`_fbc` are excluded. `_ttp` has no trusted issuance timestamp, so it is excluded after a known withdrawal rather than treating it as freshly authorized. Fresh click evidence and canonical, newly permitted Purchase matching remain independent.
 
 ## Limits and decisions
