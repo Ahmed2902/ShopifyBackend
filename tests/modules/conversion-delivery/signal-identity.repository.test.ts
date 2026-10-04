@@ -272,6 +272,28 @@ db('collector durability privacy races', () => {
 
 afterEach(() => vi.restoreAllMocks());
 db('durable provider-specific funnel enqueue', () => {
+
+  it('advances past lapsed tenants and revisits them after entitlement recovers', async () => {
+    const denied = await funnelFixture();
+    const allowed = await funnelFixture();
+    const oldEvent = await funnelEvent(denied, 'ADD_TO_CART');
+    const newerEvent = await funnelEvent(allowed, 'ADD_TO_CART');
+    await prisma.storefrontEvent.update({ where: { id: oldEvent.id }, data: { receivedAt: new Date(Date.now() - 300_000) } });
+    await prisma.storefrontEvent.update({ where: { id: newerEvent.id }, data: { receivedAt: new Date(Date.now() - 60_000) } });
+    let recovered = false;
+    vi.mocked(billingService.requireAdProviderReadOnly).mockImplementation(async storeId => {
+      if (storeId === denied.store.id && !recovered) throw new Error('Subscription expired');
+      return {} as never;
+    });
+    expect((await enqueueFunnelEvents(1)).enqueued).toBe(0);
+    expect((await enqueueFunnelEvents(1)).enqueued).toBe(1);
+    expect(await prisma.conversionDelivery.count({ where: { storeId: allowed.store.id, sourceEventId: newerEvent.id } })).toBe(1);
+    expect(await prisma.conversionDelivery.count({ where: { storeId: denied.store.id } })).toBe(0);
+    recovered = true;
+    expect((await enqueueFunnelEvents(1)).enqueued).toBe(1);
+    expect(await prisma.conversionDelivery.count({ where: { storeId: denied.store.id, sourceEventId: oldEvent.id } })).toBe(1);
+  });
+
   async function funnelFixture() {
     const f = await fixture();
     vi.spyOn(billingService, 'requireAdProviderReadOnly').mockResolvedValue({} as never);

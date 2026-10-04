@@ -8,17 +8,23 @@ export function storefrontEventKey(storeId: string, eventId: string) {
     .update(JSON.stringify([storeId, eventId]))
     .digest('hex')}`;
 }
+type FunnelCursor = { receivedAt: Date; id: string; destinationId: string };
+// A bounded sweep advances even over temporarily ineligible tenants. This is only
+// a scheduling hint: restart/wrap safely replays candidates using durable uniqueness.
+let sweepCursor: FunnelCursor | null = null;
+
 export async function enqueueFunnelEvents(limit = 200) {
-  const candidates = await prisma.$queryRaw<
+  const selectCandidates = (cursor: FunnelCursor | null) => prisma.$queryRaw<
     Array<{
       id: string;
       storeId: string;
       destinationId: string;
       provider: 'META' | 'TIKTOK';
       generation: Date;
+      receivedAt: Date;
     }>
   >(Prisma.sql`
-    SELECT e."id", e."storeId", dest."id" AS "destinationId", dest."provider", conn."installedAt" AS "generation"
+    SELECT e."id", e."storeId", e."receivedAt", dest."id" AS "destinationId", dest."provider", conn."installedAt" AS "generation"
     FROM "StorefrontEvent" e
     JOIN "ShopifyConnection" conn ON conn."storeId" = e."storeId" AND conn."status" = 'ACTIVE'
     JOIN "ConversionDestination" dest ON dest."storeId" = e."storeId" AND dest."status" = 'ACTIVE'
@@ -33,8 +39,16 @@ export async function enqueueFunnelEvents(limit = 200) {
         OR (e."browserMatchCiphertext" IS NOT NULL AND e."browserMatchExpiresAt" > NOW()))
       AND NOT EXISTS (SELECT 1 FROM "StorefrontConsentWithdrawal" w WHERE w."storeId" = e."storeId" AND w."revokedBefore" >= e."eventAt" AND (w."scopeKey" = 'session:' || e."sessionId" OR w."scopeKey" = 'visitor:' || e."anonymousVisitorId"))
       AND NOT EXISTS (SELECT 1 FROM "ConversionDelivery" d WHERE d."destinationId" = dest."id" AND d."sourceEventId" = e."id")
+      ${cursor ? Prisma.sql`AND (e."receivedAt", e."id", dest."id") > (${cursor.receivedAt}, ${cursor.id}::uuid, ${cursor.destinationId}::uuid)` : Prisma.empty}
     ORDER BY e."receivedAt", e."id", dest."id" LIMIT ${Math.min(Math.max(Math.trunc(limit), 1), 1000)}
   `);
+  let candidates = await selectCandidates(sweepCursor);
+  if (!candidates.length && sweepCursor) {
+    sweepCursor = null;
+    candidates = await selectCandidates(null);
+  }
+  const last = candidates.at(-1);
+  if (last) sweepCursor = { receivedAt: last.receivedAt, id: last.id, destinationId: last.destinationId };
   const events = await prisma.storefrontEvent.findMany({
     where: { id: { in: candidates.map((c) => c.id) }, adSharingAllowed: true },
   });

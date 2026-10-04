@@ -65,6 +65,22 @@ function buildRepository(events: Array<Record<string, unknown>>) {
 }
 
 describe('PixelJourneyService', () => {
+
+  it.each(['googleBraidedClickId', 'googleWebBraidedClickId'])('preserves distinct %s evidence and deduplicates its identical continuation', async (field) => {
+    const repository = buildRepository([
+      event({}),
+      event({ [field]: 'braid-a' }),
+      event({ [field]: 'braid-a' }),
+      event({ [field]: 'braid-b' }),
+    ]);
+    await new PixelJourneyService(repository, () => fixedNow).materializeSession(storeId, browserSessionId);
+    const touches = vi.mocked(repository.replaceSessionReadModel).mock.calls[0]![4];
+    expect(touches).toHaveLength(3);
+    expect(touches.map(touch => touch.source)).toEqual(['DIRECT', 'GOOGLE', 'GOOGLE']);
+    expect(touches[1]).toMatchObject({ [field]: 'braid-a', acquisitionProvider: 'GOOGLE', acquisitionPaid: true });
+    expect(touches[2]).toMatchObject({ [field]: 'braid-b', acquisitionProvider: 'GOOGLE', acquisitionPaid: true });
+  });
+
   it('materializes Ad A -> Ad B touch history and links checkout to exact Shopify order truth', async () => {
     const productGid = 'gid://shopify/Product/1000';
     const variantGid = 'gid://shopify/ProductVariant/2000';

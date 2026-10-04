@@ -84,6 +84,8 @@ function touchSignature(event: JourneyEvent): string {
     event.utmTerm,
     event.metaClickId,
     event.googleClickId,
+    event.googleBraidedClickId,
+    event.googleWebBraidedClickId,
     event.tiktokClickId,
     event.metaCampaignExternalId,
     event.metaAdSetExternalId,
