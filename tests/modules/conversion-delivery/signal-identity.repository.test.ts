@@ -321,3 +321,21 @@ db('durable provider-specific funnel enqueue', () => {
     expect(await prisma.conversionDelivery.count({ where: { storeId: f.store.id, sourceEventId: event.id } })).toBe(2);
   });
 });
+
+db('separate provider reauthorization from shopper consent', () => {
+  it('reports a recoverable connection problem for retained permission, while withdrawal still wins', async () => {
+    const f = await fixture();
+    const repo = new ConversionDeliveryRepository();
+    await prisma.conversionDestination.update({ where: { id: f.destination.id },
+      data: { configJson: { enhancedMatching: true, authSource: 'META_CONNECTION', adAccountId: 'act-test' } } });
+    vi.spyOn(prisma.metaConnection, 'findUnique').mockResolvedValue({
+      status: 'DISCONNECTED', scopes: ['ads_management'], selectedAdAccountIds: ['act-test'],
+    } as never);
+    expect(await repo.hasAdvertisingConsent(f.claim)).toBe(false);
+    await expect(repo.hasAdvertisingConsent({ ...f.claim, reportConnectionFailure: true }))
+      .rejects.toHaveProperty('providerCode', 'CONVERSION_CONNECTION_REAUTH_REQUIRED');
+    await new PixelRepository().withdrawAdvertisingConsent(f.store.id, { anonymousVisitorId: 'same-visitor' },
+      new Date(f.now.getTime() + 1000), new Date(Date.now() + 40 * 86400_000));
+    expect(await repo.hasAdvertisingConsent({ ...f.claim, reportConnectionFailure: true })).toBe(false);
+  });
+});

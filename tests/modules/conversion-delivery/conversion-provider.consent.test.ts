@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConversionDeliveryService } from '../../../src/modules/conversion-delivery/conversion-delivery.service.js';
 import type { DeliveryClaim } from '../../../src/modules/conversion-delivery/conversion-delivery.types.js';
 import { GOOGLE_DATA_MANAGER_SCOPE } from '../../../src/modules/conversion-delivery/conversion-delivery.types.js';
-import { ConversionConsentWithdrawnError } from '../../../src/modules/conversion-delivery/providers/conversion-provider.error.js';
+import { ConversionConsentWithdrawnError, ConversionProviderError } from '../../../src/modules/conversion-delivery/providers/conversion-provider.error.js';
 import { deliverGooglePurchase } from '../../../src/modules/conversion-delivery/providers/google-conversion.provider.js';
 import { deliverMetaPurchase } from '../../../src/modules/conversion-delivery/providers/meta-conversion.provider.js';
 import { deliverTikTokPurchase } from '../../../src/modules/conversion-delivery/providers/tiktok-conversion.provider.js';
@@ -236,5 +236,23 @@ describe('conversion provider send-time consent', () => {
       ),
     ).rejects.toHaveProperty('providerCode', 'GOOGLE_FUNNEL_UNSUPPORTED');
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('recoverable provider availability during worker preflight', () => {
+  it('pauses a managed connection without consuming retries or treating it as shopper withdrawal', async () => {
+    const repository = {
+      recoverStaleClaims: vi.fn().mockResolvedValue(undefined), claimDue: vi.fn().mockResolvedValue([claim('META')]),
+      hasAdvertisingConsent: vi.fn().mockRejectedValue(new ConversionProviderError('Reconnect the channel', true, 'CONVERSION_CONNECTION_REAUTH_REQUIRED')),
+      pauseForConnection: vi.fn().mockResolvedValue(undefined),
+      pauseForBilling: vi.fn(), discardForConsent: vi.fn(), markDelivered: vi.fn(), markFailed: vi.fn(),
+    };
+    const billing = { requireAdProviderReadOnly: vi.fn().mockResolvedValue(undefined) };
+    await expect(new ConversionDeliveryService(repository as never, () => now, billing as never).processDue())
+      .resolves.toEqual({ claimed: 1, delivered: 0, retrying: 1, dead: 0 });
+    expect(repository.pauseForConnection).toHaveBeenCalledOnce();
+    expect(repository.discardForConsent).not.toHaveBeenCalled();
+    expect(repository.markFailed).not.toHaveBeenCalled();
+    expect(repository.markDelivered).not.toHaveBeenCalled();
   });
 });

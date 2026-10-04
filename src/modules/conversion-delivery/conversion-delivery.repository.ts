@@ -1,3 +1,4 @@
+import { ConversionProviderError } from './providers/conversion-provider.error.js';
 import type {
   AdvertisingProvider,
   ConversionDeliveryStatus,
@@ -243,6 +244,7 @@ export class ConversionDeliveryRepository {
     destinationId?: string;
     clickIdKind?: string | null;
     matchingIntent?: boolean;
+    reportConnectionFailure?: boolean;
     eventName?: string;
     match?: unknown;
   }) {
@@ -325,6 +327,20 @@ export class ConversionDeliveryRepository {
         { meta?: unknown; tiktok?: unknown; google?: unknown; clientIp?: string } | undefined;
       if ((claim.matchingIntent || match?.meta || match?.tiktok || match?.google || match?.clientIp) && config?.enhancedMatching !== true)
         return false;
+      const privacyPermitted = Boolean(
+        connection?.status === 'ACTIVE' &&
+        connection.scopes.includes('read_customer_events') &&
+        claim.sourceGenerationAt &&
+        connection.installedAt.getTime() === claim.sourceGenerationAt.getTime() &&
+        source.eventAt >= connection.installedAt && !revoked && latest?.adSharingAllowed && order && destination
+      );
+      if (!privacyPermitted) return false;
+      const unavailable = () => {
+        if (claim.reportConnectionFailure) throw new ConversionProviderError(
+          'Reconnect the advertising channel or restore destination account access', true, 'CONVERSION_CONNECTION_REAUTH_REQUIRED'
+        );
+        return false;
+      };
       const providerConnection =
         claim.provider === 'META'
           ? await prisma.metaConnection.findUnique({
@@ -340,7 +356,7 @@ export class ConversionDeliveryRepository {
                 where: { storeId: claim.storeId },
                 select: { status: true, scopes: true, selectedCustomerIds: true },
               });
-      if (providerConnection && providerConnection.status !== 'ACTIVE') return false;
+      if (providerConnection && providerConnection.status !== 'ACTIVE') return unavailable();
       if (
         claim.provider === 'META' &&
         config?.authSource === 'META_CONNECTION' &&
@@ -352,7 +368,7 @@ export class ConversionDeliveryRepository {
           !Array.isArray(providerConnection.selectedAdAccountIds) ||
           !providerConnection.selectedAdAccountIds.includes(String(config.adAccountId)))
       )
-        return false;
+        return unavailable();
       if (
         claim.provider === 'GOOGLE_ADS' &&
         (!providerConnection ||
@@ -363,7 +379,7 @@ export class ConversionDeliveryRepository {
           !Array.isArray(providerConnection.selectedCustomerIds) ||
           !providerConnection.selectedCustomerIds.includes(String(config?.customerId)))
       )
-        return false;
+        return unavailable();
       if (claim.clickId && claim.sourceOrderId) {
         const candidates = await this.findPurchaseCandidates(1, claim.sourceOrderId);
         if (
@@ -380,17 +396,7 @@ export class ConversionDeliveryRepository {
         )
           return false;
       }
-      return Boolean(
-        connection?.status === 'ACTIVE' &&
-        connection.scopes.includes('read_customer_events') &&
-        claim.sourceGenerationAt &&
-        connection.installedAt.getTime() === claim.sourceGenerationAt.getTime() &&
-        source.eventAt >= connection.installedAt &&
-        !revoked &&
-        latest?.adSharingAllowed &&
-        order &&
-        destination,
-      );
+      return true;
     }
     // Existing Purchase records retain their narrower exact-click consent check.
     if (!claim.clickId || !claim.sourceOrderId) return false;

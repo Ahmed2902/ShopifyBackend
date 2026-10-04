@@ -224,7 +224,7 @@ export class ConversionDeliveryService {
 
       try {
         // Avoid preparing credentials when retained permission is already absent.
-        if (!(await this.repository.hasAdvertisingConsent(claim))) {
+        if (!(await this.repository.hasAdvertisingConsent({ ...claim, reportConnectionFailure: true }))) {
           await this.repository.discardForConsent(claim.id);
           dead += 1;
           continue;
@@ -241,7 +241,7 @@ export class ConversionDeliveryService {
               const match = await enrichConversionSignal(claim, async () => {
                 try { await this.billing.requireAdProviderReadOnly(claim.storeId, billingProvider(claim.provider)); }
                 catch { throw new ConversionEntitlementChangedError(); }
-                if (!(await this.repository.hasAdvertisingConsent({ ...claim, matchingIntent: true }))) throw new ConversionConsentWithdrawnError();
+                if (!(await this.repository.hasAdvertisingConsent({ ...claim, matchingIntent: true, reportConnectionFailure: true }))) throw new ConversionConsentWithdrawnError();
               });
               return { match, customerIdentityKey: claim.customerIdentityKey, matchingReasonCode: claim.matchingReasonCode };
             })();
@@ -280,6 +280,7 @@ export class ConversionDeliveryService {
         if (
           error instanceof ConversionProviderError &&
           [
+            'CONVERSION_CONNECTION_REAUTH_REQUIRED',
             'META_CAPI_CONNECTION_INACTIVE',
             'META_CAPI_PERMISSION_REQUIRED',
             'META_CAPI_REAUTH_REQUIRED',
@@ -323,7 +324,7 @@ export class ConversionDeliveryService {
     const beforeSend = async () => {
       try { await this.billing.requireAdProviderReadOnly(claim.storeId, billingProvider(claim.provider)); }
       catch { throw new ConversionEntitlementChangedError(); }
-      if (!(await this.repository.hasAdvertisingConsent(claim))) {
+      if (!(await this.repository.hasAdvertisingConsent({ ...claim, reportConnectionFailure: true }))) {
         throw new ConversionConsentWithdrawnError();
       }
     };
