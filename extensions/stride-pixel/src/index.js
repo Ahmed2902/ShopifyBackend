@@ -128,6 +128,7 @@ function merchandiseContext(event) {
     return {
       productExternalId: shopifyGid('Product', variant?.product?.id),
       variantExternalId: shopifyGid('ProductVariant', variant?.id),
+      ...commerceContext([{ merchandise: variant, quantity: 1 }]),
     };
   }
 
@@ -143,10 +144,45 @@ function merchandiseContext(event) {
       productExternalId: shopifyGid('Product', line?.merchandise?.product?.id),
       variantExternalId: shopifyGid('ProductVariant', line?.merchandise?.id),
       quantity: line?.quantity ?? undefined,
+      ...commerceContext(line ? [line] : []),
     };
   }
 
   return {};
+}
+
+function commerceContext(lines) {
+  if (lines.length > 100) return {};
+  const currencies = new Set();
+  const commerceItems = lines.slice(0, 100).flatMap((line) => {
+    const variant = line.variant || line.merchandise;
+    const variantExternalId = shopifyGid('ProductVariant', variant?.id);
+    if (!variantExternalId) return [];
+    const money = line.cost?.amountPerQuantity || variant?.price;
+    const itemPrice =
+      money?.amount !== undefined && money?.amount !== null && String(money.amount).trim() !== ''
+        ? Number(money.amount)
+        : NaN;
+    if (/^[A-Z]{3}$/.test(money?.currencyCode || '')) currencies.add(money.currencyCode);
+    return [
+      {
+        variantExternalId,
+        ...(Number.isInteger(line.quantity) && line.quantity > 0 && line.quantity <= 100000
+          ? { quantity: line.quantity }
+          : {}),
+        ...(Number.isFinite(itemPrice) && itemPrice >= 0 && itemPrice <= 1000000000
+          ? { itemPrice }
+          : {}),
+      },
+    ];
+  });
+  if (currencies.size !== 1) for (const item of commerceItems) delete item.itemPrice;
+  return commerceItems.length
+    ? {
+        commerceItems,
+        ...(currencies.size === 1 ? { commerceCurrencyCode: [...currencies][0] } : {}),
+      }
+    : {};
 }
 
 function checkoutContext(event) {
@@ -166,6 +202,9 @@ function checkoutContext(event) {
   return {
     shopifyCheckoutToken: token || undefined,
     shopifyOrderExternalId: orderId,
+    ...(event.name === 'checkout_started' && Array.isArray(checkout?.lineItems)
+      ? commerceContext(checkout.lineItems)
+      : {}),
   };
 }
 
@@ -212,6 +251,8 @@ register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
 
   let withdrawalSending = false;
   const withdrawalStorageKey = WITHDRAWAL_KEY + installationId;
+  const cookieCutoffKey = 'stride_pixel_cookie_cutoff_' + installationId;
+  let cookieCutoff = Number(await browser.localStorage.getItem(cookieCutoffKey)) || 0;
   let pendingWithdrawals = [];
   let withdrawalStorageWrites = Promise.resolve();
   try {
@@ -283,6 +324,10 @@ register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
     }
     if (!adSharingAllowed()) {
       landing = null;
+      cookieCutoff = Date.now();
+      void browser.localStorage
+        .setItem(cookieCutoffKey, String(cookieCutoff))
+        .catch(() => undefined);
       void browser.sessionStorage.removeItem(LANDING_KEY).catch(() => undefined);
     }
     if (!adSharingAllowed() && (lastVisitorId || lastSessionId)) {
@@ -318,7 +363,42 @@ register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
           body,
           keepalive: true,
         });
-        if (response.ok) return;
+        if (response.ok) {
+          // A storefront theme embed can read top-frame sessionStorage. The strict worker
+          // never loads a provider SDK or assumes a native integration shares these IDs.
+          const revision = privacyRevision;
+          try {
+            const heartbeat = Number(
+              await browser.sessionStorage.getItem('stride_browser_heartbeat_v1'),
+            );
+            const eligible = events.filter(
+              (event) =>
+                event.adSharingAllowed &&
+                ['PAGE_VIEW', 'PRODUCT_VIEW', 'ADD_TO_CART'].includes(event.eventName),
+            );
+            if (
+              heartbeat > Date.now() &&
+              eligible.length &&
+              adSharingAllowed() &&
+              !pendingWithdrawals.length &&
+              revision === privacyRevision
+            ) {
+              await browser.sessionStorage.setItem(
+                'stride_browser_batch_v1_' + eligible[0].eventId,
+                JSON.stringify({
+                  expiresAt: Date.now() + 60000,
+                  installationId,
+                  collectorToken,
+                  collectorUrl,
+                  eventIds: eligible.map((event) => event.eventId),
+                }),
+              );
+            }
+          } catch {
+            /* Storage restrictions must not affect collector delivery. */
+          }
+          return;
+        }
         if (response.status < 500 && response.status !== 429) return;
       } catch {
         // Retry bounded transient failures only. Durable dedupe is eventId-based server-side.
@@ -444,12 +524,25 @@ register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
           return undefined;
         }
       };
-      const [fbp, ttp, fbc] = await Promise.all([readCookie('_fbp'), readCookie('_ttp'), readCookie('_fbc')]);
+      const [fbp, ttp, fbc] = await Promise.all([
+        readCookie('_fbp'),
+        readCookie('_ttp'),
+        readCookie('_fbc'),
+      ]);
+      const cookieIsFresh = (value) => !cookieCutoff || Number(value?.split('.')[2]) > cookieCutoff;
       const userAgent = event.context?.navigator?.userAgent;
       browserMatch = {
-        ...(typeof fbc === 'string' && /^fb\.[0-2]\.\d{13}\.[A-Za-z0-9._~-]{1,512}$/.test(fbc) ? { fbc } : {}),
-        ...(typeof fbp === 'string' && /^fb\.[0-2]\.\d{13}\.\d+$/.test(fbp) ? { fbp } : {}),
-        ...(typeof ttp === 'string' && /^[A-Za-z0-9_.-]{1,512}$/.test(ttp) ? { ttp } : {}),
+        ...(typeof fbc === 'string' &&
+        /^fb\.[0-2]\.\d{13}\.[A-Za-z0-9._~-]{1,512}$/.test(fbc) &&
+        cookieIsFresh(fbc)
+          ? { fbc }
+          : {}),
+        ...(typeof fbp === 'string' && /^fb\.[0-2]\.\d{13}\.\d+$/.test(fbp) && cookieIsFresh(fbp)
+          ? { fbp }
+          : {}),
+        ...(typeof ttp === 'string' && /^[A-Za-z0-9_.-]{1,512}$/.test(ttp) && !cookieCutoff
+          ? { ttp }
+          : {}),
         ...(typeof userAgent === 'string' &&
         userAgent.length <= 1024 &&
         ![...userAgent].some((char) => char.charCodeAt(0) < 32)

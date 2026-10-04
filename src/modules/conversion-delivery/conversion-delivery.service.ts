@@ -1,4 +1,6 @@
 import { storefrontEventKey } from './funnel.repository.js';
+import { prepareConversionContents } from './conversion-content.js';
+import { prisma } from '../../lib/prisma.js';
 import { env } from '../../config/env.js';
 import { enrichConversionSignal } from './signal-enrichment.service.js';
 import { signalCoverage, type MatchEvidence } from './matching.js';
@@ -188,7 +190,11 @@ export class ConversionDeliveryService {
     const now = this.now();
     await this.repository.recoverStaleClaims(new Date(now.getTime() - CLAIM_STALE_MS));
     const claims: DeliveryClaim[] = await this.repository.claimDue(bounded, now);
-    const enrichmentCache = new Map<string, Promise<{ match: MatchEvidence; customerIdentityKey?: string; matchingReasonCode?: string }>>();
+    await prepareConversionContents(claims.filter((c) => Boolean(c.sourceEventId)));
+    const enrichmentCache = new Map<
+      string,
+      Promise<{ match: MatchEvidence; customerIdentityKey?: string; matchingReasonCode?: string }>
+    >();
     const billingAllowed = new Map<string, boolean>();
     let delivered = 0;
     let retrying = 0;
@@ -224,37 +230,87 @@ export class ConversionDeliveryService {
 
       try {
         // Avoid preparing credentials when retained permission is already absent.
-        if (!(await this.repository.hasAdvertisingConsent({ ...claim, reportConnectionFailure: true }))) {
+        if (
+          !(await this.repository.hasAdvertisingConsent({
+            ...claim,
+            reportConnectionFailure: true,
+          }))
+        ) {
           await this.repository.discardForConsent(claim.id);
           dead += 1;
           continue;
         }
         if (claim.eventAt.getTime() < this.now().getTime() - 7 * 86400_000) {
-          throw new ConversionProviderError('The event exceeded Stride delivery retention', false, 'EVENT_EXPIRED');
+          throw new ConversionProviderError(
+            'The event exceeded Stride delivery retention',
+            false,
+            'EVENT_EXPIRED',
+          );
         }
         if (claim.sourceEventId) {
           const config = (claim.destination.configJson ?? {}) as ConversionDestinationConfig;
-          const cacheKey = JSON.stringify([claim.storeId, claim.sourceOrderId, claim.sourceEventId, claim.sourceGenerationAt, config.enhancedMatching === true]);
+          const cacheKey = JSON.stringify([
+            claim.storeId,
+            claim.sourceOrderId,
+            claim.sourceEventId,
+            claim.sourceGenerationAt,
+            config.enhancedMatching === true,
+          ]);
           let pending = enrichmentCache.get(cacheKey);
           if (!pending) {
             pending = (async () => {
               const match = await enrichConversionSignal(claim, async () => {
-                try { await this.billing.requireAdProviderReadOnly(claim.storeId, billingProvider(claim.provider)); }
-                catch { throw new ConversionEntitlementChangedError(); }
-                if (!(await this.repository.hasAdvertisingConsent({ ...claim, matchingIntent: true, reportConnectionFailure: true }))) throw new ConversionConsentWithdrawnError();
+                try {
+                  await this.billing.requireAdProviderReadOnly(
+                    claim.storeId,
+                    billingProvider(claim.provider),
+                  );
+                } catch {
+                  throw new ConversionEntitlementChangedError();
+                }
+                if (
+                  !(await this.repository.hasAdvertisingConsent({
+                    ...claim,
+                    matchingIntent: true,
+                    reportConnectionFailure: true,
+                  }))
+                )
+                  throw new ConversionConsentWithdrawnError();
               });
-              return { match, customerIdentityKey: claim.customerIdentityKey, matchingReasonCode: claim.matchingReasonCode };
+              return {
+                match,
+                customerIdentityKey: claim.customerIdentityKey,
+                matchingReasonCode: claim.matchingReasonCode,
+              };
             })();
             enrichmentCache.set(cacheKey, pending);
           }
           const enriched = await pending;
-          claim.match = enriched.match; claim.customerIdentityKey = enriched.customerIdentityKey; claim.matchingReasonCode = enriched.matchingReasonCode;
-          await this.repository.recordCoverage(claim.id, signalCoverage(claim.match, claim.provider, claim.clickId), claim.matchingReasonCode ?? null);
+          claim.match = enriched.match;
+          claim.customerIdentityKey = enriched.customerIdentityKey;
+          claim.matchingReasonCode = enriched.matchingReasonCode;
+          await this.repository.recordCoverage(
+            claim.id,
+            signalCoverage(claim.match, claim.provider, claim.clickId),
+            claim.matchingReasonCode ?? null,
+          );
         }
+        if (claim.contentFacts)
+          await prisma.conversionDelivery.updateMany({
+            where: { id: claim.id, storeId: claim.storeId },
+            data: { contentCoverage: claim.contentFacts },
+          });
         const result = await this.deliver(claim);
-        if (claim.matchingReasonCode) await this.repository.markDelivered(claim.id, result.providerRequestId, this.now(), claim.matchingReasonCode);
+        if (claim.matchingReasonCode)
+          await this.repository.markDelivered(
+            claim.id,
+            result.providerRequestId,
+            this.now(),
+            claim.matchingReasonCode,
+          );
         else await this.repository.markDelivered(claim.id, result.providerRequestId, this.now());
-        if (claim.customerIdentityKey && claim.sourceOrderId && claim.sourceGenerationAt) await this.repository.linkCustomerIdentity(claim);
+        if (claim.customerIdentityKey && claim.sourceOrderId && claim.sourceGenerationAt)
+          await this.repository.linkCustomerIdentity(claim);
         delivered += 1;
       } catch (error) {
         if (
@@ -269,8 +325,12 @@ export class ConversionDeliveryService {
           continue;
         }
         if (error instanceof ConversionEntitlementChangedError) {
-          await this.repository.pauseForBilling(claim.id, new Date(this.now().getTime() + BILLING_RETRY_MS));
-          retrying += 1; continue;
+          await this.repository.pauseForBilling(
+            claim.id,
+            new Date(this.now().getTime() + BILLING_RETRY_MS),
+          );
+          retrying += 1;
+          continue;
         }
         if (error instanceof ConversionConsentWithdrawnError) {
           await this.repository.discardForConsent(claim.id);
@@ -286,7 +346,15 @@ export class ConversionDeliveryService {
             'META_CAPI_REAUTH_REQUIRED',
             'GOOGLE_DATA_MANAGER_SCOPE_REQUIRED',
             'GOOGLE_ADS_REAUTH_REQUIRED',
-            '190', '200', '401', '403', '40100', '40101', '40105', 'UNAUTHENTICATED', 'PERMISSION_DENIED',
+            '190',
+            '200',
+            '401',
+            '403',
+            '40100',
+            '40101',
+            '40105',
+            'UNAUTHENTICATED',
+            'PERMISSION_DENIED',
           ].includes(error.providerCode ?? '')
         ) {
           await this.repository.pauseForConnection(
@@ -322,9 +390,17 @@ export class ConversionDeliveryService {
 
   private deliver(claim: DeliveryClaim) {
     const beforeSend = async () => {
-      try { await this.billing.requireAdProviderReadOnly(claim.storeId, billingProvider(claim.provider)); }
-      catch { throw new ConversionEntitlementChangedError(); }
-      if (!(await this.repository.hasAdvertisingConsent({ ...claim, reportConnectionFailure: true }))) {
+      try {
+        await this.billing.requireAdProviderReadOnly(
+          claim.storeId,
+          billingProvider(claim.provider),
+        );
+      } catch {
+        throw new ConversionEntitlementChangedError();
+      }
+      if (
+        !(await this.repository.hasAdvertisingConsent({ ...claim, reportConnectionFailure: true }))
+      ) {
         throw new ConversionConsentWithdrawnError();
       }
     };

@@ -1,3 +1,4 @@
+import { metaCustomData } from '../conversion-content.js';
 import { assertCanonicalPurchase } from './conversion-event.validation.js';
 import { metaUserData } from '../matching.js';
 import { env } from '../../../config/env.js';
@@ -85,13 +86,31 @@ export async function deliverMetaPurchase(
   beforeSend: BeforeConversionSend,
 ): Promise<ProviderDeliveryResult> {
   assertCanonicalPurchase(delivery);
-  if (!['PAGE_VIEW', 'PRODUCT_VIEW', 'ADD_TO_CART', 'BEGIN_CHECKOUT', 'PURCHASE'].includes(delivery.eventName ?? 'PURCHASE')) throw new ConversionProviderError('Unsupported Meta standard event', false, 'META_EVENT_UNSUPPORTED');
+  if (
+    !['PAGE_VIEW', 'PRODUCT_VIEW', 'ADD_TO_CART', 'BEGIN_CHECKOUT', 'PURCHASE'].includes(
+      delivery.eventName ?? 'PURCHASE',
+    )
+  )
+    throw new ConversionProviderError(
+      'Unsupported Meta standard event',
+      false,
+      'META_EVENT_UNSUPPORTED',
+    );
   const userData = metaUserData(
     delivery.match ?? {},
     delivery.clickId,
     delivery.attributionEventAt ?? delivery.eventAt,
   );
-  if (!delivery.clickId && !userData.fbc && !userData.fbp && !userData.em && !userData.external_id && !userData.ph && !(userData.fn && userData.ln && userData.country && (userData.zp || userData.ct)) && !(userData.client_ip_address && userData.client_user_agent)) {
+  if (
+    !delivery.clickId &&
+    !userData.fbc &&
+    !userData.fbp &&
+    !userData.em &&
+    !userData.external_id &&
+    !userData.ph &&
+    !(userData.fn && userData.ln && userData.country && (userData.zp || userData.ct)) &&
+    !(userData.client_ip_address && userData.client_user_agent)
+  ) {
     throw new ConversionProviderError(
       'Meta event has no permitted supported matching identifier',
       false,
@@ -122,13 +141,7 @@ export async function deliverMetaPurchase(
         action_source: 'website',
         ...(delivery.eventSourceUrl ? { event_source_url: delivery.eventSourceUrl } : {}),
         user_data: userData,
-        custom_data: {
-          ...(delivery.currencyCode ? { currency: delivery.currencyCode } : {}),
-          ...(delivery.value !== null && delivery.value !== undefined
-            ? { value: Number(delivery.value) }
-            : {}),
-          ...(delivery.shopifyOrderId ? { order_id: delivery.shopifyOrderId } : {}),
-        },
+        custom_data: metaCustomData(delivery),
       },
     ],
   };

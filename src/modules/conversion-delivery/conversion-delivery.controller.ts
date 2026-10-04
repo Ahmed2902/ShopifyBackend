@@ -88,7 +88,13 @@ export class ConversionDeliveryController {
   updateSignals = async (req: Request, res: Response) => {
     const id = z.string().uuid().parse(req.params.destinationId);
     const input = z
-      .object({ enhancedMatching: z.boolean(), funnelEvents: z.boolean() })
+      .object({
+        enhancedMatching: z.boolean(),
+        funnelEvents: z.boolean(),
+        browserEvents: z.boolean().optional(),
+        overlapPolicy: z.enum(['UNCONFIRMED', 'OTHER_TRACKER', 'STRIDE_EXCLUSIVE']).optional(),
+        catalogId: z.string().uuid().nullable().optional(),
+      })
       .strict()
       .parse(req.body);
     if (input.enhancedMatching && !env.SHOPIFY_ENHANCED_MATCHING_APPROVED)
@@ -107,6 +113,46 @@ export class ConversionDeliveryController {
         'CONVERSION_DESTINATION_NOT_FOUND',
       );
     await billingService.requireAdProvider(req.context.storeId!, dest.provider);
+    const current = (dest.configJson as Record<string, unknown> | null) ?? {};
+    const browserEvents = input.browserEvents ?? current.browserEvents === true;
+    const overlapPolicy = input.overlapPolicy ?? current.overlapPolicy ?? 'UNCONFIRMED';
+    if (
+      browserEvents &&
+      (dest.provider !== 'META' || !input.funnelEvents || overlapPolicy !== 'STRIDE_EXCLUSIVE')
+    )
+      throw new AppError(
+        'Paired browser sharing requires Meta funnel sharing and exclusive tracking confirmation',
+        400,
+        'BROWSER_TRACKING_POLICY_REQUIRED',
+      );
+    if (input.catalogId) {
+      const catalog =
+        dest.provider === 'META'
+          ? await prisma.metaProductCatalog.findFirst({
+              where: {
+                id: input.catalogId,
+                storeId: req.context.storeId!,
+                connection: { status: 'ACTIVE' },
+              },
+              select: { id: true },
+            })
+          : dest.provider === 'TIKTOK'
+            ? await prisma.tikTokCatalog.findFirst({
+                where: {
+                  id: input.catalogId,
+                  storeId: req.context.storeId!,
+                  connection: { status: 'ACTIVE' },
+                },
+                select: { id: true },
+              })
+            : null;
+      if (!catalog)
+        throw new AppError(
+          'Choose an available catalog from this store and channel',
+          400,
+          'CONVERSION_CATALOG_NOT_ACCESSIBLE',
+        );
+    }
     if (dest.provider === 'GOOGLE_ADS' && input.funnelEvents)
       throw new AppError(
         'Google Ads requires explicitly configured conversion actions',

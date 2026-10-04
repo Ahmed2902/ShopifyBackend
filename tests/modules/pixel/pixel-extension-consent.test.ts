@@ -321,3 +321,49 @@ it('removes matching evidence from queued batches when consent is withdrawn and 
   expect(event.adSharingAllowed).toBe(false);
   expect(event.browserMatch).toBeUndefined();
 });
+
+it('does not recapture a pre-withdrawal provider cookie on new events after regrant or reload', async () => {
+  const allowed = {
+    analyticsProcessingAllowed: true,
+    marketingAllowed: true,
+    saleOfDataAllowed: true,
+  };
+  const extension = await pixel(allowed);
+  await extension.event();
+  await extension.flush();
+  expect(
+    JSON.parse(extension.eventRequests()[0]![1].body).events[0].browserMatch.fbp,
+  ).toBeDefined();
+  extension.update({ customerPrivacy: { ...allowed, marketingAllowed: false } });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  extension.update({ customerPrivacy: allowed });
+  await extension.event();
+  await extension.flush();
+  expect(
+    JSON.parse(extension.eventRequests().at(-1)![1].body).events[0].browserMatch?.fbp,
+  ).toBeUndefined();
+  const reopened = await pixel(allowed, extension.storage);
+  await reopened.event();
+  await reopened.flush();
+  expect(
+    JSON.parse(reopened.eventRequests()[0]![1].body).events[0].browserMatch?.fbp,
+  ).toBeUndefined();
+  expect(Number(extension.storage.get('stride_pixel_cookie_cutoff_test'))).toBeGreaterThan(0);
+});
+
+it('bridges only durable accepted storefront IDs while a consented app embed heartbeat is current', async () => {
+  const allowed = {
+    analyticsProcessingAllowed: true,
+    marketingAllowed: true,
+    saleOfDataAllowed: true,
+  };
+  const storage = new Map([['stride_browser_heartbeat_v1', String(Date.now() + 3000)]]);
+  const extension = await pixel(allowed, storage);
+  await extension.event();
+  await extension.flush();
+  const bridge = JSON.parse(storage.get('stride_browser_batch_v1_test-event')!);
+  expect(bridge.eventIds).toEqual(['test-event']);
+  expect(bridge).not.toHaveProperty('browserMatch');
+  expect(bridge).not.toHaveProperty('anonymousVisitorId');
+  expect(bridge.expiresAt).toBeLessThanOrEqual(Date.now() + 60000);
+});

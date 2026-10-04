@@ -119,6 +119,8 @@ model StorefrontEvent {
   variantExternalId       String?                @db.VarChar(128)
   collectionExternalId    String?                @db.VarChar(128)
   quantity                Int?
+  commerceItems           Json?
+  commerceCurrencyCode    String?                @db.VarChar(3)
   shopifyCheckoutToken    String?                @db.VarChar(255)
   shopifyOrderExternalId  String?                @db.VarChar(128)
   utmSource               String?                @db.VarChar(255)

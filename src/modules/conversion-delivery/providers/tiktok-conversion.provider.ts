@@ -1,3 +1,4 @@
+import { tiktokProperties } from '../conversion-content.js';
 import { assertCanonicalPurchase } from './conversion-event.validation.js';
 import { tiktokUserData } from '../matching.js';
 import { decryptSecret } from '../../integrations/integration.utils.js';
@@ -50,7 +51,14 @@ export async function deliverTikTokPurchase(
     );
   }
   const user = tiktokUserData(delivery.match ?? {}, delivery.clickId);
-  if (!delivery.clickId && !user.ttp && !user.email && !user.phone && !user.external_id && !(user.ip && user.user_agent)) {
+  if (
+    !delivery.clickId &&
+    !user.ttp &&
+    !user.email &&
+    !user.phone &&
+    !user.external_id &&
+    !(user.ip && user.user_agent)
+  ) {
     throw new ConversionProviderError(
       'TikTok event has no permitted supported matching identifier',
       false,
@@ -77,13 +85,7 @@ export async function deliverTikTokPurchase(
         event_id: delivery.eventKey,
         user,
         ...(delivery.eventSourceUrl ? { page: { url: delivery.eventSourceUrl } } : {}),
-        properties: {
-          ...(delivery.currencyCode ? { currency: delivery.currencyCode } : {}),
-          ...(delivery.value !== null && delivery.value !== undefined
-            ? { value: Number(delivery.value) }
-            : {}),
-          ...(delivery.shopifyOrderId ? { order_id: delivery.shopifyOrderId } : {}),
-        },
+        properties: tiktokProperties(delivery),
       },
     ],
   };

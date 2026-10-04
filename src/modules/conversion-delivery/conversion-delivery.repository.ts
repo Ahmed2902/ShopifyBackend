@@ -55,12 +55,18 @@ export class ConversionDeliveryRepository {
           externalId: input.externalId,
         },
       },
-      select: { id: true },
+      select: { id: true, configJson: true },
     });
 
+    const previous = existing?.configJson as Record<string, unknown> | null;
+    const signalSettings = Object.fromEntries(
+      ['enhancedMatching', 'funnelEvents', 'browserEvents', 'overlapPolicy', 'catalogId']
+        .filter((key) => previous?.[key] !== undefined)
+        .map((key) => [key, previous![key]]),
+    );
     const data = {
       displayName: input.displayName ?? null,
-      configJson: input.config as Prisma.InputJsonValue,
+      configJson: { ...signalSettings, ...input.config } as Prisma.InputJsonValue,
       status: 'ACTIVE' as const,
       ...(input.config.authSource === 'META_CONNECTION'
         ? { accessTokenCiphertext: null }
@@ -325,20 +331,34 @@ export class ConversionDeliveryRepository {
         return false;
       const match = claim.match as
         { meta?: unknown; tiktok?: unknown; google?: unknown; clientIp?: string } | undefined;
-      if ((claim.matchingIntent || match?.meta || match?.tiktok || match?.google || match?.clientIp) && config?.enhancedMatching !== true)
+      if (
+        (claim.matchingIntent ||
+          match?.meta ||
+          match?.tiktok ||
+          match?.google ||
+          match?.clientIp) &&
+        config?.enhancedMatching !== true
+      )
         return false;
       const privacyPermitted = Boolean(
         connection?.status === 'ACTIVE' &&
         connection.scopes.includes('read_customer_events') &&
         claim.sourceGenerationAt &&
         connection.installedAt.getTime() === claim.sourceGenerationAt.getTime() &&
-        source.eventAt >= connection.installedAt && !revoked && latest?.adSharingAllowed && order && destination
+        source.eventAt >= connection.installedAt &&
+        !revoked &&
+        latest?.adSharingAllowed &&
+        order &&
+        destination,
       );
       if (!privacyPermitted) return false;
       const unavailable = () => {
-        if (claim.reportConnectionFailure) throw new ConversionProviderError(
-          'Reconnect the advertising channel or restore destination account access', true, 'CONVERSION_CONNECTION_REAUTH_REQUIRED'
-        );
+        if (claim.reportConnectionFailure)
+          throw new ConversionProviderError(
+            'Reconnect the advertising channel or restore destination account access',
+            true,
+            'CONVERSION_CONNECTION_REAUTH_REQUIRED',
+          );
         return false;
       };
       const providerConnection =
@@ -391,7 +411,9 @@ export class ConversionDeliveryRepository {
                 : claim.provider === 'TIKTOK'
                   ? candidate.tiktokClickId
                   : candidate.googleClickId) === claim.clickId &&
-              (claim.provider !== 'GOOGLE_ADS' || !claim.clickIdKind || candidate.googleClickIdKind === claim.clickIdKind),
+              (claim.provider !== 'GOOGLE_ADS' ||
+                !claim.clickIdKind ||
+                candidate.googleClickIdKind === claim.clickIdKind),
           )
         )
           return false;
@@ -464,7 +486,7 @@ export class ConversionDeliveryRepository {
   }) {
     if (!claim.sourceOrderId || !claim.customerIdentityKey || !claim.sourceGenerationAt) return;
     if (!(await this.hasAdvertisingConsent(claim))) return;
-    await prisma.$transaction(async tx => {
+    await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "storeId" FROM "ShopifyConnection" WHERE "storeId" = ${claim.storeId}::uuid FOR UPDATE`;
       await tx.$executeRaw`INSERT INTO "StorefrontCustomerLink" ("sourceOrderId", "storeId", "customerKey", "expiresAt")
         SELECT o."id", o."storeId", ${claim.customerIdentityKey}, NOW() + INTERVAL '90 days'
@@ -480,7 +502,10 @@ export class ConversionDeliveryRepository {
     });
   }
   recordCoverage(id: string, coverage: Record<string, boolean>, reasonCode: string | null = null) {
-    return prisma.conversionDelivery.update({ where: { id }, data: { matchCoverage: coverage, reasonCode } });
+    return prisma.conversionDelivery.update({
+      where: { id },
+      data: { matchCoverage: coverage, reasonCode },
+    });
   }
   pauseForConnection(id: string, nextAttemptAt: Date) {
     return prisma.conversionDelivery.update({
@@ -549,7 +574,12 @@ export class ConversionDeliveryRepository {
     });
   }
 
-  markDelivered(id: string, providerRequestId: string | null, deliveredAt: Date, matchingReasonCode: string | null = null) {
+  markDelivered(
+    id: string,
+    providerRequestId: string | null,
+    deliveredAt: Date,
+    matchingReasonCode: string | null = null,
+  ) {
     return prisma.conversionDelivery.update({
       where: { id },
       data: {
@@ -584,11 +614,13 @@ export class ConversionDeliveryRepository {
         ...(status === 'DEAD'
           ? { clickId: null, attributionEventAt: null, eventSourceUrl: null }
           : {}),
-        reasonCode: /EVENT_EXPIRED/.test(error) ? 'EVENT_EXPIRED' : /MATCH_ID_MISSING/.test(error)
-          ? 'MISSING_MATCH_IDENTIFIER'
-          : status === 'DEAD'
-            ? 'PROVIDER_REJECTED'
-            : 'PROVIDER_RETRY',
+        reasonCode: /EVENT_EXPIRED/.test(error)
+          ? 'EVENT_EXPIRED'
+          : /MATCH_ID_MISSING/.test(error)
+            ? 'MISSING_MATCH_IDENTIFIER'
+            : status === 'DEAD'
+              ? 'PROVIDER_REJECTED'
+              : 'PROVIDER_RETRY',
       },
     });
   }

@@ -46,6 +46,9 @@ model ConversionDelivery {
   sourceEventId       String?                  @db.Uuid
   sourceGenerationAt  DateTime?
   matchCoverage       Json?
+  contentCoverage     Json?
+  browserDispatchedAt DateTime?
+  browserReasonCode   String? @db.VarChar(64)
   reasonCode          String?                  @db.VarChar(64)
   sourceOrderId       String?                  @db.Uuid
   shopifyOrderId      String?

@@ -14,6 +14,7 @@ import { pixelController } from './pixel.controller.js';
 
 export const pixelPublicRouter = Router();
 pixelPublicRouter.post('/events', pixelController.ingest);
+pixelPublicRouter.post('/events/browser', pixelController.browserSignals);
 
 export const pixelStoreRouter = Router({ mergeParams: true });
 pixelStoreRouter.use(requireAuth, requireStoreMembership);

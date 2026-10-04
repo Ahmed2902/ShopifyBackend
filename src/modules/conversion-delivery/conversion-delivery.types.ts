@@ -13,6 +13,9 @@ export type ConversionAuthSource = 'META_CONNECTION';
 export type ConversionDestinationConfig = {
   enhancedMatching?: boolean;
   funnelEvents?: boolean;
+  browserEvents?: boolean;
+  overlapPolicy?: 'UNCONFIRMED' | 'OTHER_TRACKER' | 'STRIDE_EXCLUSIVE';
+  catalogId?: string | null;
   testEventCode?: string;
   customerId?: string;
   loginCustomerId?: string;
@@ -46,6 +49,8 @@ export type DeliveryClaim = ConversionDelivery & {
   customerIdentityKey?: string;
   matchingReasonCode?: string;
   match?: MatchEvidence;
+  contents?: Array<{ id: string; quantity?: number; itemPrice?: number }>;
+  contentFacts?: { observedItems: number; mappedItems: number; ambiguousItems: number; truncated: boolean };
 };
 
 export type ProviderDeliveryResult = {

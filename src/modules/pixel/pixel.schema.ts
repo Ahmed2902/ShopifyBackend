@@ -85,7 +85,11 @@ export const storefrontEventSchema = z
     adSharingAllowed: z.boolean().default(false),
     browserMatch: z
       .object({
-        fbc: z.string().max(600).regex(/^fb\.[0-2]\.\d{13}\.[A-Za-z0-9._~-]+$/).optional(),
+        fbc: z
+          .string()
+          .max(600)
+          .regex(/^fb\.[0-2]\.\d{13}\.[A-Za-z0-9._~-]+$/)
+          .optional(),
         fbp: z
           .string()
           .max(128)
@@ -113,6 +117,27 @@ export const storefrontEventSchema = z
     variantExternalId: shopifyEntityIdSchema('ProductVariant').optional(),
     collectionExternalId: shopifyEntityIdSchema('Collection').optional(),
     quantity: z.number().int().min(1).max(100_000).optional(),
+    commerceCurrencyCode: z
+      .string()
+      .regex(/^[A-Z]{3}$/)
+      .optional(),
+    commerceItems: z
+      .array(
+        z
+          .object({
+            productExternalId: shopifyEntityIdSchema('Product')
+              .pipe(z.string().regex(/^gid:\/\/shopify\/Product\/\d+$/))
+              .optional(),
+            variantExternalId: shopifyEntityIdSchema('ProductVariant').pipe(
+              z.string().regex(/^gid:\/\/shopify\/ProductVariant\/\d+$/),
+            ),
+            quantity: z.number().int().min(1).max(100_000).optional(),
+            itemPrice: z.number().finite().min(0).max(1_000_000_000).optional(),
+          })
+          .strict(),
+      )
+      .max(100)
+      .optional(),
     shopifyCheckoutToken: checkoutTokenSchema.optional(),
     shopifyOrderExternalId: shopifyOrderExternalIdSchema.optional(),
     attribution: storefrontAttributionSchema.optional(),

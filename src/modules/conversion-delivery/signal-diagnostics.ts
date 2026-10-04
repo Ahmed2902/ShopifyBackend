@@ -6,7 +6,7 @@ import { classifyAcquisition } from '../pixel/acquisition.js';
 const DAYS = 30;
 export async function conversionSignalHealth(storeId: string) {
   const since = new Date(Date.now() - DAYS * 86400_000);
-  const [destinations, facts, connections, commercePurchases] = await Promise.all([
+  const [destinations, facts, connections, commercePurchases, funnel] = await Promise.all([
     prisma.conversionDestination.findMany({
       where: { storeId },
       select: { id: true, provider: true, displayName: true, status: true, configJson: true },
@@ -27,9 +27,15 @@ export async function conversionSignalHealth(storeId: string) {
         userAgent: bigint;
         ip: bigint;
         measured: bigint;
+        contentMeasured: bigint;
+        observedContentItems: bigint;
+        mappedContentItems: bigint;
+        ambiguousContentItems: bigint;
+        browserDispatched: bigint;
+        browserReasonCode: string | null;
       }>
     >(Prisma.sql`
-      SELECT "provider", "eventName", "status", "reasonCode", COUNT(*) AS total, MAX("deliveredAt") AS "lastDelivery",
+      SELECT "provider", "eventName", "status", "reasonCode", "browserReasonCode", COUNT(*) AS total, MAX("deliveredAt") AS "lastDelivery",
         COUNT(*) FILTER (WHERE "matchCoverage" IS NOT NULL) AS measured,
         COUNT(*) FILTER (WHERE "matchCoverage"->>'clickId' = 'true') AS "clickId",
         COUNT(*) FILTER (WHERE "matchCoverage"->>'browserId' = 'true') AS "browserId",
@@ -37,9 +43,14 @@ export async function conversionSignalHealth(storeId: string) {
         COUNT(*) FILTER (WHERE "matchCoverage"->>'phone' = 'true') AS phone,
         COUNT(*) FILTER (WHERE "matchCoverage"->>'externalId' = 'true') AS "externalId",
         COUNT(*) FILTER (WHERE "matchCoverage"->>'userAgent' = 'true') AS "userAgent",
-        COUNT(*) FILTER (WHERE "matchCoverage"->>'ip' = 'true') AS ip
+        COUNT(*) FILTER (WHERE "matchCoverage"->>'ip' = 'true') AS ip,
+        COUNT(*) FILTER (WHERE "contentCoverage" IS NOT NULL) AS "contentMeasured",
+        COALESCE(SUM(("contentCoverage"->>'observedItems')::int), 0) AS "observedContentItems",
+        COALESCE(SUM(("contentCoverage"->>'mappedItems')::int), 0) AS "mappedContentItems",
+        COALESCE(SUM(("contentCoverage"->>'ambiguousItems')::int), 0) AS "ambiguousContentItems",
+        COUNT(*) FILTER (WHERE "browserDispatchedAt" IS NOT NULL) AS "browserDispatched"
       FROM "ConversionDelivery" WHERE "storeId" = ${storeId}::uuid AND "createdAt" >= ${since}
-      GROUP BY "provider", "eventName", "status", "reasonCode"
+      GROUP BY "provider", "eventName", "status", "reasonCode", "browserReasonCode"
     `),
     prisma.store.findUnique({
       where: { id: storeId },
@@ -47,31 +58,105 @@ export async function conversionSignalHealth(storeId: string) {
         metaConnection: { select: { status: true, tokenExpiresAt: true, scopes: true } },
         tiktokConnection: { select: { status: true, accessTokenExpiresAt: true } },
         googleAdsConnection: { select: { status: true, scopes: true } },
+        metaCatalogs: {
+          where: { connection: { status: 'ACTIVE' } },
+          select: { id: true, name: true },
+        },
+        tiktokCatalogs: {
+          where: { connection: { status: 'ACTIVE' } },
+          select: { id: true, name: true },
+        },
       },
     }),
     prisma.order.count({
       where: { storeId, isTest: false, cancelledAt: null, shopifyCreatedAt: { gte: since } },
     }),
+    prisma.$queryRaw<
+      Array<{
+        provider: string;
+        eventName: string;
+        collected: bigint;
+        consented: bigint;
+        withinDispatchWindow: bigint;
+        queued: bigint;
+        matchingMeasured: bigint;
+        acknowledged: bigint;
+        browserReported: bigint;
+      }>
+    >(Prisma.sql`
+      WITH source AS (
+        SELECT e.id, e."eventName", e."eventAt", e."adSharingAllowed", e."consentState" FROM "StorefrontEvent" e
+        JOIN "ShopifyConnection" c ON c."storeId" = e."storeId" AND c.status = 'ACTIVE' AND e."eventAt" >= c."installedAt"
+        WHERE e."storeId" = ${storeId}::uuid AND e."eventAt" >= ${since}
+          AND e."eventName" IN ('PAGE_VIEW', 'PRODUCT_VIEW', 'ADD_TO_CART', 'BEGIN_CHECKOUT')
+      ), collected AS (
+        SELECT "eventName", COUNT(*) AS collected,
+          COUNT(*) FILTER (WHERE "adSharingAllowed" AND "consentState" IN ('GRANTED', 'NOT_REQUIRED')) AS consented,
+          COUNT(*) FILTER (WHERE "adSharingAllowed" AND "consentState" IN ('GRANTED', 'NOT_REQUIRED') AND "eventAt" >= NOW() - INTERVAL '48 hours') AS "withinDispatchWindow"
+        FROM source GROUP BY "eventName"
+      ), delivery AS (
+        SELECT d.provider::text AS provider, e."eventName", COUNT(DISTINCT e.id) AS queued,
+          COUNT(DISTINCT e.id) FILTER (WHERE d."matchCoverage" IS NOT NULL) AS "matchingMeasured",
+          COUNT(DISTINCT e.id) FILTER (WHERE d.status = 'DELIVERED') AS acknowledged,
+          COUNT(DISTINCT e.id) FILTER (WHERE d."browserDispatchedAt" IS NOT NULL) AS "browserReported"
+        FROM source e JOIN "ConversionDelivery" d ON d."sourceEventId" = e.id AND d."storeId" = ${storeId}::uuid
+        GROUP BY d.provider, e."eventName"
+      ) SELECT p.provider, c."eventName", c.collected, c.consented, c."withinDispatchWindow",
+        COALESCE(d.queued, 0) AS queued, COALESCE(d."matchingMeasured", 0) AS "matchingMeasured",
+        COALESCE(d.acknowledged, 0) AS acknowledged, COALESCE(d."browserReported", 0) AS "browserReported"
+      FROM collected c CROSS JOIN (VALUES ('META'), ('TIKTOK'), ('GOOGLE_ADS')) p(provider)
+      LEFT JOIN delivery d ON d.provider = p.provider AND d."eventName" = c."eventName"
+    `),
   ]);
-  const managedMeta = destinations.some(d => d.provider === 'META' && d.status === 'ACTIVE' &&
-    (d.configJson as Record<string, unknown> | null)?.authSource === 'META_CONNECTION');
+  const managedMeta = destinations.some(
+    (d) =>
+      d.provider === 'META' &&
+      d.status === 'ACTIVE' &&
+      (d.configJson as Record<string, unknown> | null)?.authSource === 'META_CONNECTION',
+  );
   return {
     since: since.toISOString(),
     until: new Date().toISOString(),
     methodology:
       'Stride factual delivery-attempt identifier coverage; not provider match rate or Meta Event Match Quality. Purchases are Shopify truth; platform receipt is not proof of attribution.',
     commercePurchases,
+    collectionRetentionDays: env.PIXEL_RAW_EVENT_RETENTION_DAYS,
     enhancedMatchingApproved: env.SHOPIFY_ENHANCED_MATCHING_APPROVED,
     providers: ['META', 'TIKTOK', 'GOOGLE_ADS'].map((provider) => ({
       provider,
+      catalogs:
+        provider === 'META'
+          ? (connections?.metaCatalogs ?? [])
+          : provider === 'TIKTOK'
+            ? (connections?.tiktokCatalogs ?? [])
+            : [],
+      funnel: funnel
+        .filter((f) => f.provider === provider)
+        .map((f) => ({
+          eventName: f.eventName,
+          supported: provider === 'META' || (provider === 'TIKTOK' && f.eventName !== 'PAGE_VIEW'),
+          collected: Number(f.collected),
+          consented: Number(f.consented),
+          withinDispatchWindow: Number(f.withinDispatchWindow),
+          queued: Number(f.queued),
+          matchingMeasured: Number(f.matchingMeasured),
+          acknowledged: Number(f.acknowledged),
+          browserReported: Number(f.browserReported),
+        })),
       connection:
         provider === 'META'
           ? {
               status: connections?.metaConnection?.status ?? 'NOT_CONNECTED',
               credentialSource: managedMeta ? 'META_CONNECTION' : 'EVENTS_MANAGER_DESTINATION',
-              ...(managedMeta ? { permissionAvailable: connections?.metaConnection?.scopes.includes('ads_management') ?? false } : {}),
+              ...(managedMeta
+                ? {
+                    permissionAvailable:
+                      connections?.metaConnection?.scopes.includes('ads_management') ?? false,
+                  }
+                : {}),
               tokenExpired: Boolean(
-                managedMeta && connections?.metaConnection?.tokenExpiresAt &&
+                managedMeta &&
+                connections?.metaConnection?.tokenExpiresAt &&
                 connections.metaConnection.tokenExpiresAt <= new Date(),
               ),
             }
@@ -101,6 +186,10 @@ export async function conversionSignalHealth(storeId: string) {
             env.SHOPIFY_ENHANCED_MATCHING_APPROVED &&
             (d.configJson as Record<string, unknown> | null)?.enhancedMatching === true,
           funnelEvents: (d.configJson as Record<string, unknown> | null)?.funnelEvents === true,
+          browserEvents: (d.configJson as Record<string, unknown> | null)?.browserEvents === true,
+          overlapPolicy:
+            (d.configJson as Record<string, unknown> | null)?.overlapPolicy ?? 'UNCONFIRMED',
+          catalogId: (d.configJson as Record<string, unknown> | null)?.catalogId ?? null,
         })),
       facts: facts
         .filter((f) => f.provider === provider)
@@ -110,6 +199,14 @@ export async function conversionSignalHealth(storeId: string) {
           reasonCode: f.reasonCode,
           total: Number(f.total),
           lastDelivery: f.lastDelivery?.toISOString() ?? null,
+          content: {
+            measured: Number(f.contentMeasured),
+            observedItems: Number(f.observedContentItems),
+            mappedItems: Number(f.mappedContentItems),
+            ambiguousItems: Number(f.ambiguousContentItems),
+          },
+          browserReported: Number(f.browserDispatched),
+          browserReasonCode: f.browserReasonCode,
           coverage: {
             denominator: Number(f.measured),
             clickId: Number(f.clickId),
@@ -126,6 +223,8 @@ export async function conversionSignalHealth(storeId: string) {
       'No official Meta EMQ integration',
       'IP is available only from a verified canonical Shopify Purchase with explicit field approval',
       'Native integrations and other tracking apps do not share Stride event IDs',
+      'Funnel counts cover retained current-installation events, not unobserved or consent-denied visits; deletion and shorter raw retention can reduce available history; queue counts are unique events across destinations',
+      'Browser reporting means the SDK was invoked, not that the provider received the event; the paired embed supports Meta storefront events only',
       'No claim of causal attribution',
     ],
   };

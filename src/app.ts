@@ -59,7 +59,8 @@ export function createApp() {
   app.use(requestPerformanceMiddleware);
   app.use(helmet());
   app.use((req, res, next) => {
-    if (req.path === PIXEL_INGRESS_PATH) return pixelCors(req, res, next);
+    if (req.path === PIXEL_INGRESS_PATH || req.path === `${PIXEL_INGRESS_PATH}/browser`)
+      return pixelCors(req, res, next);
     return applicationCors(req, res, next);
   });
   app.use('/v1', webhookRateLimit, pixelIngressRateLimit, apiRateLimit);

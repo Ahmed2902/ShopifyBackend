@@ -370,6 +370,8 @@ export class PixelService {
       variantExternalId: event.variantExternalId ?? null,
       collectionExternalId: event.collectionExternalId ?? null,
       quantity: event.quantity ?? null,
+      ...(event.commerceItems ? { commerceItems: event.commerceItems } : {}),
+      commerceCurrencyCode: event.commerceCurrencyCode ?? null,
       shopifyCheckoutToken: event.shopifyCheckoutToken ?? null,
       shopifyOrderExternalId: event.shopifyOrderExternalId ?? null,
       utmSource: attribution.utmSource ?? null,
