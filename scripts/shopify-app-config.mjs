@@ -34,7 +34,7 @@ export function renderShopifyAppConfig(input = process.env) {
   for (const scope of scopes) if (!allowed.has(scope)) throw new Error(`Unjustified Shopify scope: ${scope}`);
   const quote = (value) => JSON.stringify(value);
   return `# Generated locally from public deployment configuration; contains no access tokens.\n` +
-    `client_id = ${quote(required('SHOPIFY_CLIENT_ID'))}\nname = "Stride"\n` +
+    `client_id = ${quote(required('SHOPIFY_CLIENT_ID'))}\nname = "Metrico"\n` +
     `application_url = ${quote(application.toString())}\nembedded = true\n` +
     `[build]\nautomatically_update_urls_on_dev = false\ninclude_config_on_deploy = true\n` +
     `[access_scopes]\nscopes = ${quote([...new Set(scopes)].join(','))}\nuse_legacy_install_flow = false\n` +

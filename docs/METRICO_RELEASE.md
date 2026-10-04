@@ -30,3 +30,6 @@ Shopify review was refreshed from the canonical CLI checklist. Theme app extensi
 
 ## Final PR review fixes
 Customer redaction preserves withdrawal cutoffs until normal expiry and locks against Pixel insertion. Data exports include order-linked customer pseudonyms and conversion deliveries (including event-linked rows), remain scoped to the requested store and exclude destination credentials. Export creation also serializes against redaction so a stale read cannot recreate an erased export. The Meta browser loader can recover after errors/timeouts without injecting a competing script or taking over a third-party replacement. Database regressions cover delayed sharing after redaction and complete, isolated exports; browser-embed regressions cover recovery and ownership.
+
+## Final deployment handoff
+The Shopify configuration generator now emits Metrico, and example sender names match the release. `release:check-config` compares explicit frontend/backend environment files without printing values or making network requests. Reviewer/protected-data/privacy instructions describe optional enhanced matching, complete exports and retained withdrawal cutoffs. Live approval and deployment gates remain unchanged.

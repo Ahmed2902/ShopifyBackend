@@ -44,7 +44,7 @@ After processing, the webhook payload is scrubbed again to a minimal completion 
 
 Metrico does not ingest a Shopify customer profile or customer email/phone into its commerce read model. It does retain order records and privacy-safe storefront journey evidence that can become customer-linked when a checkout is linked to an order.
 
-When Shopify sends a data request, Metrico generates an export containing the retained fields for the matching imported orders together with linked raw storefront events, materialized sessions, product/collection session evidence, and outstanding session-repair evidence. OWNER/ADMIN users can retrieve generated exports through:
+When Shopify sends a data request, Metrico generates an export containing the retained fields for the matching imported orders together with linked raw storefront events, materialized sessions, product/collection session evidence, outstanding session-repair evidence, minimal consent-withdrawal cutoffs, order-linked customer pseudonyms and conversion-delivery records. Destination secrets are excluded. Export creation takes a shared connection lock so it cannot recreate erased data after concurrent redaction. OWNER/ADMIN users can retrieve generated exports through:
 
 ```text
 GET /v1/stores/:storeId/integrations/shopify/privacy/data-requests
@@ -61,6 +61,7 @@ Customer redaction irreversibly removes:
 - refund and line-item rows belonging to those orders
 - raw Metrico Pixel events linked directly or through the same browser sessions
 - linked materialized storefront sessions and session repair rows
+- order-linked customer pseudonyms and conversion-delivery records
 - any generated Shopify data-request export that overlaps the redacted order IDs
 - customer-bearing historical Shopify order/refund webhook payloads associated with those orders
 
@@ -115,4 +116,4 @@ The Pixel sends `events: []` plus a minimal `withdrawal` visitor/session identif
 
 `StorefrontConsentWithdrawal` is store-scoped and records only scope identity, a monotonic revocation cutoff and expiration. The cutoff includes the accepted ten-minute future-clock window to cover old in-flight events. Withdrawal downgrades retained source permission; ingress and all provider candidate/delivery checks consult durable markers. A later regrant does not authorize an old source or an advertising click after the purchase. New events beyond the cutoff can support new purchases.
 
-Markers are included in related privacy exports, erased by matching customer redaction and cascade on shop purge. Bounded cleanup retains them for at least 40 days or the longer configured raw-event period. Live consent verification must check collector acknowledgment; bounded browser retries are not a guarantee when the client stays offline.
+Markers are included in related privacy exports and remain until normal expiry after matching customer redaction, so an older in-flight batch cannot restore advertising permission. They cascade on shop purge. Customer redaction locks the connection against Pixel insertion and export creation. Bounded cleanup retains them for at least 40 days or the longer configured raw-event period. Live consent verification must check collector acknowledgment; bounded browser retries are not a guarantee when the client stays offline.

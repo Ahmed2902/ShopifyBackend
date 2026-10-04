@@ -73,6 +73,8 @@ Contacts are intentionally pending Ahmed's domain. No mailbox is invented. `NEXT
 
 Use [the prepared protected-data application](SHOPIFY_PROTECTED_DATA_APPLICATION.md) to request level-1 access for Order resources. Request `read_all_orders` only if historical access beyond Shopify's standard order window is enabled and approved. Keep `write_products` only for the visible owner-managed collection feature; describe it to the reviewer.
 
+Compare the frontend/backend deployment files with `npm run release:check-config -- --backend-env /secure/backend.env --frontend-env /secure/frontend.env`. It checks public origins, embedded/callback/collector routes, client ID and support contact consistency without printing values or sending network requests. It also rejects secret-like `NEXT_PUBLIC_` settings; this name-based check is not an exhaustive secret scan. It cannot establish TLS, mailbox monitoring or account approval.
+
 Then run `npm run shopify:app-config`, validate the linked configuration with `shopify app config validate --json`, and deploy the app version and updated Pixel using its real extension UID. Deploy migrations 50 and 51 with the backend before enabling that extension. The first verified bootstrap of a previously untracked installation invalidates cached billing and disables old Pixel/conversion destinations and MCP grants; reconnect those features after verification.
 
 Account setup is complete only after a linked development store opens inside Shopify, verifies the actual installation ID, approves/declines hosted plans, exercises trial eligibility and plan changes, and receives all compliance topics. Record results in the submission runbook.

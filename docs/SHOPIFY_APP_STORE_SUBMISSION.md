@@ -8,6 +8,8 @@ Run first:
 
 ```bash
 npm run shopify:app-store:check
+# Compare the exact environment settings used to build/deploy both services:
+npm run release:check-config -- --backend-env /secure/backend.env --frontend-env /secure/frontend.env
 ```
 
 The automated gate covers backend/config facts. Complete every manual item below before pressing **Submit for review**.
@@ -34,7 +36,7 @@ Backend evidence: Phase 1 verifies Shopify ID tokens, exchanges them for Shopify
 
 Metrico reads Order resources, so request **level 1 protected customer data** in Partner Dashboard.
 
-Current order analytics intentionally do not request level-2 direct identifiers:
+Baseline order analytics does not request level-2 direct identifiers:
 
 - no customer name
 - no customer email
@@ -44,7 +46,7 @@ Current order analytics intentionally do not request level-2 direct identifiers:
 
 The justification should state that Metrico needs order/refund/line-item/timestamp/value and customer-journey aggregate facts to provide commerce, product profitability, attribution, and paid-growth analytics.
 
-Do **not** request level-2 fields unless the product later introduces a feature that genuinely needs them.
+Optional enhanced conversion matching now has a separate, disabled-by-default path. Before including it in submission scope, obtain the required field approvals and record the actual operator allowlist and reviewer-safe destination. Enable it only with `SHOPIFY_ENHANCED_MATCHING_APPROVED=true`, an enabled enhanced-matching destination and the existing buyer-permission/order-proof gates. The flag asserts actual approval; it cannot grant access. See `ENHANCED_CONVERSION_SIGNALS.md` and the protected-data application draft.
 
 ## 4. Privacy and compliance webhooks
 

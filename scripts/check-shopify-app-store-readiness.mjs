@@ -66,7 +66,7 @@ for (const required of requiredScopes) {
   if (!scopes.has(required)) fail(`SHOPIFY_SCOPES is missing ${required}`);
 }
 if (scopes.has('read_customers')) {
-  fail('SHOPIFY_SCOPES includes read_customers, but current Stride order analytics do not require the Customer resource');
+  fail('SHOPIFY_SCOPES includes read_customers, but current Metrico order analytics do not require the Customer resource');
 }
 
 const [privacySchema, orderQueries, apiService, authMiddleware, billingClient] = await Promise.all([
@@ -100,7 +100,7 @@ for (const pattern of levelTwoFields) {
 if (scopes.has('write_products')) {
   warn('write_products is enabled. Confirm collection-write functionality is included in the App Store listing and review instructions.');
 }
-warn('read_orders means Stride uses level-1 protected customer data. Request protected customer data access in Partner Dashboard and explain the analytics purpose; do not request level-2 fields.');
+warn('read_orders means Metrico uses level-1 protected customer data. Request protected customer data access in Partner Dashboard and explain the analytics purpose. Optional enhanced matching stays off until the required fields are actually approved and allowlisted.');
 warn('This backend gate cannot verify the frontend App Bridge script, listing icon/screenshots, reviewer screencast, Partner Dashboard emergency contact, or the actual published privacy/support URLs. Validate those manually before submission.');
 
 console.log('Shopify App Store readiness check');

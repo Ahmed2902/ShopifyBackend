@@ -29,8 +29,8 @@ Expected result: Metrico authenticates the installed shop. With no approved subs
 
 Metrico uses Shopify App Pricing.
 
-- Essentials: $49.99 USD/month
-- Pro: $84.99 USD/month
+- Essentials: $49.99 USD every 30 days
+- Pro: $84.99 USD every 30 days
 - Trial: 14 days on both plans for eligible stores, with Pro-equivalent Metrico access while Shopify reports the trial active. Shopify determines remaining trial eligibility after reinstall.
 
 Review steps:
@@ -97,7 +97,12 @@ Do not list a provider as launch-ready in the App Store listing unless the revie
 
 Metrico requests level-1 protected customer data because Order resources are required for analytics.
 
-Current launch queries do not request customer name, email, phone, billing address, or shipping address.
+Baseline commerce queries do not request customer name, email, phone, billing address or shipping address. Optional enhanced conversion matching is disabled by default. If it is included in the submitted review scope, document the actual approved fields and reviewer-safe destination below; the operator approval flag is not a Shopify permission grant.
+
+- Enhanced matching review scope: `<disabled / actual approved fields and safe review path>`
+- Approved matching allowlist: `<actual fields, or none>`
+
+Test baseline purchase sharing with enhanced matching off first. For an approved enhanced-matching path, verify buyer consent, verified-order linkage, field omissions when evidence is absent, withdrawal and the complete customer export/redaction flow. Do not enable it with unapproved fields.
 
 Purpose: order/refund/line-item/value/timestamp and customer-journey aggregate facts are used for commerce, product profitability, attribution, and paid-growth analytics.
 
