@@ -1,6 +1,6 @@
 # Shopify App Store submission runbook
 
-This is the launch gate for Stride as a public embedded Shopify app.
+This is the launch gate for Metrico as a public embedded Shopify app.
 
 Commercial terms are confirmed: Essentials $49.99 / Pro $84.99 USD every 30 days and 14 trial days on both plans for eligible stores. Use [account setup](SHOPIFY_APP_ACCOUNT_SETUP.md), [the protected-data application draft](SHOPIFY_PROTECTED_DATA_APPLICATION.md), and the frontend listing package. Contacts/domain remain pending; account configuration and approvals have not been performed.
 
@@ -15,24 +15,24 @@ The automated gate covers backend/config facts. Complete every manual item below
 ## 1. Distribution and embedded experience
 
 - Distribution type is public / Shopify App Store.
-- Stride opens as an embedded app inside Shopify Admin.
+- Metrico opens as an embedded app inside Shopify Admin.
 - The frontend loads the current Shopify App Bridge before app scripts and uses Shopify ID-token authenticated requests.
-- A merchant never has to create a Stride password, sign in with Google, or type their `myshopify.com` domain to install the app.
+- A merchant never has to create a Metrico password, sign in with Google, or type their `myshopify.com` domain to install the app.
 - Install/open/reopen works from a Shopify-owned surface.
 - Uninstall and reinstall produce a clean authenticated app session without duplicate Store rows.
 
-Backend evidence: Phase 1 verifies Shopify ID tokens, exchanges them for Shopify access tokens, and maps `shop + staff user` into existing Stride RBAC.
+Backend evidence: Phase 1 verifies Shopify ID tokens, exchanges them for Shopify access tokens, and maps `shop + staff user` into existing Metrico RBAC.
 
 ## 2. Shopify APIs
 
 - GraphQL Admin API is used for Shopify data access.
-- Required scopes are the minimum needed for visible Stride functionality.
+- Required scopes are the minimum needed for visible Metrico functionality.
 - `write_products` is requested only if collection-write functionality remains launch scope; otherwise remove it before submission.
 - No legacy REST Admin API dependency is required for core functionality.
 
 ## 3. Protected customer data
 
-Stride reads Order resources, so request **level 1 protected customer data** in Partner Dashboard.
+Metrico reads Order resources, so request **level 1 protected customer data** in Partner Dashboard.
 
 Current order analytics intentionally do not request level-2 direct identifiers:
 
@@ -42,7 +42,7 @@ Current order analytics intentionally do not request level-2 direct identifiers:
 - no billing address
 - no shipping address
 
-The justification should state that Stride needs order/refund/line-item/timestamp/value and customer-journey aggregate facts to provide commerce, product profitability, attribution, and paid-growth analytics.
+The justification should state that Metrico needs order/refund/line-item/timestamp/value and customer-journey aggregate facts to provide commerce, product profitability, attribution, and paid-growth analytics.
 
 Do **not** request level-2 fields unless the product later introduces a feature that genuinely needs them.
 
@@ -63,7 +63,7 @@ Configure public monthly plans in Partner Dashboard:
 
 - Essentials — **$49.99 USD/month**
 - Pro — **$84.99 USD/month**
-- 14-day eligible trial on both plans, with Pro-equivalent Stride access
+- 14-day eligible trial on both plans, with Pro-equivalent Metrico access
 
 Confirm:
 
@@ -76,13 +76,13 @@ Confirm:
 - expired subscription blocks paid routes
 - reinstall does not create duplicate subscription state
 
-The App Store listing, Shopify pricing page, Stride public website, and backend catalog must show the same pricing and feature boundaries.
+The App Store listing, Shopify pricing page, Metrico public website, and backend catalog must show the same pricing and feature boundaries.
 
 ## 6. Listing requirements
 
 Prepare real production assets/content:
 
-- app name: Stride
+- app name: Metrico
 - subtitle and short description
 - full description
 - clear feature list
@@ -102,15 +102,15 @@ Do not use mock screenshots, fake customer results, benchmark claims without dat
 
 Record an English screencast (or English subtitles) showing the full review path:
 
-1. Install Stride from Shopify.
-2. Open the embedded app without a separate Stride login.
+1. Install Metrico from Shopify.
+2. Open the embedded app without a separate Metrico login.
 3. Show Shopify sync / initial data state.
 4. Show the Shopify-hosted plan selection / trial state.
 5. Connect one supported advertising provider using the reviewer-safe test path.
 6. Open Overview / commerce analytics.
 7. Open Advertising hierarchy.
 8. Open Product × Ads.
-9. Show Stride Pixel / storefront analytics where test data exists.
+9. Show Metrico Pixel / storefront analytics where test data exists.
 10. Show recommendations/read-only decision workflow.
 11. Show billing upgrade/downgrade path.
 12. Show disconnect/uninstall behavior where practical.
@@ -132,7 +132,7 @@ Before submission set real values for:
 - `SHOPIFY_REVIEW_CONTACT_EMAIL`
 - `SHOPIFY_EMERGENCY_CONTACT_EMAIL`
 
-These values must agree with Partner Dashboard and the public Stride website.
+These values must agree with Partner Dashboard and the public Metrico website.
 
 ## 10. Final technical gate
 
@@ -151,7 +151,7 @@ Then manually test the entire merchant journey in a development store using the 
 
 ## Not required for initial listing
 
-Built for Shopify is a later quality milestone, not a prerequisite for first App Store publication. Treat it as a post-launch goal after Stride has real active installs and reviews.
+Built for Shopify is a later quality milestone, not a prerequisite for first App Store publication. Treat it as a post-launch goal after Metrico has real active installs and reviews.
 
 
 ## Deployment configuration and account gates

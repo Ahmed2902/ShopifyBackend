@@ -1,6 +1,6 @@
 # Shopify App Pricing launch contract
 
-Stride uses **Shopify App Pricing** for public App Store billing. Do not add Stripe, Lemon Squeezy, `appSubscriptionCreate`, or a second recurring billing authority for the Shopify-distributed product.
+Metrico uses **Shopify App Pricing** for public App Store billing. Do not add Stripe, Lemon Squeezy, `appSubscriptionCreate`, or a second recurring billing authority for the Shopify-distributed product.
 
 ## Launch plans
 
@@ -13,7 +13,7 @@ Configure these as public monthly plans in Shopify's Partner/Dev Dashboard:
 | Essentials | **$49.99 USD** | every 30 days | **14 days** |
 | Pro | **$84.99 USD** | every 30 days | **14 days** |
 
-The 14-day trial is Pro-equivalent inside Stride: while Shopify reports an active trial, `effectivePlan=PRO` even if the merchant selected Essentials. When the trial ends, entitlements fall back to the selected Shopify plan.
+The 14-day trial is Pro-equivalent inside Metrico: while Shopify reports an active trial, `effectivePlan=PRO` even if the merchant selected Essentials. When the trial ends, entitlements fall back to the selected Shopify plan.
 
 ## Essentials
 
@@ -23,7 +23,7 @@ One Shopify store and one supported paid-media provider at a time:
 - campaign + supported creative intelligence
 - Product × Ads
 - inventory-aware intelligence
-- Stride Pixel + storefront funnels
+- Metrico Pixel + storefront funnels
 - Session Explorer
 - up to 10 current recommendations
 - read-only MCP
@@ -49,7 +49,7 @@ Everything in Essentials plus:
 
 ## Dashboard configuration
 
-1. Open the Stride public app in the Shopify Partner/Dev Dashboard.
+1. Open the Metrico public app in the Shopify Partner/Dev Dashboard.
 2. Create/edit the public App Pricing plans.
 3. Set Essentials to exactly **49.99 USD / EVERY_30_DAYS / 14-day trial**.
 4. Set Pro to exactly **84.99 USD / EVERY_30_DAYS / 14-day trial**.
@@ -81,7 +81,7 @@ The Partner API credential must be kept server-side and have the permissions nee
 
 ## Configuration drift protection
 
-Recognizing a plan handle is not enough. On fresh verification Stride also requires the Shopify subscription item to match the launch contract:
+Recognizing a plan handle is not enough. On fresh verification Metrico also requires the Shopify subscription item to match the launch contract:
 
 - `FlatRatePrice`
 - active price

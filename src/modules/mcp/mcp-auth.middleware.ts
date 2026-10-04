@@ -20,18 +20,18 @@ function unauthorized(res: Response, message: string) {
 export const requireMcpAuth: RequestHandler = async (req, res, next) => {
   const authorization = req.header('authorization');
   if (!authorization?.startsWith('Bearer ')) {
-    unauthorized(res, 'Stride MCP authentication required');
+    unauthorized(res, 'Metrico MCP authentication required');
     return;
   }
   const bearer = authorization.slice('Bearer '.length).trim();
   if (!bearer) {
-    unauthorized(res, 'Stride MCP authentication required');
+    unauthorized(res, 'Metrico MCP authentication required');
     return;
   }
   try {
     const token = await verifyMcpAccessToken(bearer);
     if (!token.scopes.includes(MCP_READ_SCOPE)) {
-      unauthorized(res, 'Stride MCP token is missing mcp:read');
+      unauthorized(res, 'Metrico MCP token is missing mcp:read');
       return;
     }
 
@@ -40,7 +40,7 @@ export const requireMcpAuth: RequestHandler = async (req, res, next) => {
     // advisor access immediately rather than waiting for token expiry.
     const membership = await mcpOAuthRepository.hasStoreAccess(token.userId, token.storeId);
     if (!membership) {
-      unauthorized(res, 'Stride MCP store access is no longer available');
+      unauthorized(res, 'Metrico MCP store access is no longer available');
       return;
     }
 
@@ -49,6 +49,6 @@ export const requireMcpAuth: RequestHandler = async (req, res, next) => {
     req.context.role = membership.role;
     next();
   } catch {
-    unauthorized(res, 'Invalid or expired Stride MCP access token');
+    unauthorized(res, 'Invalid or expired Metrico MCP access token');
   }
 };

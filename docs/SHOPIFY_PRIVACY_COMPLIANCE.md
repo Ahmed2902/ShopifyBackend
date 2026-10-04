@@ -1,6 +1,6 @@
 # Shopify privacy and compliance webhooks
 
-Stride receives Shopify webhooks at:
+Metrico receives Shopify webhooks at:
 
 ```text
 POST /v1/integrations/shopify/webhooks
@@ -26,13 +26,13 @@ uri = "https://YOUR_BACKEND_HOST/v1/integrations/shopify/webhooks"
 topics = ["app/uninstalled"]
 ```
 
-Do not release a new Shopify app version until the local app configuration has been pulled/validated against the active Dashboard version. App version deployment is separate from deploying the Stride API.
+Do not release a new Shopify app version until the local app configuration has been pulled/validated against the active Dashboard version. App version deployment is separate from deploying the Metrico API.
 
 ## Data minimization at ingress
 
-Shopify compliance payloads can contain customer email and phone values. Stride validates the original signed payload and then removes customer email, phone, and customer ID before writing the durable webhook inbox.
+Shopify compliance payloads can contain customer email and phone values. Metrico validates the original signed payload and then removes customer email, phone, and customer ID before writing the durable webhook inbox.
 
-The inbox retains only what Stride needs to execute the request:
+The inbox retains only what Metrico needs to execute the request:
 
 - shop identity
 - Shopify order IDs supplied by Shopify for customer data access/redaction
@@ -42,9 +42,9 @@ After processing, the webhook payload is scrubbed again to a minimal completion 
 
 ## `customers/data_request`
 
-Stride does not ingest a Shopify customer profile or customer email/phone into its commerce read model. It does retain order records and privacy-safe storefront journey evidence that can become customer-linked when a checkout is linked to an order.
+Metrico does not ingest a Shopify customer profile or customer email/phone into its commerce read model. It does retain order records and privacy-safe storefront journey evidence that can become customer-linked when a checkout is linked to an order.
 
-When Shopify sends a data request, Stride generates an export containing the retained fields for the matching imported orders together with linked raw storefront events, materialized sessions, product/collection session evidence, and outstanding session-repair evidence. OWNER/ADMIN users can retrieve generated exports through:
+When Shopify sends a data request, Metrico generates an export containing the retained fields for the matching imported orders together with linked raw storefront events, materialized sessions, product/collection session evidence, and outstanding session-repair evidence. OWNER/ADMIN users can retrieve generated exports through:
 
 ```text
 GET /v1/stores/:storeId/integrations/shopify/privacy/data-requests
@@ -59,12 +59,12 @@ Customer redaction irreversibly removes:
 
 - imported Shopify orders listed in `orders_to_redact`
 - refund and line-item rows belonging to those orders
-- raw Stride Pixel events linked directly or through the same browser sessions
+- raw Metrico Pixel events linked directly or through the same browser sessions
 - linked materialized storefront sessions and session repair rows
 - any generated Shopify data-request export that overlaps the redacted order IDs
 - customer-bearing historical Shopify order/refund webhook payloads associated with those orders
 
-Before removing the imported order, Stride persists a tenant-scoped `ShopifyOrderRedaction` tombstone. Shopify webhook reconciliation, scheduled reconciliation, and historical/bulk order import all consult that tombstone, so a late provider event cannot resurrect a redacted order after erasure.
+Before removing the imported order, Metrico persists a tenant-scoped `ShopifyOrderRedaction` tombstone. Shopify webhook reconciliation, scheduled reconciliation, and historical/bulk order import all consult that tombstone, so a late provider event cannot resurrect a redacted order after erasure.
 
 Aggregate behavior/attribution rollups are not customer-identified and are retained as anonymous aggregate statistics.
 
@@ -79,7 +79,7 @@ Shop redaction erases the whole tenant graph, including:
 - provider mapping and insight data
 - sync runs, old webhook deliveries, and raw external payloads
 - generated Shopify data-request exports and order-redaction tombstones
-- Stride Pixel raw/read-model data
+- Metrico Pixel raw/read-model data
 - store memberships and the Store record
 - encrypted provider connections
 

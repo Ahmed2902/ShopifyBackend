@@ -86,9 +86,9 @@ export class ShopifyEmbeddedAuthService {
       }
     }
 
-    // New install/reinstall or the first time this Shopify staff member opens Stride. The offline
+    // New install/reinstall or the first time this Shopify staff member opens Metrico. The offline
     // token belongs to the shop and powers background work; the online token is used only to map
-    // this authenticated Shopify staff identity into Stride's existing membership boundary.
+    // this authenticated Shopify staff identity into Metrico's existing membership boundary.
     const offline = await this.tokenExchange.exchangeOffline(tokenContext.shop, idToken);
     const online = await this.tokenExchange.exchangeOnline(tokenContext.shop, idToken);
     this.assertSameShopifyUser(online, tokenContext.shopifyUserId);

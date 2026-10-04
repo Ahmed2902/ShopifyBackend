@@ -1,14 +1,14 @@
 # PIXEL-2B — Session and journey read model
 
-PIXEL-2B turns privacy-minimized raw Stride Pixel events into a deterministic read model for storefront sessions, observed traffic touches, product/collection interactions, and exact Shopify order linkage.
+PIXEL-2B turns privacy-minimized raw Metrico Pixel events into a deterministic read model for storefront sessions, observed traffic touches, product/collection interactions, and exact Shopify order linkage.
 
 ## Truth boundaries
 
-Stride keeps three evidence layers separate:
+Metrico keeps three evidence layers separate:
 
 - Shopify is commerce truth: orders, revenue, refunds, catalog and inventory.
 - Advertising providers are provider-attributed advertising evidence.
-- Stride Pixel is observed first-party storefront behavior.
+- Metrico Pixel is observed first-party storefront behavior.
 
 A Pixel touch saying `metaAdExternalId = 123` means that the storefront visit carried Meta Ad `123` as observed tracking evidence. It does not mean the ad causally caused a purchase.
 
@@ -80,13 +80,13 @@ A conflict is surfaced as a data-quality limitation rather than silently correct
 
 ## Shopify product resolution
 
-Product, variant and collection IDs emitted by Shopify Web Pixel events are resolved to synchronized Stride Shopify rows.
+Product, variant and collection IDs emitted by Shopify Web Pixel events are resolved to synchronized Metrico Shopify rows.
 
 A variant match is strongest because its synchronized product parent is known. If an event supplies a product ID that conflicts with the variant's synchronized parent, the session is marked with `SHOPIFY_PRODUCT_ID_CONFLICT`.
 
 ## Exact Shopify order linkage
 
-On Shopify's `checkout_completed` event, Stride captures:
+On Shopify's `checkout_completed` event, Metrico captures:
 
 - `checkout.token`
 - `checkout.order.id`
@@ -101,7 +101,7 @@ The materializer then looks up the order by the exact composite identity:
 
 Link status is:
 
-- `LINKED` — the exact Shopify order already exists in Stride.
+- `LINKED` — the exact Shopify order already exists in Metrico.
 - `PENDING` — checkout completion supplied an order ID, but Shopify order ingestion has not arrived yet.
 - `NONE` — no Shopify order ID was observed.
 
@@ -115,7 +115,7 @@ Raw `StorefrontEvent` writes remain the durable collector contract. Session rows
 
 After ingestion:
 
-1. Stride durably stores eligible raw events.
+1. Metrico durably stores eligible raw events.
 2. It attempts immediate session materialization.
 3. A materialization failure does not reject an otherwise valid collector write.
 4. A repair worker finds sessions whose newest raw `receivedAt` watermark is newer than the materialized session watermark.

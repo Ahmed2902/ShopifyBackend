@@ -68,7 +68,7 @@ export class ConversionDeliveryRepository {
       displayName: input.displayName ?? null,
       configJson: { ...signalSettings, ...input.config } as Prisma.InputJsonValue,
       status: 'ACTIVE' as const,
-      ...(input.config.authSource === 'META_CONNECTION'
+      ...(input.config.authSource === 'META_CONNECTION' || input.config.authSource === 'GOOGLE_ADS_CONNECTION'
         ? { accessTokenCiphertext: null }
         : accessTokenCiphertext !== undefined
           ? { accessTokenCiphertext }
@@ -634,7 +634,7 @@ export class ConversionDeliveryRepository {
         nextAttemptAt,
         reasonCode: 'ENTITLEMENT_BLOCKED',
         lastError:
-          'Delivery paused because the current Stride subscription does not authorize this provider',
+          'Delivery paused because the current Metrico subscription does not authorize this provider',
       },
     });
   }

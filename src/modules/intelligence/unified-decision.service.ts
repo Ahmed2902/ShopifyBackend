@@ -354,7 +354,7 @@ function productDraft(input: {
         ...commonLimitations,
         {
           code: 'CORRELATION_NOT_CAUSATION',
-          message: 'Stride Pixel observations do not establish that advertising caused the funnel weakness.',
+          message: 'Metrico Pixel observations do not establish that advertising caused the funnel weakness.',
         },
       ],
     });
@@ -437,8 +437,8 @@ export class UnifiedDecisionService {
         status: context.storefrontBehaviorRollup.lastError ? ('BLOCKED' as const) : ('WARNING' as const),
         surface: 'STOREFRONT',
         message: context.storefrontBehaviorRollup.lastError
-          ? 'Stride Pixel behavior rollup reports an error; storefront recommendations are withheld.'
-          : 'Stride Pixel evidence is older than the recommendation freshness window.',
+          ? 'Metrico Pixel behavior rollup reports an error; storefront recommendations are withheld.'
+          : 'Metrico Pixel evidence is older than the recommendation freshness window.',
         metrics: context.storefrontBehaviorRollup.lastError
           ? undefined
           : { ageHours: pixelAge, thresholdHours: REQUIRED_FRESHNESS_HOURS },

@@ -52,7 +52,7 @@ export class McpController {
         error: {
           code: -32002,
           message:
-            'Stride MCP response exceeded the safe context budget. Narrow the time window, page size, entity type, or use a detail tool.',
+            'Metrico MCP response exceeded the safe context budget. Narrow the time window, page size, entity type, or use a detail tool.',
         },
       });
       return;
@@ -67,7 +67,7 @@ export class McpController {
     res.status(405).json({
       jsonrpc: '2.0',
       id: null,
-      error: { code: -32600, message: 'Stride MCP uses stateless POST requests on this endpoint.' },
+      error: { code: -32600, message: 'Metrico MCP uses stateless POST requests on this endpoint.' },
     });
   };
 }

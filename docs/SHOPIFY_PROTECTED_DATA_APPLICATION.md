@@ -1,14 +1,14 @@
-# Stride — protected customer data application draft
+# Metrico — protected customer data application draft
 
 Prepared from the current GraphQL queries, Pixel payloads and privacy implementation. Use this wording in Shopify's protected-data access request, adapting it to the actual form. It is an application draft, not an approval or an attestation that deployment operations have been verified.
 
 ## App purpose
 
-Stride helps Shopify merchants review product sales, refunds, inventory and connected advertising performance in one workspace. It links product and paid-media activity to provide calculated, read-only recommendations. It does not automatically change advertising budgets or make purchasing decisions for the merchant.
+Metrico helps Shopify merchants review product sales, refunds, inventory and connected advertising performance in one workspace. It links product and paid-media activity to provide calculated, read-only recommendations. It does not automatically change advertising budgets or make purchasing decisions for the merchant.
 
 ## Why protected data is necessary
 
-Stride needs access to Order resources to calculate revenue, units sold, refunds and product-level economics; relate orders to purchased products; and compare connected advertising activity with Shopify commerce activity. Without order access, the app cannot provide its core commerce and Product × Ads functionality.
+Metrico needs access to Order resources to calculate revenue, units sold, refunds and product-level economics; relate orders to purchased products; and compare connected advertising activity with Shopify commerce activity. Without order access, the app cannot provide its core commerce and Product × Ads functionality.
 
 ## Requested level and fields
 
@@ -20,13 +20,13 @@ Do not request level-2 customer names, email addresses, phone numbers, billing a
 
 Use this justification only when requesting `read_all_orders`:
 
-> Merchants use Stride to compare historical product sales, refunds and paid-media activity across longer reporting periods, including seasonal and annual comparisons. Orders older than the standard access window are required to calculate these merchant-selected historical reports consistently. The app reads order and line-item facts for analytics and does not request direct customer contact or address fields.
+> Merchants use Metrico to compare historical product sales, refunds and paid-media activity across longer reporting periods, including seasonal and annual comparisons. Orders older than the standard access window are required to calculate these merchant-selected historical reports consistently. The app reads order and line-item facts for analytics and does not request direct customer contact or address fields.
 
 If Shopify has not approved this scope, configure the approved scopes and use the accessible history. Do not represent an incomplete historical period as a complete total.
 
 ## Storefront and advertising disclosure
 
-When enabled, the Stride Pixel captures pseudonymous visitor/session IDs, behavior events, sanitized URLs, product/variant/collection references, campaign parameters, click IDs and checkout/order linkage. These identifiers can become order-linked and are included in the relevant access/deletion flows; they are not described as universally anonymous.
+When enabled, the Metrico Pixel captures pseudonymous visitor/session IDs, behavior events, sanitized URLs, product/variant/collection references, campaign parameters, click IDs and checkout/order linkage. These identifiers can become order-linked and are included in the relevant access/deletion flows; they are not described as universally anonymous.
 
 Purchase disclosures to configured Meta, TikTok or Google Ads destinations require the merchant's enabled destination and explicit retained buyer permissions. Analytics permission alone is insufficient: analytics, marketing and sale-of-data permissions must all allow sharing. Missing permission defaults to denied. Disclosures use supported click identifiers, purchase time/value/currency and deduplication identifiers; the launch implementation does not request customer email/phone for advanced matching.
 

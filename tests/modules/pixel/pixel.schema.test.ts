@@ -9,7 +9,7 @@ const baseEvent = {
   pageUrl: 'https://store.example/products/shirt',
 };
 
-describe('Stride Pixel event schema', () => {
+describe('Metrico Pixel event schema', () => {
   it('does not promote analytics permission into advertising sharing permission', () => {
     expect(storefrontEventSchema.parse(baseEvent).adSharingAllowed).toBe(false);
     expect(storefrontEventSchema.parse({ ...baseEvent, adSharingAllowed: true }).adSharingAllowed).toBe(true);

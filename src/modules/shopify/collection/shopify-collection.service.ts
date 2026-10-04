@@ -132,7 +132,7 @@ export class ShopifyCollectionService {
     });
     if (!localCollection) {
       throw new AppError(
-        'The collection was created in Shopify but Stride could not read the synchronized record.',
+        'The collection was created in Shopify but Metrico could not read the synchronized record.',
         500,
         'SHOPIFY_COLLECTION_LOCAL_SYNC_FAILED',
       );

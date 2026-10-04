@@ -4,9 +4,9 @@ PIXEL-3 converts the privacy-bounded session/journey read model from PIXEL-2 int
 
 ## Truth boundary
 
-Behavioral metrics are Stride first-party observations. They do not replace Shopify commerce truth or Meta provider attribution.
+Behavioral metrics are Metrico first-party observations. They do not replace Shopify commerce truth or Meta provider attribution.
 
-A purchase metric is counted only when a Pixel session has an exact Shopify order identity linked to a Stride `Order` that is not a test order and is not cancelled. Product purchase metrics additionally require the linked Shopify order to contain the observed product/variant.
+A purchase metric is counted only when a Pixel session has an exact Shopify order identity linked to a Metrico `Order` that is not a test order and is not cancelled. Product purchase metrics additionally require the linked Shopify order to contain the observed product/variant.
 
 No fuzzy timestamp, price, customer, or SKU-nearby matching is used.
 
@@ -62,7 +62,7 @@ Authenticated store members can read:
 - `GET /v1/stores/:storeId/pixel/analytics/collections`
 - `GET /v1/stores/:storeId/pixel/analytics/landing-pages`
 
-The APIs reuse Stride's normal store-timezone date contract and equal preceding comparison period.
+The APIs reuse Metrico's normal store-timezone date contract and equal preceding comparison period.
 
 ## Eventual correctness
 

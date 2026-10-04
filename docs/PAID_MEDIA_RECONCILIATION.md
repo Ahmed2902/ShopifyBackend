@@ -1,6 +1,6 @@
 # Paid-media reconciliation
 
-Stride keeps Meta, TikTok and Google Ads data fresh with a deliberately low-resource reconciliation policy. This subsystem is independent from server-side conversion delivery: reconciliation reads provider data into Stride; CAPI/Events/Data Manager sends Shopify-backed conversions from Stride to providers.
+Metrico keeps Meta, TikTok and Google Ads data fresh with a deliberately low-resource reconciliation policy. This subsystem is independent from server-side conversion delivery: reconciliation reads provider data into Metrico; CAPI/Events/Data Manager sends Shopify-backed conversions from Metrico to providers.
 
 ## Production cadence
 
@@ -68,7 +68,7 @@ Before any provider API call, background reconciliation requires:
 
 - an ACTIVE provider connection;
 - at least one selected provider advertising account/customer;
-- an active Stride subscription/trial;
+- an active Metrico subscription/trial;
 - provider entitlement under the Store's Essentials/Pro plan.
 
 An Essentials Store does not spend API/DB resources refreshing a second provider that is outside its selected channel. Inactive providers make no external calls.
@@ -83,18 +83,18 @@ Transient failures use bounded backoff:
 2. 1 hour
 3. 4 hours
 
-Manual refresh requests and TikTok webhook dirtiness are retained during backoff but do not erase `retryAt` or bypass the provider retry budget. After those retries are exhausted, Stride stops immediate retries and schedules the next normal daily/catalog reconciliation.
+Manual refresh requests and TikTok webhook dirtiness are retained during backoff but do not erase `retryAt` or bypass the provider retry budget. After those retries are exhausted, Metrico stops immediate retries and schedules the next normal daily/catalog reconciliation.
 
 ## Cache correctness
 
 Meta/TikTok provider syncs already finalize their `SyncRun` through `IntegrationService`, which advances Store-scoped analytics/dashboard/intelligence cache generations after provider writes. Google reconciliation explicitly advances the same Store generations after its canonical writes and deterministic Product x Ads mapping projection.
 
-This is targeted to the affected Store. Stride never flushes global Redis state after reconciliation.
+This is targeted to the affected Store. Metrico never flushes global Redis state after reconciliation.
 
 ## Separation from CAPI
 
-Paid-media reconciliation is provider -> Stride ingestion.
+Paid-media reconciliation is provider -> Metrico ingestion.
 
-Server-side conversion delivery is Stride -> provider delivery.
+Server-side conversion delivery is Metrico -> provider delivery.
 
 They use separate tables, queues, retries and workers. Failure or backpressure in one system must not block the other.

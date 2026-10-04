@@ -103,7 +103,7 @@ export class ShopifyPrivacyAccessRepository {
       disclosure: {
         customerProfileFieldsStored: false,
         source:
-          'All retained Stride records linked to the Shopify order identifiers supplied by the privacy request',
+          'All retained Metrico records linked to the Shopify order identifiers supplied by the privacy request',
       },
       requestedOrderIds,
       orders,

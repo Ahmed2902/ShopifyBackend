@@ -19,7 +19,7 @@ shopifyRouter.post('/webhooks', shopifyController.webhook);
 shopifyRouter.post('/session/bootstrap', requireShopifyAppAuth, shopifyController.sessionBootstrap);
 // Temporary migration bridge for the pre-embedded frontend. Do not use this path from the App Store.
 const legacyInstallOnly: RequestHandler = (_req, _res, next) => {
-  if (!env.LEGACY_MERCHANT_AUTH_ENABLED) throw new AppError('Install Stride through Shopify.', 410, 'SHOPIFY_INSTALL_REQUIRED');
+  if (!env.LEGACY_MERCHANT_AUTH_ENABLED) throw new AppError('Install Metrico through Shopify.', 410, 'SHOPIFY_INSTALL_REQUIRED');
   next();
 };
 shopifyRouter.post('/install', legacyInstallOnly, requireAuth, shopifyController.install);

@@ -254,7 +254,7 @@ export class ShopifyPixelProvisioner {
   ) {
     if (result.userErrors.length > 0) {
       throw new AppError(
-        `Shopify could not ${operation} the Stride web pixel`,
+        `Shopify could not ${operation} the Metrico web pixel`,
         409,
         'SHOPIFY_PIXEL_CONFIGURATION_FAILED',
         {

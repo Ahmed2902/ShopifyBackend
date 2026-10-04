@@ -111,7 +111,7 @@ export class UnifiedDataQualityService {
         code: 'PIXEL_UNAVAILABLE',
         status: pixel.installation.status === 'PROVISIONING' ? 'WARNING' : 'BLOCKED',
         surface: 'STOREFRONT',
-        message: `Stride Pixel is ${pixel.installation.status}; storefront evidence is unavailable or incomplete.`,
+        message: `Metrico Pixel is ${pixel.installation.status}; storefront evidence is unavailable or incomplete.`,
       });
     } else {
       const pixelAgeHours = ageHours(now, pixel.installation.lastEventAt);
@@ -120,7 +120,7 @@ export class UnifiedDataQualityService {
           code: 'PIXEL_STALE',
           status: 'WARNING',
           surface: 'STOREFRONT',
-          message: 'Stride Pixel has not observed an event recently; storefront evidence may be stale.',
+          message: 'Metrico Pixel has not observed an event recently; storefront evidence may be stale.',
           metrics: { ageHours: pixelAgeHours, thresholdHours: PIXEL_STALE_HOURS },
         });
       }
@@ -129,7 +129,7 @@ export class UnifiedDataQualityService {
           code: 'PIXEL_BEHAVIOR_ROLLUP_FAILED',
           status: 'BLOCKED',
           surface: 'STOREFRONT',
-          message: 'Stride Pixel behavior rollup reports an error.',
+          message: 'Metrico Pixel behavior rollup reports an error.',
         });
       }
       if (pixel.attributionRollup.lastError) {
@@ -137,7 +137,7 @@ export class UnifiedDataQualityService {
           code: 'PIXEL_ATTRIBUTION_ROLLUP_FAILED',
           status: 'BLOCKED',
           surface: 'ATTRIBUTION',
-          message: 'Stride Pixel attribution rollup reports an error.',
+          message: 'Metrico Pixel attribution rollup reports an error.',
         });
       }
     }
@@ -172,7 +172,7 @@ export class UnifiedDataQualityService {
         surface: 'PRODUCT_ADS',
         provider: 'GOOGLE_ADS',
         message:
-          'Google Performance Max or Shopping spend without defensible canonical product mapping remains shared or unmapped; Stride does not guess product allocation.',
+          'Google Performance Max or Shopping spend without defensible canonical product mapping remains shared or unmapped; Metrico does not guess product allocation.',
       });
     }
 

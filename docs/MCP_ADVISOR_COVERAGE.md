@@ -1,40 +1,40 @@
-# Stride MCP Advisor Coverage
+# Metrico MCP Advisor Coverage
 
-This document is the production-readiness coverage map for Stride's read-only MCP advisor surface.
-It distinguishes business knowledge that an external advisor may read from Stride from data and
+This document is the production-readiness coverage map for Metrico's read-only MCP advisor surface.
+It distinguishes business knowledge that an external advisor may read from Metrico from data and
 operations that are intentionally not exposed.
 
 ## Design rules
 
 - MCP is read-only. Tool schemas do not accept `storeId`; the store comes only from the OAuth token.
 - Store membership is revalidated on each MCP request so revoked access does not survive until JWT expiry.
-- The MCP route requires an active Stride subscription.
+- The MCP route requires an active Metrico subscription.
 - Existing billing entitlements remain authoritative. In particular, advanced Pixel attribution remains Pro-only and recommendation counts respect the current plan limit.
 - Shopify is commerce truth. Meta and TikTok conversion/value fields remain provider-attributed evidence.
-- Stride Pixel is first-party observed storefront behavior and journey evidence, not causal proof.
-- Stride's deterministic read models/rules remain authoritative for calculated metrics, evidence quality, confidence, limitations, and recommendation generation. MCP composes those reads; it does not create a second calculation engine.
-- Currency boundaries are preserved unless an explicit Stride methodology says otherwise.
+- Metrico Pixel is first-party observed storefront behavior and journey evidence, not causal proof.
+- Metrico's deterministic read models/rules remain authoritative for calculated metrics, evidence quality, confidence, limitations, and recommendation generation. MCP composes those reads; it does not create a second calculation engine.
+- Currency boundaries are preserved unless an explicit Metrico methodology says otherwise.
 - Search is restricted to business entities and aggregate evidence; it is not a database or customer-PII search API.
 
 ## MCP tools and business coverage
 
-| MCP tool | Covered Stride knowledge | Notes / boundaries |
+| MCP tool | Covered Metrico knowledge | Notes / boundaries |
 | --- | --- | --- |
 | `stride_get_context` | Store identity, domains, currency, timezone, integration state/freshness, truth-model metadata | OAuth-bound store only |
 | `stride_get_snapshot` | Compact cross-domain overview, profitability/contribution context, safe dashboard signals, deterministic recommendations/data quality, derived Pixel funnel understanding, Product x Ads evidence | Recommendation array is plan-limited; optional domains remain explicitly unavailable when their read fails; raw recent-order records from the browser dashboard are removed from the advisor snapshot |
-| `stride_search` | Shopify products/collections, Meta campaigns/ad sets/ads/creatives, TikTok campaigns/ad groups/ads, Pixel landing pages, Pixel attribution sources, Stride recommendations | No raw customer PII; paid-media search respects the active plan's allowed provider; TikTok creative is not claimed |
+| `stride_search` | Shopify products/collections, Meta campaigns/ad sets/ads/creatives, TikTok campaigns/ad groups/ads, Pixel landing pages, Pixel attribution sources, Metrico recommendations | No raw customer PII; paid-media search respects the active plan's allowed provider; TikTok creative is not claimed |
 | `stride_get_commerce` | Commerce overview, daily performance, products/product detail, product leaderboard, collections/collection detail, aggregate customer analytics, inventory | Shopify-grounded; collection detail is a current membership snapshot, not reconstructed historical membership |
 | `stride_get_paid_media` | Meta/TikTok overview/list/detail through the provider abstraction; Meta ad-exposure list/detail with deterministic Shopify target mapping and inventory context | Provider-attributed conversion/value remains distinct from Shopify truth; ad exposure is Meta-only; TikTok supports campaign/ad-group/ad detail, not creative parity; provider reads preserve channel entitlements without mutating billing selection |
-| `stride_get_storefront` | Derived Pixel overview plus aggregate product, collection, and landing-page behavior | Uses the same derived cart/checkout abandonment and funnel-drop composition as Stride's HTTP UI |
+| `stride_get_storefront` | Derived Pixel overview plus aggregate product, collection, and landing-page behavior | Uses the same derived cart/checkout abandonment and funnel-drop composition as Metrico's HTTP UI |
 | `stride_get_attribution` | Aggregate Pixel sources, Meta-ad first-party attribution evidence, journey paths, product/collection mapping evidence | Paths/mappings preserve `ADVANCED_ATTRIBUTION`; raw session/visitor journeys are not exposed |
 | `stride_get_product_ads` | Product-centric Shopify x Meta mapped-spend/economics evidence | Shared/multi-product spend is not silently allocated as exact product spend |
 | `stride_get_recommendations` | Deterministic recommendation lifecycle/evidence/quality/precision/limitations/confidence/data quality | Plan recommendation limit is enforced; no action execution |
 | `stride_get_decision_settings` | Existing intelligence settings and inventory-planning settings used by deterministic rules | Read-only; exposes rule inputs such as inventory mode, restock lead time, and low-stock threshold, not setting writes |
-| `stride_get_report` | Historical current-vs-comparison commerce/advertising report with deterministic intelligence context | Existing Stride report methodology is reused and the MCP response preserves the active plan's recommendation limit |
+| `stride_get_report` | Historical current-vs-comparison commerce/advertising report with deterministic intelligence context | Existing Metrico report methodology is reused and the MCP response preserves the active plan's recommendation limit |
 
 ## Read models intentionally reused instead of recalculated
 
-The advisor facade directly composes the existing Stride services/workspaces for analytics, paid-media
+The advisor facade directly composes the existing Metrico services/workspaces for analytics, paid-media
 provider evidence, Product x Ads, ad exposure, Pixel behavior/attribution, intelligence, reports,
 collection detail, product leaderboard, performance trends, and decision settings. Derived Pixel
 funnel understanding is protocol-independent so the HTTP UI and MCP consume the same formulas.
@@ -53,7 +53,7 @@ dashboard's recent-order preview is deliberately stripped from the broad MCP adv
 
 ### Raw Pixel sessions and visitor journeys
 
-Stride's HTTP Pixel explorer can expose individual pseudonymous sessions and, where entitled, linked
+Metrico's HTTP Pixel explorer can expose individual pseudonymous sessions and, where entitled, linked
 visitor journeys. These are intentionally excluded from the generic external advisor surface. The MCP
 advisor receives aggregate behavior and attribution evidence instead.
 
@@ -61,7 +61,7 @@ advisor receives aggregate behavior and attribution evidence instead.
 
 Pixel health/debug/install controls are not exposed through a generic store-scoped MCP token because
 the first-party route applies stricter owner/admin authorization or performs an operational write.
-Operational recovery remains a first-party Stride workflow.
+Operational recovery remains a first-party Metrico workflow.
 
 ### Writes and execution
 
@@ -72,12 +72,12 @@ billing mutation, or other execution endpoint. Recommendations remain advice onl
 ### Unsupported provider parity
 
 The provider abstraction reports its capabilities. Meta creative evidence is supported by the existing
-Stride read model; TikTok creative parity is not claimed. The MCP layer must return/describe capability
+Metrico read model; TikTok creative parity is not claimed. The MCP layer must return/describe capability
 limits rather than synthesizing missing provider functionality.
 
 ## Authorization and entitlement parity
 
-The MCP transport/auth layer must preserve the effective restrictions of first-party Stride reads even
+The MCP transport/auth layer must preserve the effective restrictions of first-party Metrico reads even
 when it calls services below Express controllers:
 
 1. OAuth access token is bound to one store/resource/client and requires `mcp:read`.

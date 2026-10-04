@@ -1,6 +1,6 @@
-# Stride App Store code review — 2026-10-02
+# Metrico App Store code review — 2026-10-04
 
-Scope: backend submission-readiness branch plus its frontend companion, based on the current merged main revisions. This is a code review and local verification, not Shopify approval or a deployed-runtime certification.
+Scope: combined Metrico release branches, incorporating conversion signals, Shopify billing, workspace gate and the editorial public site. This is a code review and local verification, not Shopify approval or a deployed-runtime certification.
 
 Sources: the canonical Shopify AI requirements document was fetched using Shopify CLI; also reviewed the [full App Store requirements](https://shopify.dev/docs/apps/launch/shopify-app-store/app-store-requirements), [Shopify App Pricing](https://shopify.dev/docs/apps/launch/billing/shopify-app-pricing), Partner activeSubscription 2026-07 schema, Admin ShopPlan 2026-07 schema and Web Pixels Customer Privacy documentation. Each requirement below was evaluated separately. “Likely passing” describes inspected code; “Needs review” requires account, live-runtime or listing evidence.
 
@@ -42,9 +42,19 @@ Sources: the canonical Shopify AI requirements document was fetched using Shopif
 
 Counts: **19 likely passing / 0 failing / 12 needs review / 31 core requirements**. The needs-review items require live account/runtime evidence and are not certified complete by this PR.
 
+## Applicable online-store requirements
+
+| Requirement | Result | Evidence / remaining check |
+| --- | --- | --- |
+| 5.1.1 Theme app extensions | Likely passing | Browser signals use a Liquid theme app embed; no theme file mutation. |
+| 5.1.3 Detailed onboarding | Needs review | Signal setup explains Themes → Customize → App embeds → enable Metrico browser signals → Save → return to verify. Confirm actual deployed embed name and behavior in a real live theme. |
+| 5.1.5 Return data to merchant | Likely passing | Signal quality displays collection, consent, queue, provider acknowledgement and browser pairing separately. |
+
+Total assessed: **21 likely passing / 0 failing / 13 needs review / 34 requirements**. The 31 core counts above remain unchanged. Canonical checklist refreshed using Shopify CLI 4.8.4 on 2026-10-04.
+
 ## Conditional groups skipped
 
-Groups **5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9 and 5.10** were checked for applicability and skipped: Stride does not implement those specialized app categories. The repository's extension is a Web Pixel; template purpose declarations and actual deployed extension UID/version still require verification.
+Groups **5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9 and 5.10** were checked for applicability and skipped: Metrico does not implement those specialized app categories. The repository includes a Web Pixel and a theme app embed. Actual deployed extension UID/version still require verification.
 
 ## Additional full-requirements gates
 

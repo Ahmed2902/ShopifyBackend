@@ -1,4 +1,8 @@
 import type { AdvertisingProvider } from '../../generated/prisma/client.js';
+import { GoogleAdsRepository } from '../google-ads/google-ads.repository.js';
+import { GoogleAdsApiService } from '../google-ads/shared/google-ads-api.service.js';
+import { GoogleAdsAuthService } from '../google-ads/shared/google-ads-auth.service.js';
+import { GOOGLE_DATA_MANAGER_SCOPE } from './conversion-delivery.types.js';
 import { AppError } from '../../errors/app-error.js';
 import { billingService, type BillingService } from '../billing/billing.service.js';
 import { MetaRepository } from '../meta/meta.repository.js';
@@ -12,6 +16,9 @@ export type ManagedConversionOption = {
   accountName: string;
   adAccountId: string;
   lastActivityAt: string | null;
+  customerId?: string;
+  loginCustomerId?: string;
+  destinationId?: string;
 };
 
 export type ManagedConversionOptions = {
@@ -62,6 +69,8 @@ export class ManagedConversionSetupService {
 
   async options(storeId: string, provider: AdvertisingProvider): Promise<ManagedConversionOptions> {
     await this.billing.requireAdProvider(storeId, provider);
+
+    if (provider === 'GOOGLE_ADS') return this.googleOptions(storeId);
 
     if (provider !== 'META') {
       return {
@@ -132,7 +141,108 @@ export class ManagedConversionSetupService {
     };
   }
 
+  private async googleOptions(storeId: string): Promise<ManagedConversionOptions> {
+    const repository = new GoogleAdsRepository();
+    const api = new GoogleAdsApiService();
+    const auth = new GoogleAdsAuthService(repository, api);
+    const context = await auth.getApiContext(storeId);
+    const needsPermission = !context.scopes.includes(GOOGLE_DATA_MANAGER_SCOPE);
+    const result: ManagedConversionOptions = {
+      provider: 'GOOGLE_ADS',
+      automaticSetupAvailable: true,
+      ready: false,
+      needsPermission,
+      needsAdAccountSelection: context.selectedCustomerIds.length === 0,
+      options: [],
+    };
+    if (needsPermission || result.needsAdAccountSelection) return result;
+    const accounts = await repository.findSelectedCustomers(storeId, context.selectedCustomerIds);
+    const groups = await Promise.all(
+      accounts
+        .filter((account) => !account.manager)
+        .map(async (account) => {
+          const rows = await api.search({
+            accessToken: context.accessToken,
+            apiVersion: context.apiVersion,
+            customerId: account.customerId,
+            loginCustomerId: account.loginCustomerId,
+            query:
+              "SELECT conversion_action.id, conversion_action.name, conversion_action.status, conversion_action.type, conversion_action.category, conversion_action.owner_customer FROM conversion_action WHERE conversion_action.status = 'ENABLED' AND conversion_action.type = 'UPLOAD_CLICKS' AND conversion_action.category = 'PURCHASE'",
+          });
+          return rows.flatMap((row) => {
+            const action = asRecord(row.conversionAction);
+            // Manager-owned actions require a different operating account. Never infer that account.
+            if (
+              !action ||
+              action.status !== 'ENABLED' ||
+              action.type !== 'UPLOAD_CLICKS' ||
+              action.category !== 'PURCHASE' ||
+              action.ownerCustomer !== `customers/${account.customerId}` ||
+              !/^[0-9]+$/.test(String(action.id))
+            )
+              return [];
+            return [
+              {
+                id: `${account.customerId}:${action.id}`,
+                name:
+                  typeof action.name === 'string' && action.name.trim()
+                    ? action.name.trim()
+                    : 'Google purchase action',
+                accountName: account.descriptiveName || 'Google Ads account',
+                adAccountId: account.customerId,
+                customerId: account.customerId,
+                ...(account.loginCustomerId ? { loginCustomerId: account.loginCustomerId } : {}),
+                destinationId: String(action.id),
+                lastActivityAt: null,
+              },
+            ];
+          });
+        }),
+    );
+    result.options = [...new Map(groups.flat().map((option) => [option.id, option])).values()].sort(
+      (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+    );
+    result.ready = result.options.length > 0;
+    return result;
+  }
+
   async enable(storeId: string, provider: AdvertisingProvider, optionId: string) {
+    if (provider === 'GOOGLE_ADS') {
+      const setup = await this.options(storeId, provider);
+      if (setup.needsPermission)
+        throw new AppError(
+          'Reconnect Google Ads once to allow purchase sharing',
+          403,
+          'GOOGLE_DATA_MANAGER_SCOPE_REQUIRED',
+        );
+      if (setup.needsAdAccountSelection)
+        throw new AppError(
+          'Choose a Google Ads account before enabling purchase sharing',
+          409,
+          'GOOGLE_ADS_CUSTOMERS_NOT_CONFIGURED',
+        );
+      const selected = setup.options.find((option) => option.id === optionId);
+      if (!selected?.customerId || !selected.destinationId)
+        throw new AppError(
+          'The selected Google purchase action is no longer available',
+          400,
+          'GOOGLE_CONVERSION_DESTINATION_NOT_ACCESSIBLE',
+        );
+      return this.repository.upsertDestination(
+        storeId,
+        {
+          provider,
+          externalId: selected.destinationId,
+          displayName: selected.name,
+          config: {
+            authSource: 'GOOGLE_ADS_CONNECTION',
+            customerId: selected.customerId,
+            ...(selected.loginCustomerId ? { loginCustomerId: selected.loginCustomerId } : {}),
+          },
+        },
+        undefined,
+      );
+    }
     if (provider !== 'META') {
       throw new AppError(
         'Automatic purchase sharing setup is not available for this channel yet',
@@ -144,7 +254,7 @@ export class ManagedConversionSetupService {
     const setup = await this.options(storeId, provider);
     if (setup.needsPermission) {
       throw new AppError(
-        'Reconnect Meta once to allow Stride to send confirmed Shopify purchases automatically',
+        'Reconnect Meta once to allow Metrico to send confirmed Shopify purchases automatically',
         403,
         'META_ADS_MANAGEMENT_REQUIRED',
       );

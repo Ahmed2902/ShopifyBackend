@@ -25,7 +25,7 @@ function syntheticIdentityEmail(shop: string, shopifyUserId: string): string {
 
 function authoritativeRole(accountOwner: boolean): 'OWNER' | 'MEMBER' {
   // The Shopify ID/online token gives us a trustworthy account-owner bit, but it doesn't encode
-  // Stride's ADMIN concept. Never guess elevated permissions for staff/collaborators.
+  // Metrico's ADMIN concept. Never guess elevated permissions for staff/collaborators.
   return accountOwner ? 'OWNER' : 'MEMBER';
 }
 
@@ -142,7 +142,7 @@ export class ShopifyEmbeddedAuthRepository {
         take: 2,
       });
       if (candidates.length > 1) {
-        throw new Error('Shopify shop identity resolves to conflicting Stride stores');
+        throw new Error('Shopify shop identity resolves to conflicting Metrico stores');
       }
 
       const storeData = {
@@ -292,7 +292,7 @@ export class ShopifyEmbeddedAuthRepository {
         });
       }
 
-      // Deliberately do not link a Shopify staff member to a legacy Stride account by email. That
+      // Deliberately do not link a Shopify staff member to a legacy Metrico account by email. That
       // could inherit stale OWNER/ADMIN permissions. The synthetic address exists only because the
       // compatibility User table still requires a unique email during this migration.
       const internalEmail = syntheticIdentityEmail(input.shop, input.shopifyUserId);

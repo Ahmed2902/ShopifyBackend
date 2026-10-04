@@ -76,7 +76,7 @@ describe('requireMcpAuth', () => {
     expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
-        error: expect.objectContaining({ message: 'Invalid or expired Stride MCP access token' }),
+        error: expect.objectContaining({ message: 'Invalid or expired Metrico MCP access token' }),
       }),
     );
     expect(next).not.toHaveBeenCalled();

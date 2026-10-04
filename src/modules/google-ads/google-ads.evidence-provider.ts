@@ -29,9 +29,9 @@ export class GoogleAdsAdvertisingEvidenceProvider implements AdvertisingEvidence
       currencyPolicy: 'SEPARATE_BY_PROVIDER_CURRENCY',
       limitations: [
         'Google conversions, conversion value and ROAS are provider-reported attribution, not Shopify revenue truth.',
-        'Performance Max is Campaign -> Asset Group; Stride does not invent Google ad entities where Google does not expose them.',
+        'Performance Max is Campaign -> Asset Group; Metrico does not invent Google ad entities where Google does not expose them.',
         'Google assets are exposed as canonical creative/asset entities; asset-level delivery metrics are not claimed.',
-        'Period reach is unavailable because daily reach is non-additive and Stride does not fabricate deduplicated reach.',
+        'Period reach is unavailable because daily reach is non-additive and Metrico does not fabricate deduplicated reach.',
         'Only merchant-selected Google Ads client customer accounts are included.',
       ],
     };

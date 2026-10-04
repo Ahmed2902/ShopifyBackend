@@ -1,4 +1,4 @@
-# Stride V1 release smoke
+# Metrico V1 release smoke
 
 Use this after deploying the intended backend revision to a real Shopify development/test store. It turns the highest-value release checks into one repeatable command without changing provider state by default.
 
@@ -8,7 +8,7 @@ The default run is read-only and verifies:
 
 - API liveness and PostgreSQL-backed readiness;
 - authenticated billing state and the billing portal contract;
-- Stride Pixel installation/status and operational health endpoints;
+- Metrico Pixel installation/status and operational health endpoints;
 - storefront behavior analytics and recent Pixel sessions;
 - first-party attribution sources and Meta-touch evidence;
 - advanced attribution paths/mapping evidence when the current plan includes that entitlement;
@@ -73,7 +73,7 @@ npm run smoke:v1-release
 
 After the request succeeds, manually verify all of the following:
 
-1. the message arrives from the verified Stride sender;
+1. the message arrives from the verified Metrico sender;
 2. the reset URL points to the expected frontend origin;
 3. the token works exactly once;
 4. the old password stops working and the new password works;
@@ -94,7 +94,7 @@ A green smoke command is necessary release evidence, but it is not sufficient to
 - exercise plan change/cancel behavior using the test store;
 - verify an inactive subscription is denied by paid middleware.
 
-### Stride Pixel and Shopify purchase truth
+### Metrico Pixel and Shopify purchase truth
 
 Perform a real storefront journey:
 
@@ -125,7 +125,7 @@ Use real provider-delivered ads for final provider-fetch validation, or connecte
 - low mapping coverage is visible as data-quality evidence;
 - mapping-dependent decisions remain suppressed or lower-confidence when evidence is insufficient.
 
-Database fixtures validate normalized Stride behavior only. They do not prove that the Meta API hierarchy/Insights fetch path works against a real merchant account.
+Database fixtures validate normalized Metrico behavior only. They do not prove that the Meta API hierarchy/Insights fetch path works against a real merchant account.
 
 ## Interpreting failures
 

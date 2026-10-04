@@ -1,15 +1,15 @@
-# Stride V1 production rollout runbook
+# Metrico V1 production rollout runbook
 
-This is the operator checklist for moving the current Stride V1 implementation from merged code to a validated merchant/test-store deployment.
+This is the operator checklist for moving the current Metrico V1 implementation from merged code to a validated merchant/test-store deployment.
 
-It consolidates the process topology, Shopify privacy, Shopify validation, Pixel runtime, and analytics performance requirements into one execution order. It does not expand V1 scope or weaken Stride's data-truth boundaries.
+It consolidates the process topology, Shopify privacy, Shopify validation, Pixel runtime, and analytics performance requirements into one execution order. It does not expand V1 scope or weaken Metrico's data-truth boundaries.
 
 ## V1 truth boundaries
 
 - Shopify is commerce truth.
 - Meta metrics remain provider-attributed advertising evidence.
 - Product × Ads mapping/shared exposure is deterministic cross-channel evidence.
-- Stride Pixel is first-party observed behavior and journey evidence.
+- Metrico Pixel is first-party observed behavior and journey evidence.
 - Inventory-driven recommendations require `TRUSTED` inventory mode.
 - No V1 causal incrementality/MMM/forecast/autonomous ad mutation is implied by this rollout.
 
@@ -118,7 +118,7 @@ Return it to the normal production setting after measurement unless continuous v
 
 ## 4. Shopify app configuration and Web Pixel extension
 
-The backend repository intentionally does not contain a fabricated Shopify Web Pixel UID. Generate the real extension inside a Shopify CLI app project linked to the existing Stride app.
+The backend repository intentionally does not contain a fabricated Shopify Web Pixel UID. Generate the real extension inside a Shopify CLI app project linked to the existing Metrico app.
 
 ### Link the CLI project to the existing app
 
@@ -161,7 +161,7 @@ Then:
 1. preserve the Shopify-generated `uid` in the generated `shopify.extension.toml`;
 2. replace the generated extension `src/index.js` with `extensions/stride-pixel/src/index.js` from this repository;
 3. copy the privacy/settings declarations from `extensions/stride-pixel/shopify.extension.toml.template` without replacing the generated UID;
-4. verify the extension still requests analytics-only customer privacy behavior as defined by Stride.
+4. verify the extension still requests analytics-only customer privacy behavior as defined by Metrico.
 
 Validate the app configuration:
 
@@ -179,7 +179,7 @@ Inspect the generated app version in the Dev Dashboard. Release only after the s
 
 If the test store was installed before Pixel scopes were added, reauthorize/reinstall it so Shopify grants the current scopes.
 
-## 5. Install and verify Stride Pixel
+## 5. Install and verify Metrico Pixel
 
 After the backend revision containing Pixel support is live and the Shopify app version containing the extension is released:
 

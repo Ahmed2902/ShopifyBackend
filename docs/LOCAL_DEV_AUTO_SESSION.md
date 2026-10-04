@@ -1,6 +1,6 @@
 # Local dashboard auto session
 
-When the backend runs with `NODE_ENV=development`, Stride can mint a short-lived normal access token for the local dashboard without asking the developer to sign in.
+When the backend runs with `NODE_ENV=development`, Metrico can mint a short-lived normal access token for the local dashboard without asking the developer to sign in.
 
 ## Default behavior
 
@@ -8,7 +8,7 @@ When the backend runs with `NODE_ENV=development`, Stride can mint a short-lived
 
 The frontend calls `POST /v1/auth/dev-session`, the backend chooses a real local Store membership, and returns the same access-token shape used by the legacy local auth path. Normal store-membership middleware still protects every store-scoped request.
 
-No additional setting is required as long as the local database contains at least one Store with a membership. When several Stores exist, Stride opens the most recently updated Store automatically.
+No additional setting is required as long as the local database contains at least one Store with a membership. When several Stores exist, Metrico opens the most recently updated Store automatically.
 
 To pin local development to a specific Store instead, set:
 

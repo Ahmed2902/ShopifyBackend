@@ -422,7 +422,7 @@ export class PixelService {
     if (env.APP_URL) return new URL(COLLECTOR_PATH, env.APP_URL).toString();
     if (!required) return null;
     throw new AppError(
-      'APP_URL or PIXEL_COLLECTOR_URL must be configured before installing Stride Pixel',
+      'APP_URL or PIXEL_COLLECTOR_URL must be configured before installing Metrico Pixel',
       500,
       'PIXEL_COLLECTOR_URL_MISSING',
     );

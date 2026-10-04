@@ -1,4 +1,4 @@
-# Stride V1 Testing Pipeline
+# Metrico V1 Testing Pipeline
 
 This document is mirrored by the backend testing-pipeline issue and is intended to be run only after the current backend/frontend main revisions and the persistent worker are deployed.
 
@@ -13,15 +13,15 @@ This document is mirrored by the backend testing-pipeline issue and is intended 
 ## 2. Shopify development store
 
 1. In Shopify Dev Dashboard, create or select a Dev store. Prefer generated test data if creating a new one.
-2. Confirm the Stride app is the existing app used by the backend credentials.
+2. Confirm the Metrico app is the existing app used by the backend credentials.
 3. From the Shopify CLI project, link the existing app configuration.
 4. Generate/link the real Web Pixel extension and preserve Shopify's generated extension UID.
-5. Confirm app scopes include at least the scopes currently required by Stride, including `write_pixels` and `read_customer_events`.
+5. Confirm app scopes include at least the scopes currently required by Metrico, including `write_pixels` and `read_customer_events`.
 6. Confirm mandatory privacy webhooks point at `/v1/integrations/shopify/webhooks` for `customers/data_request`, `customers/redact`, and `shop/redact`, plus `app/uninstalled`.
 7. Validate and deploy an unreleased app version first, inspect it, then release it.
-8. Install/re-authorize Stride on the Dev store after any scope expansion.
-9. In Shopify Admin > Settings > Customer events, verify the Stride app pixel is present.
-10. In Stride, run Pixel install and inspect both Pixel status and Pixel health.
+8. Install/re-authorize Metrico on the Dev store after any scope expansion.
+9. In Shopify Admin > Settings > Customer events, verify the Metrico app pixel is present.
+10. In Metrico, run Pixel install and inspect both Pixel status and Pixel health.
 
 ## 3. Shopify commerce test matrix
 
@@ -49,7 +49,7 @@ Exercise:
 
 For test orders use Shopify's supported Dev-store test-payment path such as Bogus Gateway/test mode; do not use real payments.
 
-## 4. Stride Pixel storefront journey
+## 4. Metrico Pixel storefront journey
 
 Run a controlled storefront visit carrying deterministic Meta-like identity parameters where applicable:
 
@@ -73,12 +73,12 @@ Inspect:
 
 ## 5. Meta connected-account fixture testing
 
-Use a real Stride Meta OAuth connection and selected ad-account identity, but do not depend on that account having delivered ads.
+Use a real Metrico Meta OAuth connection and selected ad-account identity, but do not depend on that account having delivered ads.
 
-1. Connect Meta through the normal Stride OAuth flow.
+1. Connect Meta through the normal Metrico OAuth flow.
 2. Verify accessible account discovery and select the intended test ad account.
 3. Confirm the selected account exists locally as `MetaAdAccount` and has no provider-imported hierarchy you need to preserve.
-4. Configure the local fixture target with the exact Stride store UUID and selected Meta account ID.
+4. Configure the local fixture target with the exact Metrico store UUID and selected Meta account ID.
 5. Preview the target with `npm run dev:meta-fixtures`.
 6. Seed normalized hierarchy/mappings/60-day daily ad Insights with `npm run dev:meta-fixtures:write`.
 7. Exercise Advertising, campaign/ad-set/ad/creative views, video retention, Product x Ads, mappings, currency isolation, Business Brief, data quality, confidence, and the deterministic Intelligence snapshot.
@@ -95,8 +95,8 @@ Before the first production merchant is considered fully validated, connect a co
 Confirm the UI/API never collapses these into one source:
 - Shopify order/revenue/refund truth
 - Meta provider-attributed purchases/value/ROAS
-- Stride Pixel first-party observed journey/attribution
-- Stride-derived Product x Ads/shared-exposure evidence
+- Metrico Pixel first-party observed journey/attribution
+- Metrico-derived Product x Ads/shared-exposure evidence
 
 Check same-currency behavior, foreign Meta currency separation, mapping confidence, inventory trust mode, data-quality warnings, evidence quality, attribution precision, and limitations.
 

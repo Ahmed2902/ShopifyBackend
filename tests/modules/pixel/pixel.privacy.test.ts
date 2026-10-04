@@ -6,7 +6,7 @@ import {
   sanitizeStorefrontUrl,
 } from '../../../src/modules/pixel/pixel.privacy.js';
 
-describe('Stride Pixel privacy helpers', () => {
+describe('Metrico Pixel privacy helpers', () => {
   it('captures behavior only when consent is granted or tracking is not required', () => {
     expect(isStorefrontBehaviorCaptureAllowed('GRANTED')).toBe(true);
     expect(isStorefrontBehaviorCaptureAllowed('NOT_REQUIRED')).toBe(true);

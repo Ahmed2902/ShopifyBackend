@@ -11,7 +11,7 @@ export async function verifyShopifyDevelopmentStore(storeId: string, shopId: str
   const store = await repository.findConnectionForSync(storeId);
   const connection = store?.shopifyConnection;
   if (!store || !connection || connection.status !== 'ACTIVE') {
-    throw new AppError('Reopen Stride in Shopify to verify this development store.',
+    throw new AppError('Reopen Metrico in Shopify to verify this development store.',
       503, 'SHOPIFY_BILLING_UNAVAILABLE');
   }
   const accessToken = await auth.resolveAccessToken(store.myshopifyDomain, connection);

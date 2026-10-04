@@ -25,7 +25,7 @@ export class MetaTrackingProvider {
     const liveCreativeId = await this.fetchLiveCreativeId(context, ad.metaAdId);
     if (liveCreativeId !== creative.metaCreativeId) {
       throw new AppError(
-        'Meta ad creative changed since the last Stride hierarchy sync; resync before applying tracking',
+        'Meta ad creative changed since the last Metrico hierarchy sync; resync before applying tracking',
         409,
         'META_TRACKING_SNAPSHOT_STALE',
         {
@@ -37,7 +37,7 @@ export class MetaTrackingProvider {
     }
 
     const createParams: Record<string, string> = {
-      name: `${creative.name ?? ad.name} [Stride tracking]`.slice(0, 255),
+      name: `${creative.name ?? ad.name} [Metrico tracking]`.slice(0, 255),
       url_tags: urlTags,
     };
 
@@ -78,7 +78,7 @@ export class MetaTrackingProvider {
     const liveCreativeIdBeforeAssignment = await this.fetchLiveCreativeId(context, ad.metaAdId);
     if (liveCreativeIdBeforeAssignment !== creative.metaCreativeId) {
       throw new AppError(
-        'Meta ad creative changed while Stride was preparing tracking; the new creative was not assigned',
+        'Meta ad creative changed while Metrico was preparing tracking; the new creative was not assigned',
         409,
         'META_TRACKING_SNAPSHOT_STALE',
         {

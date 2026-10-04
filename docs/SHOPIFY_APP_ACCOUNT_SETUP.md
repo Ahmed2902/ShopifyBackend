@@ -1,23 +1,23 @@
-# Stride — Shopify account setup
+# Metrico — Shopify account setup
 
-Commercial terms confirmed by Ahmed on 2026-10-03 (Africa/Cairo): Essentials **$49.99 USD every 30 days**, Pro **$84.99 USD every 30 days**, **14 trial days on both plans for eligible stores**. An active Shopify-confirmed trial gets Pro-equivalent Stride features. Shopify determines returning-store eligibility; uninstalling does not promise a fresh trial.
+Commercial terms confirmed by Ahmed on 2026-10-03 (Africa/Cairo): Essentials **$49.99 USD every 30 days**, Pro **$84.99 USD every 30 days**, **14 trial days on both plans for eligible stores**. An active Shopify-confirmed trial gets Pro-equivalent Metrico features. Shopify determines returning-store eligibility; uninstalling does not promise a fresh trial.
 
 This document separates prepared application configuration from values that exist only in the actual Shopify account. No plans, credentials, approvals or charges were created by writing it.
 
 ## App identity
 
-Use the existing Stride public app. Its client ID is safe for the frontend; its client secret is backend-only. In **Dev Dashboard → Apps → Stride → Settings → Credentials**, configure:
+Use the existing Metrico public app. Its client ID is safe for the frontend; its client secret is backend-only. In **Dev Dashboard → Apps → Metrico → Settings → Credentials**, configure:
 
 | Actual account value | Backend | Frontend |
 | --- | --- | --- |
 | Client ID | `SHOPIFY_CLIENT_ID` | `NEXT_PUBLIC_SHOPIFY_API_KEY` |
 | Client secret | `SHOPIFY_CLIENT_SECRET` | Never expose |
 
-Do not create a custom-store app as a substitute for the public Stride app. Keep merchant authentication in Shopify Admin; Google Ads OAuth remains an advertising connection.
+Do not create a custom-store app as a substitute for the public Metrico app. Keep merchant authentication in Shopify Admin; Google Ads OAuth remains an advertising connection.
 
 ## Hosted plans
 
-Pricing and the App Store listing are in the **Partner Dashboard**, even if app settings have moved to the Dev Dashboard. Open **App distribution → All apps → Stride → Distribution → Manage listing → English → Pricing content → Manage**. Use Shopify App Pricing with monthly billing.
+Pricing and the App Store listing are in the **Partner Dashboard**, even if app settings have moved to the Dev Dashboard. Open **App distribution → All apps → Metrico → Distribution → Manage listing → English → Pricing content → Manage**. Use Shopify App Pricing with monthly billing.
 
 | Setting | Essentials | Pro |
 | --- | --- | --- |
@@ -25,7 +25,7 @@ Pricing and the App Store listing are in the **Partner Dashboard**, even if app 
 | Recurring currency/price | USD / 49.99 | USD / 84.99 |
 | Billing period | Every 30 days | Every 30 days |
 | Free trial duration | 14 days | 14 days |
-| Welcome path within Stride's `/app` root | `/billing` | `/billing` |
+| Welcome path within Metrico's `/app` root | `/billing` | `/billing` |
 | Active advertising providers | One selected provider | All supported configured providers |
 | Current recommendation limit | 10 | 50 |
 
@@ -37,7 +37,7 @@ The backend rejects mismatched currency, billing interval, amount or handles. Th
 
 ## Partner subscription verification
 
-An organization owner creates the Partner API client through **Partner Dashboard → Settings → Partner API clients → Manage Partner API clients**. Grant **Manage apps** for subscription reads; no financial-write permission is needed for Stride's read-only reconciliation.
+An organization owner creates the Partner API client through **Partner Dashboard → Settings → Partner API clients → Manage Partner API clients**. Grant **Manage apps** for subscription reads; no financial-write permission is needed for Metrico's read-only reconciliation.
 
 Configure these backend-only deployment values:
 

@@ -42,7 +42,7 @@ describe('MCP protocol failure boundary', () => {
     expect(response.body).toMatchObject({
       result: {
         isError: true,
-        structuredContent: { data: { error: 'Stride MCP request failed' } },
+        structuredContent: { data: { error: 'Metrico MCP request failed' } },
       },
     });
     expect(JSON.stringify(response.body)).not.toContain('internal-db.example');
@@ -89,7 +89,7 @@ describe('MCP protocol failure boundary', () => {
       headers,
     );
 
-    expect(JSON.stringify(response.body)).toContain('Stride MCP request failed');
+    expect(JSON.stringify(response.body)).toContain('Metrico MCP request failed');
     expect(JSON.stringify(response.body)).not.toContain('abc123');
   });
 });

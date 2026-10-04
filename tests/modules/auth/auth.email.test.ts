@@ -39,9 +39,9 @@ describe('ResendAuthEmailSender', () => {
     };
     expect(body.from).toBe('Test App <onboarding@resend.dev>');
     expect(body.to).toEqual(['owner@example.com']);
-    expect(body.subject).toBe('Verify your Stride email');
+    expect(body.subject).toBe('Verify your Metrico email');
     expect(body.text).toContain('This link expires in 24 hours.');
-    expect(body.html).toContain('STRIDE');
+    expect(body.html).toContain('METRICO');
     expect(body.html).toContain('Verify your email');
     expect(body.html).toContain(
       'http://localhost:3000/auth/verify-email?token=verification-token-value',
@@ -72,7 +72,7 @@ describe('ResendAuthEmailSender', () => {
       text: string;
       html: string;
     };
-    expect(body.subject).toBe('Reset your Stride password');
+    expect(body.subject).toBe('Reset your Metrico password');
     expect(body.text).toContain('one-time link expires in 30 minutes');
     expect(body.html).toContain('Reset your password');
     expect(body.html).toContain(

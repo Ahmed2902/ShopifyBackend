@@ -78,7 +78,7 @@ describe('external MCP client compatibility', () => {
       expect(initialized.body).toMatchObject({
         result: {
           protocolVersion,
-          serverInfo: { name: 'Stride', version: '1.0.0' },
+          serverInfo: { name: 'Metrico', version: '1.0.0' },
         },
       });
 

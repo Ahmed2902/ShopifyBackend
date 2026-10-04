@@ -1,19 +1,19 @@
-# Stride server-side purchase conversions
+# Metrico server-side purchase conversions
 
 ## Scope
 
-Stride can deliver Shopify-backed `Purchase` conversions server-side to:
+Metrico can deliver Shopify-backed `Purchase` conversions server-side to:
 
 - Meta Conversions API
 - TikTok Events API
 - Google Data Manager API for Google Ads
 
-This subsystem is intentionally provider-neutral above the final HTTP adapters. It does **not** treat a browser `CHECKOUT_COMPLETED` event as revenue truth. A conversion is eligible only after Stride has a persisted Shopify `Order` linked to a Stride storefront session.
+This subsystem is intentionally provider-neutral above the final HTTP adapters. It does **not** treat a browser `CHECKOUT_COMPLETED` event as revenue truth. A conversion is eligible only after Metrico has a persisted Shopify `Order` linked to a Metrico storefront session.
 
 ## Truth and privacy boundaries
 
 1. Shopify `Order` owns purchase time, value, currency, cancellation/test status and order identity.
-2. Stride Pixel contributes only consented provider click identifiers from the linked session (`fbclid`, `gclid`, `ttclid`).
+2. Metrico Pixel contributes only consented provider click identifiers from the linked session (`fbclid`, `gclid`, `ttclid`).
 3. The initial release does not require or persist customer email, phone, name, address, IP address or user-agent data.
 4. `UNKNOWN` or `DENIED` storefront consent never supplies a click identifier to conversion delivery.
 5. Successful deliveries immediately scrub the click identifier, attribution timestamp and source URL from the durable delivery record.
@@ -43,7 +43,7 @@ stride:purchase:<shopifyOrderId>
 
 The worker claims rows with `FOR UPDATE SKIP LOCKED`, recovers stale processing claims, retries transient provider/network failures with bounded exponential backoff, and dead-letters permanent failures or rows that exhaust the retry budget.
 
-Background delivery also enforces Stride billing:
+Background delivery also enforces Metrico billing:
 
 - active/trialing subscription required;
 - Pro can deliver to configured providers;
@@ -76,7 +76,7 @@ Content-Type: application/json
 
 ### Configure TikTok
 
-Stride sends TikTok's current `Purchase` standard event name for new Web/Events API integrations.
+Metrico sends TikTok's current `Purchase` standard event name for new Web/Events API integrations.
 
 ```http
 PUT /v1/stores/:storeId/conversion-delivery/destinations
@@ -135,9 +135,9 @@ Email/phone-based enhanced matching can be added later as optional enrichment af
 
 ## Deduplication boundary
 
-Stride guarantees **server-side idempotency** for retries/replays of its own delivery through the deterministic event key and database uniqueness.
+Metrico guarantees **server-side idempotency** for retries/replays of its own delivery through the deterministic event key and database uniqueness.
 
-Provider-side browser/server deduplication is a separate concern. If a merchant also sends the same Purchase through another browser/server integration, that integration must use the provider's corresponding deduplication mechanism (for example the same event ID where the provider requires one). Stride must not claim that an unrelated third-party/native pixel has the same event ID unless Stride can verify it.
+Provider-side browser/server deduplication is a separate concern. If a merchant also sends the same Purchase through another browser/server integration, that integration must use the provider's corresponding deduplication mechanism (for example the same event ID where the provider requires one). Metrico must not claim that an unrelated third-party/native pixel has the same event ID unless Metrico can verify it.
 
 ## Operations
 

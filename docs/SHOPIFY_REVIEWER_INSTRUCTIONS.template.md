@@ -1,10 +1,10 @@
-# Stride — Shopify App Store reviewer instructions
+# Metrico — Shopify App Store reviewer instructions
 
 > Replace every `<placeholder>` before submission. Do not submit this file with fake credentials or inaccessible resources.
 
 ## App
 
-- App name: Stride
+- App name: Metrico
 - App URL: `<https://...>`
 - Support email: `<support@...>`
 - Review contact: `<name + email>`
@@ -17,21 +17,21 @@
 
 ## Installation and authentication
 
-1. Install Stride from the Shopify review surface.
+1. Install Metrico from the Shopify review surface.
 2. Approve the requested scopes.
-3. Open Stride from **Shopify Admin → Apps → Stride**.
-4. No separate Stride account, password, email verification, or Google sign-in is required.
+3. Open Metrico from **Shopify Admin → Apps → Metrico**.
+4. No separate Metrico account, password, email verification, or Google sign-in is required.
 5. The embedded app authenticates using Shopify App Bridge ID tokens.
 
-Expected result: Stride authenticates the installed shop. With no approved subscription, Plan & billing remains usable and paid screens request Shopify-hosted plan selection.
+Expected result: Metrico authenticates the installed shop. With no approved subscription, Plan & billing remains usable and paid screens request Shopify-hosted plan selection.
 
 ## Billing
 
-Stride uses Shopify App Pricing.
+Metrico uses Shopify App Pricing.
 
 - Essentials: $49.99 USD/month
 - Pro: $84.99 USD/month
-- Trial: 14 days on both plans for eligible stores, with Pro-equivalent Stride access while Shopify reports the trial active. Shopify determines remaining trial eligibility after reinstall.
+- Trial: 14 days on both plans for eligible stores, with Pro-equivalent Metrico access while Shopify reports the trial active. Shopify determines remaining trial eligibility after reinstall.
 
 Review steps:
 
@@ -39,13 +39,13 @@ Review steps:
 2. Select **Manage plan**.
 3. Shopify opens the hosted pricing page.
 4. Select Essentials or Pro.
-5. Return to Stride and refresh billing state.
+5. Return to Metrico and refresh billing state.
 
-No external payment processor or card form is used by Stride.
+No external payment processor or card form is used by Metrico.
 
 ## Shopify data setup
 
-After install, Stride reads the shop's permitted Shopify data through the GraphQL Admin API.
+After install, Metrico reads the shop's permitted Shopify data through the GraphQL Admin API.
 
 To populate the review store:
 
@@ -82,20 +82,20 @@ Use one reviewer-safe provider path:
 
 Do not list a provider as launch-ready in the App Store listing unless the reviewer can validate its connection and core data flow.
 
-## Core Stride features to review
+## Core Metrico features to review
 
 1. **Overview** — Shopify commerce truth beside supported paid-media evidence.
 2. **Advertising** — provider/account/campaign/group/ad hierarchy and daily metrics.
 3. **Product × Ads** — exact/shared/unmapped product-ad relationships; ambiguous spend is not silently allocated.
 4. **Inventory-aware intelligence** — stock context shown beside paid activity where required evidence exists.
-5. **Stride Pixel** — first-party storefront sessions/funnel behavior where the review store has events.
-6. **Recommendations** — deterministic, read-only findings; Stride does not automatically change campaign budgets.
+5. **Metrico Pixel** — first-party storefront sessions/funnel behavior where the review store has events.
+6. **Recommendations** — deterministic, read-only findings; Metrico does not automatically change campaign budgets.
 7. **Billing/entitlements** — `/app/billing`: Essentials one-channel limit and Pro advanced/multi-channel access.
 8. **Merchant collection actions** — `/app/collections`: an owner/admin can explicitly create a collection and add selected products. This is why `write_products` is requested; recommendations do not perform these writes automatically.
 
 ## Protected customer data
 
-Stride requests level-1 protected customer data because Order resources are required for analytics.
+Metrico requests level-1 protected customer data because Order resources are required for analytics.
 
 Current launch queries do not request customer name, email, phone, billing address, or shipping address.
 
@@ -113,9 +113,9 @@ The Connections page at `/app/integrations` includes the Shopify privacy request
 
 ## Uninstall / reinstall
 
-1. Uninstall Stride from Shopify Admin.
+1. Uninstall Metrico from Shopify Admin.
 2. Confirm access credentials are no longer treated as active.
-3. Reinstall Stride.
+3. Reinstall Metrico.
 4. Open the app again through Shopify Admin.
 
 Expected result: the same shop reconciles to its tenant without duplication. Bootstrap verifies current credentials and Shopify AppInstallation identity even if the old uninstall webhook is delayed. Cached old billing cannot grant access to a changed installation. Reconfirm the hosted plan and reinstall the Pixel/re-enable destinations when applicable. A same-installation reopen preserves its generation; an old delayed uninstall cannot revoke a newer installation.

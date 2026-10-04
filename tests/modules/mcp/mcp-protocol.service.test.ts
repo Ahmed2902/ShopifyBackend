@@ -56,7 +56,7 @@ describe('McpProtocolService', () => {
         supportedVersions: [MCP_MODERN_VERSION, MCP_LEGACY_VERSION],
         ttlMs: 3_600_000,
         cacheScope: 'public',
-        _meta: { 'io.modelcontextprotocol/serverInfo': { name: 'Stride', version: '1.0.0' } },
+        _meta: { 'io.modelcontextprotocol/serverInfo': { name: 'Metrico', version: '1.0.0' } },
       },
     });
   });
@@ -212,7 +212,7 @@ describe('McpProtocolService', () => {
     });
   });
 
-  it('rejects non-scalar JSON-RPC ids before invoking any Stride work', async () => {
+  it('rejects non-scalar JSON-RPC ids before invoking any Metrico work', async () => {
     const { value, tools, reads } = service();
     const response = await value.handle(
       storeId,
@@ -381,7 +381,7 @@ describe('McpProtocolService', () => {
     expect(initialized.body).toMatchObject({
       result: {
         protocolVersion: MCP_LEGACY_VERSION,
-        serverInfo: { name: 'Stride', version: '1.0.0' },
+        serverInfo: { name: 'Metrico', version: '1.0.0' },
       },
     });
     expect(JSON.stringify(initialized.body)).not.toContain('resultType');

@@ -9,7 +9,7 @@ const shopIdentitySchema = z.object({
 
 const customerIdentitySchema = z.object({
   id: shopifyIdSchema,
-  // Shopify includes these fields in compliance payloads. Stride validates their shape but
+  // Shopify includes these fields in compliance payloads. Metrico validates their shape but
   // deliberately drops them before writing the durable webhook inbox.
   email: z.string().nullable().optional(),
   phone: z.string().nullable().optional(),

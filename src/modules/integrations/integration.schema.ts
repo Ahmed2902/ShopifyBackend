@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Advertising integrations supported by Stride's normalized paid-media layer.
+ * Advertising integrations supported by Metrico's normalized paid-media layer.
  * Keep this list as the single runtime source for ad-provider validation.
  */
 export const ADVERTISING_PROVIDERS = ['META', 'TIKTOK'] as const;

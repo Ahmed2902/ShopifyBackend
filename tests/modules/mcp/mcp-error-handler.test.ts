@@ -17,7 +17,7 @@ function appWithFailure(error: unknown) {
 describe('MCP error boundary', () => {
   it('keeps middleware AppErrors inside the JSON-RPC envelope', async () => {
     const app = appWithFailure(
-      new AppError('Your Stride subscription is not active.', 402, 'SUBSCRIPTION_REQUIRED', {
+      new AppError('Your Metrico subscription is not active.', 402, 'SUBSCRIPTION_REQUIRED', {
         selectedPlan: 'ESSENTIALS',
       }),
     );
@@ -35,7 +35,7 @@ describe('MCP error boundary', () => {
       id: 'billing-1',
       error: {
         code: -32000,
-        message: 'Your Stride subscription is not active.',
+        message: 'Your Metrico subscription is not active.',
         data: {
           code: 'SUBSCRIPTION_REQUIRED',
           details: { selectedPlan: 'ESSENTIALS' },

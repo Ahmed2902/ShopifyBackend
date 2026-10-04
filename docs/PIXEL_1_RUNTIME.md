@@ -6,7 +6,7 @@ PIXEL-1 implements the runtime path on top of the PIXEL-0 event/privacy contract
 
 ```text
 Shopify App Web Pixel
-  -> public Stride collector
+  -> public Metrico collector
     -> credential + consent gate
       -> contract validation
         -> privacy normalization
@@ -56,7 +56,7 @@ The raw collector token:
 
 - is generated with 32 bytes of CSPRNG entropy;
 - is passed into Shopify Web Pixel settings;
-- is stored by Stride only as a SHA-256 hash;
+- is stored by Metrico only as a SHA-256 hash;
 - is compared using a timing-safe comparison;
 - is rotated when the merchant re-runs pixel installation;
 - is never returned by the status/install response after persistence.

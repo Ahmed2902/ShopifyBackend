@@ -44,11 +44,11 @@ export class PixelController {
           duplicates: result.duplicates,
           suppressedForConsent: result.suppressedForConsent,
         },
-        'Stride Pixel collector accepted batch',
+        'Metrico Pixel collector accepted batch',
       );
       res.status(200).json(result);
     } catch (error) {
-      logger.warn({ code: collectorRejectionCode(error) }, 'Stride Pixel collector rejected batch');
+      logger.warn({ code: collectorRejectionCode(error) }, 'Metrico Pixel collector rejected batch');
       throw error;
     }
   };

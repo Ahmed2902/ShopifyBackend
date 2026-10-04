@@ -85,10 +85,10 @@ const pixelJourneyWorker = new PollingWorker(
       pixelJourneyService.linkPendingOrders(100),
     ]);
     if (sessions.materialized > 0 || sessions.failed > 0 || orders.linked > 0) {
-      logger.info({ sessions, orders }, 'Reconciled Stride Pixel journey read model');
+      logger.info({ sessions, orders }, 'Reconciled Metrico Pixel journey read model');
     }
   },
-  'Stride Pixel journey reconciliation failed',
+  'Metrico Pixel journey reconciliation failed',
 );
 
 const conversionEnqueueWorker = new PollingWorker(
@@ -122,11 +122,11 @@ const pixelBehaviorWorker = new PollingWorker(
     if (result.storesRolled > 0 || result.failed > 0 || repairedStates > 0) {
       logger.info(
         { ...result, repairedStates },
-        'Rolled up privacy-safe Stride Pixel behavioral facts',
+        'Rolled up privacy-safe Metrico Pixel behavioral facts',
       );
     }
   },
-  'Stride Pixel behavioral rollup failed',
+  'Metrico Pixel behavioral rollup failed',
 );
 
 const pixelAttributionWorker = new PollingWorker(
@@ -137,11 +137,11 @@ const pixelAttributionWorker = new PollingWorker(
     if (result.storesRolled > 0 || result.failed > 0 || repairedStates > 0) {
       logger.info(
         { ...result, repairedStates },
-        'Rolled up privacy-safe Stride Pixel attribution evidence',
+        'Rolled up privacy-safe Metrico Pixel attribution evidence',
       );
     }
   },
-  'Stride Pixel attribution rollup failed',
+  'Metrico Pixel attribution rollup failed',
 );
 
 const pixelRetentionWorker = new PollingWorker(
@@ -156,10 +156,10 @@ const pixelRetentionWorker = new PollingWorker(
     const sessions = await pixelJourneyService.cleanupExpiredSessions();
 
     if (sessions.deleted > 0 || events.deleted > 0 || repairs.selected > 0 || repairs.failed > 0) {
-      logger.info({ sessions, events, repairs }, 'Deleted expired Stride Pixel behavioral traces');
+      logger.info({ sessions, events, repairs }, 'Deleted expired Metrico Pixel behavioral traces');
     }
   },
-  'Stride Pixel retention cleanup failed',
+  'Metrico Pixel retention cleanup failed',
 );
 
 const workers = [

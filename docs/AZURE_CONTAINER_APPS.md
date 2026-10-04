@@ -1,6 +1,6 @@
 # Azure Container Apps deployment
 
-Stride should run the same backend image as two separate Azure Container Apps:
+Metrico should run the same backend image as two separate Azure Container Apps:
 
 - **stride-api** — public HTTPS ingress, default image command `node dist/api.js`
 - **stride-worker** — no public ingress, command override `node dist/worker.js`, minimum replicas **1**
@@ -93,7 +93,7 @@ After the Azure API hostname is known:
 2. Update Shopify webhook subscription URIs to the Azure API origin.
 3. Keep the production frontend callback in Shopify `redirect_urls` and set `SHOPIFY_REDIRECT_URI` to the exact same callback.
 4. Deploy/release the Shopify app configuration.
-5. Reinstall/repair the Stride Pixel so its remote settings contain the production collector URL.
+5. Reinstall/repair the Metrico Pixel so its remote settings contain the production collector URL.
 6. Re-test product/inventory/order/refund webhooks without pressing **Sync data**.
 
 ## First production smoke

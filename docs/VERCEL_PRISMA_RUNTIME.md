@@ -1,6 +1,6 @@
 # Vercel Prisma runtime note
 
-Stride uses Prisma's `prisma-client` generator with a custom output directory at `src/generated/prisma`.
+Metrico uses Prisma's `prisma-client` generator with a custom output directory at `src/generated/prisma`.
 That directory is intentionally git-ignored, so every deployment environment must generate the client before the Vercel Node function is traced and packaged.
 
 `package.json` therefore runs `prisma generate` during `postinstall`. Keep the normal `build`-time generation as well so local and CI builds remain self-contained after schema changes.

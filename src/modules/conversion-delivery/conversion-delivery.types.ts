@@ -8,7 +8,7 @@ import type {
 export const GOOGLE_DATA_MANAGER_SCOPE = 'https://www.googleapis.com/auth/datamanager';
 
 export type GoogleConsentMode = 'ACCOUNT_DEFAULT' | 'GRANTED';
-export type ConversionAuthSource = 'META_CONNECTION';
+export type ConversionAuthSource = 'META_CONNECTION' | 'GOOGLE_ADS_CONNECTION';
 
 export type ConversionDestinationConfig = {
   enhancedMatching?: boolean;

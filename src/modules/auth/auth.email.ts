@@ -46,20 +46,20 @@ function authEmailHtml(input: {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${escapeHtml(input.title)}</title>
   </head>
-  <body style="margin:0;background:#f6f6f6;font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#111111;">
+  <body style="margin:0;background:#f7f6f2;font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#24282d;">
     <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(input.preheader)}</div>
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f6f6;padding:40px 16px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f7f6f2;padding:40px 16px;">
       <tr>
         <td align="center">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border:1px solid #e7e7e7;border-radius:18px;overflow:hidden;">
             <tr>
-              <td style="padding:32px 36px 8px;font-size:18px;font-weight:800;letter-spacing:-0.02em;">STRIDE</td>
+              <td style="padding:32px 36px 8px;font-size:18px;font-weight:800;letter-spacing:-0.02em;">METRICO</td>
             </tr>
             <tr>
               <td style="padding:20px 36px 36px;">
                 <h1 style="margin:0 0 14px;font-size:28px;line-height:1.2;letter-spacing:-0.03em;">${escapeHtml(input.title)}</h1>
                 <p style="margin:0 0 24px;font-size:15px;line-height:1.65;color:#525252;">${escapeHtml(input.body)}</p>
-                <a href="${actionUrl}" style="display:inline-block;background:#111111;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;padding:13px 18px;border-radius:10px;">${escapeHtml(input.actionLabel)}</a>
+                <a href="${actionUrl}" style="display:inline-block;background:#355cde;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;padding:13px 18px;border-radius:10px;">${escapeHtml(input.actionLabel)}</a>
                 <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:#737373;">${escapeHtml(input.expiry)}</p>
                 <p style="margin:10px 0 0;font-size:13px;line-height:1.6;color:#737373;">${escapeHtml(input.securityNote)}</p>
                 <div style="margin:28px 0 12px;border-top:1px solid #eeeeee;"></div>
@@ -122,16 +122,16 @@ export class ResendAuthEmailSender implements AuthEmailSender {
     const link = linkWithToken(env.EMAIL_VERIFICATION_URL, token);
     await sendEmail({
       to: email,
-      subject: 'Verify your Stride email',
-      text: `Verify your email address to finish creating your Stride account:\n\n${link}\n\nThis link expires in 24 hours. If you did not create a Stride account, you can ignore this email.`,
+      subject: 'Verify your Metrico email',
+      text: `Verify your email address to finish creating your Metrico account:\n\n${link}\n\nThis link expires in 24 hours. If you did not create a Metrico account, you can ignore this email.`,
       html: authEmailHtml({
-        preheader: 'Verify your email to finish setting up your Stride account.',
+        preheader: 'Verify your email to finish setting up your Metrico account.',
         title: 'Verify your email',
-        body: 'Confirm that this email address belongs to you before signing in to Stride.',
+        body: 'Confirm that this email address belongs to you before signing in to Metrico.',
         actionLabel: 'Verify email',
         actionUrl: link,
         expiry: 'This one-time link expires in 24 hours.',
-        securityNote: 'If you did not create a Stride account, you can safely ignore this email.',
+        securityNote: 'If you did not create a Metrico account, you can safely ignore this email.',
       }),
       idempotencyKey: authEmailIdempotencyKey('verification', token),
     });
@@ -141,12 +141,12 @@ export class ResendAuthEmailSender implements AuthEmailSender {
     const link = linkWithToken(env.PASSWORD_RESET_URL, token);
     await sendEmail({
       to: email,
-      subject: 'Reset your Stride password',
-      text: `Reset your Stride password:\n\n${link}\n\nThis one-time link expires in 30 minutes. If you did not request a password reset, you can ignore this email.`,
+      subject: 'Reset your Metrico password',
+      text: `Reset your Metrico password:\n\n${link}\n\nThis one-time link expires in 30 minutes. If you did not request a password reset, you can ignore this email.`,
       html: authEmailHtml({
-        preheader: 'Use this one-time link to reset your Stride password.',
+        preheader: 'Use this one-time link to reset your Metrico password.',
         title: 'Reset your password',
-        body: 'We received a request to choose a new password for your Stride account.',
+        body: 'We received a request to choose a new password for your Metrico account.',
         actionLabel: 'Reset password',
         actionUrl: link,
         expiry: 'This one-time link expires in 30 minutes.',

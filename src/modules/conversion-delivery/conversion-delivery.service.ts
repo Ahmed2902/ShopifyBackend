@@ -242,7 +242,7 @@ export class ConversionDeliveryService {
         }
         if (claim.eventAt.getTime() < this.now().getTime() - 7 * 86400_000) {
           throw new ConversionProviderError(
-            'The event exceeded Stride delivery retention',
+            'The event exceeded Metrico delivery retention',
             false,
             'EVENT_EXPIRED',
           );

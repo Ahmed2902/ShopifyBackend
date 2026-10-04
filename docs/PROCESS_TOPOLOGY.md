@@ -1,6 +1,6 @@
-# Stride backend process topology
+# Metrico backend process topology
 
-Stride has two different runtime responsibilities:
+Metrico has two different runtime responsibilities:
 
 1. the HTTP API
 2. long-lived background pollers that drain webhook/reconciliation/pixel work
@@ -77,9 +77,9 @@ Do not use the combined command for a horizontally scaled API deployment, becaus
 
 `src/server.ts` remains the Vercel function entrypoint. When `VERCEL=1`, it exports the Express app without binding a port or starting background pollers.
 
-Do not use Vercel request functions as the only runtime for Stride's persistent polling workers. Host `npm run start:worker` on a persistent process platform.
+Do not use Vercel request functions as the only runtime for Metrico's persistent polling workers. Host `npm run start:worker` on a persistent process platform.
 
-## Recommended Stride topology
+## Recommended Metrico topology
 
 ```text
 Vercel

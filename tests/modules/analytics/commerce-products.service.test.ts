@@ -18,7 +18,7 @@ function repository() {
           title: 'Core Tee',
           handle: 'core-tee',
           status: 'ACTIVE',
-          vendor: 'Stride',
+          vendor: 'Metrico',
           productType: 'Apparel',
           tracksInventory: true,
           totalInventory: 10,

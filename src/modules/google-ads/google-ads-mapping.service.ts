@@ -40,7 +40,7 @@ function parseStoreUrl(rawUrl: string, hosts: Set<string>) {
 
 /**
  * Projects only deterministic Google final-URL evidence into canonical Product × Ads mappings.
- * PMax Asset Groups intentionally remain outside the adId-based mapping tables: Stride must not
+ * PMax Asset Groups intentionally remain outside the adId-based mapping tables: Metrico must not
  * fabricate an AdvertisingAd merely to allocate Shopping/PMax spend.
  */
 export class GoogleAdsMappingService {

@@ -267,7 +267,7 @@ export function mappingCoverageDegradedRule(input: {
     entityId: null,
     externalEntityId: null,
     title: 'A material share of Meta spend is not mapped to products',
-    summary: 'Stride cannot make complete product-level paid-demand comparisons while mapping coverage is low.',
+    summary: 'Metrico cannot make complete product-level paid-demand comparisons while mapping coverage is low.',
     suggestedAction: 'Review high-spend unmapped ads and confirm their product or collection targets.',
     impactScore: clamp01(1 - input.mappingCoverage),
     confidenceScore: 0.95,

@@ -37,7 +37,7 @@ describe('MCP deterministic recommendation contract', () => {
     expect(recommendationTool?.description).toContain('measured values');
     expect(recommendationTool?.description).toContain('explicit rule threshold crossed');
     expect(recommendationTool?.description).toContain('No probability or confidence grade is implied');
-    expect(recommendationTool?.description).toContain('why did Stride flag this?');
+    expect(recommendationTool?.description).toContain('why did Metrico flag this?');
     expect(recommendationTool?.description).not.toContain('evidence quality');
     expect(recommendationTool?.annotations).toMatchObject({
       readOnlyHint: true,

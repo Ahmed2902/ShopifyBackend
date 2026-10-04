@@ -118,7 +118,7 @@ export async function conversionSignalHealth(storeId: string) {
     since: since.toISOString(),
     until: new Date().toISOString(),
     methodology:
-      'Stride factual delivery-attempt identifier coverage; not provider match rate or Meta Event Match Quality. Purchases are Shopify truth; platform receipt is not proof of attribution.',
+      'Metrico factual delivery-attempt identifier coverage; not provider match rate or Meta Event Match Quality. Purchases are Shopify truth; platform receipt is not proof of attribution.',
     commercePurchases,
     collectionRetentionDays: env.PIXEL_RAW_EVENT_RETENTION_DAYS,
     enhancedMatchingApproved: env.SHOPIFY_ENHANCED_MATCHING_APPROVED,
@@ -222,7 +222,7 @@ export async function conversionSignalHealth(storeId: string) {
     limitations: [
       'No official Meta EMQ integration',
       'IP is available only from a verified canonical Shopify Purchase with explicit field approval',
-      'Native integrations and other tracking apps do not share Stride event IDs',
+      'Native integrations and other tracking apps do not share Metrico event IDs',
       'Funnel counts cover retained current-installation events, not unobserved or consent-denied visits; deletion and shorter raw retention can reduce available history; queue counts are unique events across destinations',
       'Browser reporting means the SDK was invoked, not that the provider received the event; the paired embed supports Meta storefront events only',
       'No claim of causal attribution',

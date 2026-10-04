@@ -91,12 +91,9 @@ export async function prepareConversionContents(claims: DeliveryClaim[]) {
         })
       : [],
   ]);
-  const ordersById = new Map(orders.map((order) => [order.id, order]));
-  const eventsById = new Map(events.map((event) => [event.id, event]));
   const readItems = (c: DeliveryClaim): ObservedItem[] => {
     if ((c.eventName ?? 'PURCHASE') === 'PURCHASE') {
-      const sourceOrder = c.sourceOrderId ? ordersById.get(c.sourceOrderId) : undefined;
-      const order = sourceOrder?.storeId === c.storeId ? sourceOrder : undefined;
+      const order = orders.find((o) => o.id === c.sourceOrderId && o.storeId === c.storeId);
       return (order?.lineItems ?? []).flatMap((line) => {
         if (!line.shopifyVariantId || line.quantity < 1) return [];
         const price = line.discountedUnitPriceAfterAllDiscounts ?? line.originalUnitPrice;
@@ -111,8 +108,7 @@ export async function prepareConversionContents(claims: DeliveryClaim[]) {
         ];
       });
     }
-    const sourceEvent = c.sourceEventId ? eventsById.get(c.sourceEventId) : undefined;
-    const event = sourceEvent?.storeId === c.storeId ? sourceEvent : undefined;
+    const event = events.find((e) => e.id === c.sourceEventId && e.storeId === c.storeId);
     if (event?.commerceCurrencyCode) c.currencyCode = event.commerceCurrencyCode;
     const items = Array.isArray(event?.commerceItems)
       ? (event.commerceItems as ObservedItem[])
@@ -179,24 +175,14 @@ export async function prepareConversionContents(claims: DeliveryClaim[]) {
         })
       : [],
   ]);
-  const mappingsByCatalog = new Map<string, Mapping[]>();
-  const keyFor = (provider: string, storeId: string, catalogId: string | null | undefined) =>
-    JSON.stringify([provider, storeId, catalogId]);
-  for (const [provider, mappings] of [
-    ['META', meta],
-    ['TIKTOK', tiktok],
-  ] as const) {
-    for (const mapping of mappings) {
-      if (mapping.variant.storeId !== mapping.catalogItem.catalog.storeId) continue;
-      const key = keyFor(provider, mapping.variant.storeId, mapping.catalogItem.catalog.id);
-      const group = mappingsByCatalog.get(key) ?? [];
-      group.push(mapping);
-      mappingsByCatalog.set(key, group);
-    }
-  }
   for (const c of relevant) {
     const catalogId = (c.destination.configJson as ConversionDestinationConfig | null)?.catalogId;
-    const mappings = mappingsByCatalog.get(keyFor(c.provider, c.storeId, catalogId)) ?? [];
+    const mappings = (c.provider === 'META' ? meta : tiktok).filter(
+      (m) =>
+        m.variant.storeId === c.storeId &&
+        m.catalogItem.catalog.storeId === c.storeId &&
+        m.catalogItem.catalog.id === catalogId,
+    );
     Object.assign(c, resolveContentItems(itemsByClaim.get(c.id) ?? [], mappings));
   }
 }

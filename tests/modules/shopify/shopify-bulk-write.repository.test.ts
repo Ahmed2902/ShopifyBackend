@@ -24,7 +24,7 @@ function product(id: string, title = `Product ${id}`): ShopifyProduct {
     title,
     handle: `product-${id}`,
     productType: 'Apparel',
-    vendor: 'Stride Test',
+    vendor: 'Metrico Test',
     tags: ['bulk', 'sync'],
     status: 'ACTIVE',
     totalInventory: 10,

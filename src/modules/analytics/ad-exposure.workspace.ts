@@ -293,7 +293,7 @@ export class AdExposureWorkspace {
       limitations.push({
         code: 'SHARED_SPEND_NOT_ALLOCATED',
         message:
-          'Ad spend is known for the shared creative, but Stride does not divide it between promoted products without provider evidence.',
+          'Ad spend is known for the shared creative, but Metrico does not divide it between promoted products without provider evidence.',
       });
     }
     if (ad.targetScope === 'COLLECTION') {
@@ -335,7 +335,7 @@ export class AdExposureWorkspace {
     if (ad.targetScope === 'UNKNOWN') {
       limitations.push({
         code: 'TARGET_UNKNOWN',
-        message: 'Stride does not have deterministic Shopify target evidence for this ad.',
+        message: 'Metrico does not have deterministic Shopify target evidence for this ad.',
       });
     }
     if (!inventoryTrusted && ['MULTI_PRODUCT', 'COLLECTION'].includes(ad.targetScope)) {

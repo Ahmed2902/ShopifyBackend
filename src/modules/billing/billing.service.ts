@@ -239,7 +239,7 @@ export class BillingService {
         where: { id: storeId }, select: { shopifyConnection: { select: { status: true } } },
       });
       if (store?.shopifyConnection?.status !== 'ACTIVE') {
-        throw new AppError('Reopen the installed Stride app from Shopify Admin.',
+        throw new AppError('Reopen the installed Metrico app from Shopify Admin.',
           402, 'SHOPIFY_INSTALL_REQUIRED');
       }
       if (billing.verification.stale || billing.provider !== 'SHOPIFY') {
@@ -252,7 +252,7 @@ export class BillingService {
     if (!billing.accessActive) {
       const portal = await this.portal(storeId);
       throw new AppError(
-        'Your Stride trial or subscription is not active. Choose a plan to continue using paid features.',
+        'Your Metrico trial or subscription is not active. Choose a plan to continue using paid features.',
         402,
         'SUBSCRIPTION_REQUIRED',
         {
@@ -308,7 +308,7 @@ export class BillingService {
     if (!selected && connections.length > 1) {
       const portal = await this.portal(storeId);
       throw new AppError(
-        'Essentials includes one advertising channel. Choose which connected channel should remain active in Stride.',
+        'Essentials includes one advertising channel. Choose which connected channel should remain active in Metrico.',
         409,
         'PLAN_CHANNEL_SELECTION_REQUIRED',
         { connectedProviders: connections, planSelectionUrl: portal.url },
@@ -336,7 +336,7 @@ export class BillingService {
     if (!selected && connections.length > 1) {
       const portal = await this.portal(storeId);
       throw new AppError(
-        'Essentials includes one advertising channel. Choose which connected channel should remain active in Stride.',
+        'Essentials includes one advertising channel. Choose which connected channel should remain active in Metrico.',
         409,
         'PLAN_CHANNEL_SELECTION_REQUIRED',
         { connectedProviders: connections, planSelectionUrl: portal.url },
@@ -584,7 +584,7 @@ export class BillingService {
 
     if (!selectedPlan || !item) {
       throw new AppError(
-        'Shopify returned an active Stride subscription with an unrecognized plan handle.',
+        'Shopify returned an active Metrico subscription with an unrecognized plan handle.',
         503,
         'SHOPIFY_PLAN_UNRECOGNIZED',
         { handles: remote.items.map((remoteItem) => remoteItem.handle).filter(Boolean) },
@@ -604,7 +604,7 @@ export class BillingService {
 
     if (!contractMatches) {
       throw new AppError(
-        'Shopify App Pricing configuration does not match Stride’s launch pricing contract.',
+        'Shopify App Pricing configuration does not match Metrico’s launch pricing contract.',
         503,
         'SHOPIFY_PLAN_CONFIGURATION_MISMATCH',
         {

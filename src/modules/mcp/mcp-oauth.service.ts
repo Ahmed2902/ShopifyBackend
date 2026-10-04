@@ -244,7 +244,7 @@ export class McpOAuthService {
     const resource = input.resource ?? mcpResource();
     if (resource !== mcpResource()) {
       throw new AppError(
-        'OAuth resource does not match the Stride MCP resource',
+        'OAuth resource does not match the Metrico MCP resource',
         400,
         'MCP_INVALID_RESOURCE',
       );
@@ -335,7 +335,7 @@ export class McpOAuthService {
     }
     const redirect = new URL(request.redirectUri);
     redirect.searchParams.set('error', 'access_denied');
-    redirect.searchParams.set('error_description', 'The merchant declined Stride MCP access.');
+    redirect.searchParams.set('error_description', 'The merchant declined Metrico MCP access.');
     if (request.state) redirect.searchParams.set('state', request.state);
     redirect.searchParams.set('iss', mcpIssuer());
     return redirect.toString();
