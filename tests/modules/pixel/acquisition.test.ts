@@ -82,3 +82,18 @@ describe('known Shopify tokenized URL paths', () => {
       .toBe('https://shop.example' + canonical);
   });
 });
+
+describe('conservative source-channel boundaries', () => {
+  it.each([
+    [{ utmSource: 'unrecognized-publisher', utmMedium: 'organic' }, 'OTHER', 'OTHER'],
+    [{ utmSource: 'instagram', utmMedium: 'organic' }, 'ORGANIC_SOCIAL', 'INSTAGRAM'],
+    [{ utmSource: 'facebook', utmMedium: 'cpc' }, 'PAID_SOCIAL', 'META'],
+    [{ referrerUrl: 'https://mail.google.com/' }, 'EMAIL', 'GOOGLE'],
+    [{ referrerUrl: 'https://docs.google.com/' }, 'REFERRAL', 'GOOGLE'],
+    [{ referrerUrl: 'https://drive.google.com/' }, 'REFERRAL', 'GOOGLE'],
+    [{ referrerUrl: 'https://accounts.google.com/' }, 'REFERRAL', 'GOOGLE'],
+    [{ referrerUrl: 'https://unrecognized.google.com/' }, 'REFERRAL', 'OTHER'],
+  ] as const)('does not invent a search/social channel for %j', (input, channel, provider) => {
+    expect(classifyAcquisition(input)).toMatchObject({ channel, provider });
+  });
+});

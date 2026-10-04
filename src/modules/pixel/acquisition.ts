@@ -54,7 +54,10 @@ function domain(h: string, d: string) {
   return h === d || h.endsWith(`.${d}`);
 }
 function referrerSource(h: string): { provider: string; channel: AcquisitionChannel } | null {
-  if (/^(?:[a-z0-9-]+\.)*google\.(?:com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})$/.test(h))
+  if (h === 'mail.google.com') return { provider: 'GOOGLE', channel: 'EMAIL' };
+  if (['docs.google.com', 'drive.google.com', 'accounts.google.com'].includes(h))
+    return { provider: 'GOOGLE', channel: 'REFERRAL' };
+  if (/^(?:(?:www|images|news|maps|encrypted)\.)?google\.(?:com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})$/.test(h))
     return { provider: 'GOOGLE', channel: 'ORGANIC_SEARCH' };
   if (domain(h, 'bing.com')) return { provider: 'BING', channel: 'ORGANIC_SEARCH' };
   for (const [d, provider] of [
@@ -125,7 +128,8 @@ export function classifyAcquisition(e: AcquisitionEvidence) {
       );
     if (medium === 'organic')
       return result(
-        ['GOOGLE', 'BING'].includes(provider) ? 'ORGANIC_SEARCH' : 'ORGANIC_SOCIAL',
+        ['GOOGLE', 'BING'].includes(provider) ? 'ORGANIC_SEARCH' :
+          ['META', 'INSTAGRAM', 'TIKTOK', 'YOUTUBE', 'PINTEREST'].includes(provider) ? 'ORGANIC_SOCIAL' : 'OTHER',
         provider,
         'UTM',
         false,
@@ -139,7 +143,7 @@ export function classifyAcquisition(e: AcquisitionEvidence) {
   if (referring && referring !== host(e.pageUrl) && referring !== host(e.landingPageUrl)) {
     const known = referrerSource(referring);
     return known
-      ? result(known.channel, known.provider, 'REFERRER', false)
+      ? result(known.channel, known.provider, 'REFERRER', known.channel === 'REFERRAL' ? null : false)
       : result('REFERRAL', 'OTHER', 'REFERRER', null);
   }
   return e.pageUrl || e.landingPageUrl
