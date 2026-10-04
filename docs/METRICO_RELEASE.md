@@ -22,8 +22,8 @@ TikTok investigation confirms a Marketing API pixel-list endpoint and a separate
 Shopify review was refreshed from the canonical CLI checklist. Theme app extension requirements now apply: 21 likely passing, 13 need live/account/listing review, 0 observed failures across 34 applicable requirements. This is code evidence, not Shopify approval. Live installation, incognito App Bridge, billing, protected-data approval, extension deployment, TLS and listing/reviewer credentials remain launch gates.
 
 ## Primary references
-- https://developers.google.com/data-manager/api/devguides/set-up-access
+- https://developers.google.com/data-manager/api/devguides/quickstart/set-up-access
 - https://developers.google.com/google-ads/api/fields/v25/conversion_action
-- https://github.com/tiktok/tiktok-business-api-sdk/blob/main/js_sdk/docs/PixelApi.md
-- https://business-api.tiktok.com/portal/docs?id=1771101027435521
+- https://github.com/tiktok/tiktok-business-api-sdk/blob/main/js_sdk/docs/MeasurementApi.md
+- https://business-api.tiktok.com/gateway/docs/index?doc_id=1771100779668482
 - https://shopify.dev/docs/apps/launch/app-store-review/app-store-ai-self-review-requirements
