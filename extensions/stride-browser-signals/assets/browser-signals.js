@@ -10,6 +10,8 @@
   let revokedOnPage = false;
   let busy = false;
   let sdk;
+  let ownedFbq;
+  let sdkScript;
   const initialized = new Set();
   const submitted = new Set();
   function permissionsGranted() {
@@ -77,8 +79,8 @@
     clearBridge();
     if (!permissionsGranted()) {
       revokedOnPage = true;
-      if (window.__strideOwnsMetaSdk) {
-        window.fbq('consent', 'revoke');
+      if (window.__strideOwnsMetaSdk && ownedFbq) {
+        ownedFbq('consent', 'revoke');
         for (const name of ['_fbp', '_fbc']) {
           document.cookie = name + '=; Max-Age=0; Path=/; Secure; SameSite=Lax';
           const parts = window.location.hostname.split('.');
@@ -97,7 +99,7 @@
     active = false;
     revision++;
     clearBridge();
-    if (window.__strideOwnsMetaSdk) window.fbq('consent', 'revoke');
+    if (window.__strideOwnsMetaSdk && ownedFbq) ownedFbq('consent', 'revoke');
   });
   window.addEventListener('pageshow', () => {
     if (!active) {
@@ -107,8 +109,11 @@
   });
   function loadSdk() {
     if (sdk) return sdk;
-    if (window.fbq) return Promise.reject(new Error('EXISTING_META_BROWSER_TRACKER'));
-    sdk = new Promise((resolve, reject) => {
+    if (window.fbq && window.fbq !== ownedFbq)
+      return Promise.reject(new Error('EXISTING_META_BROWSER_TRACKER'));
+    if (ownedFbq && window.fbq === ownedFbq && typeof ownedFbq.callMethod === 'function')
+      return Promise.resolve();
+    if (!ownedFbq) {
       const fbq = function () {
         if (fbq.callMethod) fbq.callMethod.apply(fbq, arguments);
         else fbq.queue.push(arguments);
@@ -117,17 +122,39 @@
       fbq.loaded = true;
       fbq.version = '2.0';
       fbq.push = fbq;
+      ownedFbq = fbq;
       window.fbq = fbq;
       window._fbq = fbq;
       window.__strideOwnsMetaSdk = true;
       fbq('consent', 'revoke');
-      const script = document.createElement('script');
-      script.async = true;
-      script.src = 'https://connect.facebook.net/en_US/fbevents.js';
-      script.onload = () => resolve();
-      script.onerror = () => reject(new Error('META_SDK_UNAVAILABLE'));
+    }
+    const append = !sdkScript;
+    if (append) {
+      sdkScript = document.createElement('script');
+      sdkScript.async = true;
+      sdkScript.src = 'https://connect.facebook.net/en_US/fbevents.js';
+    }
+    sdk = new Promise((resolve, reject) => {
+      sdkScript.onload = () => window.fbq === ownedFbq
+        ? resolve()
+        : reject(new Error('EXISTING_META_BROWSER_TRACKER'));
+      sdkScript.onerror = () => {
+        sdkScript.remove?.();
+        sdkScript = undefined;
+        // Never clear or take ownership of a third-party replacement.
+        if (window.fbq === ownedFbq) delete window.fbq;
+        if (window._fbq === ownedFbq) delete window._fbq;
+        ownedFbq = undefined;
+        window.__strideOwnsMetaSdk = false;
+        reject(new Error('META_SDK_UNAVAILABLE'));
+      };
+      // A timeout leaves the in-flight owned script intact. A later batch waits again or
+      // uses it after loading; it must not inject a competing second SDK script.
       setTimeout(() => reject(new Error('META_SDK_TIMEOUT')), 5000);
-      document.head.appendChild(script);
+      if (append) document.head.appendChild(sdkScript);
+    }).catch((error) => {
+      sdk = undefined;
+      throw error;
     });
     return sdk;
   }
@@ -308,6 +335,10 @@
             Date.parse(receipt.expiresAt) <= Date.now()
           )
             continue;
+          if (window.fbq !== ownedFbq || !window.__strideOwnsMetaSdk) {
+            await authorize(batch, undefined, 'EXISTING_META_BROWSER_TRACKER');
+            break;
+          }
           window.fbq('consent', 'grant');
           if (!initialized.has(dispatch.pixelId)) {
             window.fbq('set', 'autoConfig', false, dispatch.pixelId);

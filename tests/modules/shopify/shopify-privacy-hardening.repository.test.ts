@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
+import { PixelRepository } from '../../../src/modules/pixel/pixel.repository.js';
 import { prisma } from '../../../src/lib/prisma.js';
 import { ShopifyPrivacyRepository } from '../../../src/modules/shopify/privacy/shopify-privacy.repository.js';
 
@@ -143,7 +144,7 @@ describeDatabase('Shopify privacy hardening', () => {
 
     await prisma.storefrontConsentWithdrawal.create({ data: { storeId: store.id, scopeKey: 'session:raw-session-789', revokedBefore: now, retentionExpiresAt: expiresAt } });
     await repository.redactCustomerOrders(store.id, redactDelivery.id, [orderId]);
-    expect(await prisma.storefrontConsentWithdrawal.count({ where: { storeId: store.id } })).toBe(0);
+    expect(await prisma.storefrontConsentWithdrawal.count({ where: { storeId: store.id } })).toBe(1);
 
     expect(await prisma.storefrontEvent.count({ where: { storeId: store.id } })).toBe(0);
     expect(await prisma.storefrontSessionRepair.count({ where: { storeId: store.id } })).toBe(0);
@@ -160,6 +161,18 @@ describeDatabase('Shopify privacy hardening', () => {
     expect(scrubbed.payload).toEqual({ redacted: true, reason: 'customers/redact' });
     expect(JSON.stringify(scrubbed.payload)).not.toContain('customer@example.com');
     expect(JSON.stringify(scrubbed.payload)).not.toContain('+15551234567');
+    // A delayed pre-withdrawal batch arrives after customer redaction. The connection date
+    // deliberately allows the event, so only the retained withdrawal barrier can downgrade it.
+    await prisma.shopifyConnection.update({ where: { id: connectionId }, data: { installedAt: new Date(now.getTime() - 60_000) } });
+    await new PixelRepository().insertEvents(store.id, [{
+      eventId: 'delayed-after-redaction', eventName: 'PAGE_VIEW', eventAt: new Date(now.getTime() - 1000),
+      receivedAt: now, sessionId: 'raw-session-789', consentState: 'GRANTED', adSharingAllowed: true,
+      browserMatchCiphertext: 'must-not-survive', browserMatchExpiresAt: expiresAt, retentionExpiresAt: expiresAt,
+    }], now);
+    const delayed = await prisma.storefrontEvent.findFirstOrThrow({ where: { storeId: store.id, eventId: 'delayed-after-redaction' } });
+    expect(delayed.adSharingAllowed).toBe(false);
+    expect(delayed.browserMatchCiphertext).toBeNull();
+
   });
 
   it('exports all retained order, raw-event, materialized-session, and historical webhook evidence', async () => {
@@ -217,7 +230,7 @@ describeDatabase('Shopify privacy hardening', () => {
         lastSeenAt: now,
       },
     });
-    await prisma.storefrontEvent.create({
+    const accessEvent = await prisma.storefrontEvent.create({
       data: {
         storeId: store.id,
         eventId: `access-event-${randomUUID()}`,
@@ -254,9 +267,26 @@ describeDatabase('Shopify privacy hardening', () => {
     });
 
     await prisma.storefrontConsentWithdrawal.createMany({ data: ['session:access-session-990', 'visitor:visitor-990'].map(scopeKey => ({ storeId: store.id, scopeKey, revokedBefore: now, retentionExpiresAt: expiresAt })) });
+
+    await prisma.storefrontCustomerLink.create({ data: { storeId: store.id, sourceOrderId: order.id, customerKey: 'a'.repeat(64), expiresAt } });
+    const destination = await prisma.conversionDestination.create({ data: { storeId: store.id, provider: 'META', externalId: 'privacy-export-destination', accessTokenCiphertext: 'never-export-provider-token' } });
+    const delivery = await prisma.conversionDelivery.create({ data: { storeId: store.id, destinationId: destination.id, provider: 'META', eventKey: 'export-purchase', eventName: 'PURCHASE', sourceOrderId: order.id, shopifyOrderId: orderId, eventAt: now, clickId: 'retained-click-id', eventSourceUrl: 'https://shop.test/products/example' } });
+    await prisma.conversionDelivery.create({ data: { storeId: store.id, destinationId: destination.id, provider: 'META', eventKey: 'export-event', eventName: 'PRODUCT_VIEW', sourceEventId: accessEvent.id, eventAt: now } });
+    const foreign = await createConnectedStore('privacy-foreign');
+    const foreignOrder = await prisma.order.create({ data: { storeId: foreign.id, shopifyOrderId: orderId, name: '#foreign', shopifyCreatedAt: now, currencyCode: 'USD' } });
+    await prisma.storefrontCustomerLink.create({ data: { storeId: foreign.id, sourceOrderId: foreignOrder.id, customerKey: 'b'.repeat(64), expiresAt } });
+    const foreignDestination = await prisma.conversionDestination.create({ data: { storeId: foreign.id, provider: 'META', externalId: 'foreign-export' } });
+    await prisma.conversionDelivery.create({ data: { storeId: foreign.id, destinationId: foreignDestination.id, provider: 'META', eventKey: 'foreign-export', eventName: 'PURCHASE', sourceOrderId: foreignOrder.id, shopifyOrderId: orderId, eventAt: now, clickId: 'foreign-click-id' } });
     const request = await repository.createDataRequestExport(store.id, requestDelivery.id, [orderId]);
     const exported = request.exportJson as Record<string, unknown>;
     expect(exported.storefrontConsentWithdrawals).toMatchObject([{ scopeKey: 'session:access-session-990' }, { scopeKey: 'visitor:visitor-990' }]);
+    expect(exported.storefrontCustomerLinks).toMatchObject([{ sourceOrderId: order.id, customerKey: 'a'.repeat(64) }]);
+    expect(exported.conversionDeliveries).toEqual(expect.arrayContaining([expect.objectContaining({ id: delivery.id, clickId: 'retained-click-id', eventSourceUrl: 'https://shop.test/products/example' })]));
+    expect(exported.conversionDeliveries).toHaveLength(2);
+    expect(exported.conversionDeliveries).toEqual(expect.arrayContaining([expect.objectContaining({ sourceEventId: accessEvent.id })]));
+    expect(JSON.stringify(exported)).not.toContain('foreign-click-id');
+    expect(JSON.stringify(exported)).not.toContain('never-export-provider-token');
+    expect(JSON.stringify(exported)).not.toContain('b'.repeat(64));
     const exportedOrders = exported.orders as Array<Record<string, unknown>>;
     const exportedSessions = exported.storefrontSessions as Array<Record<string, unknown>>;
     const exportedEvents = exported.storefrontEvents as Array<Record<string, unknown>>;

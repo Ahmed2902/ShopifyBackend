@@ -90,12 +90,12 @@ function embed(
       key: (i: number) => [...stored.keys()][i] ?? null,
     },
   });
-  const sdkReady = () => {
+  const sdkReady = (index = 0) => {
     window.fbq.callMethod = (...args: unknown[]) => {
       calls(...args);
       if (args[0] === 'init') cookie = ` _fbp=fb.1.${Date.now()}.12345`;
     };
-    scripts[0]!.onload();
+    scripts[index]!.onload();
   };
   return {
     stored,
@@ -112,6 +112,56 @@ function embed(
   };
 }
 describe('consent-aware theme app embed', () => {
+  it('does not dispatch into a tracker that replaces the owned SDK during authorization', async () => {
+    const e = embed();
+    await vi.waitFor(() => expect(e.scripts).toHaveLength(1));
+    const foreign = vi.fn();
+    e.fetch.mockImplementationOnce(async () => {
+      e.window.fbq = foreign;
+      return { ok: true, json: async () => ({ dispatches: [e.dispatch], expiresAt: new Date(Date.now() + 5000).toISOString() }) };
+    });
+    e.sdkReady();
+    await vi.waitFor(() => expect(e.fetch).toHaveBeenCalledTimes(3));
+    expect(foreign).not.toHaveBeenCalled();
+    expect(e.calls.mock.calls.some(c => c[0] === 'trackSingle')).toBe(false);
+  });
+
+  it('retries a failed owned SDK without taking over a third-party global', async () => {
+    const e = embed();
+    await vi.waitFor(() => expect(e.scripts).toHaveLength(1));
+    e.scripts[0]!.onerror();
+    await vi.waitFor(() => expect(e.fetch).toHaveBeenCalledTimes(2));
+    expect(e.window.fbq).toBeUndefined();
+    e.stored.set('stride_browser_batch_v1_retry', JSON.stringify(e.batch));
+    e.timers.find(t => t.delay === 500)!.callback();
+    await vi.waitFor(() => expect(e.scripts).toHaveLength(2));
+    e.sdkReady(1);
+    await vi.waitFor(() => expect(e.calls.mock.calls.some(c => c[0] === 'trackSingle')).toBe(true));
+  });
+  it('uses a timed-out SDK after it recovers without injecting a second script', async () => {
+    const e = embed();
+    await vi.waitFor(() => expect(e.scripts).toHaveLength(1));
+    e.timers.find(t => t.delay === 5000)!.callback();
+    await vi.waitFor(() => expect(e.fetch).toHaveBeenCalledTimes(2));
+    e.sdkReady();
+    e.stored.set('stride_browser_batch_v1_retry', JSON.stringify(e.batch));
+    e.timers.find(t => t.delay === 500)!.callback();
+    await vi.waitFor(() => expect(e.calls.mock.calls.some(c => c[0] === 'trackSingle')).toBe(true));
+    expect(e.scripts).toHaveLength(1);
+  });
+  it('refuses another tracker introduced after its owned SDK fails', async () => {
+    const e = embed();
+    await vi.waitFor(() => expect(e.scripts).toHaveLength(1));
+    e.scripts[0]!.onerror();
+    await vi.waitFor(() => expect(e.fetch).toHaveBeenCalledTimes(2));
+    const foreign = vi.fn();e.window.fbq = foreign;
+    e.stored.set('stride_browser_batch_v1_retry', JSON.stringify(e.batch));
+    e.timers.find(t => t.delay === 500)!.callback();
+    await vi.waitFor(() => expect(e.fetch).toHaveBeenCalledTimes(4));
+    expect(e.window.fbq).toBe(foreign);expect(foreign).not.toHaveBeenCalled();
+    expect(e.scripts).toHaveLength(1);
+  });
+
   it('blocks SDK loading if a private URL appears during the first authorization', async () => {
     const e = embed();
     e.window.location.href = 'https://shop.test/products/hero?email=private@example.com';

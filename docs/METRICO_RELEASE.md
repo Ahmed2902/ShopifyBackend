@@ -12,7 +12,7 @@ This release incorporates the existing conversion-signals and Shopify billing/li
 100 claims across 100 stores, 30 items each and 3,000 catalog mappings; 20 measured samples after warmup; mocked database I/O. Median conversion preparation CPU fell from 8.073 ms to 3.423 ms (57.6% reduction). Outputs are deeply equal. This measures preparation CPU, not provider delivery or production database latency. Pool-budget guards remain enforced.
 
 ## Local verification
-`npm run ci`: lint, TypeScript, 193 passing test files / 1,052 passing tests, smoke-script syntax and pool-budget self-test. 38 database-dependent files / 112 tests are skipped locally because this workspace has no PostgreSQL. The PR workflow is the required gate for database-enabled tests, 53 migrations, migration drift and Docker.
+`npm run ci`: lint, TypeScript, 193 passing test files / 1,056 passing tests, smoke-script syntax and pool-budget self-test. 38 database-dependent files / 112 tests are skipped locally because this workspace has no PostgreSQL. The PR workflow is the required gate for database-enabled tests, 53 migrations, migration drift and Docker.
 
 ## Provider and submission limits
 Google OAuth verification, developer token access, actual selected accounts/actions and live acknowledgement need account evidence. Only enabled UPLOAD_CLICKS/PURCHASE actions owned by the selected customer qualify. Website-tag and manager-owned actions are intentionally excluded.
@@ -27,3 +27,6 @@ Shopify review was refreshed from the canonical CLI checklist. Theme app extensi
 - https://github.com/tiktok/tiktok-business-api-sdk/blob/main/js_sdk/docs/MeasurementApi.md
 - https://business-api.tiktok.com/gateway/docs/index?doc_id=1771100779668482
 - https://shopify.dev/docs/apps/launch/app-store-review/app-store-ai-self-review-requirements
+
+## Final PR review fixes
+Customer redaction preserves withdrawal cutoffs until normal expiry and locks against Pixel insertion. Data exports include order-linked customer pseudonyms and conversion deliveries (including event-linked rows), remain scoped to the requested store and exclude destination credentials. Export creation also serializes against redaction so a stale read cannot recreate an erased export. The Meta browser loader can recover after errors/timeouts without injecting a competing script or taking over a third-party replacement. Database regressions cover delayed sharing after redaction and complete, isolated exports; browser-embed regressions cover recovery and ownership.

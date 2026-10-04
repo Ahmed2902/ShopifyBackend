@@ -17,6 +17,8 @@ export class ShopifyPrivacyRedactionRepository {
     eventsDeleted: number;
   }> {
     return prisma.$transaction(async (tx) => {
+      // Match Pixel collection/withdrawal locking before discovering and erasing linked rows.
+      await tx.$queryRaw`SELECT "storeId" FROM "ShopifyConnection" WHERE "storeId" = ${storeId}::uuid FOR UPDATE`;
       if (orderExternalIds.length > 0) {
         await tx.shopifyOrderRedaction.createMany({
           data: orderExternalIds.map((shopifyOrderId) => ({
@@ -48,7 +50,7 @@ export class ShopifyPrivacyRedactionRepository {
 
       const rawOrderEvents = await tx.storefrontEvent.findMany({
         where: { storeId, shopifyOrderExternalId: { in: orderExternalIds } },
-        select: { sessionId: true, anonymousVisitorId: true },
+        select: { sessionId: true },
       });
       const rawBrowserSessionIds = uniqueStrings(rawOrderEvents.map((event) => event.sessionId));
 
@@ -63,7 +65,7 @@ export class ShopifyPrivacyRedactionRepository {
               : []),
           ],
         },
-        select: { id: true, browserSessionId: true, anonymousVisitorId: true },
+        select: { id: true, browserSessionId: true },
       });
       const sessionIds = sessions.map((session) => session.id);
       const browserSessionIds = uniqueStrings([
@@ -71,25 +73,8 @@ export class ShopifyPrivacyRedactionRepository {
         ...sessions.map((session) => session.browserSessionId),
       ]);
 
-      const relatedVisitorEvents =
-        browserSessionIds.length > 0
-          ? await tx.storefrontEvent.findMany({
-              where: { storeId, sessionId: { in: browserSessionIds } },
-              select: { anonymousVisitorId: true },
-            })
-          : [];
-      const withdrawalKeys = [
-        ...new Set([
-          ...browserSessionIds.map((id) => `session:${id}`),
-          ...[...rawOrderEvents, ...sessions, ...relatedVisitorEvents].flatMap((event) =>
-            event.anonymousVisitorId ? [`visitor:${event.anonymousVisitorId}`] : [],
-          ),
-        ]),
-      ];
-      if (withdrawalKeys.length > 0)
-        await tx.storefrontConsentWithdrawal.deleteMany({
-          where: { storeId, scopeKey: { in: withdrawalKeys } },
-        });
+      // Keep minimal withdrawal barriers until normal expiry. Removing them would allow a
+      // delayed pre-withdrawal Pixel batch to regain sharing permission after redaction.
 
       await tx.conversionDelivery.deleteMany({
         where: {
