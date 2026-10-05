@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { env } from '../../../src/config/env.js';
-import { tiktokWebhookUrl } from '../../../src/config/public-urls.js';
+import { tiktokCallbackUrl, tiktokWebhookUrl } from '../../../src/config/public-urls.js';
 import {
   requireTikTokAppCredentials,
   requireTikTokStateSecret,
@@ -79,5 +79,34 @@ describe('TikTok lazy runtime configuration', () => {
   it('keeps a stable webhook URL available without making it a separate boot requirement', () => {
     expect(tiktokWebhookUrl()).toBe(env.TIKTOK_WEBHOOK_URL);
     expect(new URL(tiktokWebhookUrl()).pathname).toBe('/v1/integrations/tiktok/webhooks');
+  });
+
+  it('uses the canonical backend callback in production with an omitted or matching override', () => {
+    env.NODE_ENV = 'production';
+    env.APP_URL = 'https://api.example.com';
+    env.TIKTOK_REDIRECT_URI = '';
+    expect(tiktokCallbackUrl()).toBe('https://api.example.com/v1/integrations/tiktok/callback');
+    env.TIKTOK_REDIRECT_URI = tiktokCallbackUrl();
+    expect(tiktokCallbackUrl()).toBe(env.TIKTOK_REDIRECT_URI);
+  });
+
+  it.each([
+    'http://localhost:3001/v1/integrations/tiktok/callback',
+    'https://app.example.com/app/integrations/complete',
+    'https://api.example.com/v1/integrations/tiktok/callback/',
+  ])('rejects a conflicting production callback before redirecting to TikTok (%s)', (redirectUri) => {
+    env.NODE_ENV = 'production';
+    env.APP_URL = 'https://api.example.com';
+    env.TIKTOK_REDIRECT_URI = redirectUri;
+    expect(tiktokCallbackUrl).toThrowError(expect.objectContaining({
+      statusCode: 503, code: 'TIKTOK_REDIRECT_CONFIGURATION_MISMATCH',
+    }));
+  });
+
+  it('retains the explicit tunnel callback for local development', () => {
+    env.NODE_ENV = 'development';
+    env.APP_URL = 'http://localhost:3001';
+    env.TIKTOK_REDIRECT_URI = 'https://tunnel.example.com/v1/integrations/tiktok/callback';
+    expect(tiktokCallbackUrl()).toBe(env.TIKTOK_REDIRECT_URI);
   });
 });
