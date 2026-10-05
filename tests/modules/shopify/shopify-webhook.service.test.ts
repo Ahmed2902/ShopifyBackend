@@ -22,7 +22,7 @@ const connection = {
   refreshTokenExpiresAt: null,
   scopes: ['read_products', 'read_inventory', 'read_locations', 'read_orders'],
   apiVersion: '2026-07',
-  store: { id: storeId, myshopifyDomain: 'example-store.myshopify.com' },
+  store: { id: storeId, shopifyShopId: 'gid://shopify/Shop/1', myshopifyDomain: 'example-store.myshopify.com' },
 };
 
 function delivery(topic: string, payload: unknown, attempts = 1) {
@@ -33,6 +33,8 @@ function delivery(topic: string, payload: unknown, attempts = 1) {
     payload,
     attempts,
     shopifyConnectionId: connectionId,
+    triggeredAt: new Date("2026-10-02T00:00:00Z"),
+    receivedAt: new Date("2026-10-02T00:00:01Z"),
   };
 }
 
@@ -51,6 +53,7 @@ function buildService(currentDelivery = delivery('products/update', { id: 1 })) 
     markIgnored: vi.fn().mockResolvedValue(undefined),
     markFailed: vi.fn().mockResolvedValue(undefined),
     markConnectionUninstalled: vi.fn().mockResolvedValue(undefined),
+    updateConnectionScopes: vi.fn().mockResolvedValue(true),
     markProductDeleted: vi.fn().mockResolvedValue(true),
     markMissingProductVariantsDeleted: vi.fn().mockResolvedValue(0),
     markLocationDeleted: vi.fn().mockResolvedValue(undefined),
@@ -196,7 +199,7 @@ describe('ShopifyWebhookService', () => {
 
     await service.processDueDeliveries();
 
-    expect(repository.markConnectionUninstalled).toHaveBeenCalledWith(connectionId);
+    expect(repository.markConnectionUninstalled).toHaveBeenCalledWith(connectionId, new Date("2026-10-02T00:00:00Z"));
     expect(authService.resolveAccessToken).not.toHaveBeenCalled();
     expect(repository.markProcessed).toHaveBeenCalledWith(deliveryId);
   });
@@ -281,5 +284,20 @@ describe('ShopifyWebhookService', () => {
       1,
       'temporary Shopify failure',
     );
+  });
+});
+
+describe('Scope webhook installation generation', () => {
+  it.each([true, false])('applies a scope delivery only when its generation predicate matches (%s)', async (matches) => {
+    const { repository, authService, service } = buildService(delivery('app/scopes_update', { current: ['read_products'] }));
+    vi.mocked(repository.updateConnectionScopes).mockResolvedValue(matches);
+    await service.processDueDeliveries();
+    expect(repository.updateConnectionScopes).toHaveBeenCalledWith(connectionId, ['read_products'], new Date('2026-10-02T00:00:00Z'));
+    expect(authService.resolveAccessToken).not.toHaveBeenCalled();
+    if (matches) expect(repository.markProcessed).toHaveBeenCalledWith(deliveryId);
+    else {
+      expect(repository.markIgnored).toHaveBeenCalledWith(deliveryId, 'Scope update predates the current installation');
+      expect(repository.markProcessed).not.toHaveBeenCalled();
+    }
   });
 });

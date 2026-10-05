@@ -9,7 +9,12 @@ const baseEvent = {
   pageUrl: 'https://store.example/products/shirt',
 };
 
-describe('Stride Pixel event schema', () => {
+describe('Metrico Pixel event schema', () => {
+  it('does not promote analytics permission into advertising sharing permission', () => {
+    expect(storefrontEventSchema.parse(baseEvent).adSharingAllowed).toBe(false);
+    expect(storefrontEventSchema.parse({ ...baseEvent, adSharingAllowed: true }).adSharingAllowed).toBe(true);
+    expect(() => storefrontEventSchema.parse({ ...baseEvent, adSharingAllowed: 'true' })).toThrow();
+  });
   it('accepts the privacy-minimized V1 event contract and defaults its version', () => {
     expect(
       storefrontEventSchema.parse({

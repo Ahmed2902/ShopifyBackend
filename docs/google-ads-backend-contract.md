@@ -1,6 +1,6 @@
 # Google Ads backend contract
 
-This document freezes the backend contract for the frontend Google Ads worker on top of Stride's canonical paid-media model.
+This document freezes the backend contract for the frontend Google Ads worker on top of Metrico's canonical paid-media model.
 
 ## Provider identity
 
@@ -20,9 +20,9 @@ Required production configuration when Google Ads is enabled:
 - `GOOGLE_ADS_REDIRECT_URI` (recommended explicit production callback)
 - `GOOGLE_ADS_API_VERSION` (defaults to `v25` in this branch)
 
-Google Ads API requests require both OAuth 2.0 authorization and a Google Ads developer token. Stride sends the developer token on every Google Ads API request and fails with `GOOGLE_ADS_NOT_CONFIGURED` before issuing a request when the token is absent.
+Google Ads API requests require both OAuth 2.0 authorization and a Google Ads developer token. Metrico sends the developer token on every Google Ads API request and fails with `GOOGLE_ADS_NOT_CONFIGURED` before issuing a request when the token is absent.
 
-Google Ads OAuth is intentionally separate from ordinary Stride Google login.
+Google Ads OAuth is intentionally separate from ordinary Metrico Google login.
 
 ## Integration endpoints
 
@@ -124,7 +124,7 @@ The response also includes deterministic Google final-URL mapping counts:
 
 ### POST `/disconnect`
 
-Attempts to revoke the Google OAuth refresh token, then always clears locally persisted credentials/selection and changes the connection state to `DISCONNECTED`. A failed/already-invalid remote revocation does not leave reusable credentials inside Stride.
+Attempts to revoke the Google OAuth refresh token, then always clears locally persisted credentials/selection and changes the connection state to `DISCONNECTED`. A failed/already-invalid remote revocation does not leave reusable credentials inside Metrico.
 
 ## Canonical hierarchy
 
@@ -145,7 +145,7 @@ AdvertisingAccount
       -> AdvertisingGroup(kind = ASSET_GROUP)
 ```
 
-Stride does not fabricate an `AdvertisingAd` for PMax where Google does not expose a normal ad entity.
+Metrico does not fabricate an `AdvertisingAd` for PMax where Google does not expose a normal ad entity.
 
 Google assets are normalized into `AdvertisingCreative` where a stable asset identity exists. PMax asset-to-asset-group relationships, field type, provider status, and performance label are retained inside provider data because the relationship is many-to-many rather than a fake one-ad/one-creative mapping.
 
@@ -158,7 +158,7 @@ The provider registry exposes Google with:
 - group label: `Ad Group / Asset Group`
 - attribution model: `PROVIDER_REPORTED`
 - reach: period reach is unavailable unless Google exposes trustworthy deduplicated period evidence
-- assets: entities are readable, but Stride does not claim asset-level normalized delivery metrics
+- assets: entities are readable, but Metrico does not claim asset-level normalized delivery metrics
 
 The shared read-only MCP `stride_get_paid_media` provider enum includes `GOOGLE_ADS`; it delegates to the same provider-neutral advisor/provider registry used by HTTP analytics. MCP remains store-bound, entitlement checked, read-only, and token-free. Google PMax/asset/attribution limitations are exposed through provider capabilities.
 
@@ -192,7 +192,7 @@ Daily reach is not summed. Canonical Google reach/frequency stay unavailable unl
 
 ## Product × Ads
 
-For normal Google ads, Stride projects a mapping only when a Google final URL belongs to the current Shopify store and deterministically resolves to exactly one Shopify product, variant, or collection. These mappings use canonical `AdvertisingProductMapping` / `AdvertisingCollectionMapping`, carry explicit evidence/confidence, and stale non-merchant mappings are expired on re-sync.
+For normal Google ads, Metrico projects a mapping only when a Google final URL belongs to the current Shopify store and deterministically resolves to exactly one Shopify product, variant, or collection. These mappings use canonical `AdvertisingProductMapping` / `AdvertisingCollectionMapping`, carry explicit evidence/confidence, and stale non-merchant mappings are expired on re-sync.
 
 PMax Asset Groups do not get fake `AdvertisingAd` rows. Therefore PMax/Shopping spend is not divided among products just because an Asset Group or listing structure exists. Until product-level listing-group/Merchant Center evidence is represented at a truthful structural level, that spend remains shared/unmapped.
 
@@ -230,6 +230,6 @@ Never render unavailable evidence as zero. Never sum Meta/TikTok/Google attribut
 
 - Deterministic normal-ad final URLs participate in Product × Ads, but PMax/Shopping product allocation remains deliberately unclaimed until listing-group/Merchant Center evidence can be represented without a fake ad or guessed spend split.
 - Google test accounts are suitable for OAuth/resource/query contract testing but do not produce serving delivery metrics; metric behavior is covered with deterministic mocked provider fixtures until a populated live customer is available.
-- Stride exposes stable Google asset entities and PMax asset-group relationships, but does not claim normalized asset-level delivery metrics where Google evidence does not support truthful parity.
+- Metrico exposes stable Google asset entities and PMax asset-group relationships, but does not claim normalized asset-level delivery metrics where Google evidence does not support truthful parity.
 
 These limitations do not change the canonical hierarchy or provider-neutral frontend contract. The frontend should display them as data-quality/provider-capability limitations rather than synthesizing parity that Google does not expose.

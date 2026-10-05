@@ -1,3 +1,5 @@
+import { classifyAcquisition } from './acquisition.js';
+import { encryptSecret } from '../integrations/integration.utils.js';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { env } from '../../config/env.js';
@@ -233,22 +235,40 @@ export class PixelService {
 
   async ingest(batch: PixelIngestBatchInput) {
     const installation = await this.repository.findInstallationForIngress(batch.installationId);
-    const acceptedStatus = installation?.status === 'ACTIVE' || installation?.status === 'PROVISIONING';
+    const acceptedStatus =
+      installation?.status === 'ACTIVE' || installation?.status === 'PROVISIONING';
     const credentialMatches = Boolean(
       installation &&
-        (tokenMatches(batch.collectorToken, installation.collectorTokenHash) ||
-          tokenMatches(batch.collectorToken, installation.pendingCollectorTokenHash)),
+      (tokenMatches(batch.collectorToken, installation.collectorTokenHash) ||
+        tokenMatches(batch.collectorToken, installation.pendingCollectorTokenHash)),
     );
     if (!installation || !acceptedStatus || !credentialMatches) {
       throw new AppError('Pixel collector credentials are invalid', 401, 'PIXEL_UNAUTHORIZED');
     }
 
     const receivedAt = this.now();
+    if (batch.withdrawal) {
+      // Privacy-only ingress remains usable after analytics consent is withdrawn. Include the
+      // accepted client-clock window so an old in-flight event cannot arrive just after revocation.
+      await this.repository.withdrawAdvertisingConsent(
+        installation.storeId,
+        batch.withdrawal,
+        new Date(receivedAt.getTime() + MAX_EVENT_FUTURE_SKEW_MS),
+        calculatePixelRetentionExpiresAt(
+          receivedAt,
+          Math.max(40, env.PIXEL_RAW_EVENT_RETENTION_DAYS),
+        ),
+      );
+    }
     const eligible = batch.events.filter((event) =>
       isStorefrontBehaviorCaptureAllowed(event.consentState),
     );
     const normalized = eligible.map((event) => this.normalizeEvent(event, receivedAt));
-    const inserted = await this.repository.insertEvents(installation.storeId, normalized, receivedAt);
+    const inserted = await this.repository.insertEvents(
+      installation.storeId,
+      normalized,
+      receivedAt,
+    );
 
     if (eligible.length > 0) {
       const latestEventAt = eligible.reduce((latest, event) => {
@@ -283,7 +303,11 @@ export class PixelService {
     const receivedAt = this.now();
     const events = batch.events.map((event) => ({
       captureAllowed: isStorefrontBehaviorCaptureAllowed(event.consentState),
-      normalized: this.normalizeEvent(event, receivedAt),
+      normalized: Object.fromEntries(
+        Object.entries(this.normalizeEvent(event, receivedAt)).filter(
+          ([key]) => !key.startsWith('browserMatch'),
+        ),
+      ),
     }));
 
     return {
@@ -297,6 +321,8 @@ export class PixelService {
     const boundedLimit = Math.min(Math.max(1, Math.trunc(limit)), 10_000);
     const ids = await this.repository.findExpiredEventIds(this.now(), boundedLimit);
     const deleted = await this.repository.deleteEventsByIds(ids);
+    await this.repository.cleanupExpiredWithdrawals(this.now(), boundedLimit);
+    await this.repository.cleanupMatchEvidence(this.now(), boundedLimit);
     return { selected: ids.length, deleted };
   }
 
@@ -317,6 +343,14 @@ export class PixelService {
     }
 
     const attribution = mergeAttribution(event);
+    const acquisition = classifyAcquisition({
+      ...attribution,
+      pageUrl: event.pageUrl,
+      landingPageUrl: event.landingPageUrl,
+      referrerUrl: event.referrerUrl,
+    });
+    const permittedMatch =
+      isStorefrontBehaviorCaptureAllowed(event.consentState) && eventAgeMs <= 48 * 60 * 60_000 && event.adSharingAllowed && event.browserMatch && Object.keys(event.browserMatch).length > 0;
 
     return {
       eventId: event.eventId,
@@ -327,6 +361,8 @@ export class PixelService {
       anonymousVisitorId: event.anonymousVisitorId ?? null,
       sessionId: event.sessionId ?? null,
       consentState: event.consentState,
+      adSharingAllowed:
+        isStorefrontBehaviorCaptureAllowed(event.consentState) && event.adSharingAllowed === true,
       pageUrl: sanitizeStorefrontUrl(event.pageUrl),
       referrerUrl: sanitizeStorefrontUrl(event.referrerUrl),
       landingPageUrl: sanitizeStorefrontUrl(event.landingPageUrl),
@@ -334,6 +370,8 @@ export class PixelService {
       variantExternalId: event.variantExternalId ?? null,
       collectionExternalId: event.collectionExternalId ?? null,
       quantity: event.quantity ?? null,
+      ...(event.commerceItems ? { commerceItems: event.commerceItems } : {}),
+      commerceCurrencyCode: event.commerceCurrencyCode ?? null,
       shopifyCheckoutToken: event.shopifyCheckoutToken ?? null,
       shopifyOrderExternalId: event.shopifyOrderExternalId ?? null,
       utmSource: attribution.utmSource ?? null,
@@ -341,6 +379,28 @@ export class PixelService {
       utmCampaign: attribution.utmCampaign ?? null,
       utmContent: attribution.utmContent ?? null,
       utmTerm: attribution.utmTerm ?? null,
+      browserMatchCiphertext: permittedMatch
+        ? encryptSecret(JSON.stringify(event.browserMatch))
+        : null,
+      browserMatchExpiresAt: permittedMatch
+        ? new Date(
+            Math.min(
+              receivedAt.getTime() + 48 * 60 * 60_000,
+              eventAt.getTime() + 48 * 60 * 60_000,
+              calculatePixelRetentionExpiresAt(
+                receivedAt,
+                env.PIXEL_RAW_EVENT_RETENTION_DAYS,
+              ).getTime(),
+            ),
+          )
+        : null,
+      googleBraidedClickId: attribution.googleBraidedClickId ?? null,
+      googleWebBraidedClickId: attribution.googleWebBraidedClickId ?? null,
+      acquisitionChannel: acquisition.channel,
+      acquisitionProvider: acquisition.provider,
+      acquisitionBasis: acquisition.basis,
+      acquisitionPaid: acquisition.paid,
+      acquisitionVersion: acquisition.version,
       metaClickId: attribution.metaClickId ?? null,
       googleClickId: attribution.googleClickId ?? null,
       tiktokClickId: attribution.tiktokClickId ?? null,
@@ -362,7 +422,7 @@ export class PixelService {
     if (env.APP_URL) return new URL(COLLECTOR_PATH, env.APP_URL).toString();
     if (!required) return null;
     throw new AppError(
-      'APP_URL or PIXEL_COLLECTOR_URL must be configured before installing Stride Pixel',
+      'APP_URL or PIXEL_COLLECTOR_URL must be configured before installing Metrico Pixel',
       500,
       'PIXEL_COLLECTOR_URL_MISSING',
     );

@@ -1,3 +1,4 @@
+import { sanitizeAttributionValue } from './pixel.privacy.js';
 import { z } from 'zod';
 import {
   PIXEL_EVENT_VERSION,
@@ -27,10 +28,25 @@ const shopifyOrderExternalIdSchema = z
   .string()
   .trim()
   .transform((value) => (/^\d+$/.test(value) ? `gid://shopify/Order/${value}` : value))
-  .pipe(z.string().max(128).regex(/^gid:\/\/shopify\/Order\/\d+$/));
+  .pipe(
+    z
+      .string()
+      .max(128)
+      .regex(/^gid:\/\/shopify\/Order\/\d+$/),
+  );
 const providerNumericIdSchema = z.string().trim().regex(/^\d+$/).max(128);
-const attributionValueSchema = z.string().trim().min(1).max(255);
-const clickIdSchema = z.string().trim().min(1).max(512);
+const attributionValueSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(255)
+  .transform((value) => sanitizeAttributionValue(value));
+const clickIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(512)
+  .transform((value) => sanitizeAttributionValue(value, true));
 const urlSchema = z.string().url().max(2048);
 const collectorTokenSchema = z
   .string()
@@ -49,6 +65,8 @@ export const storefrontAttributionSchema = z
     metaClickId: clickIdSchema.optional(),
     googleClickId: clickIdSchema.optional(),
     tiktokClickId: clickIdSchema.optional(),
+    googleBraidedClickId: clickIdSchema.optional(),
+    googleWebBraidedClickId: clickIdSchema.optional(),
     metaCampaignExternalId: providerNumericIdSchema.optional(),
     metaAdSetExternalId: providerNumericIdSchema.optional(),
     metaAdExternalId: providerNumericIdSchema.optional(),
@@ -64,6 +82,34 @@ export const storefrontEventSchema = z
     anonymousVisitorId: opaqueIdSchema.optional(),
     sessionId: opaqueIdSchema.optional(),
     consentState: z.enum(STOREFRONT_CONSENT_STATES),
+    adSharingAllowed: z.boolean().default(false),
+    browserMatch: z
+      .object({
+        fbc: z
+          .string()
+          .max(600)
+          .regex(/^fb\.[0-2]\.\d{13}\.[A-Za-z0-9._~-]+$/)
+          .optional(),
+        fbp: z
+          .string()
+          .max(128)
+          .regex(/^fb\.[0-2]\.\d{13}\.\d+$/)
+          .optional(),
+        ttp: z
+          .string()
+          .min(1)
+          .max(512)
+          .regex(/^[A-Za-z0-9_.-]+$/)
+          .optional(),
+        userAgent: z
+          .string()
+          .min(1)
+          .max(1024)
+          .refine((value) => ![...value].some((char) => char.charCodeAt(0) < 32))
+          .optional(),
+      })
+      .strict()
+      .optional(),
     pageUrl: urlSchema.optional(),
     referrerUrl: urlSchema.optional(),
     landingPageUrl: urlSchema.optional(),
@@ -71,6 +117,27 @@ export const storefrontEventSchema = z
     variantExternalId: shopifyEntityIdSchema('ProductVariant').optional(),
     collectionExternalId: shopifyEntityIdSchema('Collection').optional(),
     quantity: z.number().int().min(1).max(100_000).optional(),
+    commerceCurrencyCode: z
+      .string()
+      .regex(/^[A-Z]{3}$/)
+      .optional(),
+    commerceItems: z
+      .array(
+        z
+          .object({
+            productExternalId: shopifyEntityIdSchema('Product')
+              .pipe(z.string().regex(/^gid:\/\/shopify\/Product\/\d+$/))
+              .optional(),
+            variantExternalId: shopifyEntityIdSchema('ProductVariant').pipe(
+              z.string().regex(/^gid:\/\/shopify\/ProductVariant\/\d+$/),
+            ),
+            quantity: z.number().int().min(1).max(100_000).optional(),
+            itemPrice: z.number().finite().min(0).max(1_000_000_000).optional(),
+          })
+          .strict(),
+      )
+      .max(100)
+      .optional(),
     shopifyCheckoutToken: checkoutTokenSchema.optional(),
     shopifyOrderExternalId: shopifyOrderExternalIdSchema.optional(),
     attribution: storefrontAttributionSchema.optional(),
@@ -135,13 +202,27 @@ export const storefrontEventSchema = z
     }
   });
 
+export const pixelConsentWithdrawalSchema = z
+  .object({
+    anonymousVisitorId: opaqueIdSchema.optional(),
+    sessionId: opaqueIdSchema.optional(),
+  })
+  .strict()
+  .refine((value) => Boolean(value.anonymousVisitorId || value.sessionId), {
+    message: 'A consent withdrawal needs a visitor or session identifier',
+  });
+
 export const pixelIngestBatchSchema = z
   .object({
     installationId: z.string().uuid(),
     collectorToken: collectorTokenSchema,
-    events: z.array(storefrontEventSchema).min(1).max(PIXEL_MAX_BATCH_SIZE),
+    events: z.array(storefrontEventSchema).max(PIXEL_MAX_BATCH_SIZE),
+    withdrawal: pixelConsentWithdrawalSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine((value) => value.events.length > 0 || Boolean(value.withdrawal), {
+    message: 'A collector batch needs events or a consent withdrawal',
+  });
 
 export const pixelDebugBatchSchema = z
   .object({

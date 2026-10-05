@@ -346,7 +346,7 @@ export function buildCreativeVideoRetention(input: {
     status = 'INCONSISTENT_PROVIDER_DATA';
     limitations.push({
       code: 'INCONSISTENT_PROVIDER_DATA',
-      message: 'Meta video quartile counts are not monotonic, so Stride does not diagnose a drop-off stage.',
+      message: 'Meta video quartile counts are not monotonic, so Metrico does not diagnose a drop-off stage.',
     });
   } else if (currentInsufficient) {
     status = 'INSUFFICIENT_PLAYS';

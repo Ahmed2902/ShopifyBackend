@@ -35,7 +35,7 @@ function repository() {
 }
 
 describe('McpOAuthService authorization', () => {
-  it('requires PKCE S256 and the exact Stride MCP resource', async () => {
+  it('requires PKCE S256 and the exact Metrico MCP resource', async () => {
     const repo = repository();
     const service = new McpOAuthService(repo as never);
     await expect(

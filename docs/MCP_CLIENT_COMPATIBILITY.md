@@ -1,6 +1,6 @@
 # MCP client compatibility matrix
 
-This file is the release-facing compatibility matrix for Stride's single remote MCP endpoint.
+This file is the release-facing compatibility matrix for Metrico's single remote MCP endpoint.
 
 | Capability | ChatGPT custom MCP | Claude remote MCP | Generic remote MCP client |
 | --- | --- | --- | --- |
@@ -19,7 +19,7 @@ This file is the release-facing compatibility matrix for Stride's single remote 
 
 Client names are validation targets, not branches in the business layer. Shopify, advertising, Pixel, attribution, billing, privacy, and recommendation behavior remain client-independent.
 
-The legacy compatibility path intentionally remains stateless: Stride's read-only V1 surface does not create sticky application sessions merely to serve older Streamable HTTP clients. Protocol/version handling stays isolated in the transport layer.
+The legacy compatibility path intentionally remains stateless: Metrico's read-only V1 surface does not create sticky application sessions merely to serve older Streamable HTTP clients. Protocol/version handling stays isolated in the transport layer.
 
 ## Request-path performance and failure-boundary invariants
 
@@ -31,4 +31,4 @@ The legacy compatibility path intentionally remains stateless: Stride's read-onl
 - Unexpected provider/database failures are logged internally and reduced to a generic external MCP error; only client-actionable non-5xx `AppError` messages cross the external advisor boundary.
 - Response serialization is bounded by the MCP controller's context-size guard, and the external advisor remains read-only.
 
-Any future LLM client should first be tested against this same standards contract. Add provider-specific transport metadata only when the provider demonstrably requires it; do not fork Stride's tools or business logic per model vendor.
+Any future LLM client should first be tested against this same standards contract. Add provider-specific transport metadata only when the provider demonstrably requires it; do not fork Metrico's tools or business logic per model vendor.

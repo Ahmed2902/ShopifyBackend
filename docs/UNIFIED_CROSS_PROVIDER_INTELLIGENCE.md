@@ -2,14 +2,14 @@
 
 Parent: `b7e6597a37b8f91d3dc48da57f5bd8b28b4004c5` (`#129`).
 
-This document is the backend contract for Stride's provider-neutral intelligence layer. It does not change provider ingestion or the canonical `Advertising*` model.
+This document is the backend contract for Metrico's provider-neutral intelligence layer. It does not change provider ingestion or the canonical `Advertising*` model.
 
 ## Truth model
 
 - **Shopify is commerce truth**: orders, net revenue, refunds, products/variants, customers, inventory, product economics, contribution before advertising.
 - **Meta, TikTok and Google Ads are provider-reported advertising evidence**: spend, delivery, clicks, provider-attributed conversions/value and provider ROAS.
-- **Stride Pixel is first-party observed storefront evidence**: sessions, product/cart/checkout behavior, linked purchase behavior, landing/source evidence and observed journeys.
-- **Stride intelligence is deterministic interpretation** of those sources.
+- **Metrico Pixel is first-party observed storefront evidence**: sessions, product/cart/checkout behavior, linked purchase behavior, landing/source evidence and observed journeys.
+- **Metrico intelligence is deterministic interpretation** of those sources.
 - Provider conversion value is never relabeled as Shopify revenue.
 - Missing evidence is never coerced to zero.
 - Cross-provider spend is combined only when account/metric currency is compatible.

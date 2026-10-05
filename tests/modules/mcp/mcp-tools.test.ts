@@ -66,7 +66,7 @@ function lifecycle() {
   };
 }
 
-describe('Stride MCP tools', () => {
+describe('Metrico MCP tools', () => {
   it('exposes only read-only tools with no caller-controlled store id', () => {
     for (const tool of MCP_TOOLS) {
       expect(tool.annotations).toMatchObject({
@@ -397,7 +397,7 @@ describe('Stride MCP tools', () => {
     const executor = new McpToolExecutor(value as never, billing() as never);
 
     await expect(executor.call(storeId, 'stride_delete_campaign', {})).rejects.toThrow(
-      'Unknown Stride MCP tool',
+      'Unknown Metrico MCP tool',
     );
   });
 });

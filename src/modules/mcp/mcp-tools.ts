@@ -90,9 +90,9 @@ function providerAccessBlock(error: unknown): error is AppError {
 export const MCP_TOOLS: readonly McpToolDefinition[] = [
   {
     name: 'stride_get_context',
-    title: 'Get Stride business context',
+    title: 'Get Metrico business context',
     description:
-      'Get the connected merchant/store identity, currency, timezone, domains, integration readiness, freshness, and Stride truth-model rules. Use this before making assumptions about what data is connected or which currency/timezone applies.',
+      'Get the connected merchant/store identity, currency, timezone, domains, integration readiness, freshness, and Metrico truth-model rules. Use this before making assumptions about what data is connected or which currency/timezone applies.',
     inputSchema: schema({}),
     outputSchema: objectOutputSchema,
     annotations: readAnnotations,
@@ -101,12 +101,12 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
     name: 'stride_get_snapshot',
     title: 'Get advisor snapshot',
     description:
-      'Get a compact cross-domain marketing-advisor snapshot: Shopify commerce truth, profitability/contribution, paid-media pressure, dashboard signals, deterministic Stride recommendations with lifecycle state and data quality, first-party storefront behavior including derived funnel understanding, and Product × Ads evidence. Start here for broad questions such as “how are we doing?”, “what changed?”, or “what needs attention?”. Drill down with the other tools before making entity-specific claims not present in the snapshot.',
+      'Get a compact cross-domain marketing-advisor snapshot: Shopify commerce truth, profitability/contribution, paid-media pressure, dashboard signals, deterministic Metrico recommendations with lifecycle state and data quality, first-party storefront behavior including derived funnel understanding, and Product × Ads evidence. Start here for broad questions such as “how are we doing?”, “what changed?”, or “what needs attention?”. Drill down with the other tools before making entity-specific claims not present in the snapshot.',
     inputSchema: schema({
       days: paginationProperties.days,
       fresh: {
         type: 'boolean',
-        description: 'Bypass Stride intelligence/dashboard caches when true. Use sparingly.',
+        description: 'Bypass Metrico intelligence/dashboard caches when true. Use sparingly.',
       },
     }),
     outputSchema: objectOutputSchema,
@@ -114,9 +114,9 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
   },
   {
     name: 'stride_search',
-    title: 'Search Stride business evidence',
+    title: 'Search Metrico business evidence',
     description:
-      'Search business entities and deterministic findings Stride knows about by name, internal/external id, or matching aggregate evidence. Searches Shopify products/collections, entitled Meta/TikTok/Google Ads paid-media entities, Pixel landing pages and attribution sources, and Stride recommendations; it deliberately excludes raw customer PII. Use it to resolve names before a detail call.',
+      'Search business entities and deterministic findings Metrico knows about by name, internal/external id, or matching aggregate evidence. Searches Shopify products/collections, entitled Meta/TikTok/Google Ads paid-media entities, Pixel landing pages and attribution sources, and Metrico recommendations; it deliberately excludes raw customer PII. Use it to resolve names before a detail call.',
     inputSchema: schema(
       {
         query: {
@@ -143,7 +143,7 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
     name: 'stride_get_commerce',
     title: 'Read Shopify commerce intelligence',
     description:
-      'Read Stride’s Shopify-grounded commerce intelligence. `overview` covers revenue/order value, refunds, discounts, customer mix, contribution and same-currency blended MER. `performance` returns the daily commerce/paid-media trend series. `products`/`product` expose product economics, while `product_leaderboard` returns store-wide product ranking/totals. `collections` lists collection analytics and `collection_detail` returns the current Shopify collection and paginated membership snapshot. `customers` and `inventory` expose their analytical read models. Shopify remains the commerce source of truth.',
+      'Read Metrico’s Shopify-grounded commerce intelligence. `overview` covers revenue/order value, refunds, discounts, customer mix, contribution and same-currency blended MER. `performance` returns the daily commerce/paid-media trend series. `products`/`product` expose product economics, while `product_leaderboard` returns store-wide product ranking/totals. `collections` lists collection analytics and `collection_detail` returns the current Shopify collection and paginated membership snapshot. `customers` and `inventory` expose their analytical read models. Shopify remains the commerce source of truth.',
     inputSchema: schema(
       {
         surface: {
@@ -175,7 +175,7 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
     name: 'stride_get_paid_media',
     title: 'Read paid-media intelligence',
     description:
-      'Read provider-reported paid-media evidence through Stride’s normalized provider layer while preserving the store plan’s selected advertising-channel entitlement. `overview`, `list`, and `detail` support Meta, TikTok, and Google Ads according to returned capabilities. The generic hierarchy is Campaign → Group → Ad; provider capabilities label Meta groups as Ad Sets, TikTok/normal Google groups as Ad Groups, and Google Performance Max groups as Asset Groups. Meta-only `ad_exposure_list` and `ad_exposure_detail` add its specialized reverse mapping view. Google conversion value/ROAS remain provider attribution, PMax does not fabricate ads, and asset-level delivery metrics/reach remain unavailable unless Google supplies trustworthy evidence. Provider conversion/value metrics are not Shopify purchase truth.',
+      'Read provider-reported paid-media evidence through Metrico’s normalized provider layer while preserving the store plan’s selected advertising-channel entitlement. `overview`, `list`, and `detail` support Meta, TikTok, and Google Ads according to returned capabilities. The generic hierarchy is Campaign → Group → Ad; provider capabilities label Meta groups as Ad Sets, TikTok/normal Google groups as Ad Groups, and Google Performance Max groups as Asset Groups. Meta-only `ad_exposure_list` and `ad_exposure_detail` add its specialized reverse mapping view. Google conversion value/ROAS remain provider attribution, PMax does not fabricate ads, and asset-level delivery metrics/reach remain unavailable unless Google supplies trustworthy evidence. Provider conversion/value metrics are not Shopify purchase truth.',
     inputSchema: schema(
       {
         provider: { enum: ['META', 'TIKTOK', 'GOOGLE_ADS'] },
@@ -186,7 +186,7 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
         },
         entityId: {
           type: 'string',
-          description: 'Stride internal entity id. Required for detail or ad_exposure_detail.',
+          description: 'Metrico internal entity id. Required for detail or ad_exposure_detail.',
         },
         ...paginationProperties,
       },
@@ -199,7 +199,7 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
     name: 'stride_get_storefront',
     title: 'Read first-party storefront behavior',
     description:
-      'Read Stride Pixel first-party observed behavior. `overview` includes the same derived cart abandonment, checkout abandonment, largest valid funnel drop, change points and methodology used by the Stride HTTP UI. `products`, `collections`, and `landing_pages` provide aggregate entity behavior. Observed behavior identifies where the funnel changes, not why it changed. Owner/admin-only Pixel operational health is intentionally not exposed by the generic store-scoped MCP token.',
+      'Read Metrico Pixel first-party observed behavior. `overview` includes the same derived cart abandonment, checkout abandonment, largest valid funnel drop, change points and methodology used by the Metrico HTTP UI. `products`, `collections`, and `landing_pages` provide aggregate entity behavior. Observed behavior identifies where the funnel changes, not why it changed. Owner/admin-only Pixel operational health is intentionally not exposed by the generic store-scoped MCP token.',
     inputSchema: schema(
       {
         surface: { enum: ['overview', 'products', 'collections', 'landing_pages'] },
@@ -214,7 +214,7 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
     name: 'stride_get_attribution',
     title: 'Read first-party attribution evidence',
     description:
-      'Read Stride first-party attribution and aggregate journey evidence separately from provider attribution. Sources and Meta-ad evidence follow the standard Pixel analytics entitlement; aggregate paths and PRODUCT/COLLECTION mapping evidence preserve Stride’s Pro advanced-attribution entitlement. Raw visitor/session journeys are intentionally not exposed through MCP.',
+      'Read Metrico first-party attribution and aggregate journey evidence separately from provider attribution. Sources and Meta-ad evidence follow the standard Pixel analytics entitlement; aggregate paths and PRODUCT/COLLECTION mapping evidence preserve Metrico’s Pro advanced-attribution entitlement. Raw visitor/session journeys are intentionally not exposed through MCP.',
     inputSchema: schema(
       {
         surface: { enum: ['sources', 'meta_ads', 'paths', 'mappings'] },
@@ -251,25 +251,25 @@ export const MCP_TOOLS: readonly McpToolDefinition[] = [
   },
   {
     name: 'stride_get_recommendations',
-    title: 'Read Stride recommendations',
+    title: 'Read Metrico recommendations',
     description:
-      'Get Stride deterministic recommendations with the finding, affected entity, measured values, current/comparison period, explicit rule threshold crossed, suggested action, lifecycle state, attribution source/limitations and diagnostic data-quality context. No probability or confidence grade is implied. Use this for “what should I do?” and “why did Stride flag this?” questions. Recommendations are advice only; MCP cannot execute the suggested action.',
+      'Get Metrico deterministic recommendations with the finding, affected entity, measured values, current/comparison period, explicit rule threshold crossed, suggested action, lifecycle state, attribution source/limitations and diagnostic data-quality context. No probability or confidence grade is implied. Use this for “what should I do?” and “why did Metrico flag this?” questions. Recommendations are advice only; MCP cannot execute the suggested action.',
     inputSchema: schema({ fresh: { type: 'boolean' } }),
     outputSchema: objectOutputSchema,
     annotations: readAnnotations,
   },
   {
     name: 'stride_get_decision_settings',
-    title: 'Read Stride decision settings',
+    title: 'Read Metrico decision settings',
     description:
-      'Read the merchant settings that shape Stride deterministic decision rules without changing them. Returns the existing intelligence settings plus inventory-planning inputs such as restock lead time and low-stock threshold. Use this to explain why inventory-aware recommendations behave as they do.',
+      'Read the merchant settings that shape Metrico deterministic decision rules without changing them. Returns the existing intelligence settings plus inventory-planning inputs such as restock lead time and low-stock threshold. Use this to explain why inventory-aware recommendations behave as they do.',
     inputSchema: schema({}),
     outputSchema: objectOutputSchema,
     annotations: readAnnotations,
   },
   {
     name: 'stride_get_report',
-    title: 'Read historical Stride report',
+    title: 'Read historical Metrico report',
     description:
       'Get a historical current-vs-comparison analytical report with commerce/advertising overview and plan-limited deterministic intelligence context, including recommendation lifecycle state, for a chosen day window. Use for retrospective questions, trend explanation and period comparisons.',
     inputSchema: schema({
@@ -588,7 +588,7 @@ export class McpToolExecutor {
         };
       }
       default:
-        throw new Error(`Unknown Stride MCP tool: ${name}`);
+        throw new Error(`Unknown Metrico MCP tool: ${name}`);
     }
   }
 }

@@ -1,6 +1,6 @@
 # Analytics read workspaces
 
-This module is Stride's stable analytics read side.
+This module is Metrico's stable analytics read side.
 
 The pattern is intentionally CQRS-lite, borrowing the useful part of Systemly's workspace reads without coupling backend contracts to the current frontend layout:
 
@@ -52,7 +52,7 @@ All routes are mounted below `/v1/stores/:storeId`.
 
 `Overview` is a stable cross-domain summary: Shopify commerce, product economics, same-currency Meta spend, blended MER, contribution-after-ads and data availability are returned together.
 
-`Product × Ads` is a separate cross-channel analytical resource. It keeps Shopify commerce truth, Meta provider attribution and Stride's mapping-derived metrics distinct. Only exact single-product mappings are used for product-level paid metrics; ambiguous multi-product ads are excluded rather than split or guessed.
+`Product × Ads` is a separate cross-channel analytical resource. It keeps Shopify commerce truth, Meta provider attribution and Metrico's mapping-derived metrics distinct. Only exact single-product mappings are used for product-level paid metrics; ambiguous multi-product ads are excluded rather than split or guessed.
 
 `Ad Exposure` is the complementary scope-aware read. `AdExposureWorkspace` composes Meta ad facts with current Shopify target relationships and optional inventory context. It distinguishes exact product exposure, shared multi-product exposure, collection exposure, store-level exposure and unknown scope. For `MULTI_PRODUCT` and `COLLECTION`, Meta spend remains at ad level and is never divided between products unless a provider-level allocation fact exists.
 
@@ -67,11 +67,11 @@ All routes are mounted below `/v1/stores/:storeId`.
 - Cross-channel economics never combine different currencies.
 - Meta freshness is the latest persisted AD-level Insights sync across selected ad accounts, independent of the reporting window.
 - Period reach is not reported from daily ad-level rows because reach is non-additive across rows. Frequency is an impression-weighted average of daily provider frequency and is used only as an observational repeat-exposure signal.
-- `read_all_orders` authorization and successful history synchronization are separate facts. The legacy `fullOrderHistory` flag remains an authorization indicator for compatibility. `orderHistory.syncReady` means a successful `OrdersRefunds` sync exists, but the current `SyncRun` schema does not persist which history scope produced that run, so Stride does not claim independently verified all-time coverage (`fullCoverageVerified: false`).
-- Collection historical metrics currently apply the collection's **current** product membership to historical order cohorts. This limitation is explicit as `membershipSnapshot: CURRENT`; Stride does not claim historical collection-membership reconstruction.
+- `read_all_orders` authorization and successful history synchronization are separate facts. The legacy `fullOrderHistory` flag remains an authorization indicator for compatibility. `orderHistory.syncReady` means a successful `OrdersRefunds` sync exists, but the current `SyncRun` schema does not persist which history scope produced that run, so Metrico does not claim independently verified all-time coverage (`fullCoverageVerified: false`).
+- Collection historical metrics currently apply the collection's **current** product membership to historical order cohorts. This limitation is explicit as `membershipSnapshot: CURRENT`; Metrico does not claim historical collection-membership reconstruction.
 - Collection ad exposure likewise uses current Shopify collection membership. The response includes `CURRENT_COLLECTION_MEMBERSHIP` whenever that limitation matters.
 - Shared multi-product/collection ads expose one ad-level spend value plus target membership. Product rows intentionally use `allocatedAdSpend: null` for shared scopes.
 - Inventory days cover remains deterministic: current available inventory divided by recent observed stock-depletion velocity. It is not a forecast and only drives inventory recommendations when inventory is marked `TRUSTED`.
 - Historical creative metrics retain facts from ads that were later soft-deleted; current entity lists still represent current active provider objects.
 
-Source and methodology labels must remain explicit whenever Shopify truth, provider attribution and Stride-derived cross-channel calculations appear together.
+Source and methodology labels must remain explicit whenever Shopify truth, provider attribution and Metrico-derived cross-channel calculations appear together.

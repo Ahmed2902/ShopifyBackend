@@ -12,7 +12,7 @@ const connectionSelect = {
   refreshTokenExpiresAt: true,
   scopes: true,
   apiVersion: true,
-  store: { select: { id: true, myshopifyDomain: true } },
+  store: { select: { id: true, myshopifyDomain: true, shopifyShopId: true } },
 } as const;
 
 export class ShopifyWebhookRepository {
@@ -120,6 +120,8 @@ export class ShopifyWebhookRepository {
         payload: true,
         attempts: true,
         shopifyConnectionId: true,
+        triggeredAt: true,
+        receivedAt: true,
       },
     });
   }
@@ -164,14 +166,87 @@ export class ShopifyWebhookRepository {
     });
   }
 
-  markConnectionUninstalled(connectionId: string) {
-    return prisma.shopifyConnection.update({
-      where: { id: connectionId },
-      data: {
-        status: 'UNINSTALLED',
-        uninstalledAt: new Date(),
-      },
+  markConnectionUninstalled(connectionId: string, eventAt: Date) {
+    return prisma.$transaction(async (tx) => {
+      const connection = await tx.shopifyConnection.findUnique({
+        where: { id: connectionId },
+        select: { storeId: true },
+      });
+      if (!connection) return false;
+      // Conditional update takes a row lock and prevents a delayed uninstall from revoking
+      // credentials provisioned by a newer reinstall (including concurrent token exchanges).
+      const changed = await tx.shopifyConnection.updateMany({
+        where: { id: connectionId, installedAt: { lte: eventAt } },
+        data: {
+          status: 'UNINSTALLED',
+          uninstalledAt: eventAt,
+          accessTokenCiphertext: '',
+          accessTokenExpiresAt: null,
+          refreshTokenCiphertext: null,
+          refreshTokenExpiresAt: null,
+          scopes: [],
+          nextReconciliationAt: null,
+          reconciliationClaimedAt: null,
+        },
+      });
+      if (!changed.count) return false;
+      await tx.storeSubscription.updateMany({
+        where: { storeId: connection.storeId },
+        data: {
+          status: 'CANCELED',
+          trialEndsAt: eventAt,
+          currentPeriodEndsAt: null,
+          canceledAt: eventAt,
+          cancelAtEndOfCycle: false,
+          shopifyAppSubscriptionId: null,
+          shopifyPlanHandle: null,
+          lastVerifiedAt: null,
+        },
+      });
+      await tx.mcpRefreshToken.updateMany({
+        where: { storeId: connection.storeId, revokedAt: null },
+        data: { revokedAt: eventAt },
+      });
+      await tx.mcpAuthorizationCode.deleteMany({ where: { storeId: connection.storeId } });
+      await tx.storeSignalIdentityKey.deleteMany({ where: { storeId: connection.storeId } });
+      await tx.storefrontCustomerLink.deleteMany({ where: { storeId: connection.storeId } });
+      await tx.storefrontEvent.updateMany({
+        where: { storeId: connection.storeId },
+        data: {
+          browserMatchCiphertext: null,
+          browserMatchExpiresAt: null,
+          adSharingAllowed: false,
+        },
+      });
+      await tx.conversionDelivery.updateMany({
+        where: { storeId: connection.storeId, status: { in: ['PENDING', 'RETRY', 'PROCESSING'] } },
+        data: {
+          status: 'DEAD',
+          reasonCode: 'INSTALLATION_REVOKED',
+          clickId: null,
+          eventSourceUrl: null,
+          attributionEventAt: null,
+          processingStartedAt: null,
+        },
+      });
+      await tx.conversionDestination.updateMany({
+        where: { storeId: connection.storeId },
+        data: { status: 'DISABLED' },
+      });
+      await tx.pixelInstallation.updateMany({
+        where: { storeId: connection.storeId },
+        data: { status: 'DISABLED', shopifyWebPixelId: null },
+      });
+      return true;
     });
+  }
+
+  async updateConnectionScopes(connectionId: string, scopes: string[], eventAt: Date) {
+    const result = await prisma.shopifyConnection.updateMany({
+      where: { id: connectionId, status: 'ACTIVE', installedAt: { lte: eventAt } },
+      data: { scopes },
+    });
+    return result.count > 0;
   }
 
   markProductDeleted(storeId: string, shopifyProductId: string) {

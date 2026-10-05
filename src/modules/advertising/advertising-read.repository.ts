@@ -112,7 +112,7 @@ function aggregate(row: RawAggregateRow): AdvertisingAggregateRow {
 }
 
 /**
- * Provider-neutral read boundary over Stride's canonical paid-media persistence.
+ * Provider-neutral read boundary over Metrico's canonical paid-media persistence.
  *
  * Provider interpretation belongs at ingestion. In particular, Meta purchase action selection is
  * normalized before data reaches AdvertisingDailyMetric, so consumers aggregate conversions/value

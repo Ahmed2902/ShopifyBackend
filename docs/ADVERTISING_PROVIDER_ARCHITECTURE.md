@@ -1,6 +1,6 @@
 # Advertising provider architecture
 
-Stride normalizes the paid-media entities it actually reasons about into one canonical persistence model while preserving provider-specific payloads and capabilities.
+Metrico normalizes the paid-media entities it actually reasons about into one canonical persistence model while preserving provider-specific payloads and capabilities.
 
 ## Boundary
 
@@ -12,7 +12,7 @@ Google API ----/        |                         |
                         +-> providerData/rawJson preserve native fields
 ```
 
-Provider adapters translate platform-specific API objects and semantics into Stride's common paid-media language. The normalized model preserves provider identity, attribution limitations, currency policy, and capability differences rather than pretending every network has identical features.
+Provider adapters translate platform-specific API objects and semantics into Metrico's common paid-media language. The normalized model preserves provider identity, attribution limitations, currency policy, and capability differences rather than pretending every network has identical features.
 
 ## Registry
 
@@ -40,9 +40,9 @@ The shared model is intentionally limited to concepts that map cleanly across th
 
 `AdvertisingAccount.provider` identifies the network. Child entities inherit provider identity through their account relation, avoiding redundant provider columns that could disagree with the parent.
 
-Every canonical provider entity keeps `providerEntityId` (the ID assigned by Meta/TikTok/Google), while Stride keeps its UUID as the primary key. During migration, existing Meta/TikTok UUIDs are preserved in the canonical tables so current recommendation/entity references do not churn.
+Every canonical provider entity keeps `providerEntityId` (the ID assigned by Meta/TikTok/Google), while Metrico keeps its UUID as the primary key. During migration, existing Meta/TikTok UUIDs are preserved in the canonical tables so current recommendation/entity references do not churn.
 
-`providerData` stores provider-specific structured fields that Stride may need but that do not justify universal columns. `rawJson` retains the native source payload for audit/debugging. Google Performance Max asset groups fit the canonical hierarchy directly as `AdvertisingGroup(kind = ASSET_GROUP)`; only concepts that genuinely do not fit that shared hierarchy (for example listing-group filters or provider-only asset metadata) may use focused extension tables instead of creating a parallel Google schema or polluting common tables with mostly-null columns.
+`providerData` stores provider-specific structured fields that Metrico may need but that do not justify universal columns. `rawJson` retains the native source payload for audit/debugging. Google Performance Max asset groups fit the canonical hierarchy directly as `AdvertisingGroup(kind = ASSET_GROUP)`; only concepts that genuinely do not fit that shared hierarchy (for example listing-group filters or provider-only asset metadata) may use focused extension tables instead of creating a parallel Google schema or polluting common tables with mostly-null columns.
 
 ## Migration policy
 

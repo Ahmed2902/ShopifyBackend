@@ -1,4 +1,4 @@
-import {register} from '@shopify/web-pixels-extension';
+import { register } from '@shopify/web-pixels-extension';
 
 const FLUSH_DELAY_MS = 750;
 const MAX_BATCH_SIZE = 20;
@@ -7,6 +7,9 @@ const SESSION_INACTIVITY_MS = 30 * 60 * 1000;
 const SESSION_KEY = 'stride_pixel_session_id';
 const SESSION_LAST_ACTIVITY_KEY = 'stride_pixel_session_last_activity_at';
 const LANDING_KEY = 'stride_pixel_landing';
+const WITHDRAWAL_KEY = 'stride_pixel_withdrawal_';
+const PRIVACY_VISITOR_KEY = 'stride_pixel_privacy_visitor_id';
+const PRIVACY_SESSION_KEY = 'stride_pixel_privacy_session_id';
 
 const EVENT_NAMES = [
   'page_viewed',
@@ -39,6 +42,8 @@ const ATTRIBUTION_KEYS = [
   ['utm_term', 'utmTerm'],
   ['fbclid', 'metaClickId'],
   ['gclid', 'googleClickId'],
+  ['gbraid', 'googleBraidedClickId'],
+  ['wbraid', 'googleWebBraidedClickId'],
   ['ttclid', 'tiktokClickId'],
   ['stride_meta_campaign_id', 'metaCampaignExternalId'],
   ['stride_meta_adset_id', 'metaAdSetExternalId'],
@@ -55,17 +60,24 @@ function shopifyGid(type, value) {
 }
 
 function safeUrl(value) {
-  if (!value) return {url: undefined, attribution: {}};
+  if (!value) return { url: undefined, attribution: {} };
   try {
     const parsed = new URL(value);
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-      return {url: undefined, attribution: {}};
+      return { url: undefined, attribution: {} };
     }
 
     const attribution = {};
     for (const [queryKey, outputKey] of ATTRIBUTION_KEYS) {
       const queryValue = parsed.searchParams.get(queryKey)?.trim();
-      if (!queryValue) continue;
+      if (
+        !queryValue ||
+        queryValue.includes('@') ||
+        /https?:\/\//i.test(queryValue) ||
+        [...queryValue].some((c) => c.charCodeAt(0) < 32)
+      )
+        continue;
+      if (outputKey.endsWith('ClickId') && !/^[A-Za-z0-9._~-]+$/.test(queryValue)) continue;
 
       if (outputKey.endsWith('ExternalId')) {
         if (queryValue.length <= 128 && /^\d+$/.test(queryValue)) {
@@ -80,11 +92,15 @@ function safeUrl(value) {
 
     parsed.username = '';
     parsed.password = '';
+    const path = decodeURIComponent(parsed.pathname);
+    const privatePath = path.match(/^\/(?:\d+\/)?(checkouts?|account|orders)(?:\/|$)/i);
+    if (privatePath) parsed.pathname = '/' + privatePath[1].toLowerCase();
+    else if (/^\/cart\/c(?:\/|$)/i.test(path)) parsed.pathname = '/cart';
     parsed.search = '';
     parsed.hash = '';
-    return {url: parsed.toString(), attribution};
+    return { url: parsed.toString(), attribution };
   } catch {
-    return {url: undefined, attribution: {}};
+    return { url: undefined, attribution: {} };
   }
 }
 
@@ -112,6 +128,7 @@ function merchandiseContext(event) {
     return {
       productExternalId: shopifyGid('Product', variant?.product?.id),
       variantExternalId: shopifyGid('ProductVariant', variant?.id),
+      ...commerceContext([{ merchandise: variant, quantity: 1 }]),
     };
   }
 
@@ -127,10 +144,45 @@ function merchandiseContext(event) {
       productExternalId: shopifyGid('Product', line?.merchandise?.product?.id),
       variantExternalId: shopifyGid('ProductVariant', line?.merchandise?.id),
       quantity: line?.quantity ?? undefined,
+      ...commerceContext(line ? [line] : []),
     };
   }
 
   return {};
+}
+
+function commerceContext(lines) {
+  if (lines.length > 100) return {};
+  const currencies = new Set();
+  const commerceItems = lines.slice(0, 100).flatMap((line) => {
+    const variant = line.variant || line.merchandise;
+    const variantExternalId = shopifyGid('ProductVariant', variant?.id);
+    if (!variantExternalId) return [];
+    const money = line.cost?.amountPerQuantity || variant?.price;
+    const itemPrice =
+      money?.amount !== undefined && money?.amount !== null && String(money.amount).trim() !== ''
+        ? Number(money.amount)
+        : NaN;
+    if (/^[A-Z]{3}$/.test(money?.currencyCode || '')) currencies.add(money.currencyCode);
+    return [
+      {
+        variantExternalId,
+        ...(Number.isInteger(line.quantity) && line.quantity > 0 && line.quantity <= 100000
+          ? { quantity: line.quantity }
+          : {}),
+        ...(Number.isFinite(itemPrice) && itemPrice >= 0 && itemPrice <= 1000000000
+          ? { itemPrice }
+          : {}),
+      },
+    ];
+  });
+  if (currencies.size !== 1) for (const item of commerceItems) delete item.itemPrice;
+  return commerceItems.length
+    ? {
+        commerceItems,
+        ...(currencies.size === 1 ? { commerceCurrencyCode: [...currencies][0] } : {}),
+      }
+    : {};
 }
 
 function checkoutContext(event) {
@@ -145,13 +197,14 @@ function checkoutContext(event) {
   const checkout = event.data?.checkout;
   const token = typeof checkout?.token === 'string' ? checkout.token.trim().slice(0, 255) : '';
   const orderId =
-    event.name === 'checkout_completed'
-      ? shopifyGid('Order', checkout?.order?.id)
-      : undefined;
+    event.name === 'checkout_completed' ? shopifyGid('Order', checkout?.order?.id) : undefined;
 
   return {
     shopifyCheckoutToken: token || undefined,
     shopifyOrderExternalId: orderId,
+    ...(event.name === 'checkout_started' && Array.isArray(checkout?.lineItems)
+      ? commerceContext(checkout.lineItems)
+      : {}),
   };
 }
 
@@ -159,16 +212,15 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-register(async ({analytics, browser, customerPrivacy, init, settings}) => {
+register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
   const collectorUrl = typeof settings.collectorUrl === 'string' ? settings.collectorUrl : '';
-  const installationId =
-    typeof settings.installationId === 'string' ? settings.installationId : '';
-  const collectorToken =
-    typeof settings.collectorToken === 'string' ? settings.collectorToken : '';
+  const installationId = typeof settings.installationId === 'string' ? settings.installationId : '';
+  const collectorToken = typeof settings.collectorToken === 'string' ? settings.collectorToken : '';
 
   if (!collectorUrl || !installationId || !collectorToken) return;
 
   let privacy = init.customerPrivacy;
+  let privacyRevision = 0;
   let sessionId = await browser.sessionStorage.getItem(SESSION_KEY);
   let lastActivityAtMs = 0;
   const storedLastActivity = await browser.sessionStorage.getItem(SESSION_LAST_ACTIVITY_KEY);
@@ -192,23 +244,161 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
   const queue = [];
   let flushTimer = null;
   let flushing = false;
+  let inFlightBatch = null;
+  let lastVisitorId = await browser.sessionStorage.getItem(PRIVACY_VISITOR_KEY);
+  let lastSessionId = (await browser.sessionStorage.getItem(PRIVACY_SESSION_KEY)) || sessionId;
   let handling = Promise.resolve();
 
+  let withdrawalSending = false;
+  const withdrawalStorageKey = WITHDRAWAL_KEY + installationId;
+  const cookieCutoffKey = 'stride_pixel_cookie_cutoff_' + installationId;
+  let cookieCutoff = Number(await browser.localStorage.getItem(cookieCutoffKey)) || 0;
+  let pendingWithdrawals = [];
+  let withdrawalStorageWrites = Promise.resolve();
+  try {
+    const stored = JSON.parse((await browser.localStorage.getItem(withdrawalStorageKey)) || 'null');
+    pendingWithdrawals = Array.isArray(stored) ? stored : stored ? [stored] : [];
+  } catch {
+    /* No retained marker. */
+  }
+  function persistWithdrawals() {
+    withdrawalStorageWrites = withdrawalStorageWrites
+      .catch(() => undefined)
+      .then(async () => {
+        if (pendingWithdrawals.length)
+          await browser.localStorage.setItem(
+            withdrawalStorageKey,
+            JSON.stringify(pendingWithdrawals),
+          );
+        else await browser.localStorage.removeItem(withdrawalStorageKey);
+      });
+    return withdrawalStorageWrites.catch(() => undefined);
+  }
+  async function deliverWithdrawal(withdrawal) {
+    // Keep every unacknowledged scope. A new scope must never overwrite an in-flight marker.
+    if (!pendingWithdrawals.some((marker) => JSON.stringify(marker) === JSON.stringify(withdrawal)))
+      pendingWithdrawals.push(withdrawal);
+    await persistWithdrawals();
+    await retryWithdrawal();
+  }
+  async function retryWithdrawal() {
+    if (withdrawalSending || !pendingWithdrawals.length) return;
+    withdrawalSending = true;
+    const marker = pendingWithdrawals[0];
+    try {
+      const response = await fetch(collectorUrl, {
+        method: 'POST',
+        body: JSON.stringify({ installationId, collectorToken, events: [], withdrawal: marker }),
+        keepalive: true,
+      });
+      if (response.ok) {
+        pendingWithdrawals = pendingWithdrawals.filter((item) => item !== marker);
+        await persistWithdrawals();
+      }
+    } catch {
+      /* Keep the privacy marker until collector acknowledgment, including across reloads. */
+    } finally {
+      withdrawalSending = false;
+      if (pendingWithdrawals.length)
+        setTimeout(() => {
+          void retryWithdrawal();
+        }, 5000);
+    }
+  }
+  if (pendingWithdrawals.length) void retryWithdrawal();
+  if (!adSharingAllowed()) {
+    landing = null;
+    await browser.sessionStorage.removeItem(LANDING_KEY);
+  }
+
   customerPrivacy.subscribe('visitorConsentCollected', (event) => {
+    privacyRevision += 1;
     privacy = event.customerPrivacy;
+    // Re-check queued events when consent changes before transmitting them.
+    for (const batch of [queue, inFlightBatch ?? []]) {
+      for (const queued of batch) {
+        queued.adSharingAllowed = queued.adSharingAllowed && adSharingAllowed();
+        if (!queued.adSharingAllowed) delete queued.browserMatch;
+      }
+      if (!privacy?.analyticsProcessingAllowed) batch.length = 0;
+    }
+    if (!adSharingAllowed()) {
+      landing = null;
+      cookieCutoff = Date.now();
+      void browser.localStorage
+        .setItem(cookieCutoffKey, String(cookieCutoff))
+        .catch(() => undefined);
+      void browser.sessionStorage.removeItem(LANDING_KEY).catch(() => undefined);
+    }
+    if (!adSharingAllowed() && (lastVisitorId || lastSessionId)) {
+      // A privacy operation, not an analytics event. It must reach the collector even when
+      // no subsequent storefront event occurs or analytics permission has been withdrawn.
+      void deliverWithdrawal({
+        ...(lastVisitorId ? { anonymousVisitorId: lastVisitorId } : {}),
+        ...(lastSessionId ? { sessionId: lastSessionId } : {}),
+      });
+    }
   });
 
-  async function deliver(events) {
-    const body = JSON.stringify({installationId, collectorToken, events});
+  function adSharingAllowed() {
+    return (
+      privacy?.analyticsProcessingAllowed === true &&
+      privacy?.marketingAllowed === true &&
+      privacy?.saleOfDataAllowed === true
+    );
+  }
 
+  async function deliver(events) {
     for (let attempt = 0; attempt < MAX_DELIVERY_ATTEMPTS; attempt += 1) {
+      if (!privacy?.analyticsProcessingAllowed || events.length === 0) return;
+      // A retry must use current permission, and withdrawal is sticky for this batch.
+      for (const event of events) {
+        event.adSharingAllowed = event.adSharingAllowed && adSharingAllowed();
+        if (!event.adSharingAllowed) delete event.browserMatch;
+      }
+      const body = JSON.stringify({ installationId, collectorToken, events });
       try {
         const response = await fetch(collectorUrl, {
           method: 'POST',
           body,
           keepalive: true,
         });
-        if (response.ok) return;
+        if (response.ok) {
+          // A storefront theme embed can read top-frame sessionStorage. The strict worker
+          // never loads a provider SDK or assumes a native integration shares these IDs.
+          const revision = privacyRevision;
+          try {
+            const heartbeat = Number(
+              await browser.sessionStorage.getItem('stride_browser_heartbeat_v1'),
+            );
+            const eligible = events.filter(
+              (event) =>
+                event.adSharingAllowed &&
+                ['PAGE_VIEW', 'PRODUCT_VIEW', 'ADD_TO_CART'].includes(event.eventName),
+            );
+            if (
+              heartbeat > Date.now() &&
+              eligible.length &&
+              adSharingAllowed() &&
+              !pendingWithdrawals.length &&
+              revision === privacyRevision
+            ) {
+              await browser.sessionStorage.setItem(
+                'stride_browser_batch_v1_' + eligible[0].eventId,
+                JSON.stringify({
+                  expiresAt: Date.now() + 60000,
+                  installationId,
+                  collectorToken,
+                  collectorUrl,
+                  eventIds: eligible.map((event) => event.eventId),
+                }),
+              );
+            }
+          } catch {
+            /* Storage restrictions must not affect collector delivery. */
+          }
+          return;
+        }
         if (response.status < 500 && response.status !== 429) return;
       } catch {
         // Retry bounded transient failures only. Durable dedupe is eventId-based server-side.
@@ -231,7 +421,12 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
     try {
       while (queue.length > 0) {
         const batch = queue.splice(0, MAX_BATCH_SIZE);
-        await deliver(batch);
+        inFlightBatch = batch;
+        try {
+          await deliver(batch);
+        } finally {
+          inFlightBatch = null;
+        }
       }
     } finally {
       flushing = false;
@@ -291,11 +486,26 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
 
   async function handle(event) {
     if (!privacy?.analyticsProcessingAllowed) return;
+    const revision = privacyRevision;
+    if (pendingWithdrawals.length) {
+      await retryWithdrawal();
+      if (pendingWithdrawals.length) return;
+    }
 
     const eventName = mapEventName(event.name);
     if (!eventName) return;
 
     await ensureSession(event);
+    if (revision !== privacyRevision || !privacy?.analyticsProcessingAllowed) return;
+    lastVisitorId = event.clientId || lastVisitorId;
+    lastSessionId = sessionId;
+    await Promise.all([
+      ...(lastVisitorId
+        ? [browser.sessionStorage.setItem(PRIVACY_VISITOR_KEY, lastVisitorId)]
+        : []),
+      browser.sessionStorage.setItem(PRIVACY_SESSION_KEY, lastSessionId),
+    ]);
+    if (revision !== privacyRevision || !privacy?.analyticsProcessingAllowed) return;
 
     const current = safeUrl(event.context?.document?.location?.href);
     if (!landing || hasAttribution(current.attribution)) {
@@ -303,7 +513,44 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
       await browser.sessionStorage.setItem(LANDING_KEY, JSON.stringify(landing));
     }
     const referrer = safeUrl(event.context?.document?.referrer);
+    if (revision !== privacyRevision || !privacy?.analyticsProcessingAllowed) return;
 
+    let browserMatch;
+    if (adSharingAllowed()) {
+      const readCookie = async (key) => {
+        try {
+          return await browser.cookie.get(key);
+        } catch {
+          return undefined;
+        }
+      };
+      const [fbp, ttp, fbc] = await Promise.all([
+        readCookie('_fbp'),
+        readCookie('_ttp'),
+        readCookie('_fbc'),
+      ]);
+      const cookieIsFresh = (value) => !cookieCutoff || Number(value?.split('.')[2]) > cookieCutoff;
+      const userAgent = event.context?.navigator?.userAgent;
+      browserMatch = {
+        ...(typeof fbc === 'string' &&
+        /^fb\.[0-2]\.\d{13}\.[A-Za-z0-9._~-]{1,512}$/.test(fbc) &&
+        cookieIsFresh(fbc)
+          ? { fbc }
+          : {}),
+        ...(typeof fbp === 'string' && /^fb\.[0-2]\.\d{13}\.\d+$/.test(fbp) && cookieIsFresh(fbp)
+          ? { fbp }
+          : {}),
+        ...(typeof ttp === 'string' && /^[A-Za-z0-9_.-]{1,512}$/.test(ttp) && !cookieCutoff
+          ? { ttp }
+          : {}),
+        ...(typeof userAgent === 'string' &&
+        userAgent.length <= 1024 &&
+        ![...userAgent].some((char) => char.charCodeAt(0) < 32)
+          ? { userAgent }
+          : {}),
+      };
+    }
+    if (revision !== privacyRevision || !privacy?.analyticsProcessingAllowed) return;
     queue.push({
       eventId: event.id,
       eventVersion: 1,
@@ -312,6 +559,8 @@ register(async ({analytics, browser, customerPrivacy, init, settings}) => {
       anonymousVisitorId: event.clientId || undefined,
       sessionId: sessionId || undefined,
       consentState: 'GRANTED',
+      adSharingAllowed: adSharingAllowed(),
+      ...(adSharingAllowed() && browserMatch ? { browserMatch } : {}),
       pageUrl: current.url,
       referrerUrl: referrer.url,
       landingPageUrl: landing?.url,

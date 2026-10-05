@@ -1,5 +1,5 @@
 {
-  "name": "shopify-inventory-intelligence-api",
+  "name": "metrico-api",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -37,6 +37,7 @@
     "smoke:v1-release": "node scripts/v1-release-smoke.mjs",
     "smoke:mcp-release": "node scripts/mcp-release-smoke.mjs",
     "shopify:app-store:check": "node scripts/check-shopify-app-store-readiness.mjs",
+    "shopify:app-config": "node scripts/shopify-app-config.mjs",
     "smoke:v1-release:check": "node --check scripts/v1-release-smoke.mjs && node --check scripts/mcp-release-smoke.mjs",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
@@ -47,7 +48,8 @@
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:migrate:status": "prisma migrate status",
     "prisma:migrate:check": "prisma migrate diff --exit-code --from-config-datasource --to-schema prisma",
-    "ci": "npm run prisma:validate && npm run lint && npm run typecheck && npm run test && npm run smoke:v1-release:check && npm run perf:pool-budget:check"
+    "ci": "npm run prisma:validate && npm run lint && npm run typecheck && npm run test && npm run smoke:v1-release:check && npm run perf:pool-budget:check",
+    "release:check-config": "node scripts/check-deployment-pair.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.0.0",
@@ -73,12 +75,16 @@
     "@types/supertest": "^6.0.0",
     "eslint": "^9.0.0",
     "globals": "^16.0.0",
-    "prisma": "^7.0.0",
     "prettier": "^3.0.0",
+    "prisma": "^7.0.0",
     "supertest": "^7.0.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "typescript-eslint": "^8.0.0",
     "vitest": "^4.0.0"
+  },
+  "overrides": {
+    "mysql2": "^3.23.1",
+    "deepmerge-ts": "^8.0.0"
   }
 }

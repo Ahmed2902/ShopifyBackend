@@ -22,7 +22,7 @@ export const authRouter = Router();
 authRouter.get('/me', requireAuth, authController.me);
 authRouter.post('/dev-session', authController.devSession);
 authRouter.use((_req, _res, next) => {
-  if (!env.LEGACY_MERCHANT_AUTH_ENABLED) throw new AppError('Open Stride from Shopify Admin to sign in.', 410, 'SHOPIFY_AUTH_REQUIRED');
+  if (!env.LEGACY_MERCHANT_AUTH_ENABLED) throw new AppError('Open Metrico from Shopify Admin to sign in.', 410, 'SHOPIFY_AUTH_REQUIRED');
   next();
 });
 

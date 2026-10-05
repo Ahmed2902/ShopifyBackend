@@ -6,12 +6,12 @@ PIXEL-4 turns the privacy-bounded PIXEL-2 journey model into durable descriptive
 
 This layer does not create a universal attribution truth.
 
-Stride keeps four different evidence families separate:
+Metrico keeps four different evidence families separate:
 
 1. Shopify commerce truth
 2. Meta provider attribution claims
-3. Stride mapping/exposure evidence
-4. Stride first-party journey evidence
+3. Metrico mapping/exposure evidence
+4. Metrico first-party journey evidence
 
 First/last/assisted touch metrics are descriptive observations from the retained first-party path. They are not causal incrementality claims.
 
@@ -58,7 +58,7 @@ A Pixel-only mapping suggestion requires at least:
 - 5 interacting sessions
 - 60% of those sessions viewing the target
 
-Pixel-only suggested confidence is capped at `0.69`, below Stride's existing `0.70` automatic exact Product x Ads mapping threshold.
+Pixel-only suggested confidence is capped at `0.69`, below Metrico's existing `0.70` automatic exact Product x Ads mapping threshold.
 
 Therefore Pixel-only evidence never automatically activates an exact mapping.
 
@@ -76,7 +76,7 @@ Authenticated store members can read:
 - `GET /v1/stores/:storeId/pixel/attribution/mapping-evidence?targetType=PRODUCT`
 - `GET /v1/stores/:storeId/pixel/attribution/mapping-evidence?targetType=COLLECTION`
 
-Date ranges use Stride's normal store-timezone boundaries and equal preceding comparison period.
+Date ranges use Metrico's normal store-timezone boundaries and equal preceding comparison period.
 
 ## Eventual correctness
 
@@ -89,3 +89,7 @@ The attribution worker watches `StorefrontSession.updatedAt`, so it reacts to:
 If an earlier session for a visitor changes, later linked-purchase dates within the 30-day lookback are rebuilt so first/last/assist evidence stays consistent.
 
 The attribution rollup runs before Pixel trace-retention cleanup.
+
+## Enhanced signals extension
+
+See [Enhanced conversion signals](ENHANCED_CONVERSION_SIGNALS.md) for current acquisition dimensions, deterministic identity, opt-in matching/funnel delivery, consent and retention contracts. Older Purchase-only descriptions above describe the prior foundation. The extension preserves commerce/provider/first-party evidence separation.

@@ -3,7 +3,7 @@ import { BusinessKnowledgeService } from '../../../src/modules/business-knowledg
 
 const store = {
   id: '11111111-1111-4111-8111-111111111111',
-  name: 'Stride Test Store',
+  name: 'Metrico Test Store',
   myshopifyDomain: 'stride-test.myshopify.com',
   currencyCode: 'USD',
   ianaTimezone: 'America/New_York',

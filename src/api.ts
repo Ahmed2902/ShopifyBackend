@@ -10,7 +10,7 @@ let shuttingDown = false;
 server = app.listen(env.PORT, () => {
   logger.info(
     { port: env.PORT, environment: env.NODE_ENV, processRole: 'api' },
-    'Stride API listening',
+    'Metrico API listening',
   );
 });
 
@@ -21,7 +21,7 @@ async function finishShutdown() {
 async function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
-  logger.info({ signal, processRole: 'api' }, 'Shutting down Stride API');
+  logger.info({ signal, processRole: 'api' }, 'Shutting down Metrico API');
 
   if (!server) {
     await finishShutdown();

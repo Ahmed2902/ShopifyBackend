@@ -1,6 +1,6 @@
 # Performance acceptance contract
 
-Stride treats latency and database fan-out as release-quality constraints, not post-release diagnostics.
+Metrico treats latency and database fan-out as release-quality constraints, not post-release diagnostics.
 
 ## Local/production-like benchmark
 

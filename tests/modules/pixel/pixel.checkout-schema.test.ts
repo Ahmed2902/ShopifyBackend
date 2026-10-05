@@ -7,7 +7,7 @@ const base = {
   consentState: 'GRANTED' as const,
 };
 
-describe('Stride Pixel checkout linkage contract', () => {
+describe('Metrico Pixel checkout linkage contract', () => {
   it('accepts Shopify checkout token and exact order GID on checkout completion evidence', () => {
     expect(
       storefrontEventSchema.parse({

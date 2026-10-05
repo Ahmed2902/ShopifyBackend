@@ -122,14 +122,14 @@ export class ShopifyDisconnectService {
 
       if (data.appUninstall.userErrors.length > 0) {
         throw new AppError(
-          data.appUninstall.userErrors[0]?.message ?? 'Shopify could not uninstall Stride.',
+          data.appUninstall.userErrors[0]?.message ?? 'Shopify could not uninstall Metrico.',
           502,
           'SHOPIFY_UNINSTALL_FAILED',
         );
       }
       providerUninstalled = true;
     } catch (error) {
-      // If the stored credential is already invalid, Stride can still stop using the connection
+      // If the stored credential is already invalid, Metrico can still stop using the connection
       // locally and let a fresh OAuth installation replace it. We only claim provider uninstall
       // when Shopify actually accepted appUninstall.
       if (!(error instanceof AppError && error.code === 'SHOPIFY_REAUTH_REQUIRED')) throw error;

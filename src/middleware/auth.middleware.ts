@@ -53,7 +53,7 @@ async function authenticateShopify(
  * Migration-compatible application authentication.
  *
  * Embedded Shopify requests use App Bridge ID tokens and are the authoritative production path.
- * Legacy Stride JWTs are accepted only when the explicit rollback flag is enabled, except for the
+ * Legacy Metrico JWTs are accepted only when the explicit rollback flag is enabled, except for the
  * short-lived token minted by the local development auto-session route while NODE_ENV=development.
  */
 export const requireAuth: RequestHandler = async (req, res, next) => {
@@ -67,7 +67,7 @@ export const requireAuth: RequestHandler = async (req, res, next) => {
 
   const developmentSessionAllowed = env.NODE_ENV === 'development' && env.DEV_AUTO_SESSION_ENABLED;
   if (!env.LEGACY_MERCHANT_AUTH_ENABLED && !developmentSessionAllowed) {
-    throw new AppError('Open Stride from Shopify Admin to sign in.', 401, 'SHOPIFY_AUTH_REQUIRED');
+    throw new AppError('Open Metrico from Shopify Admin to sign in.', 401, 'SHOPIFY_AUTH_REQUIRED');
   }
   const context = await verifyAccessToken(token);
   req.context.userId = context.userId;

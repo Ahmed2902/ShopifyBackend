@@ -126,31 +126,30 @@ describe('BillingService internal trial expiry', () => {
 describe('BillingService request-path Shopify verification', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    storeRepository.findUnique.mockResolvedValue({ shopifyShopId: 'gid://shopify/Shop/1' });
+    storeRepository.findUnique.mockResolvedValue({ shopifyShopId: 'gid://shopify/Shop/1', myshopifyDomain: 'example.myshopify.com', shopifyConnection: { status: 'ACTIVE' } });
   });
 
-  it('returns stale active local access without starting provider work in the request', async () => {
+  it('coalesces stale authorization checks and blocks access when Shopify canceled the contract', async () => {
     const stale = shopifyActive({ lastVerifiedAt: new Date('2026-09-19T07:00:00.000Z') });
     subscriptionRepository.findUnique.mockResolvedValue(stale);
-
-    const activeSubscription = vi.fn();
-    const shopifyPricing = {
-      isEnabled: vi.fn(() => true),
-      activeSubscription,
-      planSelectionUrl: vi.fn(() => 'https://admin.shopify.com/example'),
-      planHandles: vi.fn(() => ({ ESSENTIALS: 'essentials', PRO: 'pro' })),
+    subscriptionRepository.update.mockImplementation(async ({ data }) => ({ ...stale, ...data }));
+    const activeSubscription = vi.fn().mockResolvedValue(null);
+    const client = {
+      isEnabled: () => true, activeSubscription,
+      planSelectionUrl: () => 'https://admin.shopify.com/example',
     } as unknown as ShopifyAppPricingClient;
-    const service = new BillingService(shopifyPricing);
+    const service = new BillingService(client);
+    const results = await Promise.allSettled(Array.from({ length: 3 }, () => service.requireActive(storeId)));
+    expect(results.every((result) => result.status === 'rejected' && result.reason.code === 'SUBSCRIPTION_REQUIRED')).toBe(true);
+    expect(activeSubscription).toHaveBeenCalledTimes(1);
+    expect(subscriptionRepository.update).toHaveBeenCalledTimes(1);
+  });
 
-    const results = await Promise.all([
-      service.requireActive(storeId),
-      service.requireActive(storeId),
-      service.requireActive(storeId),
-    ]);
-
-    expect(results.every((result) => result.accessActive)).toBe(true);
-    expect(results.every((result) => result.verification.stale)).toBe(true);
-    expect(activeSubscription).not.toHaveBeenCalled();
+  it('does not authorize stale active access during a Partner API outage', async () => {
+    subscriptionRepository.findUnique.mockResolvedValue(shopifyActive({ lastVerifiedAt: new Date(0) }));
+    const unavailable = new Error('Partner API unavailable');
+    const client = { isEnabled: () => true, activeSubscription: vi.fn().mockRejectedValue(unavailable) } as unknown as ShopifyAppPricingClient;
+    await expect(new BillingService(client).requireActive(storeId)).rejects.toBe(unavailable);
     expect(subscriptionRepository.update).not.toHaveBeenCalled();
   });
 

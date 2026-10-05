@@ -144,7 +144,7 @@ function searchableEvidence(value: unknown) {
 
 /**
  * Complete protocol-independent read facade for advisor integrations.
- * No metric is recalculated here: every result comes from an existing Stride read model.
+ * No metric is recalculated here: every result comes from an existing Metrico read model.
  */
 export class AdvisorReadService {
   constructor(

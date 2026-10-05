@@ -1,12 +1,12 @@
 # Intelligence scenario harness
 
-This harness validates Stride V1's deterministic decision engine against deliberately constructed scenarios without claiming that generated delivery history came from Meta.
+This harness validates Metrico V1's deterministic decision engine against deliberately constructed scenarios without claiming that generated delivery history came from Meta.
 
 ## Why the harness is split in two
 
-Recommendation validation uses normalized synthetic evidence shaped exactly like the evidence that Stride's repositories produce after Meta + Shopify synchronization. Service-level scenario tests then pass that evidence through the real metric builders, data-quality layer, rules, ranking, and deterministic decision mapper.
+Recommendation validation uses normalized synthetic evidence shaped exactly like the evidence that Metrico's repositories produce after Meta + Shopify synchronization. Service-level scenario tests then pass that evidence through the real metric builders, data-quality layer, rules, ranking, and deterministic decision mapper.
 
-For end-to-end application testing, the local fixture writer can insert realistic Meta hierarchy and daily Insights rows beneath a real connected Stride store/ad-account identity. This exercises the same database reads, analytics, mappings, reports and intelligence paths as provider-imported rows while leaving the actual Meta API fetch path explicitly unvalidated.
+For end-to-end application testing, the local fixture writer can insert realistic Meta hierarchy and daily Insights rows beneath a real connected Metrico store/ad-account identity. This exercises the same database reads, analytics, mappings, reports and intelligence paths as provider-imported rows while leaving the actual Meta API fetch path explicitly unvalidated.
 
 This gives us two independent proofs:
 
@@ -118,7 +118,7 @@ Shared-ad recommendations keep Meta spend at the ad level. They intentionally ad
 
 `meta-fixture-seed.ts` creates normalized database fixtures only. It never calls Meta and never writes campaigns, ads, creatives or budgets back to a provider account.
 
-The fixture target must already be a real connected Stride store and a selected `MetaAdAccount`. Preview the exact target before any write:
+The fixture target must already be a real connected Metrico store and a selected `MetaAdAccount`. Preview the exact target before any write:
 
 ```bash
 META_FIXTURE_STORE_ID=<store-uuid> \

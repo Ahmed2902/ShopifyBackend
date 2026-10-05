@@ -1,5 +1,9 @@
 import type { Request, Response } from 'express';
 import { ZodError } from 'zod';
+import {
+  authorizeBrowserSignals,
+  browserSignalsSchema,
+} from '../conversion-delivery/browser-signals.js';
 import { AppError } from '../../errors/app-error.js';
 import { logger } from '../../lib/logger.js';
 import { pixelDebugBatchSchema, pixelIngestBatchSchema } from './pixel.schema.js';
@@ -23,6 +27,12 @@ function collectorRejectionCode(error: unknown): string {
 export class PixelController {
   constructor(private readonly service: PixelService) {}
 
+  browserSignals = async (req: Request, res: Response) => {
+    const input = browserSignalsSchema.parse(parseCollectorBody(req.body));
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(await authorizeBrowserSignals(input));
+  };
+
   ingest = async (req: Request, res: Response) => {
     try {
       const input = pixelIngestBatchSchema.parse(parseCollectorBody(req.body));
@@ -34,14 +44,11 @@ export class PixelController {
           duplicates: result.duplicates,
           suppressedForConsent: result.suppressedForConsent,
         },
-        'Stride Pixel collector accepted batch',
+        'Metrico Pixel collector accepted batch',
       );
       res.status(200).json(result);
     } catch (error) {
-      logger.warn(
-        { code: collectorRejectionCode(error) },
-        'Stride Pixel collector rejected batch',
-      );
+      logger.warn({ code: collectorRejectionCode(error) }, 'Metrico Pixel collector rejected batch');
       throw error;
     }
   };

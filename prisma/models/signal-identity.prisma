@@ -1,0 +1,22 @@
+// Store-scoped encrypted random HMAC key. Relation fields are deliberately excluded from all public reads.
+model StoreSignalIdentityKey {
+  storeId          String   @id @db.Uuid
+  secretCiphertext String
+  createdAt        DateTime @default(now())
+  store            Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+}
+
+// Deterministic customer relationship: canonical Shopify order only. Shared visitor devices never merge customer identities.
+model StorefrontCustomerLink {
+  sourceOrderId String   @id @db.Uuid
+  storeId       String   @db.Uuid
+  customerKey   String   @db.VarChar(64)
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+  store         Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  order         Order    @relation(fields: [sourceOrderId, storeId], references: [id, storeId], onDelete: Cascade)
+
+  @@unique([sourceOrderId, storeId])
+  @@index([storeId, customerKey])
+  @@index([expiresAt])
+}

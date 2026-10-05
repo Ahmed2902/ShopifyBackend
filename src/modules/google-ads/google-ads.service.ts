@@ -283,7 +283,7 @@ export class GoogleAdsService {
     );
     if (customers.length !== context.selectedCustomerIds.length) {
       throw new AppError(
-        'A selected Google Ads customer is no longer accessible in Stride',
+        'A selected Google Ads customer is no longer accessible in Metrico',
         409,
         'GOOGLE_ADS_CUSTOMER_NOT_ACCESSIBLE',
       );

@@ -16,7 +16,7 @@ import {
  * Protocol-independent storefront overview used by both HTTP and advisor/MCP reads.
  *
  * Keep derived behavior understanding here so every consumer uses the exact same
- * Stride formulas and Shopify-linked purchase semantics.
+ * Metrico formulas and Shopify-linked purchase semantics.
  */
 export class PixelBehaviorOverviewReadService {
   constructor(

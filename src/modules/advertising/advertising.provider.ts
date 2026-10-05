@@ -204,7 +204,7 @@ export class TikTokAdvertisingEvidenceProvider implements AdvertisingEvidencePro
         level,
         capabilities: this.capabilities(),
         unsupported: true,
-        reason: 'TikTok creative-level normalized analytics are not available in Stride yet.',
+        reason: 'TikTok creative-level normalized analytics are not available in Metrico yet.',
       };
     }
     const normalized = bounded(query);
@@ -234,7 +234,7 @@ export class TikTokAdvertisingEvidenceProvider implements AdvertisingEvidencePro
         level,
         capabilities: this.capabilities(),
         unsupported: true,
-        reason: 'TikTok creative-level normalized analytics are not available in Stride yet.',
+        reason: 'TikTok creative-level normalized analytics are not available in Metrico yet.',
       };
     }
     const normalized = bounded(query);

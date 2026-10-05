@@ -99,7 +99,7 @@ export class MetaTrackingService {
         adSet: 'stride_meta_adset_id={{adset.id}}',
         ad: 'stride_meta_ad_id={{ad.id}}',
       },
-      note: 'Existing merchant URL parameters can remain; add the Stride parameters alongside them.',
+      note: 'Existing merchant URL parameters can remain; add the Metrico parameters alongside them.',
     };
   }
 

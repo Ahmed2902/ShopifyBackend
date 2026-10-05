@@ -36,7 +36,7 @@ export function providerFirstPartyPurchaseGapRule(input: {
     externalEntityId: null,
     title: 'Provider and first-party purchase attribution differ materially',
     summary:
-      'Meta provider-reported purchases and Stride first-party Meta-touched Shopify purchase journeys differ materially in the same reporting window.',
+      'Meta provider-reported purchases and Metrico first-party Meta-touched Shopify purchase journeys differ materially in the same reporting window.',
     suggestedAction:
       'Review attribution settings, tracking coverage and journey evidence before comparing the two purchase counts as if they used the same attribution model.',
     impactScore: Math.min(1, relativeGap),
@@ -48,7 +48,7 @@ export function providerFirstPartyPurchaseGapRule(input: {
       {
         code: 'ATTRIBUTION_MODELS_DIFFER',
         message:
-          'This gap is diagnostic evidence only. Meta provider attribution and Stride first-party journey attribution use different models and are not expected to match exactly.',
+          'This gap is diagnostic evidence only. Meta provider attribution and Metrico first-party journey attribution use different models and are not expected to match exactly.',
       },
     ],
     observationStart: input.observationStart,

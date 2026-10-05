@@ -23,7 +23,7 @@ function payload() {
 
 afterEach(() => vi.restoreAllMocks());
 
-describe('Stride Pixel ingress', () => {
+describe('Metrico Pixel ingress', () => {
   it('accepts Shopify-sandbox-friendly text/plain JSON with public CORS', async () => {
     vi.spyOn(pixelService, 'ingest').mockResolvedValue({
       received: 1,

@@ -1,27 +1,27 @@
-# Stride Pixel — first-party storefront event contract
+# Metrico Pixel — first-party storefront event contract
 
 ## Status
 
-This document defines **PIXEL-0** only: the event contract, privacy model, anonymous identity rules, idempotency and retention metadata for Stride's first-party storefront behavioral dataset.
+This document defines **PIXEL-0** only: the event contract, privacy model, anonymous identity rules, idempotency and retention metadata for Metrico's first-party storefront behavioral dataset.
 
 PIXEL-0 does **not** add a public collector endpoint, Shopify Web Pixel/custom-pixel installation flow, session read model, order linkage, behavioral analytics or attribution claims. Those belong to PIXEL-1 through PIXEL-4.
 
 ## Why this layer exists
 
-Stride currently has three kinds of evidence:
+Metrico currently has three kinds of evidence:
 
 ```text
 Shopify -> neutral commerce truth
 Meta    -> provider-attributed advertising evidence
-Stride  -> mapping/exposure evidence joining the two where defensible
+Metrico  -> mapping/exposure evidence joining the two where defensible
 ```
 
-Those layers do not provide Stride with a neutral first-party view of what a visitor did on the storefront before purchase.
+Those layers do not provide Metrico with a neutral first-party view of what a visitor did on the storefront before purchase.
 
-Stride Pixel adds a fourth layer:
+Metrico Pixel adds a fourth layer:
 
 ```text
-Stride Pixel -> first-party storefront behavioral/journey evidence
+Metrico Pixel -> first-party storefront behavioral/journey evidence
 ```
 
 It remains separate from Shopify revenue truth and provider attribution claims. A storefront event must never overwrite Shopify order/revenue facts or be presented as causal incrementality.
@@ -79,7 +79,7 @@ Collector-facing events are versioned. PIXEL-0 defines version `1`.
 }
 ```
 
-External merchandise IDs are intentionally provider/storefront identities rather than Stride database UUIDs. PIXEL-2 may resolve them to normalized Shopify entities.
+External merchandise IDs are intentionally provider/storefront identities rather than Metrico database UUIDs. PIXEL-2 may resolve them to normalized Shopify entities.
 
 ## Event-specific minimums
 
@@ -130,7 +130,7 @@ PIXEL-1 owns generation/storage mechanics.
 Every event carries an explicit privacy state:
 
 ```text
-UNKNOWN      -> Stride does not treat this as permission to capture behavior
+UNKNOWN      -> Metrico does not treat this as permission to capture behavior
 GRANTED      -> behavior capture is allowed
 DENIED       -> behavior capture is not allowed
 NOT_REQUIRED -> caller/platform indicates capture is permitted without an opt-in state
@@ -142,7 +142,7 @@ PIXEL-0 deliberately does not infer jurisdiction or legal basis. The supported S
 
 ## URL and attribution handling
 
-Raw page URLs can contain personal or sensitive query parameters. Stride therefore separates page identity from attribution parameters.
+Raw page URLs can contain personal or sensitive query parameters. Metrico therefore separates page identity from attribution parameters.
 
 Before persistence:
 
@@ -193,7 +193,7 @@ Events are append-only facts. PIXEL-1 should treat a duplicate event ID as an id
 
 PIXEL-0 defines a product default of **90 days** for raw storefront events and a maximum supported raw-event retention window of **365 days**.
 
-This is a Stride product/data-minimization policy, **not a statement that one retention period satisfies every merchant's legal obligations**.
+This is a Metrico product/data-minimization policy, **not a statement that one retention period satisfies every merchant's legal obligations**.
 
 Every persisted event has a mandatory `retentionExpiresAt`, with an index dedicated to expiry cleanup.
 
@@ -227,12 +227,12 @@ No session or attribution aggregate is materialized in PIXEL-0.
 
 ## Truth boundaries
 
-Adding Stride Pixel does not change the existing money/attribution rules:
+Adding Metrico Pixel does not change the existing money/attribution rules:
 
 ```text
 Shopify commerce revenue != Meta attributed revenue
-Shopify commerce revenue != Stride first-party attributed revenue
-Meta attributed revenue    != Stride first-party attributed revenue
+Shopify commerce revenue != Metrico first-party attributed revenue
+Meta attributed revenue    != Metrico first-party attributed revenue
 ```
 
 Future first-touch/last-touch/path outputs are descriptive journey attribution evidence. They must remain labeled separately from provider attribution and from causal/incrementality claims.
@@ -274,3 +274,7 @@ Future first-touch/last-touch/path outputs are descriptive journey attribution e
 - stronger ad -> product/collection mapping evidence;
 - cross-channel assist evidence;
 - explicit methodology/coverage/limitations.
+
+## Enhanced signals extension
+
+See [Enhanced conversion signals](ENHANCED_CONVERSION_SIGNALS.md) for current acquisition dimensions, deterministic identity, opt-in matching/funnel delivery, consent and retention contracts. Older Purchase-only descriptions above describe the prior foundation. The extension preserves commerce/provider/first-party evidence separation.

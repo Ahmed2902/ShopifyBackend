@@ -1,12 +1,35 @@
-import type { AdvertisingProvider, ConversionDeliveryStatus } from '../../generated/prisma/client.js';
+import { storefrontEventKey } from './funnel.repository.js';
+import { prepareConversionContents } from './conversion-content.js';
+import { prisma } from '../../lib/prisma.js';
+import { env } from '../../config/env.js';
+import { enrichConversionSignal } from './signal-enrichment.service.js';
+import { signalCoverage, type MatchEvidence } from './matching.js';
+import type { ConversionDestinationConfig } from './conversion-delivery.types.js';
+import type {
+  AdvertisingProvider,
+  ConversionDeliveryStatus,
+} from '../../generated/prisma/client.js';
 import { AppError } from '../../errors/app-error.js';
-import { billingService, type BillingService, type V1AdProvider } from '../billing/billing.service.js';
+import {
+  billingService,
+  type BillingService,
+  type V1AdProvider,
+} from '../billing/billing.service.js';
 import { encryptSecret } from '../integrations/integration.utils.js';
 import { ConversionDeliveryRepository } from './conversion-delivery.repository.js';
-import type { ConfigureDestinationInput, DeliveryClaim, PurchaseCandidate } from './conversion-delivery.types.js';
+import type {
+  ConfigureDestinationInput,
+  DeliveryClaim,
+  PurchaseCandidate,
+} from './conversion-delivery.types.js';
 import { deliverGooglePurchase } from './providers/google-conversion.provider.js';
 import { deliverMetaPurchase } from './providers/meta-conversion.provider.js';
-import { ConversionProviderError, providerErrorMessage } from './providers/conversion-provider.error.js';
+import {
+  ConversionConsentWithdrawnError,
+  ConversionEntitlementChangedError,
+  ConversionProviderError,
+  providerErrorMessage,
+} from './providers/conversion-provider.error.js';
 import { deliverTikTokPurchase } from './providers/tiktok-conversion.provider.js';
 
 const MAX_ENQUEUE_BATCH = 1_000;
@@ -129,19 +152,29 @@ export class ConversionDeliveryService {
       for (const destination of destinationsByStore.get(candidate.storeId) ?? []) {
         if (!(await isAllowed(candidate.storeId, destination.provider))) continue;
         const attribution = attributionFor(candidate, destination.provider);
-        if (!attribution.clickId) continue;
+        const config = (destination.configJson ?? {}) as ConversionDestinationConfig;
+        if (
+          !attribution.clickId &&
+          !candidate.browserMatchAvailable &&
+          !(config.enhancedMatching && env.SHOPIFY_ENHANCED_MATCHING_APPROVED)
+        )
+          continue;
         eligible += 1;
         const result = await this.repository.enqueue({
           storeId: candidate.storeId,
           destinationId: destination.id,
           provider: destination.provider,
-          eventKey: `stride:purchase:${candidate.shopifyOrderId}`,
+          eventKey: storefrontEventKey(candidate.storeId, `purchase:${candidate.shopifyOrderId}`),
           sourceOrderId: candidate.orderId,
+          sourceEventId: candidate.sourceEventId,
+          sourceGenerationAt: candidate.sourceGenerationAt,
           shopifyOrderId: candidate.shopifyOrderId,
           eventAt: candidate.eventAt,
           value: candidate.value,
           currencyCode: candidate.currencyCode,
           clickId: attribution.clickId,
+          clickIdKind:
+            destination.provider === 'GOOGLE_ADS' ? (candidate.googleClickIdKind ?? 'gclid') : null,
           attributionEventAt: attribution.eventAt,
           eventSourceUrl: candidate.eventSourceUrl,
         });
@@ -156,7 +189,12 @@ export class ConversionDeliveryService {
     const bounded = Math.min(Math.max(1, Math.trunc(limit)), MAX_DELIVERY_BATCH);
     const now = this.now();
     await this.repository.recoverStaleClaims(new Date(now.getTime() - CLAIM_STALE_MS));
-    const claims = await this.repository.claimDue(bounded, now);
+    const claims: DeliveryClaim[] = await this.repository.claimDue(bounded, now);
+    await prepareConversionContents(claims.filter((c) => Boolean(c.sourceEventId)));
+    const enrichmentCache = new Map<
+      string,
+      Promise<{ match: MatchEvidence; customerIdentityKey?: string; matchingReasonCode?: string }>
+    >();
     const billingAllowed = new Map<string, boolean>();
     let delivered = 0;
     let retrying = 0;
@@ -191,10 +229,141 @@ export class ConversionDeliveryService {
       }
 
       try {
+        // Avoid preparing credentials when retained permission is already absent.
+        if (
+          !(await this.repository.hasAdvertisingConsent({
+            ...claim,
+            reportConnectionFailure: true,
+          }))
+        ) {
+          await this.repository.discardForConsent(claim.id);
+          dead += 1;
+          continue;
+        }
+        if (claim.eventAt.getTime() < this.now().getTime() - 7 * 86400_000) {
+          throw new ConversionProviderError(
+            'The event exceeded Metrico delivery retention',
+            false,
+            'EVENT_EXPIRED',
+          );
+        }
+        if (claim.sourceEventId) {
+          const config = (claim.destination.configJson ?? {}) as ConversionDestinationConfig;
+          const cacheKey = JSON.stringify([
+            claim.storeId,
+            claim.sourceOrderId,
+            claim.sourceEventId,
+            claim.sourceGenerationAt,
+            config.enhancedMatching === true,
+          ]);
+          let pending = enrichmentCache.get(cacheKey);
+          if (!pending) {
+            pending = (async () => {
+              const match = await enrichConversionSignal(claim, async () => {
+                try {
+                  await this.billing.requireAdProviderReadOnly(
+                    claim.storeId,
+                    billingProvider(claim.provider),
+                  );
+                } catch {
+                  throw new ConversionEntitlementChangedError();
+                }
+                if (
+                  !(await this.repository.hasAdvertisingConsent({
+                    ...claim,
+                    matchingIntent: true,
+                    reportConnectionFailure: true,
+                  }))
+                )
+                  throw new ConversionConsentWithdrawnError();
+              });
+              return {
+                match,
+                customerIdentityKey: claim.customerIdentityKey,
+                matchingReasonCode: claim.matchingReasonCode,
+              };
+            })();
+            enrichmentCache.set(cacheKey, pending);
+          }
+          const enriched = await pending;
+          claim.match = enriched.match;
+          claim.customerIdentityKey = enriched.customerIdentityKey;
+          claim.matchingReasonCode = enriched.matchingReasonCode;
+          await this.repository.recordCoverage(
+            claim.id,
+            signalCoverage(claim.match, claim.provider, claim.clickId),
+            claim.matchingReasonCode ?? null,
+          );
+        }
+        if (claim.contentFacts)
+          await prisma.conversionDelivery.updateMany({
+            where: { id: claim.id, storeId: claim.storeId },
+            data: { contentCoverage: claim.contentFacts },
+          });
         const result = await this.deliver(claim);
-        await this.repository.markDelivered(claim.id, result.providerRequestId, this.now());
+        if (claim.matchingReasonCode)
+          await this.repository.markDelivered(
+            claim.id,
+            result.providerRequestId,
+            this.now(),
+            claim.matchingReasonCode,
+          );
+        else await this.repository.markDelivered(claim.id, result.providerRequestId, this.now());
+        if (claim.customerIdentityKey && claim.sourceOrderId && claim.sourceGenerationAt)
+          await this.repository.linkCustomerIdentity(claim);
         delivered += 1;
       } catch (error) {
+        if (
+          error instanceof AppError &&
+          /BILLING|SUBSCRIPTION|ENTITLEMENT|AD_PROVIDER/.test(error.code ?? '')
+        ) {
+          await this.repository.pauseForBilling(
+            claim.id,
+            new Date(this.now().getTime() + BILLING_RETRY_MS),
+          );
+          retrying += 1;
+          continue;
+        }
+        if (error instanceof ConversionEntitlementChangedError) {
+          await this.repository.pauseForBilling(
+            claim.id,
+            new Date(this.now().getTime() + BILLING_RETRY_MS),
+          );
+          retrying += 1;
+          continue;
+        }
+        if (error instanceof ConversionConsentWithdrawnError) {
+          await this.repository.discardForConsent(claim.id);
+          dead += 1;
+          continue;
+        }
+        if (
+          error instanceof ConversionProviderError &&
+          [
+            'CONVERSION_CONNECTION_REAUTH_REQUIRED',
+            'META_CAPI_CONNECTION_INACTIVE',
+            'META_CAPI_PERMISSION_REQUIRED',
+            'META_CAPI_REAUTH_REQUIRED',
+            'GOOGLE_DATA_MANAGER_SCOPE_REQUIRED',
+            'GOOGLE_ADS_REAUTH_REQUIRED',
+            '190',
+            '200',
+            '401',
+            '403',
+            '40100',
+            '40101',
+            '40105',
+            'UNAUTHENTICATED',
+            'PERMISSION_DENIED',
+          ].includes(error.providerCode ?? '')
+        ) {
+          await this.repository.pauseForConnection(
+            claim.id,
+            new Date(this.now().getTime() + BILLING_RETRY_MS),
+          );
+          retrying += 1;
+          continue;
+        }
         const attempt = claim.attempts + 1;
         const explicitlyPermanent = error instanceof ConversionProviderError && !error.retryable;
         const isDead = explicitlyPermanent || attempt >= MAX_ATTEMPTS;
@@ -220,9 +389,24 @@ export class ConversionDeliveryService {
   }
 
   private deliver(claim: DeliveryClaim) {
-    if (claim.provider === 'META') return deliverMetaPurchase(claim);
-    if (claim.provider === 'TIKTOK') return deliverTikTokPurchase(claim);
-    return deliverGooglePurchase(claim);
+    const beforeSend = async () => {
+      try {
+        await this.billing.requireAdProviderReadOnly(
+          claim.storeId,
+          billingProvider(claim.provider),
+        );
+      } catch {
+        throw new ConversionEntitlementChangedError();
+      }
+      if (
+        !(await this.repository.hasAdvertisingConsent({ ...claim, reportConnectionFailure: true }))
+      ) {
+        throw new ConversionConsentWithdrawnError();
+      }
+    };
+    if (claim.provider === 'META') return deliverMetaPurchase(claim, beforeSend);
+    if (claim.provider === 'TIKTOK') return deliverTikTokPurchase(claim, beforeSend);
+    return deliverGooglePurchase(claim, beforeSend);
   }
 }
 

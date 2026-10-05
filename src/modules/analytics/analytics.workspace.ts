@@ -24,7 +24,7 @@ type StoreContext = NonNullable<Awaited<ReturnType<AnalyticsRepository['getStore
 type OrderHistorySync = NonNullable<StoreContext['shopifyConnection']>['syncRuns'][number];
 
 /**
- * Stable analytics read side for Stride.
+ * Stable analytics read side for Metrico.
  *
  * Workspaces compose source-domain facts for cross-domain analytical use-cases without
  * creating a second write model or coupling backend contracts to the current UI layout.

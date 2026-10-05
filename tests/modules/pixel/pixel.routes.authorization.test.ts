@@ -22,6 +22,7 @@ vi.mock('../../../src/modules/billing/billing.middleware.js', () => ({
 vi.mock('../../../src/modules/pixel/pixel.controller.js', () => ({
   pixelController: {
     ingest: noop,
+    browserSignals: noop,
     status: noop,
     install,
     debugValidate,

@@ -582,7 +582,7 @@ export class IntelligenceService {
         code: 'PIXEL_NOT_ACTIVE',
         status: 'WARNING',
         surface: 'STOREFRONT_BEHAVIOR',
-        message: 'Stride Pixel is not active, so storefront behavior decisions are unavailable.',
+        message: 'Metrico Pixel is not active, so storefront behavior decisions are unavailable.',
       });
     } else {
       const pixelStaleHours = ageHours(pixel.lastEventAt, input.now);
@@ -600,7 +600,7 @@ export class IntelligenceService {
           code: 'PIXEL_ROLLUP_ERROR',
           status: 'WARNING',
           surface: 'STOREFRONT_BEHAVIOR',
-          message: 'Stride Pixel behavior rollup currently reports an error.',
+          message: 'Metrico Pixel behavior rollup currently reports an error.',
         });
       } else if (
         !pixelRollup?.lastRolledUpAt ||
@@ -611,7 +611,7 @@ export class IntelligenceService {
           code: 'PIXEL_BEHAVIOR_MISSING',
           status: 'WARNING',
           surface: 'STOREFRONT_BEHAVIOR',
-          message: 'Stride Pixel is active but comparable storefront behavior is missing from the current or comparison window.',
+          message: 'Metrico Pixel is active but comparable storefront behavior is missing from the current or comparison window.',
           metrics: {
             currentRows: input.storefrontCurrentRowsCount,
             comparisonRows: input.storefrontComparisonRowsCount,

@@ -1,22 +1,22 @@
 # PIXEL-2A — Exact Meta attribution bridge
 
-This phase adds the deterministic bridge between Meta ad identity and Stride first-party storefront events.
+This phase adds the deterministic bridge between Meta ad identity and Metrico first-party storefront events.
 
 ## Truth boundary
 
-Shopify Web Pixels tell Stride what happened on the storefront. Meta ad identity is not supplied by Shopify automatically. Exact ad identity therefore enters the storefront through URL parameters attached to the Meta ad destination.
+Shopify Web Pixels tell Metrico what happened on the storefront. Meta ad identity is not supplied by Shopify automatically. Exact ad identity therefore enters the storefront through URL parameters attached to the Meta ad destination.
 
-Stride stores that identity as observed attribution evidence. It does **not** mean the ad causally caused a later purchase.
+Metrico stores that identity as observed attribution evidence. It does **not** mean the ad causally caused a later purchase.
 
 ## Tracking parameters
 
-Stride uses Meta dynamic URL parameters:
+Metrico uses Meta dynamic URL parameters:
 
 ```text
 stride_meta_campaign_id={{campaign.id}}&stride_meta_adset_id={{adset.id}}&stride_meta_ad_id={{ad.id}}
 ```
 
-At click time Meta resolves those macros to provider IDs. The Stride Pixel allowlists the resolved numeric values and sends them as:
+At click time Meta resolves those macros to provider IDs. The Metrico Pixel allowlists the resolved numeric values and sends them as:
 
 - `metaCampaignExternalId`
 - `metaAdSetExternalId`
@@ -64,7 +64,7 @@ That flow requests:
 ads_read,ads_management
 ```
 
-The requested authorization mode is signed into OAuth state. The callback only completes an automatic-tracking upgrade when Meta's inspected token actually contains `ads_management`. If the merchant declines that permission, Stride returns `META_ADS_MANAGEMENT_REQUIRED` and leaves the existing read-only connection untouched instead of reporting a false successful upgrade.
+The requested authorization mode is signed into OAuth state. The callback only completes an automatic-tracking upgrade when Meta's inspected token actually contains `ads_management`. If the merchant declines that permission, Metrico returns `META_ADS_MANAGEMENT_REQUIRED` and leaves the existing read-only connection untouched instead of reporting a false successful upgrade.
 
 Audit coverage:
 
@@ -93,7 +93,7 @@ Example dry-run body:
 
 Automatic setup is merchant-triggered and limited to tracking configuration.
 
-Stride does not change:
+Metrico does not change:
 
 - budgets
 - bids
@@ -102,13 +102,13 @@ Stride does not change:
 - campaign/ad-set/ad status
 - creative media or copy intentionally
 
-Meta creatives are handled conservatively because URL tags live on the creative. For supported non-dynamic creatives, Stride clones the creative with existing merchant URL tags plus the Stride tracking parameters, then repoints the selected ad to the new creative.
+Meta creatives are handled conservatively because URL tags live on the creative. For supported non-dynamic creatives, Metrico clones the creative with existing merchant URL tags plus the Metrico tracking parameters, then repoints the selected ad to the new creative.
 
-Stride does not automatically retry provider writes because creative creation is non-idempotent. A lost response could otherwise create duplicate creatives.
+Metrico does not automatically retry provider writes because creative creation is non-idempotent. A lost response could otherwise create duplicate creatives.
 
 Dynamic or unsupported creative shapes are returned as `MANUAL_REQUIRED` and are never automatically rebuilt.
 
-Meta can review an ad again after a creative assignment. API responses explicitly surface that warning, and successful writes request a normal Meta hierarchy resync before Stride treats the local snapshot as current.
+Meta can review an ad again after a creative assignment. API responses explicitly surface that warning, and successful writes request a normal Meta hierarchy resync before Metrico treats the local snapshot as current.
 
 ## Meta developer configuration required for production
 

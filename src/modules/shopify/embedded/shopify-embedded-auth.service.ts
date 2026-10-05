@@ -65,57 +65,49 @@ export class ShopifyEmbeddedAuthService {
   ): Promise<ShopifyEmbeddedSession> {
     const tokenContext = await verifyShopifyIdToken(idToken);
     const existingStore = await this.repository.findStoreByShop(tokenContext.shop);
-    let online: ShopifyOnlineAccessTokenResponse | undefined;
 
-    if (existingStore?.shopifyConnection?.status === 'ACTIVE') {
-      if (options.refreshIdentity) {
-        online = await this.tokenExchange.exchangeOnline(tokenContext.shop, idToken);
-        this.assertSameShopifyUser(online, tokenContext.shopifyUserId);
-        const refreshed = await this.repository.refreshIdentity(
-          existingStore.id,
-          tokenContext.shopifyUserId,
-          online.associated_user,
-        );
-        if (refreshed) {
-          await this.billing.ensureSubscription(existingStore.id);
-          return this.session({
-            storeId: existingStore.id,
-            userId: refreshed.userId,
-            role: refreshed.role,
-            shop: tokenContext.shop,
-            shopifyUserId: tokenContext.shopifyUserId,
-          });
-        }
-      } else {
-        const identity = await this.repository.findIdentity(
-          existingStore.id,
-          tokenContext.shopifyUserId,
-        );
-        if (identity) {
-          await this.billing.ensureSubscription(existingStore.id);
-          return this.session({
-            storeId: existingStore.id,
-            userId: identity.userId,
-            role: identity.role,
-            shop: tokenContext.shop,
-            shopifyUserId: tokenContext.shopifyUserId,
-          });
-        }
+    // Every embedded bootstrap verifies the installation remotely, even while a delayed
+    // uninstall webhook still leaves the previous connection ACTIVE. Ordinary authenticated
+    // reads retain their identity fast path after that bootstrap.
+    if (existingStore?.shopifyConnection?.status === 'ACTIVE' && !options.refreshIdentity) {
+      const identity = await this.repository.findIdentity(
+        existingStore.id,
+        tokenContext.shopifyUserId,
+      );
+      if (identity) {
+        await this.billing.ensureSubscription(existingStore.id);
+        return this.session({
+          storeId: existingStore.id,
+          userId: identity.userId,
+          role: identity.role,
+          shop: tokenContext.shop,
+          shopifyUserId: tokenContext.shopifyUserId,
+        });
       }
     }
 
-    // New install/reinstall or the first time this Shopify staff member opens Stride. The offline
+    // New install/reinstall or the first time this Shopify staff member opens Metrico. The offline
     // token belongs to the shop and powers background work; the online token is used only to map
-    // this authenticated Shopify staff identity into Stride's existing membership boundary.
+    // this authenticated Shopify staff identity into Metrico's existing membership boundary.
     const offline = await this.tokenExchange.exchangeOffline(tokenContext.shop, idToken);
-    online ??= await this.tokenExchange.exchangeOnline(tokenContext.shop, idToken);
+    const online = await this.tokenExchange.exchangeOnline(tokenContext.shop, idToken);
     this.assertSameShopifyUser(online, tokenContext.shopifyUserId);
 
-    const profile = await this.apiService.fetchShopProfile(
-      tokenContext.shop,
-      offline.access_token,
-      env.SHOPIFY_API_VERSION,
-    );
+    // Capture the beginning of the successful remote proof, not the later database-write time.
+    // An uninstall that happens during/after this request must still invalidate the connection.
+    const verifiedAt = new Date();
+    const [profile, installationId] = await Promise.all([
+      this.apiService.fetchShopProfile(
+        tokenContext.shop,
+        offline.access_token,
+        env.SHOPIFY_API_VERSION,
+      ),
+      this.apiService.fetchCurrentInstallationId(
+        tokenContext.shop,
+        offline.access_token,
+        env.SHOPIFY_API_VERSION,
+      ),
+    ]);
     const canonicalShop = normalizeShopDomain(profile.myshopifyDomain);
     if (canonicalShop !== tokenContext.shop) {
       throw new AppError(
@@ -131,7 +123,7 @@ export class ShopifyEmbeddedAuthService {
       profile,
       associatedUser: online.associated_user,
       apiVersion: env.SHOPIFY_API_VERSION,
-      credentials: offlineCredentials(offline),
+      credentials: { ...offlineCredentials(offline), verifiedAt, installationId },
     });
 
     await invalidateStoreDecisionCaches(provisioned.storeId);
@@ -144,10 +136,7 @@ export class ShopifyEmbeddedAuthService {
     });
   }
 
-  private assertSameShopifyUser(
-    online: ShopifyOnlineAccessTokenResponse,
-    shopifyUserId: string,
-  ) {
+  private assertSameShopifyUser(online: ShopifyOnlineAccessTokenResponse, shopifyUserId: string) {
     if (String(online.associated_user.id) !== shopifyUserId) {
       throw new AppError(
         'Shopify returned a different staff identity during token exchange',
