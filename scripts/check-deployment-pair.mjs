@@ -25,6 +25,10 @@ export function checkDeploymentPair(backend, frontend) {
   const publicSite = origin(frontend, 'NEXT_PUBLIC_SITE_URL');
   if (api && publicApi && api !== publicApi) failures.push('NEXT_PUBLIC_API_URL must match APP_URL');
   if (site && publicSite && site !== publicSite) failures.push('NEXT_PUBLIC_SITE_URL must match FRONTEND_URL');
+  if (api && value(backend, 'TIKTOK_REDIRECT_URI') &&
+      value(backend, 'TIKTOK_REDIRECT_URI') !== new URL('/v1/integrations/tiktok/callback', api).toString()) {
+    failures.push('TIKTOK_REDIRECT_URI must match APP_URL plus /v1/integrations/tiktok/callback; register that exact URL in TikTok API for Business');
+  }
   if (!value(backend, 'SHOPIFY_CLIENT_ID') ||
       value(backend, 'SHOPIFY_CLIENT_ID') !== value(frontend, 'NEXT_PUBLIC_SHOPIFY_API_KEY')) {
     failures.push('NEXT_PUBLIC_SHOPIFY_API_KEY must match the nonempty SHOPIFY_CLIENT_ID');

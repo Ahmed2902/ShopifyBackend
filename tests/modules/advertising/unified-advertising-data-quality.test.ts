@@ -24,6 +24,38 @@ function service() {
 }
 
 describe('unified advertising sync data quality', () => {
+  it.each([null, 'DISCONNECTED', 'UNINSTALLED'])('omits unused channels from all-channel evidence while retaining connected-channel failures (%s)', (status) => {
+    const value = service().dataQuality({
+      states: [
+        { provider: 'META', status: 'ACTIVE', selectedExternalIds: [], lastSyncedAt: null, lastSyncStatus: 'FAILED' },
+        { provider: 'TIKTOK', status, selectedExternalIds: [], lastSyncedAt: null, lastSyncStatus: null },
+        { provider: 'GOOGLE_ADS', status, selectedExternalIds: [], lastSyncedAt: null, lastSyncStatus: null },
+      ],
+      allSelectedAccounts: [], scopedAccounts: [], rows: [], requestedProvider: 'ALL',
+      now: new Date('2026-10-05T12:00:00Z'),
+    });
+    expect(value.filter(item => item.provider === 'TIKTOK' || item.provider === 'GOOGLE_ADS')).toEqual([]);
+    expect(value).toContainEqual(expect.objectContaining({ provider: 'META', code: 'FAILED_SYNC', status: 'BLOCKED' }));
+  });
+
+  it('still explains a disconnected channel when the merchant explicitly selects it', () => {
+    const value = service().dataQuality({
+      states: [{ provider: 'TIKTOK', status: 'DISCONNECTED', selectedExternalIds: [], lastSyncedAt: null, lastSyncStatus: null }],
+      allSelectedAccounts: [], scopedAccounts: [], rows: [], requestedProvider: 'TIKTOK',
+      now: new Date('2026-10-05T12:00:00Z'),
+    });
+    expect(value).toContainEqual(expect.objectContaining({ provider: 'TIKTOK', code: 'PROVIDER_DISCONNECTED' }));
+  });
+
+  it('keeps a connected channel that needs renewed permission visible', () => {
+    const value = service().dataQuality({
+      states: [{ provider: 'META', status: 'REAUTH_REQUIRED', selectedExternalIds: [], lastSyncedAt: null, lastSyncStatus: null }],
+      allSelectedAccounts: [], scopedAccounts: [], rows: [], requestedProvider: 'ALL',
+      now: new Date('2026-10-05T12:00:00Z'),
+    });
+    expect(value).toContainEqual(expect.objectContaining({ provider: 'META', code: 'PROVIDER_CONNECTION_BLOCKED' }));
+  });
+
   it('surfaces Meta partial sync as a warning', () => {
     const value = service().dataQuality({
       states: [

@@ -1,4 +1,5 @@
 import { env } from './env.js';
+import { AppError } from '../errors/app-error.js';
 
 function backendOrigin(): string {
   return new URL(env.APP_URL).origin;
@@ -45,7 +46,18 @@ export function metaCallbackUrl(): string {
 }
 
 export function tiktokCallbackUrl(): string {
-  return backendCallback('/v1/integrations/tiktok/callback', env.TIKTOK_REDIRECT_URI);
+  const callback = backendCallback('/v1/integrations/tiktok/callback', env.TIKTOK_REDIRECT_URI);
+  if (env.NODE_ENV === 'production' && env.TIKTOK_REDIRECT_URI &&
+      new URL(env.TIKTOK_REDIRECT_URI).toString() !== callback) {
+    // Do not silently replace the callback the operator registered at TikTok.
+    // Keep the canonical backend route, but reject contradictory configuration.
+    throw new AppError(
+      'TikTok connection settings need attention. Ask Metrico support to check the registered return address.',
+      503,
+      'TIKTOK_REDIRECT_CONFIGURATION_MISMATCH',
+    );
+  }
+  return callback;
 }
 
 export function tiktokWebhookUrl(): string {

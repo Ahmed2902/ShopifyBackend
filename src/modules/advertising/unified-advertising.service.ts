@@ -443,6 +443,9 @@ export class UnifiedAdvertisingService {
         state.status === 'DISCONNECTED' ||
         state.status === 'UNINSTALLED'
       ) {
+        // An unconnected optional channel is not a store-health problem. Keep the
+        // explanation when a merchant explicitly inspects that provider, though.
+        if (input.requestedProvider === 'ALL') continue;
         items.push({
           code: 'PROVIDER_DISCONNECTED',
           status: 'WARNING',

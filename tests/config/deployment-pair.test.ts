@@ -17,6 +17,9 @@ describe('cross-deployment configuration gate', () => {
   it('accepts consistent public settings and omitted default CORS/collector settings', () => {
     expect(checkDeploymentPair(backend, frontend)).toEqual([]);
   });
+  it('accepts the same TikTok callback used by the production backend', () => {
+    expect(checkDeploymentPair({ ...backend, TIKTOK_REDIRECT_URI: `${backend.APP_URL}/v1/integrations/tiktok/callback` }, frontend)).toEqual([]);
+  });
   it.each([
     { NEXT_PUBLIC_API_URL: 'https://wrong.metrico-fixture.dev' },
     { NEXT_PUBLIC_SITE_URL: 'https://wrong.metrico-fixture.dev' },
@@ -36,6 +39,9 @@ describe('cross-deployment configuration gate', () => {
     { SHOPIFY_APP_URL: 'https://app.metrico-fixture.dev/' },
     { SHOPIFY_REDIRECT_URI: 'https://api.metrico-fixture.dev/api/shopify/callback' },
     { PIXEL_COLLECTOR_URL: 'https://wrong.metrico-fixture.dev/v1/pixel/events' },
+    { TIKTOK_REDIRECT_URI: 'http://localhost:3001/v1/integrations/tiktok/callback' },
+    { TIKTOK_REDIRECT_URI: `${backend.FRONTEND_URL}/app/integrations/complete` },
+    { TIKTOK_REDIRECT_URI: `${backend.APP_URL}/v1/integrations/tiktok/callback/` },
   ])('rejects routes that would break embedded installation, collector or CORS (%j)', (overrides) => {
     expect(checkDeploymentPair({ ...backend, ...overrides }, frontend).length).toBeGreaterThan(0);
   });
