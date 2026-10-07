@@ -35,6 +35,8 @@ Copy `deploy/` to a private server directory and configure:
 
 Set directory permissions to 700 and secret files to 600. Never commit them, run `docker compose config` without `--quiet` in logs, or source env files as executable shell. Authenticate to GHCR using a read:packages token if images are private; store Docker credentials with an appropriate credential helper. Provider/Shopify secrets do not belong in GHCR login or build configuration.
 
+Keep `SHOPIFY_ENHANCED_MATCHING_APPROVED=false` until the app's actual protected-data approvals and production privacy controls are verified. Set `SHOPIFY_ENHANCED_MATCHING_FIELDS` explicitly: the template limits requests to `email,phone,customer_id`, which is appropriate only when those fields and their advertising purpose are approved. Remove anything unapproved; do not add name, address or client IP automatically. The application's fallback includes more fields, so do not omit this allowlist when enabling matching. Each merchant must also enable enhanced matching on its destination. See [the Shopify account setup](SHOPIFY_APP_ACCOUNT_SETUP.md) for approval checks.
+
 Caddy automatically obtains TLS for all three hosts. Root serves public pages; root /app and Shopify callback paths redirect to app.metrico.live preserving queries. App responses preserve Shopify iframe CSP from Next.js; do not add X-Frame-Options DENY. API proxy preserves MCP streaming and incoming headers without access logs containing OAuth query codes. HTTPS certificate validation needs real DNS and reachable ports.
 
 ## Capacity and database pools
