@@ -54,8 +54,33 @@ jobs:
       - name: Production build
         run: npm run build
 
+      - name: Add Supabase browser roles for access-control verification
+        run: |
+          docker exec -i "${{ job.services.postgres.id }}" psql -U postgres -d shopify_intelligence_test -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE anon NOLOGIN;
+          CREATE ROLE authenticated NOLOGIN;
+          SQL
+
       - name: Apply database migrations
         run: npm run prisma:migrate:deploy
+
+      - name: Verify backend-only table access
+        run: |
+          docker exec -i "${{ job.services.postgres.id }}" psql -U postgres -d shopify_intelligence_test -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            IF EXISTS (
+              SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
+                AND c.relname <> '_prisma_migrations'
+                AND (NOT c.relrowsecurity
+                  OR has_table_privilege('anon', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+                  OR has_table_privilege('authenticated', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'))
+            ) THEN
+              RAISE EXCEPTION 'Application tables must enable RLS and revoke browser-role grants';
+            END IF;
+          END $$;
+          SQL
 
       - name: Verify migration drift
         run: npm run prisma:migrate:check
