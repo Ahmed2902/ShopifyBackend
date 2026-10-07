@@ -21,7 +21,7 @@ This release incorporates the existing conversion-signals and Shopify billing/li
 
 Google OAuth verification, Google Cloud project API access, actual selected accounts/actions and live acknowledgement need account evidence. Only enabled UPLOAD_CLICKS/PURCHASE actions owned by the selected customer qualify. Website-tag and manager-owned actions are intentionally excluded.
 
-TikTok investigation confirms a Marketing API pixel-list endpoint and a separate Events API event endpoint. Existing advertising authorization does not prove authority to send storefront events. Managed TikTok setup remains unavailable until an approved Events API token acquisition/refresh and revocation flow is verified. Existing manually configured server destinations remain unchanged.
+TikTok investigation confirms a Marketing API pixel-list endpoint and a separate Events API event endpoint. Existing advertising authorization does not prove authority to send storefront events. The October 7 follow-up implements advertiser-owned destination discovery and connected-OAuth delivery behind TIKTOK_EVENTS_API_ENABLED; it remains disabled until the deployment’s actual pixel/list and event/track permissions are verified. Existing manually configured server destinations remain unchanged.
 
 Shopify review was refreshed from the canonical CLI checklist. Theme app extension requirements now apply: 21 likely passing, 13 need live/account/listing review, 0 observed failures across 34 applicable requirements. This is code evidence, not Shopify approval. Live installation, incognito App Bridge, billing, protected-data approval, extension deployment, TLS and listing/reviewer credentials remain launch gates.
 

@@ -119,6 +119,14 @@ describe('managed TikTok conversion setup', () => {
       }),
     );
     fetchMock.mockClear();
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ code: 401, message: 'revoked' }), { status: 401 }),
+    );
+    await expect(deliverTikTokPurchase(claim, before)).rejects.toMatchObject({
+      providerCode: 'TIKTOK_REAUTH_REQUIRED',
+      retryable: true,
+    });
+    fetchMock.mockClear();
     before.mockRejectedValueOnce(new Error('consent withdrawn'));
     await expect(deliverTikTokPurchase(claim, before)).rejects.toThrow('consent withdrawn');
     expect(fetchMock).not.toHaveBeenCalled();
