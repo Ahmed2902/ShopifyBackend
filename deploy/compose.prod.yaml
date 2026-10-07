@@ -68,7 +68,7 @@ services:
 
   proxy:
     <<: *service
-    image: caddy:2-alpine
+    image: ${PROXY_IMAGE:?Set the immutable Caddy image digest}
     mem_limit: 128m
     ports:
       - '80:80'

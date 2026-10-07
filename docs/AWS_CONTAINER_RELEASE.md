@@ -28,7 +28,7 @@ Use Docker Engine and Compose **2.30+** (raw env-file format), curl and age. Ima
 
 Copy `deploy/` to a private server directory and configure:
 
-- `release.env`: actual immutable image digests, based on release.env.example.
+- `release.env`: actual immutable image digests, based on release.env.example. Each application variable must match its own repository; placeholder zero digests are rejected. Pin the HTTPS proxy too: run `docker pull caddy:2-alpine`, then `docker image inspect caddy:2-alpine --format '{{index .RepoDigests 0}}'`, and put that exact `caddy@sha256:…` value in `PROXY_IMAGE`. Review proxy updates deliberately and retain the previous digest for rollback.
 - `backend.env`: actual backend secrets and public URLs, based on backend.env.example. Plain unquoted values; Compose raw format preserves literal characters. DATABASE_URL must be a supported Supabase direct/session TLS connection. Prisma CLI can use MIGRATION_DATABASE_URL if different. Keep approved scopes only; read_all_orders is included because the owner reports it granted.
 - `backup.env`: PostgreSQL connection components for pg_dump, preferably an authorized backup connection, not browser credentials. These are separate to avoid supplying advertising secrets to the PostgreSQL client.
 - `backup.recipient`: one age public recipient whose private decryption key is stored securely off this host. No private key belongs here.
