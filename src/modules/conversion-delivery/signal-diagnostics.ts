@@ -167,7 +167,15 @@ export async function conversionSignalHealth(storeId: string) {
                   connections?.tiktokConnection?.accessTokenExpiresAt &&
                   connections.tiktokConnection.accessTokenExpiresAt <= new Date(),
                 ),
-                credentialSource: 'EVENTS_MANAGER_DESTINATION',
+                credentialSource: destinations.some(
+                  (d) =>
+                    d.provider === 'TIKTOK' &&
+                    (d.configJson as Record<string, unknown> | null)?.authSource ===
+                      'TIKTOK_CONNECTION',
+                )
+                  ? 'TIKTOK_CONNECTION'
+                  : 'EVENTS_MANAGER_DESTINATION',
+                permissionAvailable: env.TIKTOK_EVENTS_API_ENABLED,
               }
             : {
                 status: connections?.googleAdsConnection?.status ?? 'NOT_CONNECTED',

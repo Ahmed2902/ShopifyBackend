@@ -68,7 +68,9 @@ export class ConversionDeliveryRepository {
       displayName: input.displayName ?? null,
       configJson: { ...signalSettings, ...input.config } as Prisma.InputJsonValue,
       status: 'ACTIVE' as const,
-      ...(input.config.authSource === 'META_CONNECTION' || input.config.authSource === 'GOOGLE_ADS_CONNECTION'
+      ...(input.config.authSource === 'META_CONNECTION' ||
+      input.config.authSource === 'GOOGLE_ADS_CONNECTION' ||
+      input.config.authSource === 'TIKTOK_CONNECTION'
         ? { accessTokenCiphertext: null }
         : accessTokenCiphertext !== undefined
           ? { accessTokenCiphertext }
@@ -370,7 +372,7 @@ export class ConversionDeliveryRepository {
           : claim.provider === 'TIKTOK'
             ? await prisma.tikTokConnection.findUnique({
                 where: { storeId: claim.storeId },
-                select: { status: true },
+                select: { status: true, selectedAdvertiserIds: true },
               })
             : await prisma.googleAdsConnection.findUnique({
                 where: { storeId: claim.storeId },
@@ -398,6 +400,15 @@ export class ConversionDeliveryRepository {
           !('selectedCustomerIds' in providerConnection) ||
           !Array.isArray(providerConnection.selectedCustomerIds) ||
           !providerConnection.selectedCustomerIds.includes(String(config?.customerId)))
+      )
+        return unavailable();
+      if (
+        claim.provider === 'TIKTOK' &&
+        config?.authSource === 'TIKTOK_CONNECTION' &&
+        (!providerConnection ||
+          !('selectedAdvertiserIds' in providerConnection) ||
+          !Array.isArray(providerConnection.selectedAdvertiserIds) ||
+          !providerConnection.selectedAdvertiserIds.includes(String(config.advertiserId)))
       )
         return unavailable();
       if (claim.clickId && claim.sourceOrderId) {

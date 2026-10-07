@@ -9,6 +9,11 @@ import { MetaRepository } from '../meta/meta.repository.js';
 import { MetaApiService } from '../meta/shared/meta-api.service.js';
 import { MetaAuthService } from '../meta/shared/meta-auth.service.js';
 import { ConversionDeliveryRepository } from './conversion-delivery.repository.js';
+import { env } from '../../config/env.js';
+import { TikTokRepository } from '../tiktok/tiktok.repository.js';
+import { TikTokApiService } from '../tiktok/shared/tiktok-api.service.js';
+import { TikTokAuthService } from '../tiktok/shared/tiktok-auth.service.js';
+import { listTikTokPixels } from './tiktok-pixels.js';
 
 export type ManagedConversionOption = {
   id: string;
@@ -71,6 +76,7 @@ export class ManagedConversionSetupService {
     await this.billing.requireAdProvider(storeId, provider);
 
     if (provider === 'GOOGLE_ADS') return this.googleOptions(storeId);
+    if (provider === 'TIKTOK') return this.tiktokOptions(storeId);
 
     if (provider !== 'META') {
       return {
@@ -141,6 +147,41 @@ export class ManagedConversionSetupService {
     };
   }
 
+  private async tiktokOptions(storeId: string): Promise<ManagedConversionOptions> {
+    const result: ManagedConversionOptions = {
+      provider: 'TIKTOK',
+      automaticSetupAvailable: env.TIKTOK_EVENTS_API_ENABLED,
+      ready: false,
+      needsPermission: !env.TIKTOK_EVENTS_API_ENABLED,
+      needsAdAccountSelection: false,
+      options: [],
+    };
+    if (!env.TIKTOK_EVENTS_API_ENABLED) return result;
+    const repository = new TikTokRepository();
+    const api = new TikTokApiService();
+    const context = await new TikTokAuthService(repository, api).getApiContext(storeId);
+    result.needsAdAccountSelection = context.selectedAdvertiserIds.length === 0;
+    if (result.needsAdAccountSelection) return result;
+    const groups = await Promise.all(
+      context.selectedAdvertiserIds.map(async (advertiserId) => {
+        const pixels = await listTikTokPixels(api, context, advertiserId);
+        return pixels.map((pixel) => ({
+          id: `${advertiserId}:${pixel.code}`,
+          name: pixel.name,
+          accountName: 'TikTok advertiser',
+          adAccountId: advertiserId,
+          destinationId: pixel.code,
+          lastActivityAt: null,
+        }));
+      }),
+    );
+    result.options = [...new Map(groups.flat().map((option) => [option.id, option])).values()].sort(
+      (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+    );
+    result.ready = result.options.length > 0;
+    return result;
+  }
+
   private async googleOptions(storeId: string): Promise<ManagedConversionOptions> {
     const repository = new GoogleAdsRepository();
     const api = new GoogleAdsApiService();
@@ -207,6 +248,32 @@ export class ManagedConversionSetupService {
   }
 
   async enable(storeId: string, provider: AdvertisingProvider, optionId: string) {
+    if (provider === 'TIKTOK') {
+      const setup = await this.options(storeId, provider);
+      if (!setup.automaticSetupAvailable)
+        throw new AppError(
+          'TikTok Events API permission must be approved before purchase sharing is available',
+          409,
+          'TIKTOK_EVENTS_APPROVAL_REQUIRED',
+        );
+      const selected = setup.options.find((option) => option.id === optionId);
+      if (!selected?.destinationId)
+        throw new AppError(
+          'The selected TikTok tracking destination is no longer available',
+          400,
+          'TIKTOK_CONVERSION_DESTINATION_NOT_ACCESSIBLE',
+        );
+      return this.repository.upsertDestination(
+        storeId,
+        {
+          provider,
+          externalId: selected.destinationId,
+          displayName: selected.name,
+          config: { authSource: 'TIKTOK_CONNECTION', advertiserId: selected.adAccountId },
+        },
+        undefined,
+      );
+    }
     if (provider === 'GOOGLE_ADS') {
       const setup = await this.options(storeId, provider);
       if (setup.needsPermission)

@@ -9,6 +9,12 @@ import type {
   ProviderDeliveryResult,
 } from '../conversion-delivery.types.js';
 import { ConversionProviderError } from './conversion-provider.error.js';
+import { env } from '../../../config/env.js';
+import { AppError } from '../../../errors/app-error.js';
+import { TikTokRepository } from '../../tiktok/tiktok.repository.js';
+import { TikTokAuthService } from '../../tiktok/shared/tiktok-auth.service.js';
+import { TikTokApiService } from '../../tiktok/shared/tiktok-api.service.js';
+import { listTikTokPixels } from '../tiktok-pixels.js';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const TIKTOK_EVENTS_ENDPOINT = 'https://business-api.tiktok.com/open_api/v1.3/event/track/';
@@ -42,8 +48,57 @@ export async function deliverTikTokPurchase(
       false,
       'TIKTOK_EVENT_UNSUPPORTED',
     );
+  const config = (delivery.destination.configJson ?? {}) as ConversionDestinationConfig;
   const tokenCiphertext = delivery.destination.accessTokenCiphertext;
-  if (!tokenCiphertext) {
+  let accessToken: string;
+  if (config.authSource === 'TIKTOK_CONNECTION') {
+    if (!env.TIKTOK_EVENTS_API_ENABLED)
+      throw new ConversionProviderError(
+        'TikTok Events API is not approved for this deployment',
+        true,
+        'TIKTOK_EVENTS_APPROVAL_REQUIRED',
+      );
+    try {
+      const api = new TikTokApiService();
+      const context = await new TikTokAuthService(new TikTokRepository(), api).getApiContext(
+        delivery.storeId,
+      );
+      if (!config.advertiserId || !context.selectedAdvertiserIds.includes(config.advertiserId))
+        throw new ConversionProviderError(
+          'TikTok advertiser no longer authorizes this destination',
+          false,
+          'TIKTOK_DESTINATION_ACCOUNT_REVOKED',
+        );
+      const pixels = await listTikTokPixels(api, context, config.advertiserId);
+      if (!pixels.some((pixel) => pixel.code === delivery.destination.externalId))
+        throw new ConversionProviderError(
+          'TikTok destination no longer belongs to the selected advertiser',
+          false,
+          'TIKTOK_DESTINATION_REVOKED',
+        );
+      accessToken = context.accessToken;
+    } catch (error) {
+      if (error instanceof ConversionProviderError) throw error;
+      if (
+        error instanceof AppError &&
+        ['TIKTOK_REAUTH_REQUIRED', 'TIKTOK_CONNECTION_INACTIVE', 'TIKTOK_NOT_CONNECTED'].includes(
+          error.code,
+        )
+      )
+        throw new ConversionProviderError(
+          'Reconnect TikTok before sharing purchases',
+          true,
+          'TIKTOK_REAUTH_REQUIRED',
+        );
+      throw new ConversionProviderError(
+        'TikTok destination authorization could not be verified',
+        true,
+        'TIKTOK_DESTINATION_CHECK_FAILED',
+      );
+    }
+  } else if (tokenCiphertext) {
+    accessToken = decryptSecret(tokenCiphertext);
+  } else {
     throw new ConversionProviderError(
       'TikTok Events API destination is missing an Events Manager access token',
       false,
@@ -66,7 +121,6 @@ export async function deliverTikTokPurchase(
     );
   }
 
-  const config = (delivery.destination.configJson ?? {}) as ConversionDestinationConfig;
   const body: Record<string, unknown> = {
     event_source: 'web',
     event_source_id: delivery.destination.externalId,
@@ -98,7 +152,7 @@ export async function deliverTikTokPurchase(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Access-Token': decryptSecret(tokenCiphertext),
+        'Access-Token': accessToken,
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),

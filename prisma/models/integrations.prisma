@@ -173,6 +173,8 @@ model WebhookDelivery {
   @@index([status, nextAttemptAt, receivedAt])
   @@index([status, processingStartedAt])
   @@index([tiktokConnectionId, receivedAt])
+  @@index([shopifyConnectionId])
+  @@index([metaConnectionId])
 }
 
 model ShopifyDataRequest {
@@ -207,4 +209,6 @@ model ExternalPayload {
 
   @@index([provider, resourceType, receivedAt])
   @@index([externalId])
+  @@index([syncRunId])
+  @@index([webhookDeliveryId])
 }

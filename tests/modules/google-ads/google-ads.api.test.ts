@@ -10,10 +10,13 @@ describe('Google Ads API transport', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ results: [{ campaign: { id: '1' } }], nextPageToken: 'next' }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
+        new Response(
+          JSON.stringify({ results: [{ campaign: { id: '1' } }], nextPageToken: 'next' }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        ),
       )
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ results: [{ campaign: { id: '2' } }] }), {
@@ -41,12 +44,14 @@ describe('Google Ads API transport', () => {
       pageToken: 'next',
     });
     expect(first.headers).toMatchObject({
-      'developer-token': 'test-google-ads-developer-token',
+      authorization: 'Bearer access-token',
       'login-customer-id': '9998887777',
     });
+    expect(first.headers).not.toHaveProperty('developer-token');
+    expect(first.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it('uses the developer token but no login-customer-id for accessible-customer discovery', async () => {
+  it('discovers accounts with OAuth alone, without a developer token or manager header', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ resourceNames: ['customers/1234567890'] }), {
         status: 200,
@@ -61,9 +66,10 @@ describe('Google Ads API transport', () => {
 
     const request = fetchMock.mock.calls[0]![1] as RequestInit;
     expect(request.headers).toMatchObject({
-      'developer-token': 'test-google-ads-developer-token',
+      authorization: 'Bearer access-token',
     });
     expect(request.headers).not.toHaveProperty('login-customer-id');
+    expect(request.headers).not.toHaveProperty('developer-token');
   });
 
   it('does not collapse Cloud-project API authorization failures into OAuth reauth', async () => {

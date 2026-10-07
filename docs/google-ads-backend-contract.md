@@ -15,12 +15,11 @@ Required production configuration when Google Ads is enabled:
 
 - `GOOGLE_ADS_CLIENT_ID`
 - `GOOGLE_ADS_CLIENT_SECRET`
-- `GOOGLE_ADS_DEVELOPER_TOKEN`
 - `GOOGLE_ADS_STATE_SECRET` (at least 32 characters)
 - `GOOGLE_ADS_REDIRECT_URI` (recommended explicit production callback)
 - `GOOGLE_ADS_API_VERSION` (defaults to `v25` in this branch)
 
-Google Ads API requests require both OAuth 2.0 authorization and a Google Ads developer token. Metrico sends the developer token on every Google Ads API request and fails with `GOOGLE_ADS_NOT_CONFIGURED` before issuing a request when the token is absent.
+Google Ads developer tokens were retired on 9 September 2026. Metrico authenticates with OAuth and does not send a developer-token header. Production API access must be approved for the Google Cloud project that owns the OAuth client.
 
 Google Ads OAuth is intentionally separate from ordinary Metrico Google login.
 
@@ -203,7 +202,7 @@ Provider errors are sanitized before they reach clients. Important distinctions 
 - disconnected / not selected
 - OAuth refresh required (`401`)
 - required OAuth scope missing
-- Google Ads developer token/configuration missing
+- Google Ads OAuth configuration missing
 - inaccessible customer
 - Cloud project/API production access not approved
 - other Google API authorization failures (`403`)

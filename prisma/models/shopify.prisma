@@ -254,5 +254,6 @@ model InventorySnapshot {
   location      Location      @relation(fields: [locationId], references: [id], onDelete: Restrict)
 
   @@index([inventoryItemId, locationId, observedAt])
+  @@index([locationId])
   @@index([observedAt])
 }

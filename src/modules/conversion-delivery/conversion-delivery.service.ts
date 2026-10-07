@@ -346,6 +346,8 @@ export class ConversionDeliveryService {
             'META_CAPI_REAUTH_REQUIRED',
             'GOOGLE_DATA_MANAGER_SCOPE_REQUIRED',
             'GOOGLE_ADS_REAUTH_REQUIRED',
+            'TIKTOK_REAUTH_REQUIRED',
+            'TIKTOK_EVENTS_APPROVAL_REQUIRED',
             '190',
             '200',
             '401',

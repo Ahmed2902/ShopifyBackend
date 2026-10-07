@@ -8,7 +8,8 @@ import type {
 export const GOOGLE_DATA_MANAGER_SCOPE = 'https://www.googleapis.com/auth/datamanager';
 
 export type GoogleConsentMode = 'ACCOUNT_DEFAULT' | 'GRANTED';
-export type ConversionAuthSource = 'META_CONNECTION' | 'GOOGLE_ADS_CONNECTION';
+export type ConversionAuthSource =
+  'META_CONNECTION' | 'GOOGLE_ADS_CONNECTION' | 'TIKTOK_CONNECTION';
 
 export type ConversionDestinationConfig = {
   enhancedMatching?: boolean;
@@ -22,6 +23,7 @@ export type ConversionDestinationConfig = {
   googleConsentMode?: GoogleConsentMode;
   authSource?: ConversionAuthSource;
   adAccountId?: string;
+  advertiserId?: string;
 };
 
 export type PurchaseCandidate = {
@@ -50,7 +52,12 @@ export type DeliveryClaim = ConversionDelivery & {
   matchingReasonCode?: string;
   match?: MatchEvidence;
   contents?: Array<{ id: string; quantity?: number; itemPrice?: number }>;
-  contentFacts?: { observedItems: number; mappedItems: number; ambiguousItems: number; truncated: boolean };
+  contentFacts?: {
+    observedItems: number;
+    mappedItems: number;
+    ambiguousItems: number;
+    truncated: boolean;
+  };
 };
 
 export type ProviderDeliveryResult = {

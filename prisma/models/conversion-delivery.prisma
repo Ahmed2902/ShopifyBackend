@@ -80,4 +80,5 @@ model ConversionDelivery {
   @@index([status, eventAt])
   @@index([sourceOrderId])
   @@index([sourceEventId])
+  @@index([destinationId, storeId, provider])
 }
