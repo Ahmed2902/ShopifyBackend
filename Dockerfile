@@ -19,6 +19,12 @@ COPY src ./src
 
 RUN npm run build
 
+# One-off migration image includes the Prisma CLI and full migration history.
+FROM build AS migration
+ENV NODE_ENV=production
+USER node
+CMD ["./node_modules/.bin/prisma", "migrate", "deploy"]
+
 FROM node:22-bookworm-slim AS runtime
 
 ENV NODE_ENV=production
@@ -35,9 +41,11 @@ RUN npm ci --omit=dev --ignore-scripts \
   && npm cache clean --force
 
 COPY --from=build /app/dist ./dist
+COPY scripts/check-worker-health.mjs ./scripts/check-worker-health.mjs
 
 USER node
 
 EXPOSE 3001
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s CMD node -e "fetch('http://127.0.0.1:3001/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "dist/api.js"]

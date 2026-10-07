@@ -2,9 +2,11 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches: [main]
 
 concurrency:
-  group: ci-pr-${{ github.event.pull_request.number }}
+  group: backend-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -62,4 +64,14 @@ jobs:
         run: npm run ci
 
       - name: Build production container
-        run: docker build --tag stride-backend:ci .
+        run: docker build --target runtime --tag metrico-backend:ci .
+
+      - name: Build migration container
+        run: docker build --target migration --tag metrico-migrations:ci .
+
+      - name: Validate production orchestration
+        run: |
+          cp deploy/backend.env.example deploy/backend.env
+          cp deploy/backup.env.example deploy/backup.env
+          docker compose --env-file deploy/release.env.example -f deploy/compose.prod.yaml --profile migration --profile backup config --quiet
+          docker run --rm -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

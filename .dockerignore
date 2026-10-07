@@ -8,3 +8,10 @@ coverage
 !.env.example
 npm-debug.log*
 *.local
+deploy/backend.env
+deploy/backup.env
+deploy/release.env
+deploy/previous.release.env
+deploy/backups
+deploy/*.age
+deploy/*.key

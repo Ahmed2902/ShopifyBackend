@@ -1,0 +1,107 @@
+name: metrico
+
+x-service: &service
+  restart: unless-stopped
+  init: true
+  stop_grace_period: 30s
+  logging:
+    driver: json-file
+    options:
+      max-size: '10m'
+      max-file: '3'
+
+services:
+  api:
+    <<: *service
+    image: ${BACKEND_IMAGE:?Set a pinned backend image}
+    env_file:
+      - path: ./backend.env
+        format: raw
+    environment:
+      NODE_ENV: production
+      PORT: '3001'
+      NODE_OPTIONS: --max-old-space-size=320
+    mem_limit: 512m
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:3001/health/ready',{signal:AbortSignal.timeout(4000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  worker:
+    <<: *service
+    image: ${BACKEND_IMAGE:?Set a pinned backend image}
+    command: [node, dist/worker.js]
+    env_file:
+      - path: ./backend.env
+        format: raw
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=448
+    mem_limit: 640m
+    healthcheck:
+      test: [CMD, node, scripts/check-worker-health.mjs]
+      interval: 30s
+      timeout: 5s
+      start_period: 180s
+      retries: 3
+    depends_on:
+      api:
+        condition: service_healthy
+
+  frontend:
+    <<: *service
+    image: ${FRONTEND_IMAGE:?Set a pinned frontend image}
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      HOSTNAME: 0.0.0.0
+      NODE_OPTIONS: --max-old-space-size=256
+    mem_limit: 384m
+
+  proxy:
+    <<: *service
+    image: caddy:2-alpine
+    mem_limit: 128m
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+
+  migrate:
+    image: ${MIGRATION_IMAGE:?Set the matching pinned migration image}
+    profiles: [migration]
+    init: true
+    mem_limit: 512m
+    env_file:
+      - path: ./backend.env
+        format: raw
+
+  backup:
+    image: postgres:17-bookworm
+    profiles: [backup]
+    init: true
+    mem_limit: 256m
+    env_file:
+      - path: ./backup.env
+        format: raw
+    command: [pg_dump, --schema=public, --format=custom, --no-owner, --no-acl]
+
+volumes:
+  caddy_data:
+  caddy_config:
