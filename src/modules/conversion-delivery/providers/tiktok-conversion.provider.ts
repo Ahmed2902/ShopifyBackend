@@ -165,6 +165,13 @@ export async function deliverTikTokPurchase(
     );
   }
 
+  if (response.status === 401 || response.status === 403) {
+    throw new ConversionProviderError(
+      'TikTok purchase sharing requires renewed authorization',
+      true,
+      'TIKTOK_REAUTH_REQUIRED',
+    );
+  }
   const payload = await responseJson(response);
   if (!response.ok || payload.code !== 0) {
     const code = payload.code !== undefined ? String(payload.code) : String(response.status);
