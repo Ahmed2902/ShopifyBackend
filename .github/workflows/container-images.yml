@@ -26,13 +26,26 @@ jobs:
     permissions:
       contents: read
       packages: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Determine immutable release tag
         id: release
-        run: echo "tag=sha-$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "tag=sha-$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Require successful main CI for this commit
+        uses: actions/github-script@v8
+        env:
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+        with:
+          script: |
+            const { pathToFileURL } = require('node:url');
+            const { requireMainCi } = await import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/scripts/require-main-ci.mjs`).href);
+            const runId = await requireMainCi({ github, repository: context.repo, sha: process.env.RELEASE_SHA, ref: context.ref });
+            core.info(`Release commit passed main CI run ${runId}.`);
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:

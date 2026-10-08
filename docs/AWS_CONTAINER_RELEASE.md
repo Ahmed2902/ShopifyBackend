@@ -2,11 +2,13 @@
 
 This prepares deployment; it does not create an AWS resource or deploy the application. Use the later deployment walkthrough to choose/provision the server and configure secrets. Initial architecture is one Linux amd64 AWS host in Ireland, Docker Compose, Caddy HTTPS, API, worker and Next.js frontend, with Supabase remaining external. This avoids paying for a load balancer, NAT gateway and orchestration cluster at low volume. It is a single-host service, not a highly available cluster.
 
+Follow [the ordered owner walkthrough](DEPLOYMENT_OWNER_STEPS.md) for GitHub variables, merges, AWS setup, DNS, secret files and the first release. [The public frontend template](../deploy/frontend-build.env.example) mirrors the repository variables for deployment-pair validation.
+
 ## Images and GitHub configuration
 
 Backend CI runs on pull requests and main pushes. After a successful main-push CI, Publish containers pushes `metrico-backend` (shared by API/worker) and `metrico-migrations` to GitHub Container Registry. Frontend's equivalent workflow publishes `metrico-frontend`. Tags include the exact git SHA. Production uses the digests recorded in each workflow summary, never `latest`. The two backend images must come from the same commit. All three repositories/branches must be reviewed and merged before building the paired release.
 
-Image publication uses the repository GITHUB_TOKEN with packages:write; no AWS credentials or provider secrets are passed to Docker builds. Manual publication is accepted only from main. Pull requests build/validate images without publishing them. GitHub's automatic workflow-run path publishes only after a successful main push CI; for manual retries confirm main CI is green before running it.
+Image publication uses the repository GITHUB_TOKEN with packages:write and actions:read; no AWS credentials or provider secrets are passed to Docker builds. Publication is accepted only from main and verifies successful main-push CI for the exact checked-out commit, including manual retries. Pull requests build/validate images without publishing them. A newer pending, failed or cancelled CI run blocks publication even if an older run succeeded.
 
 Frontend public repository variables must be configured before publication:
 
@@ -60,7 +62,7 @@ chmod 600 backend.env backup.env release.env
 ./check-health.sh
 ```
 
-The script validates pinned image references and Compose configuration, pulls images, pauses the worker, creates an encrypted public-schema backup, runs Prisma migrate deploy in the matching migration image, starts all runtime services with health waits and checks public HTTPS endpoints. Backups include application tables and Prisma history, not the entire Supabase managed auth/storage system. Migrations are deliberately additive and run once. Failed backup/migration exits without upgrading running application containers and attempts to restart the previous worker; investigate the failure before retrying.
+The script validates pinned image references and Compose configuration, pulls images, runs the built production-startup and encryption-key validators without network calls, pauses the worker, creates an encrypted public-schema backup, runs Prisma migrate deploy in the matching migration image, starts all runtime services with health waits and checks public HTTPS endpoints. Invalid configuration fails before stopping the worker or changing the schema; error output includes setting names only. Backups include application tables and Prisma history, not the entire Supabase managed auth/storage system. Migrations are deliberately additive and run once. Failed backup/migration exits without upgrading running application containers and attempts to restart the previous worker; investigate the failure before retrying.
 
 This is a rolling **single-host** update with a short interruption, not a zero-downtime deployment. If post-upgrade health fails, use the rollback steps below and inspect deployment logs without copying secrets into chat. Run merchant smoke checks after container health: Shopify install/billing/pixel collection, provider auth/reporting/purchase ingestion, consent withdrawal, deletion/uninstall and MCP authorization. API readiness verifies PostgreSQL; it does not prove provider approvals, Redis health or attribution.
 

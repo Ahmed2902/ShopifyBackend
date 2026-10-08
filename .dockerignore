@@ -9,6 +9,7 @@ coverage
 npm-debug.log*
 *.local
 deploy/backend.env
+deploy/frontend-build.env
 deploy/backup.env
 deploy/release.env
 deploy/previous.release.env

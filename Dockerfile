@@ -16,6 +16,7 @@ RUN npm ci
 
 COPY tsconfig.json ./
 COPY src ./src
+COPY scripts/check-production-env.mjs ./scripts/check-production-env.mjs
 
 RUN npm run build
 

@@ -22,6 +22,8 @@ done
 compose=(docker compose --env-file release.env -f compose.prod.yaml)
 "${compose[@]}" --profile migration --profile backup config --quiet
 "${compose[@]}" --profile migration pull api worker frontend proxy migrate
+# Reject startup configuration before stopping a healthy worker or changing the schema.
+"${compose[@]}" --profile migration run --rm -T --entrypoint node migrate scripts/check-production-env.mjs
 # Reduce overlap on a small host. PostgreSQL queues persist while the worker is stopped.
 "${compose[@]}" stop worker
 trap '"${compose[@]}" start worker >/dev/null 2>&1 || true' EXIT
