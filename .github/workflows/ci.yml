@@ -49,7 +49,7 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Verify container publication gate
-        run: node --test scripts/require-main-ci.test.mjs scripts/release-preflight.test.mjs
+        run: node --test scripts/require-main-ci.test.mjs scripts/release-preflight.test.mjs scripts/public-release.test.mjs
 
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
@@ -105,4 +105,6 @@ jobs:
           cp deploy/backend.env.example deploy/backend.env
           cp deploy/backup.env.example deploy/backup.env
           docker compose --env-file deploy/release.env.example -f deploy/compose.prod.yaml --profile migration --profile backup config --quiet
+          docker compose --env-file deploy/release.env.example -f deploy/compose.public.yaml config --quiet
           docker run --rm -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker run --rm -v "$PWD/deploy/Caddyfile.public:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

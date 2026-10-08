@@ -30,7 +30,7 @@ Create or choose a real monitored support mailbox. Review policy drafts against 
 | Google Ads OAuth Client ID/secret | The Cloud project with Explorer access | Backend only |
 | Existing token-encryption key | Existing backend secret configuration | Backend only; preserve it |
 
-The live backend requires Shopify App Pricing configuration to start. Shopify installation, extension and billing tests can wait until after deployment, but production cannot start with missing pricing settings. Configure Essentials USD 49.99 and Pro USD 84.99 every 30 days, eligible 14-day trials, and copy the actual handles. See [Shopify account setup](SHOPIFY_APP_ACCOUNT_SETUP.md). Do not make up handles or substitute the OAuth client ID for the Partner App GID.
+Only the public Shopify client ID and support mailbox are needed for the first website-only stage. Other credentials can be prepared after the public pages are live. The full backend requires Shopify App Pricing configuration to start: installation, extension and billing tests can wait, but the backend cannot start with missing pricing settings. Configure Essentials USD 49.99 and Pro USD 84.99 every 30 days, eligible 14-day trials, and copy the actual handles. See [Shopify account setup](SHOPIFY_APP_ACCOUNT_SETUP.md). Do not make up handles or substitute the OAuth client ID for the Partner App GID.
 
 Provider developer apps belong to Metrico. Advertiser accounts/pixels/conversion actions belong to merchants and are only needed now if you want a test merchant setup. No campaigns or advertising spend are required for deployment.
 
@@ -183,7 +183,7 @@ Reconnect SSH and run:
 ```bash
 cd ~/metrico/deploy
 chmod 700 .
-chmod +x release.sh backup.sh check-health.sh
+chmod +x public.sh release.sh backup.sh check-health.sh
 cp backend.env.example backend.env
 cp backup.env.example backup.env
 cp release.env.example release.env
@@ -193,7 +193,73 @@ chmod 600 backend.env backup.env release.env frontend-build.env
 
 These copies are for the **first** release only. Do not overwrite configured env files with templates during an update.
 
-## 11. Fill backend.env privately
+## 11. Configure registry access
+
+For private GHCR packages, create an expiring GitHub **classic PAT with read:packages** for an account that can read these packages, with any organization SSO authorization required. It is used for server pulls, not provider authorization. Enter it without a command-line literal:
+
+```bash
+read -r -s -p 'GHCR read token: ' METRICO_GHCR_TOKEN
+printf '\n'
+printf '%s' "$METRICO_GHCR_TOKEN" | docker login ghcr.io -u Ahmed2902 --password-stdin
+unset METRICO_GHCR_TOKEN
+```
+
+If packages are public, unauthenticated pulls are sufficient. Default Docker credential storage is local to the administrative account; protect it and use a credential helper where available. Reference: https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry.
+
+## 12. Fill release.env and validate the proxy
+
+Paste the three exact application-image references from step 5 into `release.env`. Resolve and record the proxy digest:
+
+```bash
+docker pull caddy:2-alpine
+docker image inspect caddy:2-alpine --format '{{index .RepoDigests 0}}'
+```
+
+Paste that complete `caddy@sha256:...` reference into `PROXY_IMAGE`. All four references must contain real digests. The release rejects placeholders and wrong repositories. Keep the proxy digest unchanged until deliberately updating it.
+
+Validate the public-stage configuration and proxy:
+
+```bash
+docker compose --env-file release.env -f compose.public.yaml config --quiet
+METRICO_PROXY_IMAGE=$(sed -n 's/^PROXY_IMAGE=//p' release.env)
+docker run --rm -v "$PWD/Caddyfile.public:/etc/caddy/Caddyfile:ro" "$METRICO_PROXY_IMAGE" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+```
+
+The proxy validation only checks syntax. Backend and migration digests can remain unfilled for the public stage; both must be filled with a matching real pair before the full release.
+
+## 13. Deploy the public website first
+
+After DNS, frontend/proxy image references and registry access are ready, run on the server:
+
+```bash
+./public.sh
+```
+
+This starts only the frontend and HTTPS proxy and checks `/privacy`, `/terms`, `/data-deletion` and the public frontend health endpoint. No backend secrets, hosted plans, database access, backup or migrations are required for this stage.
+
+The app and API domains deliberately return HTTP 503 until the full release. The public homepage/policies are available, but merchant authorization and Shopify installation are not ready. Finish the remaining account settings using these live policy links. Public bootstrap refuses to run if API/worker containers from a full release already exist, including stopped ones; it is not a rollback/update command.
+
+## 14. Finish provider public configuration
+
+| Provider | Production OAuth redirect |
+| --- | --- |
+| Meta | `https://api.metrico.live/v1/integrations/meta/callback` |
+| TikTok | `https://api.metrico.live/v1/integrations/tiktok/callback` |
+| Google Ads | `https://api.metrico.live/v1/integrations/google-ads/callback` |
+
+Meta: enter the live privacy and deletion-instructions URLs, confirm public access, and finish permissions/business verification/app review as applicable. Initial reporting is separate from `ads_management` purchase-sharing consent.
+
+Google: retain Explorer approval, verify metrico.live ownership, finish branding and the applicable `adwords`/`datamanager` OAuth verification, and publish the approved configuration before serving external merchants. Explorer approval does not replace OAuth verification.
+
+TikTok: use the existing developer app, confirm advertiser/account-read permissions, pixel discovery and `event/track` authority. Reporting can work while `TIKTOK_EVENTS_API_ENABLED=false`. Enable that flag only after actual OAuth event authority is verified; it does not grant approval. Reauthorize after permission changes where needed.
+
+Register the intended callback URLs now; their authorization flows become testable after the full backend release. Verification videos may also require that full working flow.
+
+See [provider account setup](PROVIDER_ACCOUNT_SETUP.md). Do not paste the test pixel's browser snippet into the Metrico marketing website. Clients use their own destinations.
+
+## 15. Configure hosted billing and fill backend.env privately
+
+Now configure the existing app's actual hosted plans and Partner subscription-read access as described in [Shopify account setup](SHOPIFY_APP_ACCOUNT_SETUP.md). Copy the real app/plan handles into the file. This is account configuration; live Shopify store testing follows deployment.
 
 Use `nano backend.env` on the server, or securely transfer a privately prepared file. The Compose raw format expects unquoted values: literal `$` and `#` are preserved. Never `source` the file or print it in terminal logs/chat. Preserve the production values already supplied in the template, then replace every `REPLACE_WITH_...` setting.
 
@@ -215,7 +281,7 @@ Keep `LEGACY_MERCHANT_AUTH_ENABLED=false`, `SHOPIFY_APP_PRICING_ENABLED=true`, `
 
 The template's app origin is `https://app.metrico.live`, API origin is `https://api.metrico.live`, Shopify callback is `https://app.metrico.live/api/shopify/callback`, and collector is `https://api.metrico.live/v1/pixel/events`.
 
-## 12. Choose the database connections and backup credentials
+## 16. Choose the database connections and backup credentials
 
 In Supabase **Connect**, obtain a direct connection if reachable, or the **session pooler** connection appropriate to this project. This worker uses session advisory locks: do not use transaction pooling. Include TLS configuration in the database URL and percent-encode the password if it contains URL-special characters. Do not confuse the Supabase API URL/key with a PostgreSQL connection.
 
@@ -233,75 +299,33 @@ npm run release:check-config -- --backend-env /YOUR_PRIVATE_PATH/backend.env --f
 
 Use actual private paths appropriate to your OS. This command checks matching public configuration without printing values. It does not contact the database or prove account approvals. The server release also runs the built startup validator before stopping the worker or applying migrations.
 
-## 13. Prepare backup encryption and registry access
+## 17. Prepare backup encryption
 
 Generate an age identity on **your computer** using age, and keep the private identity off the server. On Windows, download the Windows amd64 archive from https://github.com/FiloSottile/age/releases, extract it, and run `age-keygen.exe -o metrico-backup-identity.txt` from that directory. On Linux/macOS with age installed, use `age-keygen -o metrico-backup-identity.txt`. It prints its public recipient. Copy only that `age1...` public recipient into the server's `backup.recipient`. Keep the private identity securely backed up; a recipient alone cannot decrypt a dump.
 
 Choose an off-host destination for encrypted backups, retention and alerts. A dump on the same AWS disk is not disaster recovery. The prepared dump covers the public application schema and Prisma history, not the full managed Supabase auth/storage system.
 
-For private GHCR packages, create an expiring GitHub **classic PAT with read:packages** for an account that can read these packages, with any organization SSO authorization required. It is used for server pulls, not provider authorization. Enter it without a command-line literal:
+## 18. Run the first full release
 
-```bash
-read -r -s -p 'GHCR read token: ' METRICO_GHCR_TOKEN
-printf '\n'
-printf '%s' "$METRICO_GHCR_TOKEN" | docker login ghcr.io -u Ahmed2902 --password-stdin
-unset METRICO_GHCR_TOKEN
-```
-
-If packages are public, unauthenticated pulls are sufficient. Default Docker credential storage is local to the administrative account; protect it and use a credential helper where available. Reference: https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry.
-
-## 14. Fill release.env and validate the proxy
-
-Paste the three exact application-image references from step 5 into `release.env`. Resolve and record the proxy digest:
-
-```bash
-docker pull caddy:2-alpine
-docker image inspect caddy:2-alpine --format '{{index .RepoDigests 0}}'
-```
-
-Paste that complete `caddy@sha256:...` reference into `PROXY_IMAGE`. All four references must contain real digests. The release rejects placeholders and wrong repositories. Keep the proxy digest unchanged until deliberately updating it.
-
-Validate the configuration and create the first backup:
+After backend settings, real backend/migration image references and backup credentials are ready, validate Compose and create a backup:
 
 ```bash
 docker compose --env-file release.env -f compose.prod.yaml --profile migration --profile backup config --quiet
-METRICO_PROXY_IMAGE=$(sed -n 's/^PROXY_IMAGE=//p' release.env)
-docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" "$METRICO_PROXY_IMAGE" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 ./backup.sh
 ```
 
-The proxy validation only checks syntax. Copy the resulting encrypted backup off-host and prove it decrypts/restores into an isolated PostgreSQL database; never use production as a restore-test target. The server has no decryption key by design. See [the release runbook](AWS_CONTAINER_RELEASE.md) for scope and recovery.
-
-## 15. Run the first full release
-
-After DNS, backup credentials, startup settings and image access are correct:
+Copy the encrypted backup off-host and prove decryption/restore into an isolated PostgreSQL database, never production. Keep the private age identity off the server. Then run:
 
 ```bash
 ./release.sh
 ./check-health.sh
 ```
 
-The release validates image references, pulls images, validates production startup settings without network calls, pauses the worker, creates an encrypted backup, runs migrations once, starts services and checks public HTTPS. Stop if either script fails; inspect the specific failed phase. Do not reset migration history or rerun destructive commands to force success.
+The full release preserves the public-stage project names and certificate volumes and replaces the temporary app/API responses with real routing. The release validates image references, pulls images, validates production startup settings without network calls, pauses the worker, creates an encrypted backup, runs migrations once, starts services and checks public HTTPS. Stop if either script fails; inspect the specific failed phase. Do not reset migration history or rerun destructive commands to force success.
 
 Confirm the public homepage, `/privacy`, `/terms`, `/data-deletion`, and both `/api/health` frontend endpoints work. Confirm API readiness at `https://api.metrico.live/health/ready`. Health is deployment evidence, not proof of OAuth, Redis, billing, consent, attribution or provider approval.
 
-## 16. Finish Meta, Google and TikTok public configuration
-
-| Provider | Production OAuth redirect |
-| --- | --- |
-| Meta | `https://api.metrico.live/v1/integrations/meta/callback` |
-| TikTok | `https://api.metrico.live/v1/integrations/tiktok/callback` |
-| Google Ads | `https://api.metrico.live/v1/integrations/google-ads/callback` |
-
-Meta: enter the live privacy and deletion-instructions URLs, confirm public access, and finish permissions/business verification/app review as applicable. Initial reporting is separate from `ads_management` purchase-sharing consent.
-
-Google: retain Explorer approval, verify metrico.live ownership, finish branding and the applicable `adwords`/`datamanager` OAuth verification, and publish the approved configuration before serving external merchants. Explorer approval does not replace OAuth verification.
-
-TikTok: use the existing developer app, confirm advertiser/account-read permissions, pixel discovery and `event/track` authority. Reporting can work while `TIKTOK_EVENTS_API_ENABLED=false`. Enable that flag only after actual OAuth event authority is verified; it does not grant approval. Reauthorize after permission changes where needed.
-
-See [provider account setup](PROVIDER_ACCOUNT_SETUP.md). Do not paste the test pixel's browser snippet into the Metrico marketing website. Clients use their own destinations.
-
-## 17. Release Shopify configuration and test a store
+## 19. Release Shopify configuration and test a store
 
 Once production endpoints exist, update the **existing** linked Shopify app with these public values. Use `npm run shopify:app-config` in a privately configured backend checkout, validate the generated config with the current Shopify CLI, review it, then deploy the linked app version and updated pixel/theme extensions using their existing UIDs. Backend migrations must precede extension activation. See [Shopify account setup](SHOPIFY_APP_ACCOUNT_SETUP.md); do not create a substitute custom-store app.
 
@@ -309,7 +333,7 @@ Test installation/reopening inside Shopify and Chrome incognito; hosted-plan app
 
 For optional email/phone/customer-ID matching, verify actual protected-data approval and marketing purpose, retain the explicit approved-field allowlist, then enable the deployment flag and the merchant's destination setting. Do not treat requested approval as granted.
 
-## 18. Complete live acceptance and launch
+## 20. Complete live acceptance and launch
 
 | Check | Required evidence |
 | --- | --- |

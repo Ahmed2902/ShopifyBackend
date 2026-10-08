@@ -4,6 +4,12 @@ This prepares deployment; it does not create an AWS resource or deploy the appli
 
 Follow [the ordered owner walkthrough](DEPLOYMENT_OWNER_STEPS.md) for GitHub variables, merges, AWS setup, DNS, secret files and the first release. [The public frontend template](../deploy/frontend-build.env.example) mirrors the repository variables for deployment-pair validation.
 
+## Public website first
+
+`deploy/public.sh` with `compose.public.yaml` publishes only the frontend and proxy using pinned images. It requires DNS, registry access and frontend/proxy digests, but no backend credentials, Shopify hosted-plan configuration or database changes. It verifies public policy URLs while `app.metrico.live` and `api.metrico.live` return 503. This lets the owner finish provider policy links before the full application. It refuses to run if any full-release API/worker container already exists, including a stopped container. It is not an update or rollback path.
+
+Once full backend settings and backups are ready, `release.sh` uses the same project/service names and TLS volumes to start the full application and replace the temporary routing. No certificate volumes are deleted. CI validates both Compose/Caddy configurations and the public-stage image/transition guards.
+
 ## Images and GitHub configuration
 
 Backend CI runs on pull requests and main pushes. After a successful main-push CI, Publish containers pushes `metrico-backend` (shared by API/worker) and `metrico-migrations` to GitHub Container Registry. Frontend's equivalent workflow publishes `metrico-frontend`. Tags include the exact git SHA. Production uses the digests recorded in each workflow summary, never `latest`. The two backend images must come from the same commit. All three repositories/branches must be reviewed and merged before building the paired release.
