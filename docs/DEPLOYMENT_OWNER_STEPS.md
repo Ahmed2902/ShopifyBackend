@@ -63,7 +63,7 @@ Before merging the new monitoring PRs:
 1. In your existing Sentry organization, create **metrico-backend** (Node.js / Express) and **metrico-frontend** (Next.js). Keep the existing SDK code; do not run the wizard over it.
 2. Open each project's Settings → Client Keys (DSN), and copy its DSN privately.
 3. Add the frontend project's DSN as GitHub repository **variable** `NEXT_PUBLIC_SENTRY_DSN` in `Ahmed2902/metrico-frontend`. A DSN is a public ingestion address, not an organization authentication token.
-4. Review and manually merge the backend and frontend Sentry PRs after latest-head checks pass. No Sentry account token is required for these builds. Source-map upload is disabled for this first deployment; frontend errors have bundled code locations rather than fully mapped original source.
+4. Review and manually merge [backend #157](https://github.com/Ahmed2902/ShopifyBackend/pull/157) and [frontend #105](https://github.com/Ahmed2902/metrico-frontend/pull/105) after latest-head checks pass. No Sentry account token is required for these builds. Source-map upload is disabled for this first deployment; frontend errors have bundled code locations rather than fully mapped original source.
 5. Wait for successful **CI** and then **Publish containers** on each new main commit. Replace all three application image pins with the new publication summaries. Keep backend and migration images from the same backend commit. Setting a DSN cannot add monitoring code to an older image.
 
 If the Sentry variable was added after frontend publication, dispatch **Publish containers** again on main, then use that new digest. Browser DSNs are compiled into the image. Server DSNs are configured in step 12/15.

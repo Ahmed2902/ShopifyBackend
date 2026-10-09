@@ -28,7 +28,7 @@ if (enabled) {
     defaultIntegrations: false,
     integrations: [
       Sentry.onUncaughtExceptionIntegration(),
-      Sentry.onUnhandledRejectionIntegration(),
+      Sentry.onUnhandledRejectionIntegration({ mode: 'strict' }),
     ],
     tracePropagationTargets: [],
     maxBreadcrumbs: 0,

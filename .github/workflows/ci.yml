@@ -49,7 +49,7 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Verify container publication gate
-        run: node --test scripts/require-main-ci.test.mjs scripts/release-preflight.test.mjs scripts/public-release.test.mjs
+        run: node --test scripts/require-main-ci.test.mjs scripts/release-preflight.test.mjs scripts/public-release.test.mjs scripts/monitor.test.mjs
 
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
