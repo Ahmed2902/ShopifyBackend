@@ -7,3 +7,9 @@ coverage/
 .DS_Store
 src/generated/
 shopify.app.toml
+
+# Private production configuration and generated backups.
+deploy/*.env
+deploy/backup.recipient
+deploy/backup.status*
+deploy/backups/

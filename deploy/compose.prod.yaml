@@ -19,6 +19,7 @@ services:
         format: raw
     environment:
       NODE_ENV: production
+      SENTRY_SERVICE: api
       PORT: '3001'
       NODE_OPTIONS: --max-old-space-size=320
     mem_limit: 512m
@@ -44,6 +45,7 @@ services:
         format: raw
     environment:
       NODE_ENV: production
+      SENTRY_SERVICE: worker
       NODE_OPTIONS: --max-old-space-size=448
     mem_limit: 640m
     healthcheck:
@@ -63,6 +65,7 @@ services:
       NODE_ENV: production
       PORT: '3000'
       HOSTNAME: 0.0.0.0
+      SENTRY_DSN: ${FRONTEND_SENTRY_DSN:-}
       NODE_OPTIONS: --max-old-space-size=256
     mem_limit: 384m
 

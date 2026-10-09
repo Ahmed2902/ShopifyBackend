@@ -1,3 +1,4 @@
+import { flushMonitoring, reportWorkerHeartbeat } from './lib/monitoring.js';
 import { env } from './config/env.js';
 import { logger } from './lib/logger.js';
 import { prisma } from './lib/prisma.js';
@@ -26,6 +27,8 @@ async function heartbeat() {
   }
 }
 void heartbeat();
+// Let initial polling establish health before the first external check-in.
+const monitoringTimer = setInterval(() => reportWorkerHeartbeat(workerHealth().healthy), 300_000);
 const healthTimer = setInterval(() => void heartbeat(), 30_000);
 logger.info(
   { environment: env.NODE_ENV, processRole: 'worker' },
@@ -36,6 +39,7 @@ async function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   clearInterval(healthTimer);
+  clearInterval(monitoringTimer);
   await unlink(healthPath).catch(() => undefined);
   logger.info({ signal, processRole: 'worker' }, 'Shutting down Metrico background workers');
 
@@ -48,9 +52,11 @@ async function shutdown(signal: string) {
   try {
     await stopWorkers();
     await prisma.$disconnect();
+    await flushMonitoring();
     process.exit(0);
   } catch (error) {
     logger.error({ err: error }, 'Worker shutdown failed');
+    await flushMonitoring();
     process.exit(1);
   }
 }

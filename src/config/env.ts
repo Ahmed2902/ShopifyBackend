@@ -26,6 +26,16 @@ const envSchema = z.object({
     .max(60_000)
     .default(5_000),
   CORS_ORIGIN: z.string().url().optional(),
+  SENTRY_DSN: z.string().url().optional(),
+  SENTRY_RELEASE: z
+    .string()
+    .regex(/^[a-zA-Z0-9_.-]{1,200}$/)
+    .optional(),
+  SENTRY_SERVICE: z.enum(['api', 'worker', 'combined']).default('api'),
+  SENTRY_WORKER_MONITOR_SLUG: z
+    .string()
+    .regex(/^[a-z0-9_-]{1,128}$/)
+    .optional(),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   LOG_REQUEST_PERFORMANCE: z
     .enum(['true', 'false'])

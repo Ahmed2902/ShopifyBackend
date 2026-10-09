@@ -1,3 +1,4 @@
+import { flushMonitoring } from './lib/monitoring.js';
 import type { Server } from 'node:http';
 import { app } from './app.js';
 import { env } from './config/env.js';
@@ -16,6 +17,7 @@ server = app.listen(env.PORT, () => {
 
 async function finishShutdown() {
   await prisma.$disconnect();
+  await flushMonitoring();
 }
 
 async function shutdown(signal: string) {
