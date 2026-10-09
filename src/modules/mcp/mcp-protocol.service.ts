@@ -293,10 +293,7 @@ export class McpProtocolService {
           {
             storeId,
             method: request.method,
-            error:
-              error instanceof Error
-                ? { name: error.name, message: error.message, stack: error.stack }
-                : String(error),
+            err: error,
           },
           'Unexpected Metrico MCP request failure',
         );

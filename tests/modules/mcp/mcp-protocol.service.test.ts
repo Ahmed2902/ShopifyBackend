@@ -1,3 +1,4 @@
+import { logger } from '../../../src/lib/logger.js';
 import { z } from 'zod';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -299,6 +300,28 @@ describe('McpProtocolService', () => {
 
     expect(response.body).toMatchObject({ error: { code: -32602 } });
     expect(tools.call).not.toHaveBeenCalled();
+  });
+
+  it('preserves unexpected MCP exceptions for Sentry without exposing them in RPC replies', async () => {
+    const { value, tools } = service();
+    const error = new Error('PRIVATE_PROVIDER_PAYLOAD');
+    const logged = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
+    tools.call.mockRejectedValue(error);
+    const response = await value.handle(
+      storeId,
+      {
+        jsonrpc: '2.0', id: 7, method: 'tools/call',
+        params: { name: 'stride_get_snapshot', arguments: {}, _meta: modernMeta },
+      },
+      modernHeaders('tools/call', 'stride_get_snapshot'),
+    );
+    expect(logged).toHaveBeenCalledWith(
+      expect.objectContaining({ err: error }),
+      'Unexpected Metrico MCP request failure',
+    );
+    expect(response.status).toBe(200);
+    expect(JSON.stringify(response.body)).not.toContain('PRIVATE_PROVIDER_PAYLOAD');
+    expect(response.body).toMatchObject({ result: { isError: true } });
   });
 
   it('maps Zod input failures from tool execution to JSON-RPC invalid params', async () => {
