@@ -29,10 +29,12 @@ compose=(docker compose --env-file release.env -f compose.prod.yaml)
 trap '"${compose[@]}" start worker >/dev/null 2>&1 || true' EXIT
 ./backup.sh
 "${compose[@]}" --profile migration run --rm -T migrate
+# From this point, Compose may replace the stopped worker. Never restart a new
+# worker automatically if runtime startup or the subsequent health checks fail.
+trap - EXIT
 "${compose[@]}" up -d --wait --wait-timeout 300 api worker frontend proxy
 "${compose[@]}" exec -T worker node scripts/check-worker-health.mjs
 curl --fail --silent --show-error --max-time 15 https://api.metrico.live/health/ready >/dev/null
 curl --fail --silent --show-error --max-time 15 https://metrico.live/api/health >/dev/null
 curl --fail --silent --show-error --max-time 15 https://app.metrico.live/api/health >/dev/null
-trap - EXIT
 echo "Release services are healthy. Complete the merchant and provider smoke checklist."
