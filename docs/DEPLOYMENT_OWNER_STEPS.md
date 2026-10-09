@@ -1,6 +1,6 @@
 # Metrico first production deployment — owner steps
 
-Prepared October 8, 2026. This walkthrough does not create resources, merge PRs, deploy, change DNS or migrate the live database. Ahmed performs account actions and merges. Follow these steps in order; stop on a failed check instead of continuing to the next phase.
+Updated October 9, 2026. This walkthrough does not create resources, merge PRs, deploy, change DNS or migrate the live database. Ahmed performs account actions and merges. Follow these steps in order; stop on a failed check instead of continuing to the next phase.
 
 ## 1. Use the prepared hosting layout
 
@@ -36,7 +36,7 @@ Provider developer apps belong to Metrico. Advertiser accounts/pixels/conversion
 
 ## 3. Add frontend GitHub repository variables
 
-In **Ahmed2902/ShopifyFrontend → Settings → Secrets and variables → Actions → Variables → New repository variable**, enter the following. Use repository variables, not an unreferenced GitHub Environment.
+In **Ahmed2902/metrico-frontend → Settings → Secrets and variables → Actions → Variables → New repository variable**, enter the following. Use repository variables, not an unreferenced GitHub Environment.
 
 | Variable | Value |
 | --- | --- |
@@ -54,17 +54,33 @@ Both repositories publish through the automatic `GITHUB_TOKEN`. Do not create th
 
 Check Actions is enabled. The publication job requests `packages: write` and `actions: read`; repository/organization policies must permit them. If permissions are blocked, resolve the actual policy rather than granting unrelated credentials. Reference: https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-variables.
 
-## 4. Merge the existing PRs manually
+## 4. Finish Sentry and merge its monitoring changes manually
 
-1. Check latest-head CI and review threads on backend [#154](https://github.com/Ahmed2902/ShopifyBackend/pull/154).
-2. Merge #154 into main.
-3. Edit backend [#155](https://github.com/Ahmed2902/ShopifyBackend/pull/155), change its base to `main`, and inspect the resulting diff. Resolve any merge/base CI issue before merging. #155 is stacked on #154.
-4. Merge #155 after its current checks pass.
-5. Merge frontend [#103](https://github.com/Ahmed2902/ShopifyFrontend/pull/103) after its current checks pass and the variables above are configured.
+Backend #156 and frontend #104 are already merged; their main CI and publication succeeded. The current image pins are recorded in step 5. Those images precede the Sentry changes.
 
-Wait for **CI** on the final main commits in both repositories. After successful push CI, **Publish containers** runs automatically. Do not deploy images from an earlier backend main commit that preceded #155.
+Before merging the new monitoring PRs:
+
+1. In your existing Sentry organization, create **metrico-backend** (Node.js / Express) and **metrico-frontend** (Next.js). Keep the existing SDK code; do not run the wizard over it.
+2. Open each project's Settings → Client Keys (DSN), and copy its DSN privately.
+3. Add the frontend project's DSN as GitHub repository **variable** `NEXT_PUBLIC_SENTRY_DSN` in `Ahmed2902/metrico-frontend`. A DSN is a public ingestion address, not an organization authentication token.
+4. Review and manually merge the backend and frontend Sentry PRs after latest-head checks pass. No Sentry account token is required for these builds. Source-map upload is disabled for this first deployment; frontend errors have bundled code locations rather than fully mapped original source.
+5. Wait for successful **CI** and then **Publish containers** on each new main commit. Replace all three application image pins with the new publication summaries. Keep backend and migration images from the same backend commit. Setting a DSN cannot add monitoring code to an older image.
+
+If the Sentry variable was added after frontend publication, dispatch **Publish containers** again on main, then use that new digest. Browser DSNs are compiled into the image. Server DSNs are configured in step 12/15.
+
 
 ## 5. Record the image references
+
+
+Verified current images (before the Sentry PRs), for backend main `65640921cc97d46f30147160db4a1099752b8e9e` and frontend main `718eb30f9ddc9c894413ae88225096b2076c4a8f`:
+
+```env
+BACKEND_IMAGE=ghcr.io/ahmed2902/metrico-backend@sha256:0f439fb1ad2ae4e4f80b7f37c444dd6bf92612d51551d16399d04d3586737b1c
+MIGRATION_IMAGE=ghcr.io/ahmed2902/metrico-migrations@sha256:280d05f1e7377e760f0d993d0f690023a54be7d5667e0f723e16363301e9c4a5
+FRONTEND_IMAGE=ghcr.io/ahmed2902/metrico-frontend@sha256:34c88fda915bac6e850baee2dd2489733bf5b550c9709662623fa05c21de198b
+```
+
+Verified from [backend publication](https://github.com/Ahmed2902/ShopifyBackend/actions/runs/37890514171) and [frontend publication](https://github.com/Ahmed2902/metrico-frontend/actions/runs/37891275674). Use newer pins from the merged monitoring release to activate Sentry.
 
 Open each repository's **Actions → Publish containers → successful run → Summary**. Copy the complete lines for:
 
@@ -78,29 +94,22 @@ Backend and migration images must come from the same final backend commit. The f
 
 If publication failed because public variables were missing, set them and manually run **Publish containers** on `main`. The workflow verifies successful main-push CI for the exact checked-out commit, including manual retries. It stops if CI is missing, pending, failed or unrelated.
 
-## 6. Create the AWS host
+## 6. Choose and create the AWS host
 
-In AWS, check credit eligibility and the displayed estimate for compute, disk and public IPv4 before launching. Configure a budget alert to your monitored inbox. This guide intentionally does not assume current prices or that every service is covered by your credits.
+Recommended low-cost beta: **Lightsail → Create instance → Ireland (`eu-west-1`) → Linux/Unix → OS only → Ubuntu 24.04 LTS → public IPv4 bundle → 2 GB ($12/month)**. Choose **4 GB ($24/month)** for more host memory; the prepared container limits remain bounded until deliberately tuned. Verify the architecture with `uname -m` after connecting; it must be `x86_64`. These are current base bundle prices, before taxes, snapshots, overages and external services.
 
-Use **EC2 → Instances → Launch instance**:
+The 2 GB plan is a constrained beta starting point, not measured merchant capacity. It packages disk, transfer and IPv4 into one price and runs the prepared Compose layout without a separate load balancer. All four services share one host, so this first setup has one host failure point. Keep Supabase and Redis external.
 
-| Field | Initial configuration |
-| --- | --- |
-| Name | `metrico-production` |
-| Region | Prefer close to the existing Supabase project; the earlier release plan used Ireland `eu-west-1` |
-| OS | Ubuntu Server 24.04 LTS, **64-bit x86** |
-| Instance | A 2 GiB x86 instance such as `t3.small` for a constrained beta; inspect the price and monitor real load |
-| CPU credits | Review burst-credit billing; Standard avoids surplus-credit charges at the cost of throttling after credits run out |
-| Key pair | Create/select your SSH key; save the private key securely on your computer |
-| Root disk | 20 GiB encrypted gp3 initially; monitor image/log/backup disk use |
-| Network | Public subnet with Internet access; associate a stable public address |
-| Security group | TCP 22 from **your administrative public IP only**; TCP 80/443 from the Internet |
+In Lightsail:
 
-Do not choose an ARM/Graviton instance: the current release images target `linux/amd64`. A 2 GiB machine is a beta starting point, not measured production capacity. Increase memory if sync/backfill load requires it. Do not expose API 3001, frontend 3000, PostgreSQL or the Docker socket.
+1. Save/download the region's SSH private key securely on your computer, or select your existing key.
+2. Create and **attach a static IPv4 address** to this instance. Use that address for all three DNS records.
+3. Networking firewall: TCP 22 from your administrative public IP only; TCP 80 and 443 from the Internet. Do not open 3000, 3001, database ports or Docker.
+4. Check AWS Billing → Credits for the actual expiry and eligible services of your $100 grant. Configure a small monthly cost budget and email alert. Credits do not stop charges automatically.
 
-Associate an Elastic IP with this instance if using EC2 so a stop/start does not require changing DNS. A public address can have a separate charge. Keep a record of the address and key path; the private key is never a GitHub repository file or chat attachment.
+If you already created EC2, keep it: **Ubuntu 24.04 x86, `t3.small` (2 GB) or a larger x86 instance, 20+ GB encrypted gp3, stable Elastic IP**, with the same firewall rules. EC2 provides more networking/IAM choices; instance, disk and public IPv4 are billed separately. Review burst CPU credits and the regional total. This deployment does not need ECS/Fargate or a load balancer yet; reconsider those when measured load or availability requires multiple instances.
 
-Reference: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EC2_GetStarted.html.
+References: https://aws.amazon.com/lightsail/pricing/ and https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EC2_GetStarted.html.
 
 ## 7. Configure DNS
 
@@ -183,7 +192,7 @@ Reconnect SSH and run:
 ```bash
 cd ~/metrico/deploy
 chmod 700 .
-chmod +x public.sh release.sh backup.sh check-health.sh
+chmod +x public.sh release.sh backup.sh check-health.sh monitor.sh backup-monitored.sh
 cp backend.env.example backend.env
 cp backup.env.example backup.env
 cp release.env.example release.env
@@ -215,7 +224,7 @@ docker pull caddy:2-alpine
 docker image inspect caddy:2-alpine --format '{{index .RepoDigests 0}}'
 ```
 
-Paste that complete `caddy@sha256:...` reference into `PROXY_IMAGE`. All four references must contain real digests. The release rejects placeholders and wrong repositories. Keep the proxy digest unchanged until deliberately updating it.
+Paste that complete `caddy@sha256:...` reference into `PROXY_IMAGE`. Set `FRONTEND_SENTRY_DSN` in `release.env` to the frontend Sentry project DSN for server-side error reporting; use the same project DSN as the public browser build variable. All four references must contain real digests. The release rejects placeholders and wrong repositories. Keep the proxy digest unchanged until deliberately updating it.
 
 Validate the public-stage configuration and proxy:
 
@@ -273,6 +282,7 @@ Use `nano backend.env` on the server, or securely transfer a privately prepared 
 | Contacts | `SHOPIFY_SUPPORT_EMAIL`, `SHOPIFY_REVIEW_CONTACT_EMAIL`, `SHOPIFY_EMERGENCY_CONTACT_EMAIL` |
 | Meta | Existing `META_APP_ID`, `META_APP_SECRET`; initial `META_SCOPES=ads_read` |
 | TikTok | Uncomment `TIKTOK_APP_ID`, `TIKTOK_APP_SECRET`, `TIKTOK_STATE_SECRET`; existing App ID is `7683136035535863828` |
+| Sentry | Add backend project `SENTRY_DSN`, set `SENTRY_RELEASE=backend-<actual image commit SHA>`; leave `SENTRY_WORKER_MONITOR_SLUG` unset for the one-cron-monitor setup |
 | Google Ads | Uncomment `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_STATE_SECRET`; retain API `v25` |
 
 Generate a separate fresh secret for each state/auth setting on your own machine or server with `openssl rand -hex 32`; do not reuse one across providers. Enter outputs directly into the appropriate private file. For a genuinely new database with no encrypted records, `openssl rand -base64 32` can create the token-encryption key; otherwise retain the existing key. Randomly replacing that key makes stored provider tokens unreadable.
@@ -323,7 +333,38 @@ Copy the encrypted backup off-host and prove decryption/restore into an isolated
 
 The full release preserves the public-stage project names and certificate volumes and replaces the temporary app/API responses with real routing. The release validates image references, pulls images, validates production startup settings without network calls, pauses the worker, creates an encrypted backup, runs migrations once, starts services and checks public HTTPS. Stop if either script fails; inspect the specific failed phase. Do not reset migration history or rerun destructive commands to force success.
 
-Confirm the public homepage, `/privacy`, `/terms`, `/data-deletion`, and both `/api/health` frontend endpoints work. Confirm API readiness at `https://api.metrico.live/health/ready`. Health is deployment evidence, not proof of OAuth, Redis, billing, consent, attribution or provider approval.
+Confirm the public homepage, `/privacy`, `/terms`, `/data-deletion`, and both `/api/health` frontend endpoints work. Confirm API readiness at `https://api.metrico.live/health/ready`. Health is deployment evidence, not proof of end-to-end OAuth, billing, consent, attribution or provider approval. API readiness exercises configured database/cache dependencies; merchant paths still need acceptance testing.
+
+
+### Activate and verify Sentry before merchant testing
+
+1. On the server, send a backend smoke event from the running API container:
+
+   ```bash
+   docker compose --env-file release.env -f compose.prod.yaml exec -T api node scripts/check-sentry.mjs
+   ```
+
+   Confirm an issue appears in **metrico-backend** with environment `production` and tag `service=api`. A flushed SDK queue alone is not proof that Sentry received it. Raw messages are intentionally replaced with a generic message; code locations remain for grouping.
+2. In a browser on the deployed app, open DevTools Console and run `setTimeout(() => { throw new Error('Metrico frontend monitoring check'); }, 0)`. Confirm a new issue in **metrico-frontend**. This is a temporary client-side check, not a public server crash endpoint. Browser blocking extensions can prevent telemetry.
+3. In Sentry **Monitors → Create Monitor → Uptime**, create **Metrico API readiness**, GET `https://api.metrico.live/health/ready`, 1-minute interval, 10-second timeout, 3 consecutive failures, 1 recovery. No auth headers or payloads. This is the external check that still runs if the whole host is offline.
+4. Run `./monitor.sh` once after a successful backup. It creates/upserts **metrico-host**, interval 5 minutes, 2-minute margin, UTC. It checks all four services and the three HTTPS health endpoints, disk at 80%, any container at 90% of its memory limit, and an encrypted local backup newer than 36 hours. Missing host check-ins are visible externally. Confirm the monitor's successful check-in in Sentry.
+5. In **Alerts**, configure delivery to your verified email/team for new/unhandled production errors and regression, cron failures/missed check-ins, and uptime downtime. Select the intended projects/monitor sources. Monitor creation alone does not prove email delivery; use Sentry's alert test and confirm receipt. Review a Sentry event's payload to verify no customer/request/provider details are present.
+6. Install the following in the `ubuntu` user's `crontab -e`. The first command should succeed manually before scheduling it. Server paths below assume the walkthrough's `~/metrico/deploy` location; confirm your server user's home directory. Backups run at 03:00 UTC (`CRON_TZ=UTC`).
+
+   ```cron
+   CRON_TZ=UTC
+   */5 * * * * cd /home/ubuntu/metrico/deploy && ./monitor.sh >/dev/null 2>&1
+   0 3 * * * cd /home/ubuntu/metrico/deploy && ./backup-monitored.sh >/dev/null 2>&1
+   ```
+
+   `backup-monitored.sh` records success/failure and reuses the same host monitor. It does not transfer dumps off-host. Configure that transfer and bounded retention separately, and verify an isolated restore. The freshness check proves dump creation only, not recoverability or off-host copying.
+7. Before onboarding merchants, test alerts during a short maintenance window: stop the worker, let Docker mark it unhealthy and let the next host check run, confirm the Sentry notification, then start the worker and verify recovery. Test external uptime and missed checks on a staging setup rather than disrupting production merchants.
+
+All Sentry plans currently include **one cron monitor and one uptime monitor**. This default uses exactly those two. If the account already uses its included monitors, reuse/replace only intentionally or review its quota. Additional monitors require a paid plan and PAYG budget. The optional dedicated worker heartbeat is enabled only by setting `SENTRY_WORKER_MONITOR_SLUG=metrico-worker`; leave it unset for this default. Three separate uptime URLs or a separate worker monitor would consume additional quota.
+
+Replay, performance tracing, log forwarding, metrics forwarding, and source-map upload are disabled. Browser IP/request network metadata can still be processed by Sentry's ingestion infrastructure; inspect project privacy/retention settings. Sentry is not a replacement for AWS billing budgets, database capacity review or off-host backup recovery.
+
+References: https://docs.sentry.io/product/monitors-and-alerts/monitors/uptime-monitoring/ and https://docs.sentry.io/pricing/quotas/manage-cron-monitors/.
 
 ## 19. Release Shopify configuration and test a store
 

@@ -43,6 +43,8 @@ RUN npm ci --omit=dev --ignore-scripts \
 
 COPY --from=build /app/dist ./dist
 COPY scripts/check-worker-health.mjs ./scripts/check-worker-health.mjs
+COPY scripts/check-sentry.mjs ./scripts/check-sentry.mjs
+COPY scripts/monitor-check-in.mjs ./scripts/monitor-check-in.mjs
 
 USER node
 
