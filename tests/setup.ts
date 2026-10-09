@@ -3,7 +3,8 @@ process.env.NODE_ENV = 'test';
 process.env.LEGACY_MERCHANT_AUTH_ENABLED ??= 'true';
 process.env.APP_URL ??= 'http://localhost:3001';
 process.env.FRONTEND_URL ??= 'http://localhost:3000';
-process.env.DATABASE_URL ??= 'postgresql://postgres:postgres@localhost:5432/shopify_intelligence_test';
+process.env.DATABASE_URL ??=
+  'postgresql://postgres:postgres@localhost:5432/shopify_intelligence_test';
 process.env.CORS_ORIGIN ??= 'http://localhost:3000';
 process.env.LOG_LEVEL ??= 'silent';
 process.env.REDIS_REST_URL ??= 'https://redis.test';
@@ -20,8 +21,8 @@ process.env.GOOGLE_FRONTEND_REDIRECT_URI ??= 'http://localhost:3000/auth/callbac
 process.env.GOOGLE_ADS_CLIENT_ID ??= 'test-google-ads-client-id.apps.googleusercontent.com';
 process.env.GOOGLE_ADS_CLIENT_SECRET ??= 'test-google-ads-client-secret';
 process.env.GOOGLE_ADS_REDIRECT_URI ??= 'http://localhost:3001/v1/integrations/google-ads/callback';
-process.env.GOOGLE_ADS_DEVELOPER_TOKEN ??= 'test-google-ads-developer-token';
-process.env.GOOGLE_ADS_STATE_SECRET ??= 'test-google-ads-state-secret-that-is-over-thirty-two-characters';
+process.env.GOOGLE_ADS_STATE_SECRET ??=
+  'test-google-ads-state-secret-that-is-over-thirty-two-characters';
 process.env.GOOGLE_ADS_API_VERSION ??= 'v25';
 process.env.RESEND_API_KEY ??= 're_test_key';
 process.env.RESEND_FROM ??= 'Test App <onboarding@resend.dev>';

@@ -59,19 +59,9 @@ function classifyProviderError(httpStatus: number, body: unknown) {
   ) {
     return { status: 403, code: 'GOOGLE_ADS_CUSTOMER_NOT_ACCESSIBLE' } as const;
   }
-  if (httpStatus === 403) return { status: 403, code: 'GOOGLE_ADS_API_AUTHORIZATION_FAILED' } as const;
+  if (httpStatus === 403)
+    return { status: 403, code: 'GOOGLE_ADS_API_AUTHORIZATION_FAILED' } as const;
   return { status: 502, code: 'GOOGLE_ADS_REQUEST_FAILED' } as const;
-}
-
-function developerToken() {
-  if (!env.GOOGLE_ADS_DEVELOPER_TOKEN) {
-    throw new AppError(
-      'Google Ads API developer token is not configured',
-      503,
-      'GOOGLE_ADS_NOT_CONFIGURED',
-    );
-  }
-  return env.GOOGLE_ADS_DEVELOPER_TOKEN;
 }
 
 export class GoogleAdsApiService {
@@ -87,7 +77,6 @@ export class GoogleAdsApiService {
     loginCustomerId?: string | null;
     body?: unknown;
   }): Promise<T> {
-    const token = developerToken();
     let lastStatus = 502;
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const response = await fetch(`${this.base(input.apiVersion)}${input.path}`, {
@@ -95,12 +84,12 @@ export class GoogleAdsApiService {
         headers: {
           authorization: `Bearer ${input.accessToken}`,
           'content-type': 'application/json',
-          'developer-token': token,
           ...(input.loginCustomerId
             ? { 'login-customer-id': normalizeCustomerId(input.loginCustomerId) }
             : {}),
         },
         ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
+        signal: AbortSignal.timeout(30_000),
       });
       const body = (await response.json().catch(() => null)) as T | null;
       if (response.ok && body !== null) return body;
@@ -238,7 +227,11 @@ export class GoogleAdsApiService {
       body: new URLSearchParams({ token }),
     });
     if (!response.ok) {
-      throw new AppError('Google OAuth token revocation failed', 502, 'GOOGLE_ADS_REVOCATION_FAILED');
+      throw new AppError(
+        'Google OAuth token revocation failed',
+        502,
+        'GOOGLE_ADS_REVOCATION_FAILED',
+      );
     }
   }
 }

@@ -182,6 +182,11 @@ export function startWorkers(): void {
   for (const worker of workers) worker.start();
 }
 
+export function workerHealth() {
+  const statuses = workers.map((worker) => worker.health());
+  return { healthy: statuses.every((status) => status.healthy), workers: statuses };
+}
+
 export async function stopWorkers(): Promise<void> {
   await Promise.all(workers.map((worker) => worker.stop()));
 }

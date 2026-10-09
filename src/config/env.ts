@@ -46,7 +46,6 @@ const envSchema = z.object({
   GOOGLE_ADS_CLIENT_ID: z.string().min(1).optional(),
   GOOGLE_ADS_CLIENT_SECRET: z.string().min(1).optional(),
   GOOGLE_ADS_REDIRECT_URI: z.string().url().optional(),
-  GOOGLE_ADS_DEVELOPER_TOKEN: z.string().min(1).optional(),
   GOOGLE_ADS_STATE_SECRET: z.string().min(32).optional(),
   GOOGLE_ADS_API_VERSION: z
     .string()
@@ -87,7 +86,21 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((value) => value === 'true'),
-  SHOPIFY_ENHANCED_MATCHING_FIELDS: z.string().default('email,phone,name,address,customer_id').transform(value => value.split(',').map(field => field.trim()).filter(Boolean)).pipe(z.array(z.enum(['email', 'phone', 'name', 'address', 'customer_id', 'client_ip'])).min(1).max(6)),
+  SHOPIFY_ENHANCED_MATCHING_FIELDS: z
+    .string()
+    .default('email,phone,name,address,customer_id')
+    .transform((value) =>
+      value
+        .split(',')
+        .map((field) => field.trim())
+        .filter(Boolean),
+    )
+    .pipe(
+      z
+        .array(z.enum(['email', 'phone', 'name', 'address', 'customer_id', 'client_ip']))
+        .min(1)
+        .max(6),
+    ),
   PIXEL_COLLECTOR_URL: z.string().url().optional(),
   PIXEL_RAW_EVENT_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(90),
   META_APP_ID: z.string().min(1),
@@ -104,6 +117,12 @@ const envSchema = z.object({
   TIKTOK_APP_ID: z.string().default(''),
   TIKTOK_APP_SECRET: z.string().default(''),
   TIKTOK_SCOPES: z.string().default(''),
+  // Operator assertion of approved OAuth authority for pixel/list and event/track.
+  // This does not grant TikTok permission. Enable only after a live permission check.
+  TIKTOK_EVENTS_API_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
   TIKTOK_REDIRECT_URI: z.string().url().optional(),
   TIKTOK_API_VERSION: z
     .string()

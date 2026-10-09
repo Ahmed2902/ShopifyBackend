@@ -244,6 +244,7 @@ model MetaAd {
 
   @@unique([adAccountId, metaAdId])
   @@index([adSetId, effectiveStatus])
+  @@index([campaignId])
   @@index([creativeId])
   @@index([targetScope])
   @@index([deletedAt])
