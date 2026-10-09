@@ -1,0 +1,20 @@
+# No request access log: callback query strings can contain short-lived auth codes.
+metrico.live {
+  encode zstd gzip
+  @application path /app /app/* /api/shopify/* /integrations/complete /mcp/* /internal/shopify-document
+  redir @application https://app.metrico.live{uri} 307
+  reverse_proxy frontend:3000
+}
+
+app.metrico.live {
+  encode zstd gzip
+  header X-Robots-Tag "noindex, nofollow"
+  reverse_proxy frontend:3000
+}
+
+api.metrico.live {
+  reverse_proxy api:3001 {
+    # Preserve streaming delivery for MCP; do not impose a short response timeout.
+    flush_interval -1
+  }
+}
