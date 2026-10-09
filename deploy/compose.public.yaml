@@ -1,0 +1,42 @@
+# First stage: publish marketing/policy pages without starting the API or worker.
+# Keep the same project/service/volume names as the full release to retain TLS state.
+name: metrico
+services:
+  frontend:
+    image: ${FRONTEND_IMAGE:?Set a pinned frontend image}
+    restart: unless-stopped
+    init: true
+    mem_limit: 384m
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      HOSTNAME: 0.0.0.0
+      NODE_OPTIONS: --max-old-space-size=256
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+  proxy:
+    image: ${PROXY_IMAGE:?Set the immutable Caddy image digest}
+    restart: unless-stopped
+    init: true
+    mem_limit: 128m
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile.public:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      frontend:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+volumes:
+  caddy_data:
+  caddy_config:

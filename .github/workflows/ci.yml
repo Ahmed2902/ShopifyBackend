@@ -2,9 +2,11 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches: [main]
 
 concurrency:
-  group: ci-pr-${{ github.event.pull_request.number }}
+  group: backend-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -46,14 +48,45 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      - name: Verify container publication gate
+        run: node --test scripts/require-main-ci.test.mjs scripts/release-preflight.test.mjs scripts/public-release.test.mjs
+
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 
       - name: Production build
         run: npm run build
 
+      - name: Verify production startup guard
+        run: node --test scripts/production-env.test.mjs
+
+      - name: Add Supabase browser roles for access-control verification
+        run: |
+          docker exec -i "${{ job.services.postgres.id }}" psql -U postgres -d shopify_intelligence_test -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE anon NOLOGIN;
+          CREATE ROLE authenticated NOLOGIN;
+          SQL
+
       - name: Apply database migrations
         run: npm run prisma:migrate:deploy
+
+      - name: Verify backend-only table access
+        run: |
+          docker exec -i "${{ job.services.postgres.id }}" psql -U postgres -d shopify_intelligence_test -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            IF EXISTS (
+              SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
+                AND c.relname <> '_prisma_migrations'
+                AND (NOT c.relrowsecurity
+                  OR has_table_privilege('anon', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+                  OR has_table_privilege('authenticated', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'))
+            ) THEN
+              RAISE EXCEPTION 'Application tables must enable RLS and revoke browser-role grants';
+            END IF;
+          END $$;
+          SQL
 
       - name: Verify migration drift
         run: npm run prisma:migrate:check
@@ -62,4 +95,16 @@ jobs:
         run: npm run ci
 
       - name: Build production container
-        run: docker build --tag stride-backend:ci .
+        run: docker build --target runtime --tag metrico-backend:ci .
+
+      - name: Build migration container
+        run: docker build --target migration --tag metrico-migrations:ci .
+
+      - name: Validate production orchestration
+        run: |
+          cp deploy/backend.env.example deploy/backend.env
+          cp deploy/backup.env.example deploy/backup.env
+          docker compose --env-file deploy/release.env.example -f deploy/compose.prod.yaml --profile migration --profile backup config --quiet
+          docker compose --env-file deploy/release.env.example -f deploy/compose.public.yaml config --quiet
+          docker run --rm -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker run --rm -v "$PWD/deploy/Caddyfile.public:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

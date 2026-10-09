@@ -1,0 +1,82 @@
+name: Publish containers
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-container-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - name: Determine immutable release tag
+        id: release
+        run: |
+          echo "tag=sha-$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Require successful main CI for this commit
+        uses: actions/github-script@v8
+        env:
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+        with:
+          script: |
+            const { pathToFileURL } = require('node:url');
+            const { requireMainCi } = await import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/scripts/require-main-ci.mjs`).href);
+            const runId = await requireMainCi({ github, repository: context.repo, sha: process.env.RELEASE_SHA, ref: context.ref });
+            core.info(`Release commit passed main CI run ${runId}.`);
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish API and worker image
+        id: runtime
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: runtime
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/ahmed2902/metrico-backend:${{ steps.release.outputs.tag }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+      - name: Publish matching migration image
+        id: migration
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: migration
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/ahmed2902/metrico-migrations:${{ steps.release.outputs.tag }}
+          cache-from: type=gha,scope=backend
+      - name: Record deployable image digests
+        env:
+          BACKEND_DIGEST: ${{ steps.runtime.outputs.digest }}
+          MIGRATION_DIGEST: ${{ steps.migration.outputs.digest }}
+        run: |
+          echo "BACKEND_IMAGE=ghcr.io/ahmed2902/metrico-backend@$BACKEND_DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          echo "MIGRATION_IMAGE=ghcr.io/ahmed2902/metrico-migrations@$MIGRATION_DIGEST" >> "$GITHUB_STEP_SUMMARY"
