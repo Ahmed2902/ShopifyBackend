@@ -1,0 +1,17 @@
+# Public pages first. No OAuth query access logs or incomplete app dashboard.
+metrico.live {
+  encode zstd gzip
+  @application path /app /app/* /api/shopify/* /integrations/complete /mcp/* /internal/shopify-document
+  redir @application https://app.metrico.live{uri} 307
+  reverse_proxy frontend:3000
+}
+
+app.metrico.live {
+  header X-Robots-Tag "noindex, nofollow"
+  respond "Metrico is not available yet." 503
+}
+
+api.metrico.live {
+  header Content-Type application/json
+  respond `{"status":"unavailable"}` 503
+}

@@ -1,0 +1,8 @@
+backend.env
+frontend-build.env
+backup.env
+release.env
+previous.release.env
+backups/
+*.age
+*.key
