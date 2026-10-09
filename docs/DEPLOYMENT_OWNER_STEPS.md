@@ -333,7 +333,7 @@ Copy the encrypted backup off-host and prove decryption/restore into an isolated
 
 The full release preserves the public-stage project names and certificate volumes and replaces the temporary app/API responses with real routing. The release validates image references, pulls images, validates production startup settings without network calls, pauses the worker, creates an encrypted backup, runs migrations once, starts services and checks public HTTPS. Stop if either script fails; inspect the specific failed phase. Do not reset migration history or rerun destructive commands to force success.
 
-Confirm the public homepage, `/privacy`, `/terms`, `/data-deletion`, and both `/api/health` frontend endpoints work. Confirm API readiness at `https://api.metrico.live/health/ready`. Health is deployment evidence, not proof of end-to-end OAuth, billing, consent, attribution or provider approval. API readiness exercises configured database/cache dependencies; merchant paths still need acceptance testing.
+Confirm the public homepage, `/privacy`, `/terms`, `/data-deletion`, and both `/api/health` frontend endpoints work. Confirm API readiness at `https://api.metrico.live/health/ready`. Health is deployment evidence, not proof of end-to-end OAuth, billing, consent, attribution or provider approval. API readiness checks PostgreSQL connectivity. It does not check Redis; cache-backed merchant paths still need acceptance testing.
 
 
 ### Activate and verify Sentry before merchant testing
@@ -408,3 +408,4 @@ docker compose --env-file previous.release.env -f compose.prod.yaml up -d --wait
 ```
 
 Image rollback does not undo database migrations and is safe only when the schema remains compatible. Keep previous images accessible. Preserve Caddy certificate volumes and production secret files; do not use `docker compose down -v` as an update step.
+
