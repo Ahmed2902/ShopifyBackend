@@ -52,3 +52,17 @@ EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s CMD node -e "fetch('http://127.0.0.1:3001/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "dist/api.js"]
+
+# Single-replica Azure deployment: migrations, API and polling workers share one
+# image. Keep the runtime target above for deployments with separate workers.
+FROM runtime AS azure
+ENV SENTRY_SERVICE=combined
+# Production npm ci skips install scripts; include the migration engine fetched
+# during the build so the non-root container never needs to download it.
+COPY --from=build /app/node_modules/@prisma/engines ./node_modules/@prisma/engines
+COPY --from=build /app/prisma ./prisma
+COPY --from=build /app/prisma.config.ts ./prisma.config.ts
+COPY scripts/check-production-env.mjs ./scripts/check-production-env.mjs
+COPY scripts/start-production.mjs ./scripts/start-production.mjs
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10m CMD node -e "fetch('http://127.0.0.1:3001/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["node", "scripts/start-production.mjs"]

@@ -3,11 +3,13 @@ import { app } from './app.js';
 import { env } from './config/env.js';
 import { logger } from './lib/logger.js';
 import { prisma } from './lib/prisma.js';
-import { startWorkers, stopWorkers } from './workers.js';
+import { flushMonitoring, reportWorkerHeartbeat } from './lib/monitoring.js';
+import { startWorkers, stopWorkers, workerHealth } from './workers.js';
 
 const runningOnVercel = process.env.VERCEL === '1';
 let server: Server | null = null;
 let workersEnabled = false;
+let monitoringTimer: ReturnType<typeof setInterval> | null = null;
 
 if (runningOnVercel) {
   // Vercel's Express runtime invokes the exported app directly. Do not bind a second listener or
@@ -15,20 +17,22 @@ if (runningOnVercel) {
   logger.info({ environment: env.NODE_ENV }, 'Vercel HTTP runtime initialized');
 } else {
   workersEnabled = true;
+  app.locals.workerHealthCheck = workerHealth;
   server = app.listen(env.PORT, () => {
-    logger.info(
-      { port: env.PORT, environment: env.NODE_ENV, workersEnabled },
-      'API listening',
-    );
+    logger.info({ port: env.PORT, environment: env.NODE_ENV, workersEnabled }, 'API listening');
   });
   startWorkers();
+  monitoringTimer = setInterval(() => reportWorkerHeartbeat(workerHealth().healthy), 300_000);
+  monitoringTimer.unref();
 }
 
 let shuttingDown = false;
 
 async function finishShutdown() {
+  if (monitoringTimer) clearInterval(monitoringTimer);
   if (workersEnabled) await stopWorkers();
   await prisma.$disconnect();
+  await flushMonitoring();
 }
 
 async function shutdown(signal: string) {
