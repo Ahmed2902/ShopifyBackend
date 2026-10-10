@@ -33,13 +33,8 @@ export function deploymentConfig(environment) {
   }
   const sha = environment.RELEASE_SHA;
   const image = environment.RELEASE_IMAGE;
-  if (
-    !/^[a-f0-9]{40}$/.test(sha ?? '') ||
-    !new RegExp(`^${specification.image.replaceAll('.', '\\.')}@sha256:[a-f0-9]{64}$`).test(
-      image ?? '',
-    )
-  ) {
-    throw new Error('Deployment requires the exact published image digest and full release SHA.');
+  if (!/^[a-f0-9]{40}$/.test(sha ?? '')) {
+    throw new Error('Deployment requires the full release SHA.');
   }
   const group = environment.AZURE_RESOURCE_GROUP;
   const app = environment.AZURE_CONTAINER_APP;
@@ -57,6 +52,10 @@ export function deploymentConfig(environment) {
   const attempt = environment.GITHUB_RUN_ATTEMPT;
   if (!/^\d{1,15}$/.test(run ?? '') || !/^\d{1,4}$/.test(attempt ?? '')) {
     throw new Error('Deployment requires a GitHub Actions run identity.');
+  }
+  const tag = `${service === 'backend' ? 'azure-' : ''}release-${sha}-${run}-${attempt}`;
+  if (image !== `${specification.image}:${tag}`) {
+    throw new Error('Deployment requires the exact publication tag for this commit, run and attempt.');
   }
   const suffix = `gh-${sha.slice(0, 12)}-${run}-${attempt}`;
   return {

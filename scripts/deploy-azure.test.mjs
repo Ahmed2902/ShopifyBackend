@@ -3,7 +3,6 @@ import { test } from 'node:test';
 import { azureCommand, deployAzure, deploymentConfig } from './deploy-azure.mjs';
 
 const sha = 'a'.repeat(40);
-const digest = 'b'.repeat(64);
 test('empty Azure query output means the revision has not been created yet', () => {
   assert.equal(
     azureCommand(['containerapp', 'revision', 'list'], false, () => ''),
@@ -26,7 +25,7 @@ function environment(service = 'backend') {
       service === 'backend' ? 'Ahmed2902/ShopifyBackend' : 'Ahmed2902/metrico-frontend',
     GITHUB_REF: 'refs/heads/main',
     RELEASE_SHA: sha,
-    RELEASE_IMAGE: `ghcr.io/ahmed2902/metrico-${service}@sha256:${digest}`,
+    RELEASE_IMAGE: `ghcr.io/ahmed2902/metrico-${service}:${service === 'backend' ? 'azure-' : ''}release-${sha}-123456-1`,
     AZURE_RESOURCE_GROUP: 'metrico-production',
     AZURE_CONTAINER_APP: `metrico-${service}`,
     GITHUB_RUN_ID: '123456',
@@ -109,7 +108,7 @@ function harness(config = deploymentConfig(environment()), options = {}) {
 }
 
 for (const service of ['backend', 'frontend']) {
-  test(`deploys the published ${service} digest and checks the new revision`, async () => {
+  test(`deploys the published ${service} publication tag and checks the new revision`, async () => {
     const h = harness(deploymentConfig(environment(service)), { delay: true });
     const result = await deployAzure(h.config, h.dependencies);
     assert.equal(result.revision, h.config.revision);
@@ -208,7 +207,9 @@ for (const overrides of [
   { GITHUB_REPOSITORY: 'someone/fork' },
   { RELEASE_SHA: 'main' },
   { RELEASE_IMAGE: 'ghcr.io/ahmed2902/metrico-backend:latest' },
-  { RELEASE_IMAGE: `ghcr.io/ahmed2902/metrico-frontend@sha256:${digest}` },
+  { RELEASE_IMAGE: `ghcr.io/ahmed2902/metrico-frontend:release-${sha}-123456-1` },
+  { RELEASE_IMAGE: `ghcr.io/ahmed2902/metrico-backend:azure-release-${sha}-999999-1` },
+  { GITHUB_RUN_ATTEMPT: '2' },
   { AZURE_RESOURCE_GROUP: '' },
   { AZURE_CONTAINER_APP: '' },
   { GITHUB_RUN_ID: 'not-a-run' },

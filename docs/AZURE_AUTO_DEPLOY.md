@@ -1,6 +1,6 @@
 # Enable automatic Azure deployment once, through the UI
 
-The workflow is ready but deliberately disabled until `AZURE_AUTO_DEPLOY_ENABLED=true` is configured in each repository. After setup, merging a release into `main` runs CI, publishes the image and deploys that exact image digest to the existing Azure Container App. Backend startup applies pending migrations before the API and workers start. No manual image edits, Azure migration job or additional hosting service is needed.
+The workflow is ready but deliberately disabled until `AZURE_AUTO_DEPLOY_ENABLED=true` is configured in each repository. After setup, merging a release into `main` runs CI, publishes the image and deploys its unique publication tag to the existing Azure Container App. Backend startup applies pending migrations before the API and workers start. Each tag includes the full commit SHA, workflow run ID and attempt, so rebuilding the same commit produces a new tag. Digests remain recorded in the publication summary. The name:tag format keeps Azure portal image editing usable. No manual image edits, Azure migration job or additional hosting service is needed.
 
 This document applies to `Ahmed2902/ShopifyBackend` and `Ahmed2902/metrico-frontend`. Use the frontend repository's current name, not `ShopifyFrontend`.
 
@@ -95,7 +95,7 @@ Use the actual names shown in Azure Overview. Set the enable variable last, afte
 
 ## 7. Merge the prepared PRs and verify the first automatic release
 
-Manually merge the backend and frontend deployment PRs after their latest-head CI passes. If you merge them before configuring Azure, their publication succeeds and the deployment job is skipped until the enable variable is true.
+Manually merge the backend deployment PR after its latest-head CI passes. Keep frontend PR #106 unmerged until the public Shopify listing is live. In the frontend repository, set the Actions variable `NEXT_PUBLIC_SHOPIFY_APP_STORE_URL` to the exact approved HTTPS listing URL before merging. Frontend publication now stops if that URL is missing or malformed. The URL is baked into the image; changing it requires running Publish containers again. Backend releases can proceed independently. If Azure auto-deployment is disabled, publication still runs and deployment is skipped.
 
 In **GitHub → Actions**, watch **CI** followed by **Publish containers**. That publication workflow now includes **Deploy backend to Azure** or **Deploy frontend to Azure**. It:
 
@@ -104,7 +104,7 @@ In **GitHub → Actions**, watch **CI** followed by **Publish containers**. That
 3. Logs in with GitHub's short-lived federated identity.
 4. Validates the existing app's deployment settings.
 5. Updates only the selected container image and its `SENTRY_RELEASE` setting.
-6. Waits for the new revision, its exact image digest, Azure readiness and the HTTP health response.
+6. Waits for the new revision, its exact publication tag, Azure readiness and the HTTP health response.
 7. Records the deployed image, new revision and preceding ready revision in the workflow summary.
 
 Checks use the Azure-generated HTTPS hostname, so a custom-domain certificate delay does not block the deployment mechanism. Verify custom domains separately before clients use them.
