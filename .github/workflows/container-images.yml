@@ -16,6 +16,9 @@ concurrency:
 
 jobs:
   publish:
+    outputs:
+      release_sha: ${{ steps.release.outputs.sha }}
+      azure_image: ghcr.io/ahmed2902/metrico-backend@${{ steps.azure.outputs.digest }}
     if: >-
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
@@ -95,3 +98,61 @@ jobs:
           echo "MIGRATION_IMAGE=ghcr.io/ahmed2902/metrico-migrations@$MIGRATION_DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "AZURE_BACKEND_IMAGE=ghcr.io/ahmed2902/metrico-backend@$AZURE_BACKEND_DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "AZURE_BACKEND_TAG=ghcr.io/ahmed2902/metrico-backend:azure-${{ steps.release.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy backend to Azure
+    needs: publish
+    if: vars.AZURE_AUTO_DEPLOY_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.publish.outputs.release_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Require the current main release and successful CI
+        id: gate
+        uses: actions/github-script@v8
+        env:
+          RELEASE_SHA: ${{ needs.publish.outputs.release_sha }}
+        with:
+          script: |
+            const { pathToFileURL } = require('node:url');
+            const { requireMainCi } = await import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/scripts/require-main-ci.mjs`).href);
+            await requireMainCi({ github, repository: context.repo, sha: process.env.RELEASE_SHA, ref: context.ref });
+            const { data } = await github.rest.git.getRef({ ...context.repo, ref: 'heads/main' });
+            const current = data.object.sha === process.env.RELEASE_SHA;
+            core.setOutput('current', String(current));
+            if (!current) core.notice('Skipping outdated Azure release: main has advanced.');
+      - name: Validate Azure identity settings
+        if: steps.gate.outputs.current == 'true'
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          node -e "for (const key of ['AZURE_CLIENT_ID','AZURE_TENANT_ID','AZURE_SUBSCRIPTION_ID']) { if (!process.env[key]) throw new Error('Missing repository secret: ' + key); }"
+      - name: Log in to Azure with GitHub identity
+        if: steps.gate.outputs.current == 'true'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Deploy the published image and verify the new revision
+        if: steps.gate.outputs.current == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_SERVICE: backend
+          RELEASE_SHA: ${{ needs.publish.outputs.release_sha }}
+          RELEASE_IMAGE: ${{ needs.publish.outputs.azure_image }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_CONTAINER_APP: ${{ vars.AZURE_CONTAINER_APP }}
+          AZURE_CORE_OUTPUT: none
+        run: node scripts/deploy-azure.mjs

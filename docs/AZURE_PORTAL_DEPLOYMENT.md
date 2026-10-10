@@ -1,6 +1,6 @@
 # Metrico: finish the Azure deployment in the portal
 
-Updated October 10, 2026. This is the Azure walkthrough; the VM/Compose walkthrough in `DEPLOYMENT_OWNER_STEPS.md` uses a different layout. Keep the completed resource group, Container Apps environment and frontend. The remaining deployment has **two running Container Apps**: frontend and combined backend. Supabase and Redis REST remain external. No migration job or separate worker app is required.
+Updated October 10, 2026. For later releases, see [one-time automatic deployment setup](AZURE_AUTO_DEPLOY.md). This is the Azure walkthrough; the VM/Compose walkthrough in `DEPLOYMENT_OWNER_STEPS.md` uses a different layout. Keep the completed resource group, Container Apps environment and frontend. The remaining deployment has **two running Container Apps**: frontend and combined backend. Supabase and Redis REST remain external. No migration job or separate worker app is required.
 
 ## 1. Select the correct backend image
 
