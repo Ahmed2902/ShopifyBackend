@@ -57,6 +57,9 @@ CMD ["node", "dist/api.js"]
 # image. Keep the runtime target above for deployments with separate workers.
 FROM runtime AS azure
 ENV SENTRY_SERVICE=combined
+# Production npm ci skips install scripts; include the migration engine fetched
+# during the build so the non-root container never needs to download it.
+COPY --from=build /app/node_modules/@prisma/engines ./node_modules/@prisma/engines
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/prisma.config.ts ./prisma.config.ts
 COPY scripts/check-production-env.mjs ./scripts/check-production-env.mjs

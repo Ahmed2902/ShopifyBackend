@@ -19,6 +19,7 @@ function start(migrationUrl = database) {
     MIGRATION_DATABASE_URL: migrationUrl,
     PORT: '3301',
     LOG_LEVEL: 'silent',
+    PRISMA_ENGINES_MIRROR: 'http://127.0.0.1:1',
   };
   docker([
     'run',
