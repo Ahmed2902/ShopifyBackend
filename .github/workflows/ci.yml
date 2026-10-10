@@ -58,7 +58,7 @@ jobs:
         run: npm run build
 
       - name: Verify production startup guard
-        run: node --test scripts/production-env.test.mjs
+        run: node --test scripts/production-env.test.mjs scripts/start-production.test.mjs
 
       - name: Add Supabase browser roles for access-control verification
         run: |
@@ -99,6 +99,14 @@ jobs:
 
       - name: Build migration container
         run: docker build --target migration --tag metrico-migrations:ci .
+
+      - name: Build combined Azure container
+        run: docker build --target azure --tag metrico-backend-azure:ci .
+
+      - name: Verify migration-first container startup
+        run: |
+          docker exec "${{ job.services.postgres.id }}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE shopify_intelligence_startup_test'
+          node scripts/check-azure-startup.mjs
 
       - name: Validate production orchestration
         run: |

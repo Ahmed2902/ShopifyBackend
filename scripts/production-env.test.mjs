@@ -6,34 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
-const secret = 'never-print-this-fixture-secret-123456789';
-const fixture = {
-  NODE_ENV: 'production',
-  LEGACY_MERCHANT_AUTH_ENABLED: 'false',
-  APP_URL: 'https://api.metrico.live',
-  FRONTEND_URL: 'https://app.metrico.live',
-  CORS_ORIGIN: 'https://app.metrico.live',
-  DATABASE_URL: 'postgresql://fixture:fixture@localhost:5432/fixture',
-  REDIS_REST_URL: 'https://cache.fixture.test',
-  REDIS_REST_TOKEN: secret,
-  JWT_ACCESS_SECRET: secret,
-  TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64'),
-  SHOPIFY_CLIENT_ID: 'fixture-client',
-  SHOPIFY_CLIENT_SECRET: secret,
-  SHOPIFY_SCOPES: 'read_products,read_orders',
-  SHOPIFY_REDIRECT_URI: 'https://app.metrico.live/api/shopify/callback',
-  SHOPIFY_STATE_SECRET: secret,
-  SHOPIFY_APP_PRICING_ENABLED: 'true',
-  SHOPIFY_PARTNER_ORG_ID: '123',
-  SHOPIFY_PARTNER_API_ACCESS_TOKEN: secret,
-  SHOPIFY_PARTNER_APP_ID: 'gid://shopify/App/123',
-  SHOPIFY_APP_HANDLE: 'metrico-fixture',
-  SHOPIFY_ESSENTIALS_PLAN_HANDLE: 'essentials-fixture',
-  SHOPIFY_PRO_PLAN_HANDLE: 'pro-fixture',
-  META_APP_ID: '123',
-  META_APP_SECRET: secret,
-  META_STATE_SECRET: secret,
-};
+import { fixture, secret } from './fixtures/production-env.mjs';
 function run(overrides = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'metrico-env-'));
   try {

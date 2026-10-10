@@ -73,10 +73,25 @@ jobs:
           push: true
           tags: ghcr.io/ahmed2902/metrico-migrations:${{ steps.release.outputs.tag }}
           cache-from: type=gha,scope=backend
+      # Azure's portal requires a name:tag. The commit tag selects the combined
+      # startup image while the existing runtime tag keeps its API-only command.
+      - name: Publish combined Azure image
+        id: azure
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: azure
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/ahmed2902/metrico-backend:azure-${{ steps.release.outputs.tag }}
+          cache-from: type=gha,scope=backend
       - name: Record deployable image digests
         env:
           BACKEND_DIGEST: ${{ steps.runtime.outputs.digest }}
           MIGRATION_DIGEST: ${{ steps.migration.outputs.digest }}
+          AZURE_BACKEND_DIGEST: ${{ steps.azure.outputs.digest }}
         run: |
           echo "BACKEND_IMAGE=ghcr.io/ahmed2902/metrico-backend@$BACKEND_DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "MIGRATION_IMAGE=ghcr.io/ahmed2902/metrico-migrations@$MIGRATION_DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          echo "AZURE_BACKEND_IMAGE=ghcr.io/ahmed2902/metrico-backend@$AZURE_BACKEND_DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          echo "AZURE_BACKEND_TAG=ghcr.io/ahmed2902/metrico-backend:azure-${{ steps.release.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
