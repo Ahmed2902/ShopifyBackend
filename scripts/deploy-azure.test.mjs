@@ -1,9 +1,24 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { deployAzure, deploymentConfig } from './deploy-azure.mjs';
+import { azureCommand, deployAzure, deploymentConfig } from './deploy-azure.mjs';
 
 const sha = 'a'.repeat(40);
 const digest = 'b'.repeat(64);
+test('empty Azure query output means the revision has not been created yet', () => {
+  assert.equal(
+    azureCommand(['containerapp', 'revision', 'list'], false, () => ''),
+    null,
+  );
+});
+test('Azure command failures do not print secret-bearing output', () => {
+  assert.throws(
+    () =>
+      azureCommand(['containerapp', 'update'], true, () => {
+        throw new Error('private-fixture-setting');
+      }),
+    (error) => !error.message.includes('private-fixture-setting'),
+  );
+});
 function environment(service = 'backend') {
   return {
     DEPLOY_SERVICE: service,

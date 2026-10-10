@@ -216,22 +216,24 @@ export async function deployAzure(
   );
 }
 
+export function azureCommand(args, mutation = false, execute = execFileSync) {
+  try {
+    const output = execute(
+      'az',
+      [...args, '--only-show-errors', '--output', mutation ? 'none' : 'json'],
+      { encoding: 'utf8', timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    return mutation || !output.trim() ? null : JSON.parse(output);
+  } catch {
+    throw new Error(
+      `Azure ${args.slice(0, 2).join(' ')} failed. Check the resource names, role assignment and Azure deployment status.`,
+    );
+  }
+}
+
 async function main() {
   const config = deploymentConfig(process.env);
-  const azure = async (args, mutation = false) => {
-    try {
-      const output = execFileSync(
-        'az',
-        [...args, '--only-show-errors', '--output', mutation ? 'none' : 'json'],
-        { encoding: 'utf8', timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] },
-      );
-      return mutation ? null : JSON.parse(output);
-    } catch {
-      throw new Error(
-        `Azure ${args.slice(0, 2).join(' ')} failed. Check the resource names, role assignment and Azure deployment status.`,
-      );
-    }
-  };
+  const azure = async (args, mutation = false) => azureCommand(args, mutation);
   const latestMain = async () => {
     if (!process.env.GH_TOKEN) throw new Error('GitHub deployment token is missing.');
     const response = await fetch(
