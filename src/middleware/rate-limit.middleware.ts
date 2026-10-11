@@ -61,9 +61,7 @@ export function authIdentity(req: Request): string {
 function consumeLocal(key: string, windowMs: number): { count: number; ttlMs: number } {
   const now = Date.now();
   const current = localBuckets.get(key);
-  const bucket = current && current.resetAt > now
-    ? current
-    : { count: 0, resetAt: now + windowMs };
+  const bucket = current && current.resetAt > now ? current : { count: 0, resetAt: now + windowMs };
   bucket.count += 1;
   localBuckets.set(key, bucket);
   return { count: bucket.count, ttlMs: Math.max(1, bucket.resetAt - now) };
@@ -231,6 +229,16 @@ export const mcpOAuthRateLimit = rateLimit({
 export const mcpClientRegistrationRateLimit = rateLimit({
   name: 'mcp-client-registration',
   max: 20,
+  windowMs: 15 * 60_000,
+  key: sourceIdentity,
+  skip: skipInTest,
+});
+
+// A handoff may wait up to ten minutes while the merchant approves in Shopify.
+// Keep polling separate from registration and code-exchange budgets.
+export const mcpOAuthReturnRateLimit = rateLimit({
+  name: 'mcp-oauth-return',
+  max: 360,
   windowMs: 15 * 60_000,
   key: sourceIdentity,
   skip: skipInTest,

@@ -9,7 +9,7 @@ export class McpOAuthRepository {
     return prisma.mcpOAuthClient.create({ data: input });
   }
 
-  createAuthorizationRequest(input: {
+  async createAuthorizationRequest(input: {
     clientId: string;
     clientName: string;
     redirectUri: string;
@@ -18,7 +18,11 @@ export class McpOAuthRepository {
     resource: string;
     codeChallenge: string;
     expiresAt: Date;
+    returnTokenHash?: string;
   }) {
+    // Results contain encrypted, short-lived codes. Remove expired handoffs when
+    // a new connection starts, using the existing expiresAt index.
+    await prisma.mcpAuthorizationRequest.deleteMany({ where: { expiresAt: { lte: new Date() } } });
     return prisma.mcpAuthorizationRequest.create({ data: input });
   }
 
@@ -28,6 +32,14 @@ export class McpOAuthRepository {
 
   deleteAuthorizationRequest(id: string) {
     return prisma.mcpAuthorizationRequest.deleteMany({ where: { id } });
+  }
+
+  async completeAuthorizationRequest(id: string, returnUrlCiphertext: string) {
+    const now = new Date();
+    return prisma.mcpAuthorizationRequest.updateMany({
+      where: { id, decidedAt: null, expiresAt: { gt: now } },
+      data: { decidedAt: now, returnUrlCiphertext },
+    });
   }
 
   listUserStores(userId: string) {
@@ -71,6 +83,7 @@ export class McpOAuthRepository {
 
   async claimAuthorizationRequestAndCreateCode(input: {
     requestId: string;
+    returnUrlCiphertext?: string;
     codeHash: string;
     userId: string;
     storeId: string;
@@ -83,8 +96,14 @@ export class McpOAuthRepository {
   }) {
     const now = new Date();
     return prisma.$transaction(async (tx) => {
-      const claimed = await tx.mcpAuthorizationRequest.deleteMany({
-        where: { id: input.requestId, expiresAt: { gt: now } },
+      const claimed = await tx.mcpAuthorizationRequest.updateMany({
+        where: { id: input.requestId, decidedAt: null, expiresAt: { gt: now } },
+        data: {
+          decidedAt: now,
+          returnUrlCiphertext: input.returnUrlCiphertext ?? null,
+          // A completed handoff must not outlive its authorization code.
+          expiresAt: input.expiresAt,
+        },
       });
       if (claimed.count !== 1) return null;
       return tx.mcpAuthorizationCode.create({

@@ -3,6 +3,7 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { env } from '../../config/env.js';
 import { AppError } from '../../errors/app-error.js';
+import { decryptSecret, encryptSecret } from '../integrations/integration.utils.js';
 import { mcpOAuthRepository, type McpOAuthRepository } from './mcp-oauth.repository.js';
 import {
   accessTokenExpiresIn,
@@ -258,6 +259,7 @@ export class McpOAuthService {
       );
     }
     const scopes = parseScopes(input.scope);
+    const returnToken = opaqueToken(32);
     const request = await this.repository.createAuthorizationRequest({
       clientId: client.clientId,
       clientName: client.clientName,
@@ -266,11 +268,38 @@ export class McpOAuthService {
       scopes,
       resource,
       codeChallenge: input.codeChallenge,
+      returnTokenHash: tokenHash(returnToken),
       expiresAt: new Date(Date.now() + MCP_AUTHORIZATION_REQUEST_TTL_MS),
     });
     const consentUrl = new URL('/auth/mcp/authorize', `${env.FRONTEND_URL}/`);
     consentUrl.searchParams.set('request_id', request.id);
+    // Fragments are not sent to HTTP servers, logs or referrers. The opaque capability
+    // belongs only to the original OAuth window, never the Shopify approval screen.
+    consentUrl.hash = new URLSearchParams({ return_token: returnToken }).toString();
     return consentUrl.toString();
+  }
+
+  async authorizationResult(requestId: string, returnToken: string) {
+    const request = await this.repository.getAuthorizationRequest(requestId);
+    if (
+      !request ||
+      request.expiresAt <= new Date() ||
+      !request.returnTokenHash ||
+      request.returnTokenHash !== tokenHash(returnToken)
+    ) {
+      throw new AppError('Restart this connection in your AI client.', 400, 'MCP_INVALID_RETURN');
+    }
+    if (!request.decidedAt) return { status: 'PENDING' as const };
+    if (!request.returnUrlCiphertext) {
+      throw new AppError('Restart this connection in your AI client.', 400, 'MCP_INVALID_RETURN');
+    }
+    // Retries are safe: the returned code is still short-lived, bound to PKCE,
+    // client, redirect URI and store membership, and can be redeemed only once.
+    return {
+      status: 'COMPLETE' as const,
+      redirectUrl: decryptSecret(request.returnUrlCiphertext),
+      redirectUri: request.redirectUri,
+    };
   }
 
   async authorizationRequest(userId: string, requestId: string, authenticatedStoreId?: string) {
@@ -280,6 +309,7 @@ export class McpOAuthService {
       id: request.id,
       client: { id: request.clientId, name: request.clientName },
       redirectUri: request.redirectUri,
+      returnViaAuthorizationWindow: Boolean(request.returnTokenHash),
       scopes: request.scopes,
       stores: stores
         .filter(
@@ -296,8 +326,13 @@ export class McpOAuthService {
       throw new AppError('You do not have access to that store', 403, 'MCP_STORE_FORBIDDEN');
     }
     const code = opaqueToken(32);
+    const redirect = new URL(request.redirectUri);
+    redirect.searchParams.set('code', code);
+    if (request.state) redirect.searchParams.set('state', request.state);
+    redirect.searchParams.set('iss', mcpIssuer());
     const authorizationCode = await this.repository.claimAuthorizationRequestAndCreateCode({
       requestId: request.id,
+      returnUrlCiphertext: request.returnTokenHash ? encryptSecret(redirect.toString()) : undefined,
       codeHash: tokenHash(code),
       userId,
       storeId,
@@ -315,17 +350,23 @@ export class McpOAuthService {
         'MCP_AUTH_REQUEST_EXPIRED',
       );
     }
-    const redirect = new URL(request.redirectUri);
-    redirect.searchParams.set('code', code);
-    if (request.state) redirect.searchParams.set('state', request.state);
-    redirect.searchParams.set('iss', mcpIssuer());
     return redirect.toString();
   }
 
   async deny(userId: string, requestId: string) {
     const request = await this.requirePendingRequest(requestId);
     void userId;
-    const claimed = await this.repository.deleteAuthorizationRequest(request.id);
+    const redirect = new URL(request.redirectUri);
+    redirect.searchParams.set('error', 'access_denied');
+    redirect.searchParams.set('error_description', 'The merchant declined Metrico MCP access.');
+    if (request.state) redirect.searchParams.set('state', request.state);
+    redirect.searchParams.set('iss', mcpIssuer());
+    const claimed = request.returnTokenHash
+      ? await this.repository.completeAuthorizationRequest(
+          request.id,
+          encryptSecret(redirect.toString()),
+        )
+      : await this.repository.deleteAuthorizationRequest(request.id);
     if (claimed.count !== 1) {
       throw new AppError(
         'Authorization request has already been used',
@@ -333,11 +374,6 @@ export class McpOAuthService {
         'MCP_AUTH_REQUEST_EXPIRED',
       );
     }
-    const redirect = new URL(request.redirectUri);
-    redirect.searchParams.set('error', 'access_denied');
-    redirect.searchParams.set('error_description', 'The merchant declined Metrico MCP access.');
-    if (request.state) redirect.searchParams.set('state', request.state);
-    redirect.searchParams.set('iss', mcpIssuer());
     return redirect.toString();
   }
 
@@ -446,8 +482,11 @@ export class McpOAuthService {
 
   private async requirePendingRequest(id: string) {
     const request = await this.repository.getAuthorizationRequest(id);
-    if (!request || request.expiresAt <= new Date()) {
-      if (request) await this.repository.deleteAuthorizationRequest(id);
+    if (!request || request.decidedAt || request.expiresAt <= new Date()) {
+      // A repeated consent read must not erase the result before the original
+      // OAuth window has retrieved it.
+      if (request && request.expiresAt <= new Date())
+        await this.repository.deleteAuthorizationRequest(id);
       throw new AppError('MCP authorization request expired', 400, 'MCP_AUTH_REQUEST_EXPIRED');
     }
     return request;
