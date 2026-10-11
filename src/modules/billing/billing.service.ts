@@ -594,10 +594,13 @@ export class BillingService {
     const expected = planCatalog[selectedPlan];
     const expectedCents = Math.round(expected.monthlyUsd * 100);
     const actualCents = moneyCents(item.price.amount);
+    // activeSubscription establishes the merchant's active contract. price.active only
+    // identifies the current catalog price; Shopify sets it false when a price is replaced.
+    // Retired prices remain valid here only if every launch-contract check still matches.
+    // https://shopify.dev/docs/api/partner/latest/objects/FlatRatePrice#field-active
     const contractMatches =
       remote.billingPeriod === expected.billingPeriod &&
       item.price.__typename === 'FlatRatePrice' &&
-      item.price.active === true &&
       item.price.currency === expected.currency &&
       (actualCents === expectedCents || (isDevelopmentStore && actualCents === 0)) &&
       remote.items.length === 1;
