@@ -17,6 +17,9 @@ model McpAuthorizationRequest {
   resource            String
   codeChallenge       String
   codeChallengeMethod String   @default("S256")
+  returnTokenHash     String?
+  returnUrlCiphertext String?
+  decidedAt           DateTime?
   expiresAt           DateTime
   createdAt           DateTime @default(now())
 

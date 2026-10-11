@@ -35,6 +35,12 @@ const registerSchema = z.object({
 
 const requestParamsSchema = z.object({ requestId: z.string().uuid() });
 const approvalSchema = z.object({ storeId: z.string().uuid() });
+const returnSchema = z.object({
+  returnToken: z
+    .string()
+    .length(43)
+    .regex(/^[A-Za-z0-9_-]+$/),
+});
 const tokenSchema = z.object({
   grant_type: z.enum(['authorization_code', 'refresh_token']),
   client_id: z.string().min(1).max(2048),
@@ -103,6 +109,13 @@ export class McpOAuthController {
           req.context.authSource === 'SHOPIFY' ? req.context.storeId : undefined,
         ),
       );
+  };
+
+  authorizationResult = async (req: Request, res: Response) => {
+    noStore(res);
+    const { requestId } = requestParamsSchema.parse(req.params);
+    const { returnToken } = returnSchema.parse(req.body);
+    res.status(200).json(await this.service.authorizationResult(requestId, returnToken));
   };
 
   approve = async (req: Request, res: Response) => {

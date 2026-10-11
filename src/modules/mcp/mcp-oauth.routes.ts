@@ -3,6 +3,7 @@ import { requireAuth } from '../../middleware/auth.middleware.js';
 import {
   mcpClientRegistrationRateLimit,
   mcpOAuthRateLimit,
+  mcpOAuthReturnRateLimit,
 } from '../../middleware/rate-limit.middleware.js';
 import { mcpOAuthController } from './mcp-oauth.controller.js';
 
@@ -22,6 +23,11 @@ mcpOAuthRouter.get(
 );
 mcpOAuthRouter.post('/oauth/register', mcpClientRegistrationRateLimit, mcpOAuthController.register);
 mcpOAuthRouter.get('/oauth/authorize', mcpOAuthRateLimit, mcpOAuthController.authorize);
+mcpOAuthRouter.post(
+  '/oauth/authorization-requests/:requestId/result',
+  mcpOAuthReturnRateLimit,
+  mcpOAuthController.authorizationResult,
+);
 mcpOAuthRouter.post(
   '/oauth/token',
   mcpOAuthRateLimit,
