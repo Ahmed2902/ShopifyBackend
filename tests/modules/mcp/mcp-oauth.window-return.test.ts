@@ -154,13 +154,11 @@ describe('MCP original OAuth window return', () => {
 
   it('allows capability-proven result polling without merchant login and marks responses no-store', async () => {
     const repo = {
-      getAuthorizationRequest: vi
-        .fn()
-        .mockResolvedValue({
-          ...pending(),
-          decidedAt: new Date(),
-          returnUrlCiphertext: encryptSecret(`${redirectUri}&error=access_denied`),
-        }),
+      getAuthorizationRequest: vi.fn().mockResolvedValue({
+        ...pending(),
+        decidedAt: new Date(),
+        returnUrlCiphertext: encryptSecret(`${redirectUri}&error=access_denied`),
+      }),
     };
     const controller = new McpOAuthController(new McpOAuthService(repo as never));
     const app = express();
