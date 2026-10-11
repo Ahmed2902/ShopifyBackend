@@ -380,6 +380,68 @@ describe('BillingService Shopify App Pricing verification', () => {
     expect(verify).toHaveBeenCalledWith(storeId, 'gid://shopify/Shop/123');
   });
 
+  it.each([
+    ['stride-essentials', '49.99', false, 'ESSENTIALS'],
+    ['stride-pro', '84.99', false, 'PRO'],
+    ['stride-essentials', '0.0', true, 'ESSENTIALS'],
+    ['stride-pro', '0.0', true, 'PRO'],
+  ] as const)(
+    'accepts an active subscription with a retired catalog price (%s, $%s)',
+    async (handle, amount, development, plan) => {
+      const current = localSubscription();
+      subscriptionRepository.findUnique.mockResolvedValue(current);
+      makeUpdateReturn(current);
+      const client = pricingClient();
+      const remote = remoteSubscription(handle);
+      remote.items[0]!.price.amount = amount;
+      remote.items[0]!.price.active = false;
+      vi.mocked(client.activeSubscription).mockResolvedValue(remote);
+      const verify = vi.fn().mockResolvedValue(development);
+
+      await expect(
+        new BillingService(client, verify).read(storeId, now, {
+          fresh: true,
+          failOnVerificationError: true,
+        }),
+      ).resolves.toMatchObject({ selectedPlan: plan, accessActive: true });
+
+      if (development) expect(verify).toHaveBeenCalledWith(storeId, 'gid://shopify/Shop/123');
+      else expect(verify).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['production-zero', 'amount', 'currency', 'interval', 'price-type', 'extra-item'] as const)(
+    'still rejects a retired catalog price with an invalid contract (%s)',
+    async (mismatch) => {
+      const current = localSubscription({ provider: 'SHOPIFY', status: 'ACTIVE' });
+      subscriptionRepository.findUnique.mockResolvedValue(current);
+      makeUpdateReturn(current);
+      const client = pricingClient();
+      const remote = remoteSubscription('stride-pro');
+      const item = remote.items[0]!;
+      item.price.active = false;
+      if (mismatch === 'production-zero') item.price.amount = '0.0';
+      if (mismatch === 'amount') item.price.amount = '99.00';
+      if (mismatch === 'currency') item.price.currency = 'EUR';
+      if (mismatch === 'interval') remote.billingPeriod = 'ANNUAL';
+      if (mismatch === 'price-type') item.price.__typename = 'TieredPrice';
+      if (mismatch === 'extra-item') remote.items.push({ ...item, price: { ...item.price } });
+      vi.mocked(client.activeSubscription).mockResolvedValue(remote);
+      const verify = vi.fn().mockResolvedValue(false);
+
+      await expect(
+        new BillingService(client, verify).read(storeId, now, {
+          fresh: true,
+          failOnVerificationError: true,
+        }),
+      ).rejects.toMatchObject({ code: 'SHOPIFY_PLAN_CONFIGURATION_MISMATCH' });
+      expect(subscriptionRepository.update).toHaveBeenCalledWith({
+        where: expect.objectContaining({ storeId }),
+        data: expect.objectContaining({ status: 'EXPIRED' }),
+      });
+    },
+  );
+
   it('fails closed if development-store verification is unavailable', async () => {
     const current = localSubscription(); subscriptionRepository.findUnique.mockResolvedValue(current);
     const client = pricingClient(); const remote = remoteSubscription('stride-pro'); remote.items[0]!.price.amount = '0';
