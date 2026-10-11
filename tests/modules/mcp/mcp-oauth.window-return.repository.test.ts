@@ -84,4 +84,20 @@ describeDatabase('MCP OAuth handoff database claims', () => {
     expect(pendingRow?.decidedAt).toBeNull();
     expect(pendingRow?.returnUrlCiphertext).toBeNull();
   });
+
+  it('preserves a late denial for a fresh five-minute retrieval interval', async () => {
+    const row = await pending();
+    const oldExpiry = new Date(Date.now() + 10_000);
+    await prisma.mcpAuthorizationRequest.update({
+      where: { id: row.id },
+      data: { expiresAt: oldExpiry },
+    });
+    expect(await repo.completeAuthorizationRequest(row.id, 'encrypted-denial')).toEqual({
+      count: 1,
+    });
+    const denied = await repo.getAuthorizationRequest(row.id);
+    expect(denied!.expiresAt.getTime()).toBeGreaterThan(oldExpiry.getTime());
+    expect(denied!.expiresAt.getTime() - denied!.decidedAt!.getTime()).toBe(5 * 60_000);
+    expect(denied?.returnUrlCiphertext).toBe('encrypted-denial');
+  });
 });

@@ -1,4 +1,5 @@
 import { prisma } from '../../lib/prisma.js';
+import { MCP_AUTHORIZATION_CODE_TTL_MS } from './mcp-oauth.utils.js';
 
 export class McpOAuthRepository {
   findRegisteredClient(clientId: string) {
@@ -38,7 +39,13 @@ export class McpOAuthRepository {
     const now = new Date();
     return prisma.mcpAuthorizationRequest.updateMany({
       where: { id, decidedAt: null, expiresAt: { gt: now } },
-      data: { decidedAt: now, returnUrlCiphertext },
+      data: {
+        decidedAt: now,
+        returnUrlCiphertext,
+        // Give the original window a full retrieval interval even if the
+        // merchant denies immediately before the pending request expires.
+        expiresAt: new Date(now.getTime() + MCP_AUTHORIZATION_CODE_TTL_MS),
+      },
     });
   }
 

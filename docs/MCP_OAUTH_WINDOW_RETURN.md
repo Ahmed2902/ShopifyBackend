@@ -26,11 +26,14 @@ The URL builder follows Shopify's documented `/store/:store_handle/charges/:app_
 For the exact public Metrico app installed on the dev store, inspect Partner Dashboard → App distribution → All apps → Metrico → Distribution → Manage listing → Edit listing language → Pricing content → Manage:
 
 - Confirm Shopify App Pricing is selected in pricing Settings.
+- Match the dev store and listing locales. Shopify documents a draft-app pricing-page 404 when those locales differ. For an English listing, test with matching English settings before diagnosing other causes.
 - Copy the actual app handle from the hosted pricing URL/linked app configuration into `SHOPIFY_APP_HANDLE`. The display name is not proof of the handle.
 - Ensure Essentials and Pro are saved and available to the test store, with descriptions for its language and 14 trial days configured as intended.
 - Copy the actual subscription-item handles into `SHOPIFY_ESSENTIALS_PLAN_HANDLE` and `SHOPIFY_PRO_PLAN_HANDLE`.
 - Confirm `SHOPIFY_PARTNER_APP_ID`, organization ID and Partner API access token belong to that same app and organization. Do not reuse the old Stride app's configuration.
 - For embedded plan welcome links, use the app-relative billing route and verify the resolved destination is `/app/billing`.
+
+If the handle, pricing mode, plan availability and matching locales are verified but the hosted page still returns 404, escalate to Shopify Partner Support with the app ID, test-store domain and listing locale. Do not assume publishing approval is required to test billing.
 
 Approve a plan, return to Metrico, and refresh subscription status. Never bypass billing or mark a subscription active locally to work around the hosted page. On a dev store in the same Partner organization, available App Pricing plans can be selected at no charge.
 
