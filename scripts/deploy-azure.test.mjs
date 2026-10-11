@@ -51,7 +51,10 @@ function app(config) {
           { type: 'Readiness', httpGet: { path: config.path, port: config.port } },
           {
             type: 'Startup',
-            httpGet: { path: '/health/live', port: 3001 },
+            httpGet: {
+              path: config.service === 'backend' ? '/health/live' : '/api/health',
+              port: config.port,
+            },
             failureThreshold: 60,
             periodSeconds: 10,
           },
@@ -131,6 +134,42 @@ for (const main of [() => 'c'.repeat(40), (count) => (count === 1 ? sha : 'c'.re
     const h = harness(undefined, { main });
     assert.equal((await deployAzure(h.config, h.dependencies)).skipped, true);
     assert.equal(h.mutations.length, 0);
+  });
+}
+for (const service of ['backend', 'frontend']) {
+  for (const type of ['Readiness', 'Startup', 'Liveness']) {
+    test(`rejects HTTPS ${type} on ${service} before changing Azure`, async () => {
+      const h = harness(deploymentConfig(environment(service)), {
+        configure(value) {
+          value.containers[0].probes.push({
+            type,
+            httpGet: { scheme: 'HTTPS', path: '/health/live', port: value.port },
+          });
+        },
+      });
+      await assert.rejects(deployAzure(h.config, h.dependencies), /HTTP transport/);
+      assert.equal(h.mutations.length, 0);
+    });
+  }
+  test(`rejects an HTTP probe on the wrong port for ${service}`, async () => {
+    const h = harness(deploymentConfig(environment(service)), {
+      configure(value) {
+        value.containers[0].probes[0].httpGet.port = 443;
+      },
+    });
+    await assert.rejects(deployAzure(h.config, h.dependencies), /HTTP transport/);
+    assert.equal(h.mutations.length, 0);
+  });
+  test(`accepts explicit HTTP probes on ${service}`, async () => {
+    const h = harness(deploymentConfig(environment(service)), {
+      configure(value) {
+        value.containers[0].probes.forEach((probe) => {
+          probe.httpGet.scheme = 'HTTP';
+          probe.httpGet.port = value.port;
+        });
+      },
+    });
+    assert.equal((await deployAzure(h.config, h.dependencies)).revision, h.config.revision);
   });
 }
 test('cannot verify main: deployment stops without changing Azure', async () => {

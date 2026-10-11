@@ -21,7 +21,7 @@ Before enabling automation, verify:
 | Minimum / maximum replicas      | 1 / 1                                                                | Your existing frontend limits        |
 | Private registry                | `ghcr.io`, existing username and PAT secret reference                | Same                                 |
 
-For readiness use interval 30 seconds, timeout 5 seconds, failure threshold 3. Configure probes under **Containers → Edit and deploy → Health probes**. Automation stops before updating an app if the required settings are missing. Keep actual application secrets in Azure. The private GHCR read token already configured in Azure still needs to remain valid; identity federation authenticates deployment to Azure, not image pulls from GitHub.
+For readiness use HTTP transport, initial delay 10 seconds, interval 10 seconds, timeout 5 seconds, success threshold 1 and failure threshold 3. All HTTP probes must use HTTP (not HTTPS) on the service port. Azure terminates external HTTPS at ingress; the containers serve plain HTTP. Backend liveness uses HTTP `/health/live` on port 3001 with the same timing settings. Backend startup uses initial delay 10 seconds, interval 10 seconds, timeout 5 seconds, success threshold 1 and failure threshold 60. Configure probes under **Containers → Edit and deploy → Health probes**. Automation stops before updating an app if the required settings are missing. Keep actual application secrets in Azure. The private GHCR read token already configured in Azure still needs to remain valid; identity federation authenticates deployment to Azure, not image pulls from GitHub.
 
 ## 2. Create an Azure deployment identity
 
@@ -93,9 +93,9 @@ In each repository's **Settings → Secrets and variables → Actions → Variab
 
 Use the actual names shown in Azure Overview. Set the enable variable last, after the identity, roles, credentials, apps and probes are ready. No GitHub Environment or per-release approval is required by these workflows; your normal manual PR merge remains the release trigger. Existing frontend public build variables, including `NEXT_PUBLIC_SENTRY_DSN`, stay in place.
 
-## 7. Merge the prepared PRs and verify the first automatic release
+## 7. Merge deployment changes and verify the first automatic release
 
-Manually merge the backend deployment PR after its latest-head CI passes. Keep frontend PR #106 unmerged until the public Shopify listing is live. In the frontend repository, set the Actions variable `NEXT_PUBLIC_SHOPIFY_APP_STORE_URL` to the exact approved HTTPS listing URL before merging. Frontend publication now stops if that URL is missing or malformed. The URL is baked into the image; changing it requires running Publish containers again. Backend releases can proceed independently. If Azure auto-deployment is disabled, publication still runs and deployment is skipped.
+Manually merge the backend deployment PR after its latest-head CI passes. Merge the separate frontend deployment-only PR to enable frontend automation before listing approval. Keep the listing/UI changes in frontend PR #106 unmerged until the public Shopify listing is live. In the frontend repository, set the Actions variable `NEXT_PUBLIC_SHOPIFY_APP_STORE_URL` to the exact approved HTTPS listing URL before merging. The deployment-only PR keeps the existing pre-listing publication behavior. PR #106 makes publication stop if that URL is missing or malformed, so its release remains dependent on the approved listing. The URL is baked into the image; changing it requires running Publish containers again. Backend releases can proceed independently. If Azure auto-deployment is disabled, publication still runs and deployment is skipped.
 
 In **GitHub → Actions**, watch **CI** followed by **Publish containers**. That publication workflow now includes **Deploy backend to Azure** or **Deploy frontend to Azure**. It:
 

@@ -88,6 +88,15 @@ export function validateApp(app, config) {
   ) {
     throw new Error('Configure the existing private GHCR registry credentials in Azure first.');
   }
+  // TLS terminates at Azure ingress; both application containers serve plain HTTP.
+  for (const probe of container.probes ?? []) {
+    if (
+      probe.httpGet &&
+      ((probe.httpGet.scheme ?? 'HTTP') !== 'HTTP' || probe.httpGet.port !== config.port)
+    ) {
+      throw new Error(`Configure ${probe.type} with HTTP transport on port ${config.port}.`);
+    }
+  }
   if (
     !container.probes?.some(
       (probe) =>
