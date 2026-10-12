@@ -322,6 +322,7 @@ export class PixelRepository {
   }
 
   async cleanupMatchEvidence(now: Date, limit: number) {
+    await prisma.$executeRaw`UPDATE "ConversionDelivery" SET "testCodeCiphertext" = NULL WHERE "id" IN (SELECT "id" FROM "ConversionDelivery" WHERE "testExpiresAt" <= ${now} AND "testCodeCiphertext" IS NOT NULL LIMIT ${limit})`;
     await prisma.$executeRaw`UPDATE "StorefrontEvent" SET "browserMatchCiphertext" = NULL, "browserMatchExpiresAt" = NULL WHERE "id" IN (SELECT "id" FROM "StorefrontEvent" WHERE "browserMatchExpiresAt" <= ${now} LIMIT ${limit})`;
     await prisma.$executeRaw`DELETE FROM "StorefrontCustomerLink" WHERE "sourceOrderId" IN (SELECT "sourceOrderId" FROM "StorefrontCustomerLink" WHERE "expiresAt" <= ${now} LIMIT ${limit})`;
     await prisma.$executeRaw`UPDATE "ConversionDelivery" SET "clickId" = NULL, "eventSourceUrl" = NULL, "attributionEventAt" = NULL, "status" = 'DEAD', "reasonCode" = 'EVENT_EXPIRED', "processingStartedAt" = NULL WHERE "id" IN (SELECT "id" FROM "ConversionDelivery" WHERE "eventAt" < ${new Date(now.getTime() - 7 * 86400_000)} AND "status" IN ('PENDING', 'RETRY', 'PROCESSING') LIMIT ${limit})`;

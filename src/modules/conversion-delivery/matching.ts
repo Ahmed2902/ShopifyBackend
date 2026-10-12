@@ -11,7 +11,7 @@ export type CustomerMatchInput = {
   country?: string | null;
   externalId?: string | null;
 };
-export type BrowserMatchInput = { fbc?: string; fbp?: string; ttp?: string; userAgent?: string; clientIp?: string };
+export type BrowserMatchInput = { fbc?: string; fbp?: string; ttp?: string; userAgent?: string; clientIp?: string; clientIpSource?: 'COLLECTOR' | 'SHOPIFY' };
 export type MatchEvidence = BrowserMatchInput & {
   meta?: Record<string, unknown>;
   tiktok?: Record<string, unknown>;

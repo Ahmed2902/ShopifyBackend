@@ -86,7 +86,7 @@ export async function enrichConversionSignal(delivery: DeliveryClaim, beforeProt
   delivery.customerIdentityKey = externalId;
   const address = data.order.billingAddress ?? data.order.shippingAddress;
   const clientIp = data.order.clientIp && isIP(data.order.clientIp) ? data.order.clientIp : undefined;
-  return { ...browser, ...(clientIp ? { clientIp } : {}), ...normalizeCustomerMatching({
+  return { ...browser, ...(clientIp ? { clientIp, clientIpSource: 'SHOPIFY' as const } : {}), ...normalizeCustomerMatching({
     emails: [data.order.email ?? null], phones: [data.order.phone ?? null], firstName: address?.firstName, lastName: address?.lastName,
     city: address?.city, region: address?.provinceCode, postalCode: address?.zip, country: address?.countryCodeV2, externalId,
   }) };

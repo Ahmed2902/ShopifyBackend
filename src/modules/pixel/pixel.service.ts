@@ -354,7 +354,7 @@ export class PixelService {
     // A current network observation must not be attached to replayed old events.
     const browserMatch = { ...event.browserMatch,
       ...(event.browserMatch?.userAgent && context.clientIp && eventAgeMs <= 5 * 60_000
-        ? { clientIp: context.clientIp } : {}),
+        ? { clientIp: context.clientIp, clientIpSource: 'COLLECTOR' } : {}),
     };
     const permittedMatch =
       isStorefrontBehaviorCaptureAllowed(event.consentState) && eventAgeMs <= 48 * 60 * 60_000 && event.adSharingAllowed && Object.keys(browserMatch).length > 0;

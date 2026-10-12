@@ -7,16 +7,16 @@ import { encryptSecret } from '../../../src/modules/integrations/integration.uti
 import { conversionSignalHealth } from '../../../src/modules/conversion-delivery/signal-diagnostics.js';
 const suite = process.env.RUN_DB_TESTS === 'true' ? describe : describe.skip;
 const stores: string[] = [];
-afterEach(async () => { for (const storeId of stores.splice(0)) { await prisma.order.deleteMany({ where: { storeId } }); await prisma.store.delete({ where: { id: storeId } }); } });
+afterEach(async () => { for (const storeId of stores.splice(0)) { await prisma.order.deleteMany({ where: { storeId } }); await prisma.shopifyConnection.deleteMany({ where: { storeId } }); await prisma.store.delete({ where: { id: storeId } }); } });
 async function fixture() {
   const now = new Date(); const unique = randomUUID();
   const store = await prisma.store.create({ data: { shopifyShopId: unique, myshopifyDomain: `${unique}.myshopify.com`, name: 'Recovery test', currencyCode: 'USD', ianaTimezone: 'UTC' } }); stores.push(store.id);
   const connection = await prisma.shopifyConnection.create({ data: { storeId: store.id, status: 'ACTIVE', apiVersion: '2026-07', scopes: ['read_orders', 'read_customer_events'], accessTokenCiphertext: 'test', installedAt: new Date(now.getTime() - 86400_000) } });
   const proof = checkoutProofHash(store.id, 'real-checkout-token');
   const order = await prisma.order.create({ data: { storeId: store.id, shopifyOrderId: 'gid://shopify/Order/1001', name: '#1001', shopifyCreatedAt: now, currencyCode: 'USD', currentTotalAmount: '15', checkoutTokenHash: proof } });
-  const source = await prisma.storefrontEvent.create({ data: { storeId: store.id, eventId: unique, eventName: 'BEGIN_CHECKOUT', eventAt: now, anonymousVisitorId: unique, sessionId: unique, adSharingAllowed: true, consentState: 'GRANTED', checkoutTokenHash: proof, shopifyCheckoutToken: 'real-checkout-token', pageUrl: 'https://shop.example/checkouts/checkout', browserMatchCiphertext: encryptSecret(JSON.stringify({ clientIp: '8.8.4.4', userAgent: 'Browser' })), browserMatchExpiresAt: new Date(now.getTime() + 86400_000), retentionExpiresAt: new Date(now.getTime() + 86400_000) } });
+  const source = await prisma.storefrontEvent.create({ data: { storeId: store.id, eventId: unique, eventName: 'BEGIN_CHECKOUT', eventAt: now, anonymousVisitorId: unique, sessionId: unique, adSharingAllowed: true, consentState: 'GRANTED', checkoutTokenHash: proof, shopifyCheckoutToken: 'real-checkout-token', pageUrl: 'https://shop.example/checkouts/checkout', browserMatchCiphertext: encryptSecret(JSON.stringify({ clientIp: '8.8.4.4', clientIpSource: 'COLLECTOR', userAgent: 'Browser' })), browserMatchExpiresAt: new Date(now.getTime() + 86400_000), retentionExpiresAt: new Date(now.getTime() + 86400_000) } });
   const destination = await prisma.conversionDestination.create({ data: { storeId: store.id, provider: 'META', externalId: unique, status: 'ACTIVE', accessTokenCiphertext: 'test', configJson: { enhancedMatching: false } } });
-  const claim = { storeId: store.id, sourceOrderId: order.id, sourceEventId: source.id, sourceGenerationAt: connection.installedAt, provider: 'META' as const, destinationId: destination.id, clickId: null, eventName: 'PURCHASE', match: { clientIp: '8.8.4.4', userAgent: 'Browser' } };
+  const claim = { storeId: store.id, sourceOrderId: order.id, sourceEventId: source.id, sourceGenerationAt: connection.installedAt, provider: 'META' as const, destinationId: destination.id, clickId: null, eventName: 'PURCHASE', match: { clientIp: '8.8.4.4', clientIpSource: 'COLLECTOR', userAgent: 'Browser' } };
   return { store, order, source, destination, claim, repo: new ConversionDeliveryRepository(), now };
 }
 suite('canonical purchase recovery without materialized sessions', () => {

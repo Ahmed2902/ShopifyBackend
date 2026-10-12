@@ -324,7 +324,7 @@ export class ConversionDeliveryService {
             claim.matchingReasonCode,
           );
         else await this.repository.markDelivered(claim.id, result.providerRequestId, this.now());
-        if (claim.customerIdentityKey && claim.sourceOrderId && claim.sourceGenerationAt)
+        if (!claim.isTestDelivery && claim.customerIdentityKey && claim.sourceOrderId && claim.sourceGenerationAt)
           await this.repository.linkCustomerIdentity(claim);
         delivered += 1;
       } catch (error) {

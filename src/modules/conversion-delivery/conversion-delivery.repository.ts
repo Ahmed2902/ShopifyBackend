@@ -343,12 +343,13 @@ export class ConversionDeliveryRepository {
       if (claim.eventName && claim.eventName !== 'PURCHASE' && config?.funnelEvents !== true)
         return false;
       const match = claim.match as
-        { meta?: unknown; tiktok?: unknown; google?: unknown; clientIp?: string } | undefined;
+        { meta?: unknown; tiktok?: unknown; google?: unknown; clientIp?: string; clientIpSource?: string } | undefined;
       if (
         (claim.matchingIntent ||
           match?.meta ||
           match?.tiktok ||
-          match?.google) &&
+          match?.google ||
+          (match?.clientIp && match.clientIpSource !== 'COLLECTOR')) &&
         config?.enhancedMatching !== true
       )
         return false;
@@ -473,6 +474,7 @@ export class ConversionDeliveryRepository {
         status: 'DEAD',
         processingStartedAt: null,
         reasonCode: 'CONSENT_BLOCKED',
+        testCodeCiphertext: null,
         matchCoverage: PrismaSql.DbNull,
         lastError: 'Advertising consent or source attribution is no longer available',
         clickId: null,
@@ -562,6 +564,10 @@ export class ConversionDeliveryRepository {
   }
 
   async recoverStaleClaims(cutoff: Date) {
+    await prisma.conversionDelivery.updateMany({
+      where: { isTestDelivery: true, testExpiresAt: { lte: new Date() }, testCodeCiphertext: { not: null } },
+      data: { testCodeCiphertext: null },
+    });
     return prisma.conversionDelivery.updateMany({
       where: { status: 'PROCESSING', processingStartedAt: { lt: cutoff } },
       data: {
@@ -662,7 +668,7 @@ export class ConversionDeliveryRepository {
         nextAttemptAt,
         lastError: error.slice(0, 2_000),
         ...(status === 'DEAD'
-          ? { clickId: null, attributionEventAt: null, eventSourceUrl: null }
+          ? { clickId: null, attributionEventAt: null, eventSourceUrl: null, testCodeCiphertext: null }
           : {}),
         reasonCode: /EVENT_EXPIRED/.test(error)
           ? 'EVENT_EXPIRED'
@@ -718,6 +724,7 @@ export class ConversionDeliveryRepository {
         deliveredAt: true,
         providerRequestId: true,
         lastError: true,
+        reasonCode: true,
         createdAt: true,
         destination: { select: { id: true, externalId: true, displayName: true } },
       },

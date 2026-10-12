@@ -570,7 +570,7 @@ describe('permitted independent network matching', () => {
   it('retains a real network identifier without requiring an SDK cookie', async () => {
     const { service, repository } = ready(); await service.ingest(data(true), { clientIp: '8.8.4.4' });
     const row = vi.mocked(repository.insertEvents).mock.calls[0]![1][0]!;
-    expect(JSON.parse(decryptSecret(row.browserMatchCiphertext as string))).toEqual({ userAgent: 'Observed browser', clientIp: '8.8.4.4' });
+    expect(JSON.parse(decryptSecret(row.browserMatchCiphertext as string))).toEqual({ userAgent: 'Observed browser', clientIp: '8.8.4.4', clientIpSource: 'COLLECTOR' });
   });
   it('does not retain matching context without advertising permission', async () => {
     const { service, repository } = ready(); await service.ingest(data(false), { clientIp: '8.8.4.4' });
