@@ -25,11 +25,13 @@ type GoogleDataManagerResponse = {
   error?: { code?: number; status?: string; message?: string };
 };
 
-async function responseJson(response: Response): Promise<GoogleDataManagerResponse> {
+async function responseJson(response: Response): Promise<GoogleDataManagerResponse | null> {
   try {
-    return (await response.json()) as GoogleDataManagerResponse;
+    const value: unknown = await response.json();
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? value as GoogleDataManagerResponse : null;
   } catch {
-    return {};
+    return null;
   }
 }
 
@@ -155,6 +157,9 @@ export async function deliverGooglePurchase(
   }
 
   const payload = await responseJson(response);
+  if (!payload) {
+    throw new ConversionProviderError('Google returned an unreadable response', true, 'GOOGLE_DATA_MANAGER_BAD_RESPONSE');
+  }
   if (!response.ok || payload.error) {
     const code =
       payload.error?.status ??

@@ -276,3 +276,11 @@ describe('Google validation versus live ingestion', () => {
     expect(JSON.parse(fetchMock.mock.calls[0]![1].body).validateOnly).toBe(false);
   });
 });
+
+it.each(['not-json', 'null', '[]', '"ok"'])('does not report Google validation success for malformed HTTP 200 body %s', async body => {
+  getApiContext.mockResolvedValue(context);
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, { status: 200 })));
+  try {
+    await expect(deliverGooglePurchase(claim('GOOGLE_ADS'), async () => {}, { validateOnly: true })).rejects.toMatchObject({ providerCode: 'GOOGLE_DATA_MANAGER_BAD_RESPONSE' });
+  } finally { vi.unstubAllGlobals(); }
+});
