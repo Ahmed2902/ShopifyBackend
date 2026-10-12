@@ -119,6 +119,16 @@ export class AnalyticsController {
     res.status(200).json(payload);
   };
 
+  collectionPerformance = async (req: Request, res: Response) => {
+    const storeId = req.context.storeId!;
+    const collectionId = entityId(req, 'collectionId');
+    const query = analyticsRangeQuerySchema.parse(req.query);
+    const { fresh } = analyticsReadControlSchema.parse(req.query);
+    const payload = await this.cached(storeId, analyticsCacheKey(storeId, 'collection-performance', query, collectionId), fresh,
+      async () => toJsonSafe(await this.workspace.collectionPerformance(storeId, collectionId, query)));
+    res.status(200).json(payload);
+  };
+
   collections = async (req: Request, res: Response) => {
     const storeId = req.context.storeId!;
     const query = analyticsListQuerySchema.parse(req.query);

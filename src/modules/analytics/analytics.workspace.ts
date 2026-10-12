@@ -168,6 +168,11 @@ export class AnalyticsWorkspace {
     return this.commerce.product(store, windows, productId);
   }
 
+  async collectionPerformance(storeId: string, collectionId: string, query: AnalyticsRangeQuery, now = new Date()) {
+    const { store, windows } = await this.context(storeId, query, now);
+    return this.commerce.collectionPerformance(store, windows, collectionId);
+  }
+
   async collections(storeId: string, query: AnalyticsListQuery, now = new Date()) {
     const { store, windows } = await this.context(storeId, query, now);
     if (this.collectionReadService) {
