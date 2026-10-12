@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../../errors/app-error.js';
+import { withProviderReturnShop } from '../integrations/provider-return.js';
 import { advertisingReconciliationService } from '../advertising/reconciliation/advertising-reconciliation.service.js';
 import { billingService, type BillingService } from '../billing/billing.service.js';
 import {
@@ -41,7 +42,7 @@ export class MetaController {
     const context = verifyMetaOAuthState(rawState);
 
     if (typeof req.query.error === 'string') {
-      res.redirect(303, buildMetaErrorRedirect(context.storeId, 'META_OAUTH_DENIED'));
+      res.redirect(303, await withProviderReturnShop(buildMetaErrorRedirect(context.storeId, 'META_OAUTH_DENIED'), context.storeId));
       return;
     }
 
@@ -50,10 +51,10 @@ export class MetaController {
       if (this.billing) await this.billing.requireAdProvider(context.storeId, 'META');
       const result = await this.service.completeOAuthInstall(query.code, query.state);
       if (this.billing) await this.billing.confirmAdProvider(result.storeId, 'META');
-      res.redirect(303, buildMetaSuccessRedirect(result.storeId));
+      res.redirect(303, await withProviderReturnShop(buildMetaSuccessRedirect(result.storeId), result.storeId));
     } catch (error) {
       const code = error instanceof AppError ? error.code : 'META_OAUTH_FAILED';
-      res.redirect(303, buildMetaErrorRedirect(context.storeId, code));
+      res.redirect(303, await withProviderReturnShop(buildMetaErrorRedirect(context.storeId, code), context.storeId));
     }
   };
 

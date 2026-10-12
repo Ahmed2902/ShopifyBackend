@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../../errors/app-error.js';
+import { withProviderReturnShop } from '../integrations/provider-return.js';
 import { advertisingReconciliationService } from '../advertising/reconciliation/advertising-reconciliation.service.js';
 import { googleAdsMappingService } from './google-ads-mapping.service.js';
 import { GoogleAdsRepository } from './google-ads.repository.js';
@@ -35,16 +36,16 @@ export class GoogleAdsController {
       const state = verifyGoogleAdsOAuthState(req.query.state);
       storeId = state.storeId;
       if (typeof req.query.error === 'string') {
-        res.redirect(303, buildGoogleAdsErrorRedirect(storeId, 'GOOGLE_ADS_OAUTH_DENIED'));
+        res.redirect(303, await withProviderReturnShop(buildGoogleAdsErrorRedirect(storeId, 'GOOGLE_ADS_OAUTH_DENIED'), storeId));
         return;
       }
       const query = googleAdsCallbackSchema.parse(req.query);
       const result = await googleAdsService.completeOAuthInstall(query.code, query.state);
-      res.redirect(303, buildGoogleAdsSuccessRedirect(result.storeId));
+      res.redirect(303, await withProviderReturnShop(buildGoogleAdsSuccessRedirect(result.storeId), result.storeId));
     } catch (error) {
       const code = error instanceof AppError ? error.code : 'GOOGLE_ADS_OAUTH_FAILED';
       if (storeId) {
-        res.redirect(303, buildGoogleAdsErrorRedirect(storeId, code));
+        res.redirect(303, await withProviderReturnShop(buildGoogleAdsErrorRedirect(storeId, code), storeId));
         return;
       }
       throw error;
