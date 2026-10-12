@@ -1,4 +1,5 @@
 import { AppError } from '../../errors/app-error.js';
+import { storeDate } from '../intelligence/intelligence.dates.js';
 import {
   aggregateOrders,
   aggregateProducts,
@@ -299,6 +300,44 @@ export class CommerceAnalyticsService {
       comparison,
       change: metricChanges(current, comparison),
       daily: dailyProduct(split.current, store.currencyCode),
+    };
+  }
+
+  async collectionPerformance(store: StoreContext, windows: AnalyticsWindows, collectionId: string) {
+    const collection = await this.repository.getCollection(store.id, collectionId);
+    if (!collection) throw new AppError('Collection not found', 404, 'COLLECTION_NOT_FOUND');
+    const ids = collection.products.map((item) => item.productId);
+    const rows = ids.length ? await this.repository.getCommerceRows(
+      store.id, windows.comparison.instantFrom, windows.current.instantTo, ids,
+    ) : [];
+    const split = splitCommerce(rows, windows, commerceRowDate);
+    const current = lineMetrics(split.current, store.currencyCode);
+    const comparison = lineMetrics(split.comparison, store.currencyCode);
+    const days = new Map<string, CommerceRow[]>();
+    const products = new Map<string, CommerceRow[]>();
+    for (const row of split.current) {
+      if (row.order.currencyCode !== store.currencyCode) continue;
+      const date = storeDate(commerceRowDate(row), store.ianaTimezone);
+      const dayRows = days.get(date) ?? [];
+      dayRows.push(row);
+      days.set(date, dayRows);
+      if (row.productId && row.product) {
+        const productRows = products.get(row.productId) ?? [];
+        productRows.push(row);
+        products.set(row.productId, productRows);
+      }
+    }
+    return {
+      window: windowResponse(windows), currency: store.currencyCode,
+      methodology: 'SHOPIFY_ORDER_COHORT_WITH_CURRENT_COLLECTION_MEMBERSHIP',
+      membershipSnapshot: 'CURRENT' as const,
+      collection: { id: collection.id, title: collection.title },
+      current, comparison, change: metricChanges(current, comparison),
+      daily: [...days].sort(([a], [b]) => a.localeCompare(b)).map(([date, values]) => ({ date, ...lineMetrics(values, store.currencyCode) })),
+      topProducts: [...products].map(([id, values]) => {
+        const metrics = lineMetrics(values, store.currencyCode);
+        return { product: { id, title: values[0]!.product!.title }, orderCount: metrics.orderCount, netUnits: metrics.netUnits, netRevenue: metrics.netProductRevenue };
+      }).sort((a, b) => b.netRevenue - a.netRevenue || a.product.id.localeCompare(b.product.id)).slice(0, 10),
     };
   }
 

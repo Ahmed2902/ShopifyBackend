@@ -248,6 +248,19 @@ export class AnalyticsRepository {
     });
   }
 
+  getCollection(storeId: string, collectionId: string) {
+    return prisma.collection.findFirst({
+      where: { id: collectionId, storeId, deletedAt: null },
+      select: {
+        id: true, title: true,
+        products: {
+          where: { product: { storeId, deletedAt: null } },
+          select: { productId: true },
+        },
+      },
+    });
+  }
+
   async getCollectionsPage(storeId: string, page: number, limit: number) {
     const where = { storeId, deletedAt: null };
     const [total, items] = await Promise.all([

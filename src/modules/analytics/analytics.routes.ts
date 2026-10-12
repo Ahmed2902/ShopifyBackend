@@ -34,6 +34,7 @@ analyticsRouter.get('/product-ads/:productId', analyticsController.productAdsPro
 analyticsRouter.get('/ad-exposure', adExposureController.list);
 analyticsRouter.get('/ad-exposure/:adId', adExposureController.detail);
 analyticsRouter.get('/collections', analyticsController.collections);
+analyticsRouter.get('/collections/:collectionId/performance', analyticsController.collectionPerformance);
 analyticsRouter.get('/collections/:collectionId', collectionDetailController.read);
 analyticsRouter.get('/customers', analyticsController.customers);
 analyticsRouter.get('/inventory', analyticsController.inventory);
