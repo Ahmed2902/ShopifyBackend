@@ -143,7 +143,7 @@ export async function deliverTikTokPurchase(
       },
     ],
   };
-  if (config.testEventCode) body.test_event_code = config.testEventCode;
+  if (delivery.testEventCode) body.test_event_code = delivery.testEventCode;
 
   await beforeSend();
   let response: Response;

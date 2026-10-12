@@ -1,3 +1,4 @@
+import { listPurchaseTestOrders, queuePurchaseTest, purchaseTestResult } from './purchase-test.service.js';
 import { customerOrderJourney } from './customer-journey.js';
 import { conversionSignalHealth, acquisitionAnalytics } from './signal-diagnostics.js';
 import { prisma } from '../../lib/prisma.js';
@@ -81,6 +82,17 @@ export class ConversionDeliveryController {
     res.json(await trackingTestService.run(req.context.storeId!, id, input.testEventCode));
   };
 
+  testOrders = async (req: Request, res: Response) => {
+    res.json({ orders: await listPurchaseTestOrders(req.context.storeId!) });
+  };
+  testPurchase = async (req: Request, res: Response) => {
+    const id = z.string().uuid().parse(req.params.destinationId);
+    const input = z.object({ orderId: z.string().uuid(), testEventCode: z.string().trim().regex(/^[A-Za-z0-9_-]+$/).max(255).optional() }).strict().parse(req.body);
+    res.json(await queuePurchaseTest(req.context.storeId!, id, input.orderId, input.testEventCode));
+  };
+  testResult = async (req: Request, res: Response) => {
+    res.json(await purchaseTestResult(req.context.storeId!, z.string().uuid().parse(req.params.testId)));
+  };
   customerJourney = async (req: Request, res: Response) => {
     res.json(
       await customerOrderJourney(req.context.storeId!, z.string().uuid().parse(req.params.orderId)),

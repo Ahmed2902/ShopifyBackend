@@ -1,3 +1,4 @@
+import { checkoutProofHash } from '../../conversion-delivery/checkout-proof.js';
 import type { Prisma } from '../../../generated/prisma/client.js';
 import { prisma } from '../../../lib/prisma.js';
 import type { ShopifyOrderLineItem, ShopifyRefund } from './shopify-order.schema.js';
@@ -41,9 +42,9 @@ export class ShopifyOrderRepository {
         },
         create: {
           storeId,
-          ...this.orderData(order),
+          ...this.orderData(storeId, order),
         },
-        update: this.orderData(order),
+        update: this.orderData(storeId, order),
         select: { id: true },
       });
 
@@ -194,10 +195,11 @@ export class ShopifyOrderRepository {
     });
   }
 
-  private orderData(order: ShopifyImportedOrder) {
+  private orderData(storeId: string, order: ShopifyImportedOrder) {
     const journey = order.customerJourneySummary;
     return {
       shopifyOrderId: order.id,
+      ...(order.checkoutToken !== undefined ? { checkoutTokenHash: checkoutProofHash(storeId, order.checkoutToken) } : {}),
       name: order.name,
       shopifyCreatedAt: new Date(order.createdAt),
       processedAt: optionalDate(order.processedAt),
@@ -220,7 +222,7 @@ export class ShopifyOrderRepository {
       customerOrderIndex: journey?.customerOrderIndex ?? null,
       daysToConversion: journey?.daysToConversion ?? null,
       customerJourneyReady: journey?.ready ?? null,
-      rawJson: asJson(order),
+      rawJson: asJson(Object.fromEntries(Object.entries(order).filter(([key]) => key !== "checkoutToken"))),
     };
   }
 

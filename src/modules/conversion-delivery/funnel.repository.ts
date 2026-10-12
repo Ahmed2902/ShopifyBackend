@@ -82,6 +82,7 @@ export async function enqueueFunnelEvents(limit = 200) {
           clickId: candidate.provider === 'META' ? event.metaClickId : event.tiktokClickId,
           attributionEventAt: event.eventAt,
           eventSourceUrl: event.pageUrl,
+          nextAttemptAt: new Date(Math.max(Date.now(), event.receivedAt.getTime() + 15_000)),
         },
       ],
       skipDuplicates: true,

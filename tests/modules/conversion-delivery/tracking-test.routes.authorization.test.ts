@@ -5,7 +5,7 @@ const { testDestination, noop } = vi.hoisted(() => ({ testDestination: vi.fn(), 
 vi.mock('../../../src/middleware/auth.middleware.js', () => ({ requireAuth: (_req: Request, _res: Response, next: NextFunction) => next() }));
 vi.mock('../../../src/modules/billing/billing.middleware.js', () => ({ requireActiveSubscription: (_req: Request, _res: Response, next: NextFunction) => next() }));
 vi.mock('../../../src/middleware/rate-limit.middleware.js', () => ({ rateLimit: () => (_req: Request, _res: Response, next: NextFunction) => next() }));
-vi.mock('../../../src/modules/conversion-delivery/conversion-delivery.controller.js', () => ({ conversionDeliveryController: { testDestination, destinations: noop, customerJourney: noop, signalHealth: noop, acquisition: noop, updateSignals: noop, deliveries: noop, configure: noop, disable: noop } }));
+vi.mock('../../../src/modules/conversion-delivery/conversion-delivery.controller.js', () => ({ conversionDeliveryController: { testDestination, testOrders: noop, testPurchase: noop, testResult: noop, destinations: noop, customerJourney: noop, signalHealth: noop, acquisition: noop, updateSignals: noop, deliveries: noop, configure: noop, disable: noop } }));
 vi.mock('../../../src/modules/conversion-delivery/managed-conversion-setup.controller.js', () => ({ managedConversionSetupController: { options: noop, enable: noop } }));
 import { conversionDeliveryRouter } from '../../../src/modules/conversion-delivery/conversion-delivery.routes.js';
 import { errorHandler } from '../../../src/middleware/error-handler.js';

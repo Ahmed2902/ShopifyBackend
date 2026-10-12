@@ -114,6 +114,8 @@ export class ConversionDeliveryRepository {
   async findPurchaseCandidates(
     limit: number,
     sourceOrderId?: string,
+    testOrder = false,
+    scopeStoreId?: string,
   ): Promise<PurchaseCandidate[]> {
     return prisma.$queryRaw<PurchaseCandidate[]>(PrismaSql.sql`
       SELECT DISTINCT ON (o."id")
@@ -126,7 +128,7 @@ export class ConversionDeliveryRepository {
         COALESCE(o."processedAt", o."shopifyCreatedAt") AS "eventAt",
         o."currentTotalAmount"::text AS "value",
         o."currencyCode" AS "currencyCode",
-        COALESCE(s."landingPageUrl", st."primaryDomainUrl") AS "eventSourceUrl",
+        COALESCE(identity_event."pageUrl", s."landingPageUrl", st."primaryDomainUrl", 'https://' || st."myshopifyDomain" || '/') AS "eventSourceUrl",
         meta_event."metaClickId" AS "metaClickId",
         meta_event."eventAt" AS "metaClickEventAt",
         google_event."googleClickId" AS "googleClickId",
@@ -137,22 +139,25 @@ export class ConversionDeliveryRepository {
       FROM "Order" o
       JOIN "Store" st ON st."id" = o."storeId"
       JOIN "ShopifyConnection" conn ON conn."storeId" = o."storeId" AND conn."status" = 'ACTIVE'
-      JOIN "StorefrontSession" s
-        ON s."orderId" = o."id"
+      LEFT JOIN "StorefrontSession" s
+        ON s."orderId" = o."id" AND s."storeId" = o."storeId"
        AND s."orderLinkStatus" = 'LINKED'
       JOIN LATERAL (
-        SELECT e."id", e."browserMatchCiphertext", e."browserMatchExpiresAt"
-        FROM "StorefrontEvent" e WHERE e."storeId" = o."storeId" AND e."sessionId" = s."browserSessionId"
+        SELECT e."id", e."sessionId", e."anonymousVisitorId", e."pageUrl", e."browserMatchCiphertext", e."browserMatchExpiresAt"
+        FROM "StorefrontEvent" e WHERE e."storeId" = o."storeId" AND (
+            (o."checkoutTokenHash" IS NOT NULL AND e."checkoutTokenHash" = o."checkoutTokenHash")
+            OR (s."id" IS NOT NULL AND e."sessionId" = s."browserSessionId")
+          ) AND e."retentionExpiresAt" > NOW()
           AND e."eventAt" >= conn."installedAt" AND e."eventAt" <= COALESCE(o."processedAt", o."shopifyCreatedAt") + INTERVAL '10 minutes'
           AND e."adSharingAllowed" = TRUE AND e."consentState" IN ('GRANTED', 'NOT_REQUIRED')
           AND NOT EXISTS (SELECT 1 FROM "StorefrontConsentWithdrawal" w WHERE w."storeId" = e."storeId" AND e."eventAt" <= w."revokedBefore" AND (w."scopeKey" = 'session:' || e."sessionId" OR w."scopeKey" = 'visitor:' || e."anonymousVisitorId"))
-        ORDER BY (e."shopifyOrderExternalId" = o."shopifyOrderId" AND e."shopifyCheckoutToken" IS NOT NULL) DESC NULLS LAST, e."eventAt" DESC, e."receivedAt" DESC LIMIT 1
+        ORDER BY (e."checkoutTokenHash" = o."checkoutTokenHash") DESC NULLS LAST, (e."shopifyOrderExternalId" = o."shopifyOrderId" AND e."shopifyCheckoutToken" IS NOT NULL) DESC NULLS LAST, e."eventAt" DESC, e."receivedAt" DESC LIMIT 1
       ) identity_event ON TRUE
       LEFT JOIN LATERAL (
         SELECT e."metaClickId", e."eventAt"
         FROM "StorefrontEvent" e
         WHERE e."storeId" = o."storeId"
-          AND (e."sessionId" = s."browserSessionId" OR (s."anonymousVisitorId" IS NOT NULL AND e."anonymousVisitorId" = s."anonymousVisitorId"))
+          AND (e."sessionId" = identity_event."sessionId" OR (identity_event."anonymousVisitorId" IS NOT NULL AND e."anonymousVisitorId" = identity_event."anonymousVisitorId"))
           AND e."eventAt" >= conn."installedAt"
           AND e."eventAt" >= COALESCE(o."processedAt", o."shopifyCreatedAt") - INTERVAL '30 days' 
           AND e."metaClickId" IS NOT NULL
@@ -172,7 +177,7 @@ export class ConversionDeliveryRepository {
         SELECT COALESCE(e."googleClickId", e."googleBraidedClickId", e."googleWebBraidedClickId") AS "googleClickId", CASE WHEN e."googleClickId" IS NOT NULL THEN 'gclid' WHEN e."googleBraidedClickId" IS NOT NULL THEN 'gbraid' ELSE 'wbraid' END AS "googleClickIdKind", e."eventAt"
         FROM "StorefrontEvent" e
         WHERE e."storeId" = o."storeId"
-          AND (e."sessionId" = s."browserSessionId" OR (s."anonymousVisitorId" IS NOT NULL AND e."anonymousVisitorId" = s."anonymousVisitorId"))
+          AND (e."sessionId" = identity_event."sessionId" OR (identity_event."anonymousVisitorId" IS NOT NULL AND e."anonymousVisitorId" = identity_event."anonymousVisitorId"))
           AND e."eventAt" >= conn."installedAt"
           AND e."eventAt" >= COALESCE(o."processedAt", o."shopifyCreatedAt") - INTERVAL '30 days' 
           AND (e."googleClickId" IS NOT NULL OR e."googleBraidedClickId" IS NOT NULL OR e."googleWebBraidedClickId" IS NOT NULL)
@@ -192,7 +197,7 @@ export class ConversionDeliveryRepository {
         SELECT e."tiktokClickId", e."eventAt"
         FROM "StorefrontEvent" e
         WHERE e."storeId" = o."storeId"
-          AND (e."sessionId" = s."browserSessionId" OR (s."anonymousVisitorId" IS NOT NULL AND e."anonymousVisitorId" = s."anonymousVisitorId"))
+          AND (e."sessionId" = identity_event."sessionId" OR (identity_event."anonymousVisitorId" IS NOT NULL AND e."anonymousVisitorId" = identity_event."anonymousVisitorId"))
           AND e."eventAt" >= conn."installedAt"
           AND e."eventAt" >= COALESCE(o."processedAt", o."shopifyCreatedAt") - INTERVAL '30 days' 
           AND e."tiktokClickId" IS NOT NULL
@@ -208,13 +213,14 @@ export class ConversionDeliveryRepository {
         ORDER BY e."eventAt" DESC, e."receivedAt" DESC
         LIMIT 1
       ) tiktok_event ON TRUE
-      WHERE o."isTest" = FALSE
+      WHERE o."isTest" = ${testOrder}
+        ${scopeStoreId ? PrismaSql.sql`AND o."storeId" = ${scopeStoreId}::uuid` : PrismaSql.empty}
         ${sourceOrderId ? PrismaSql.sql`AND o."id" = ${sourceOrderId}::uuid` : PrismaSql.empty}
         AND (
           SELECT latest."adSharingAllowed" FROM "StorefrontEvent" latest
           WHERE latest."storeId" = o."storeId"
-            AND (latest."sessionId" = s."browserSessionId" OR
-              (s."anonymousVisitorId" IS NOT NULL AND latest."anonymousVisitorId" = s."anonymousVisitorId"))
+            AND (latest."id" = identity_event."id" OR latest."sessionId" = identity_event."sessionId" OR
+              (identity_event."anonymousVisitorId" IS NOT NULL AND latest."anonymousVisitorId" = identity_event."anonymousVisitorId"))
           ORDER BY latest."eventAt" DESC, latest."receivedAt" DESC, latest."id" DESC LIMIT 1
         ) = TRUE
         AND o."cancelledAt" IS NULL
@@ -246,6 +252,7 @@ export class ConversionDeliveryRepository {
     sourceOrderId: string | null;
     sourceEventId?: string | null;
     sourceGenerationAt?: Date | null;
+    isTestDelivery?: boolean;
     storeId: string;
     provider: AdvertisingProvider;
     clickId: string | null;
@@ -265,12 +272,15 @@ export class ConversionDeliveryRepository {
           eventAt: true,
           adSharingAllowed: true,
           consentState: true,
+          checkoutTokenHash: true,
+          retentionExpiresAt: true,
         },
       });
       if (
         !source ||
         !source.adSharingAllowed ||
-        !['GRANTED', 'NOT_REQUIRED'].includes(source.consentState)
+        !['GRANTED', 'NOT_REQUIRED'].includes(source.consentState) ||
+        source.retentionExpiresAt <= new Date()
       )
         return false;
       const [connection, revoked, latest, order, destination] = await Promise.all([
@@ -295,6 +305,7 @@ export class ConversionDeliveryRepository {
           where: {
             storeId: claim.storeId,
             OR: [
+              { id: claim.sourceEventId },
               ...(source.sessionId ? [{ sessionId: source.sessionId }] : []),
               ...(source.anonymousVisitorId
                 ? [{ anonymousVisitorId: source.anonymousVisitorId }]
@@ -309,12 +320,12 @@ export class ConversionDeliveryRepository {
               where: {
                 id: claim.sourceOrderId,
                 storeId: claim.storeId,
-                isTest: false,
+                isTest: claim.isTestDelivery === true,
                 cancelledAt: null,
               },
-              select: { id: true },
+              select: { id: true, checkoutTokenHash: true, shopifyOrderId: true },
             })
-          : Promise.resolve(true),
+          : Promise.resolve(null),
         claim.destinationId
           ? prisma.conversionDestination.findFirst({
               where: {
@@ -337,8 +348,7 @@ export class ConversionDeliveryRepository {
         (claim.matchingIntent ||
           match?.meta ||
           match?.tiktok ||
-          match?.google ||
-          match?.clientIp) &&
+          match?.google) &&
         config?.enhancedMatching !== true
       )
         return false;
@@ -350,10 +360,21 @@ export class ConversionDeliveryRepository {
         source.eventAt >= connection.installedAt &&
         !revoked &&
         latest?.adSharingAllowed &&
-        order &&
+        (!claim.sourceOrderId || order) &&
         destination,
       );
       if (!privacyPermitted) return false;
+      if (claim.sourceOrderId && order) {
+        const canonical = source.checkoutTokenHash && order.checkoutTokenHash &&
+          source.checkoutTokenHash === order.checkoutTokenHash;
+        if (!canonical) {
+          const linked = source.sessionId ? await prisma.storefrontSession.findFirst({
+            where: { storeId: claim.storeId, orderId: claim.sourceOrderId,
+              browserSessionId: source.sessionId, orderLinkStatus: 'LINKED' }, select: { id: true },
+          }) : null;
+          if (!linked) return false;
+        }
+      }
       const unavailable = () => {
         if (claim.reportConnectionFailure)
           throw new ConversionProviderError(
@@ -412,7 +433,7 @@ export class ConversionDeliveryRepository {
       )
         return unavailable();
       if (claim.clickId && claim.sourceOrderId) {
-        const candidates = await this.findPurchaseCandidates(1, claim.sourceOrderId);
+        const candidates = await this.findPurchaseCandidates(1, claim.sourceOrderId, claim.isTestDelivery === true, claim.storeId);
         if (
           !candidates.some(
             (candidate) =>
@@ -433,7 +454,7 @@ export class ConversionDeliveryRepository {
     }
     // Existing Purchase records retain their narrower exact-click consent check.
     if (!claim.clickId || !claim.sourceOrderId) return false;
-    const candidates = await this.findPurchaseCandidates(1, claim.sourceOrderId);
+    const candidates = await this.findPurchaseCandidates(1, claim.sourceOrderId, claim.isTestDelivery === true, claim.storeId);
     return candidates.some(
       (candidate) =>
         candidate.storeId === claim.storeId &&
@@ -477,9 +498,12 @@ export class ConversionDeliveryRepository {
     clickIdKind?: string | null;
     attributionEventAt: Date | null;
     eventSourceUrl: string | null;
+    isTestDelivery?: boolean;
+    testCodeCiphertext?: string | null;
+    testExpiresAt?: Date | null;
   }) {
     const result = await prisma.conversionDelivery.createMany({
-      data: [{ ...input, eventName: 'PURCHASE' }],
+      data: [{ ...input, eventName: 'PURCHASE', nextAttemptAt: new Date(Date.now() + 15_000) }],
       skipDuplicates: true,
     });
     return { created: result.count > 0 };
@@ -511,6 +535,12 @@ export class ConversionDeliveryRepository {
           AND NOT EXISTS (SELECT 1 FROM "StorefrontConsentWithdrawal" w WHERE w."storeId" = e."storeId" AND w."revokedBefore" >= e."eventAt" AND (w."scopeKey" = 'visitor:' || e."anonymousVisitorId" OR w."scopeKey" = 'session:' || e."sessionId"))
         ON CONFLICT ("sourceOrderId") DO NOTHING`;
     });
+  }
+  pauseForMatching(id: string, nextAttemptAt: Date) {
+    return prisma.conversionDelivery.update({ where: { id }, data: {
+      status: 'RETRY', processingStartedAt: null, nextAttemptAt,
+      reasonCode: 'WAITING_FOR_MATCH', lastError: 'Waiting briefly for permitted matching information',
+    } });
   }
   recordCoverage(id: string, coverage: Record<string, boolean>, reasonCode: string | null = null) {
     return prisma.conversionDelivery.update({
@@ -585,6 +615,14 @@ export class ConversionDeliveryRepository {
     });
   }
 
+  markValidated(id: string, providerRequestId: string | null, warningCount: number) {
+    return prisma.conversionDelivery.update({ where: { id }, data: {
+      status: 'SKIPPED', processingStartedAt: null, providerRequestId,
+      reasonCode: warningCount ? 'VALIDATION_WARNINGS' : 'VALIDATION_PASSED',
+      lastError: warningCount ? 'Google validation returned warnings. Review the conversion setup.' : null,
+      testCodeCiphertext: null, clickId: null, attributionEventAt: null, eventSourceUrl: null,
+    } });
+  }
   markDelivered(
     id: string,
     providerRequestId: string | null,
@@ -600,6 +638,7 @@ export class ConversionDeliveryRepository {
         deliveredAt,
         providerRequestId,
         lastError: null,
+        testCodeCiphertext: null,
         reasonCode: matchingReasonCode,
         clickId: null,
         attributionEventAt: null,
@@ -657,6 +696,7 @@ export class ConversionDeliveryRepository {
     return prisma.conversionDelivery.findMany({
       where: {
         storeId,
+        isTestDelivery: false,
         ...(input.provider ? { provider: input.provider } : {}),
         ...(input.status ? { status: input.status } : {}),
       },

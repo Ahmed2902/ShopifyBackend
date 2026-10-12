@@ -154,7 +154,7 @@ export class ShopifyOrderService {
         accessToken: input.accessToken,
         apiVersion: input.apiVersion,
         connectionId: input.connectionId,
-        query: ORDER_DETAILS_QUERY,
+        query: input.apiVersion >= '2026-07' ? ORDER_DETAILS_QUERY : ORDER_DETAILS_QUERY.replace('      checkoutToken\n', ''),
         variables: { id: orderId, first: DETAIL_PAGE_SIZE, after: cursor },
       });
       if (!data.order) return { found: false };

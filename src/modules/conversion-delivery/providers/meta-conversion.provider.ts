@@ -118,7 +118,6 @@ export async function deliverMetaPurchase(
     );
   }
 
-  const config = (delivery.destination.configJson ?? {}) as ConversionDestinationConfig;
   const endpoint = new URL(
     `https://graph.facebook.com/${env.META_API_VERSION}/${encodeURIComponent(delivery.destination.externalId)}/events`,
   );
@@ -152,7 +151,7 @@ export async function deliverMetaPurchase(
       },
     ],
   };
-  if (config.testEventCode) body.test_event_code = config.testEventCode;
+  if (delivery.testEventCode) body.test_event_code = delivery.testEventCode;
 
   await beforeSend();
   let response: Response;

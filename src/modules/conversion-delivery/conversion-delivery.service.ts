@@ -1,3 +1,5 @@
+import { requireDevelopmentStore } from './purchase-test.service.js';
+import { decryptSecret } from '../integrations/integration.utils.js';
 import { storefrontEventKey } from './funnel.repository.js';
 import { prepareConversionContents } from './conversion-content.js';
 import { prisma } from '../../lib/prisma.js';
@@ -229,6 +231,14 @@ export class ConversionDeliveryService {
       }
 
       try {
+        if (claim.isTestDelivery) {
+          if (!claim.testExpiresAt || claim.testExpiresAt <= this.now())
+            throw new ConversionProviderError('Checkout test expired. Start a new test checkout.', false, 'TRACKING_TEST_EXPIRED');
+          await requireDevelopmentStore(claim.storeId);
+          claim.testEventCode = claim.testCodeCiphertext ? decryptSecret(claim.testCodeCiphertext) : undefined;
+          if (claim.provider !== 'GOOGLE_ADS' && !claim.testEventCode)
+            throw new ConversionProviderError('Checkout test requires a provider test code', false, 'TRACKING_TEST_CODE_REQUIRED');
+        }
         // Avoid preparing credentials when retained permission is already absent.
         if (
           !(await this.repository.hasAdvertisingConsent({
@@ -301,6 +311,11 @@ export class ConversionDeliveryService {
             data: { contentCoverage: claim.contentFacts },
           });
         const result = await this.deliver(claim);
+        if (claim.isTestDelivery && claim.provider === 'GOOGLE_ADS') {
+          await this.repository.markValidated(claim.id, result.providerRequestId, result.validationWarningCount ?? 0);
+          delivered += 1;
+          continue;
+        }
         if (claim.matchingReasonCode)
           await this.repository.markDelivered(
             claim.id,
@@ -313,6 +328,18 @@ export class ConversionDeliveryService {
           await this.repository.linkCustomerIdentity(claim);
         delivered += 1;
       } catch (error) {
+        // Missing evidence can be temporary while a browser pairing or checkout
+        // observation is still arriving. This bounded wait does not consume API
+        // retry attempts or resurrect historical failed deliveries.
+        if (error instanceof ConversionProviderError &&
+            ['META_CAPI_MATCH_ID_MISSING', 'TIKTOK_MATCH_ID_MISSING',
+             'GOOGLE_MATCH_ID_MISSING', 'META_CAPI_WEBSITE_CONTEXT_MISSING'].includes(error.providerCode ?? '') &&
+            claim.createdAt instanceof Date && this.now().getTime() < claim.createdAt.getTime() + 60_000) {
+          await this.repository.pauseForMatching(claim.id,
+            new Date(Math.min(this.now().getTime() + 15_000, claim.createdAt.getTime() + 60_000)));
+          retrying += 1;
+          continue;
+        }
         if (
           error instanceof AppError &&
           /BILLING|SUBSCRIPTION|ENTITLEMENT|AD_PROVIDER/.test(error.code ?? '')
@@ -400,6 +427,11 @@ export class ConversionDeliveryService {
       } catch {
         throw new ConversionEntitlementChangedError();
       }
+      if (claim.isTestDelivery) {
+        if (!claim.testExpiresAt || claim.testExpiresAt <= this.now())
+          throw new ConversionProviderError('Checkout test expired', false, 'TRACKING_TEST_EXPIRED');
+        await requireDevelopmentStore(claim.storeId);
+      }
       if (
         !(await this.repository.hasAdvertisingConsent({ ...claim, reportConnectionFailure: true }))
       ) {
@@ -408,7 +440,7 @@ export class ConversionDeliveryService {
     };
     if (claim.provider === 'META') return deliverMetaPurchase(claim, beforeSend);
     if (claim.provider === 'TIKTOK') return deliverTikTokPurchase(claim, beforeSend);
-    return deliverGooglePurchase(claim, beforeSend);
+    return deliverGooglePurchase(claim, beforeSend, claim.isTestDelivery ? { validateOnly: true } : undefined);
   }
 }
 

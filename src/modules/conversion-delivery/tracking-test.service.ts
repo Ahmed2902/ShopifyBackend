@@ -36,7 +36,7 @@ export class TrackingTestService {
     // This synthetic diagnostic is never queued or recorded as a Shopify purchase.
     // Customer data is not loaded. The identifiers below exist only for testing.
     const delivery = {
-      id: testId, storeId, provider: destination.provider, eventName: 'PURCHASE',
+      id: testId, storeId, testEventCode, provider: destination.provider, eventName: 'PURCHASE',
       eventKey: testId, shopifyOrderId: 'gid://shopify/Order/0', sourceOrderId: null,
       sourceEventId: null, eventAt: now, attributionEventAt: now, clickId: null,
       eventSourceUrl: `https://${store.myshopifyDomain}/`, value: '1.00', currencyCode: store.currencyCode,
