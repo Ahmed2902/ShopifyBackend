@@ -23,6 +23,8 @@ describe('isolated tracking diagnostics', () => {
     expect(claim.sourceEventId).toBeNull();
     expect(claim.shopifyOrderId).toBe('gid://shopify/Order/0');
     expect(claim.clickId).toBeNull();
+    expect(claim.match.userAgent).toContain('MetricoTrackingTest/1.0');
+    expect(claim.eventSourceUrl).toBe('https://current.myshopify.com/');
     expect(claim.eventKey).toMatch(/^metrico-test:/);
     expect(result).toMatchObject({ status: 'TEST_EVENT_ACCEPTED', liveDeliveryVerified: false, providerRequestId: 'receipt' });
     expect(repo.findDestinationWithSecret).toHaveBeenNthCalledWith(1, 'store-a', 'destination-a');

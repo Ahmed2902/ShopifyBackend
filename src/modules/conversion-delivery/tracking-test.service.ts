@@ -41,6 +41,7 @@ export class TrackingTestService {
       sourceEventId: null, eventAt: now, attributionEventAt: now, clickId: null,
       eventSourceUrl: `https://${store.myshopifyDomain}/`, value: '1.00', currencyCode: store.currencyCode,
       match: {
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 MetricoTrackingTest/1.0',
         meta: { external_id: [sha256(testId)] },
         tiktok: { external_id: sha256(testId) },
         google: { userIdentifiers: [{ emailAddress: sha256(`${testId}@example.invalid`) }] },

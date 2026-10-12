@@ -30,6 +30,7 @@ function claim(provider: 'META' | 'TIKTOK' | 'GOOGLE_ADS'): DeliveryClaim {
     shopifyOrderId: 'gid://shopify/Order/1001',
     eventKey: 'stride:purchase:1001',
     clickId: 'consented-click',
+    match: { userAgent: 'Mozilla/5.0 test-browser' },
     eventAt: now,
     attributionEventAt: now,
     eventSourceUrl: 'https://shop.example/products/hero',
@@ -149,7 +150,7 @@ describe('conversion provider send-time consent', () => {
   ] as const)(
     'sends permitted %s matching without a click ID and without raw customer fields',
     async (provider, deliver, match) => {
-      const delivery = { ...claim(provider), clickId: null, match } as DeliveryClaim;
+      const delivery = { ...claim(provider), clickId: null, match: { ...match, userAgent: "Mozilla/5.0 test-browser" } } as DeliveryClaim;
       await deliver(delivery, async () => undefined);
       const body = JSON.parse(vi.mocked(fetch).mock.calls[0]![1]!.body as string);
       expect(JSON.stringify(body)).not.toContain('Shopper@');
@@ -284,3 +285,15 @@ it.each(['not-json', 'null', '[]', '"ok"'])('does not report Google validation s
     await expect(deliverGooglePurchase(claim('GOOGLE_ADS'), async () => {}, { validateOnly: true })).rejects.toMatchObject({ providerCode: 'GOOGLE_DATA_MANAGER_BAD_RESPONSE' });
   } finally { vi.unstubAllGlobals(); }
 });
+
+ it.each(['url', 'userAgent'])('blocks Meta website delivery without captured %s', async missing => {
+  const delivery = claim('META');
+  if (missing === 'url') delivery.eventSourceUrl = null;
+  else delivery.match = {};
+  const fetchMock = vi.fn();
+  vi.stubGlobal('fetch', fetchMock);
+  try {
+    await expect(deliverMetaPurchase(delivery, async () => {})).rejects.toMatchObject({ providerCode: 'META_CAPI_WEBSITE_CONTEXT_MISSING' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  } finally { vi.unstubAllGlobals(); }
+ });
