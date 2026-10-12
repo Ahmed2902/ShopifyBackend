@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../../errors/app-error.js';
+import { withProviderReturnShop } from '../integrations/provider-return.js';
 import { advertisingReconciliationService } from '../advertising/reconciliation/advertising-reconciliation.service.js';
 import { billingService, type BillingService } from '../billing/billing.service.js';
 import {
@@ -46,7 +47,7 @@ export class TikTokController {
     const context = verifyTikTokOAuthState(rawState);
 
     if (typeof req.query.error === 'string') {
-      res.redirect(303, buildTikTokErrorRedirect(context.storeId, 'TIKTOK_OAUTH_DENIED'));
+      res.redirect(303, await withProviderReturnShop(buildTikTokErrorRedirect(context.storeId, 'TIKTOK_OAUTH_DENIED'), context.storeId));
       return;
     }
 
@@ -62,10 +63,10 @@ export class TikTokController {
         query.state,
       );
       if (this.billing) await this.billing.confirmAdProvider(result.storeId, 'TIKTOK');
-      res.redirect(303, buildTikTokSuccessRedirect(result.storeId));
+      res.redirect(303, await withProviderReturnShop(buildTikTokSuccessRedirect(result.storeId), result.storeId));
     } catch (error) {
       const code = error instanceof AppError ? error.code : 'TIKTOK_OAUTH_FAILED';
-      res.redirect(303, buildTikTokErrorRedirect(context.storeId, code));
+      res.redirect(303, await withProviderReturnShop(buildTikTokErrorRedirect(context.storeId, code), context.storeId));
     }
   };
 
