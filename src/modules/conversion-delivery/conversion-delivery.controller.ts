@@ -6,6 +6,7 @@ import { env } from '../../config/env.js';
 import { AppError } from '../../errors/app-error.js';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
+import { trackingTestService } from './tracking-test.service.js';
 import {
   conversionDeliveryService,
   type ConversionDeliveryService,
@@ -73,6 +74,12 @@ const deliveriesQuerySchema = z.object({
 
 export class ConversionDeliveryController {
   constructor(private readonly service: ConversionDeliveryService) {}
+
+  testDestination = async (req: Request, res: Response) => {
+    const id = z.string().uuid().parse(req.params.destinationId);
+    const input = z.object({ testEventCode: z.string().trim().regex(/^[A-Za-z0-9_-]+$/).max(255).optional() }).strict().parse(req.body);
+    res.json(await trackingTestService.run(req.context.storeId!, id, input.testEventCode));
+  };
 
   customerJourney = async (req: Request, res: Response) => {
     res.json(

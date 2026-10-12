@@ -25,11 +25,13 @@ type GoogleDataManagerResponse = {
   error?: { code?: number; status?: string; message?: string };
 };
 
-async function responseJson(response: Response): Promise<GoogleDataManagerResponse> {
+async function responseJson(response: Response): Promise<GoogleDataManagerResponse | null> {
   try {
-    return (await response.json()) as GoogleDataManagerResponse;
+    const value: unknown = await response.json();
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? value as GoogleDataManagerResponse : null;
   } catch {
-    return {};
+    return null;
   }
 }
 
@@ -48,6 +50,7 @@ function configFor(delivery: DeliveryClaim) {
 export async function deliverGooglePurchase(
   delivery: DeliveryClaim,
   beforeSend: BeforeConversionSend,
+  options: { validateOnly: true } | undefined = undefined,
 ): Promise<ProviderDeliveryResult> {
   assertCanonicalPurchase(delivery);
   if (delivery.eventName && delivery.eventName !== 'PURCHASE')
@@ -122,7 +125,7 @@ export async function deliverGooglePurchase(
         currency: delivery.currencyCode,
       },
     ],
-    validateOnly: false,
+    validateOnly: options?.validateOnly === true,
     ...(delivery.match?.google ? { encoding: 'HEX' } : {}),
   };
   if (config.googleConsentMode === 'GRANTED' || delivery.sourceEventId) {
@@ -154,6 +157,9 @@ export async function deliverGooglePurchase(
   }
 
   const payload = await responseJson(response);
+  if (!payload) {
+    throw new ConversionProviderError('Google returned an unreadable response', true, 'GOOGLE_DATA_MANAGER_BAD_RESPONSE');
+  }
   if (!response.ok || payload.error) {
     const code =
       payload.error?.status ??
@@ -162,6 +168,9 @@ export async function deliverGooglePurchase(
     const retryable = response.status === 429 || response.status >= 500;
     throw new ConversionProviderError(message, retryable, code);
   }
+  // Validation requests are not executed and need not return an ingestion receipt.
+  // Keep the receipt requirement unchanged for every live delivery.
+  if (options?.validateOnly === true) return { providerRequestId: null, validationWarningCount: payload.fieldWarnings?.length ?? 0 };
   if (!payload.requestId) {
     throw new ConversionProviderError(
       'Google Data Manager accepted the request without returning a request ID',

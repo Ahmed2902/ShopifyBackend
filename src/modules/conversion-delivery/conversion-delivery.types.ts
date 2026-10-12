@@ -62,6 +62,7 @@ export type DeliveryClaim = ConversionDelivery & {
 
 export type ProviderDeliveryResult = {
   providerRequestId: string | null;
+  validationWarningCount?: number;
 };
 
 // Required after any asynchronous credential preparation and before the provider HTTP request.

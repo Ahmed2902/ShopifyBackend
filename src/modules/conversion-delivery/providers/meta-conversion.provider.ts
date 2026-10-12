@@ -122,6 +122,13 @@ export async function deliverMetaPurchase(
   const endpoint = new URL(
     `https://graph.facebook.com/${env.META_API_VERSION}/${encodeURIComponent(delivery.destination.externalId)}/events`,
   );
+  if (!delivery.eventSourceUrl || !userData.client_user_agent) {
+    throw new ConversionProviderError(
+      'Meta website events require a captured page URL and browser user agent',
+      false,
+      'META_CAPI_WEBSITE_CONTEXT_MISSING',
+    );
+  }
   endpoint.searchParams.set('access_token', await resolveMetaAccessToken(delivery));
 
   const body: Record<string, unknown> = {
