@@ -256,3 +256,23 @@ describe('recoverable provider availability during worker preflight', () => {
     expect(repository.markDelivered).not.toHaveBeenCalled();
   });
 });
+
+describe('Google validation versus live ingestion', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it('validates without requiring an ingestion receipt and runs the final guard', async () => {
+    getApiContext.mockResolvedValue(context);
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const beforeSend = vi.fn().mockResolvedValue(undefined);
+    await expect(deliverGooglePurchase(claim('GOOGLE_ADS'), beforeSend, { validateOnly: true })).resolves.toEqual({ providerRequestId: null, validationWarningCount: 0 });
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body).validateOnly).toBe(true);
+    expect(beforeSend).toHaveBeenCalledOnce();
+  });
+  it('still rejects a live request without an ingestion receipt', async () => {
+    getApiContext.mockResolvedValue(context);
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(deliverGooglePurchase(claim('GOOGLE_ADS'), async () => {})).rejects.toMatchObject({ providerCode: 'GOOGLE_DATA_MANAGER_REQUEST_ID_MISSING' });
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body).validateOnly).toBe(false);
+  });
+});

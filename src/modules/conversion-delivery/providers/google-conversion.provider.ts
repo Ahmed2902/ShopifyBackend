@@ -48,6 +48,7 @@ function configFor(delivery: DeliveryClaim) {
 export async function deliverGooglePurchase(
   delivery: DeliveryClaim,
   beforeSend: BeforeConversionSend,
+  options: { validateOnly: true } | undefined = undefined,
 ): Promise<ProviderDeliveryResult> {
   assertCanonicalPurchase(delivery);
   if (delivery.eventName && delivery.eventName !== 'PURCHASE')
@@ -122,7 +123,7 @@ export async function deliverGooglePurchase(
         currency: delivery.currencyCode,
       },
     ],
-    validateOnly: false,
+    validateOnly: options?.validateOnly === true,
     ...(delivery.match?.google ? { encoding: 'HEX' } : {}),
   };
   if (config.googleConsentMode === 'GRANTED' || delivery.sourceEventId) {
@@ -162,6 +163,9 @@ export async function deliverGooglePurchase(
     const retryable = response.status === 429 || response.status >= 500;
     throw new ConversionProviderError(message, retryable, code);
   }
+  // Validation requests are not executed and need not return an ingestion receipt.
+  // Keep the receipt requirement unchanged for every live delivery.
+  if (options?.validateOnly === true) return { providerRequestId: null, validationWarningCount: payload.fieldWarnings?.length ?? 0 };
   if (!payload.requestId) {
     throw new ConversionProviderError(
       'Google Data Manager accepted the request without returning a request ID',

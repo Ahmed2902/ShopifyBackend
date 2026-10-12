@@ -4,6 +4,7 @@ import { requireRole, requireStoreMembership } from '../../middleware/store.midd
 import { requireActiveSubscription } from '../billing/billing.middleware.js';
 import { conversionDeliveryController } from './conversion-delivery.controller.js';
 import { managedConversionSetupController } from './managed-conversion-setup.controller.js';
+import { rateLimit } from '../../middleware/rate-limit.middleware.js';
 
 const ownerOrAdmin = requireRole('OWNER', 'ADMIN');
 
@@ -11,6 +12,9 @@ export const conversionDeliveryRouter = Router({ mergeParams: true });
 conversionDeliveryRouter.use(requireAuth, requireStoreMembership, requireActiveSubscription);
 
 conversionDeliveryRouter.get('/destinations', conversionDeliveryController.destinations);
+conversionDeliveryRouter.post('/destinations/:destinationId/test', ownerOrAdmin,
+  rateLimit({ name: 'tracking-test', max: 3, windowMs: 60_000, key: (req) => req.context.storeId! }),
+  conversionDeliveryController.testDestination);
 conversionDeliveryRouter.get(
   '/orders/:orderId/journey',
   conversionDeliveryController.customerJourney,
