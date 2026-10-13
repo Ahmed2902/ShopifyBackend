@@ -32,14 +32,22 @@ conversionDeliveryRouter.get(
   ownerOrAdmin,
   conversionDeliveryController.testResult,
 );
+// Allow a three-channel review run without connection checks consuming the
+// checkout budget. Bound both repeated destination tests and rotated-ID bursts.
 conversionDeliveryRouter.post(
   '/destinations/:destinationId/test-purchase',
   ownerOrAdmin,
   rateLimit({
-    name: 'tracking-test',
-    max: 3,
+    name: 'tracking-checkout-test-store',
+    max: 9,
     windowMs: 60_000,
     key: (req) => req.context.storeId!,
+  }),
+  rateLimit({
+    name: 'tracking-checkout-test-destination',
+    max: 3,
+    windowMs: 60_000,
+    key: (req) => JSON.stringify([req.context.storeId, req.params.destinationId]),
   }),
   conversionDeliveryController.testPurchase,
 );
@@ -48,10 +56,16 @@ conversionDeliveryRouter.post(
   '/destinations/:destinationId/test',
   ownerOrAdmin,
   rateLimit({
-    name: 'tracking-test',
-    max: 3,
+    name: 'tracking-connection-test-store',
+    max: 9,
     windowMs: 60_000,
     key: (req) => req.context.storeId!,
+  }),
+  rateLimit({
+    name: 'tracking-connection-test-destination',
+    max: 3,
+    windowMs: 60_000,
+    key: (req) => JSON.stringify([req.context.storeId, req.params.destinationId]),
   }),
   conversionDeliveryController.testDestination,
 );
