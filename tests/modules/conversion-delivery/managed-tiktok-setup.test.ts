@@ -48,7 +48,7 @@ describe('managed TikTok conversion setup', () => {
     expect(TikTokApiService.prototype.request).toHaveBeenCalledWith(
       expect.objectContaining({ selectedAdvertiserIds: ['123'] }),
       'pixel/list',
-      { query: { advertiser_id: '123', page: 1, page_size: 100 } },
+      { query: { advertiser_id: '123', page: 1, page_size: 20 } },
     );
   });
   it('rediscovers ownership and rejects a foreign/stale selection before storing it', async () => {
@@ -81,10 +81,32 @@ describe('managed TikTok conversion setup', () => {
     expect(
       (await service().options('store-a', 'TIKTOK')).options.map((o) => o.destinationId),
     ).toEqual(['A', 'B']);
+    expect(TikTokApiService.prototype.request).toHaveBeenNthCalledWith(1,
+      expect.anything(), 'pixel/list',
+      { query: { advertiser_id: '123', page: 1, page_size: 20 } },
+    );
+    expect(TikTokApiService.prototype.request).toHaveBeenNthCalledWith(2,
+      expect.anything(), 'pixel/list',
+      { query: { advertiser_id: '123', page: 2, page_size: 20 } },
+    );
     vi.mocked(TikTokApiService.prototype.request).mockResolvedValue({ list: [] });
     await expect(service().options('store-a', 'TIKTOK')).rejects.toMatchObject({
       code: 'TIKTOK_PIXEL_LIST_INVALID',
     });
+  });
+  it('continues at page size 20 without page metadata and stops on a short page', async () => {
+    vi.mocked(TikTokApiService.prototype.request)
+      .mockResolvedValueOnce({
+        pixels: Array.from({ length: 20 }, (_, index) => ({ pixel_code: `PIXEL${index + 1}` })),
+      })
+      .mockResolvedValueOnce({ pixels: [{ pixel_code: 'PIXEL21' }] });
+    const result = await service().options('store-a', 'TIKTOK');
+    expect(result.options).toHaveLength(21);
+    expect(TikTokApiService.prototype.request).toHaveBeenCalledTimes(2);
+    expect(TikTokApiService.prototype.request).toHaveBeenNthCalledWith(2,
+      expect.anything(), 'pixel/list',
+      { query: { advertiser_id: '123', page: 2, page_size: 20 } },
+    );
   });
   it('checks current pixel ownership and final consent before Events API dispatch', async () => {
     const fetchMock = vi
