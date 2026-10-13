@@ -309,6 +309,11 @@ db('durable provider-specific funnel enqueue', () => {
   it('advances past lapsed tenants and revisits them after entitlement recovers', async () => {
     const denied = await funnelFixture();
     const allowed = await funnelFixture();
+    // This test isolates the single-channel scheduling guarantee from multi-channel routing.
+    await prisma.conversionDestination.updateMany({
+      where: { id: { in: [denied.tiktok.id, allowed.tiktok.id] } },
+      data: { status: 'DISABLED' },
+    });
     const oldEvent = await funnelEvent(denied, 'ADD_TO_CART');
     const newerEvent = await funnelEvent(allowed, 'ADD_TO_CART');
     await prisma.storefrontEvent.update({

@@ -168,7 +168,7 @@ export class ConversionDeliveryService {
         const config = (destination.configJson ?? {}) as ConversionDestinationConfig;
         if (
           !attribution.clickId &&
-          !candidate.browserMatchAvailable &&
+          !(destination.provider !== 'GOOGLE_ADS' && candidate.browserMatchAvailable) &&
           !(config.enhancedMatching && env.SHOPIFY_ENHANCED_MATCHING_APPROVED)
         )
           continue;
