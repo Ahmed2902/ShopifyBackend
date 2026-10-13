@@ -207,11 +207,26 @@ export async function authorizeBrowserSignals(input: z.infer<typeof browserSigna
           AND w."revokedBefore" >= ${issuedAt} AND (w."scopeKey" = 'session:' || e."sessionId" OR w."scopeKey" = 'visitor:' || e."anonymousVisitorId"))
     `);
   }
+  const routingInputs = claims.map((c) => ({
+    storeId: c.storeId,
+    sourceEventId: c.sourceEventId!,
+    eventAt: c.eventAt,
+    sourceGenerationAt: c.sourceGenerationAt!,
+  }));
+  const routeEvidence = await loadRoutingSummaries(routingInputs);
   await prisma.conversionDelivery.createMany({
     data: claims.map((c) => ({
       storeId: c.storeId,
       destinationId: c.destinationId,
       provider: 'META' as const,
+      routingEvidence: routeEvidence.get(
+        routingKey({
+          storeId: c.storeId,
+          sourceEventId: c.sourceEventId!,
+          eventAt: c.eventAt,
+          sourceGenerationAt: c.sourceGenerationAt!,
+        }),
+      ),
       sourceEventId: c.sourceEventId,
       sourceGenerationAt: c.sourceGenerationAt,
       eventKey: c.eventKey,
