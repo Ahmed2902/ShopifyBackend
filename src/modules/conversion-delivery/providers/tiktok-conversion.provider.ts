@@ -1,6 +1,6 @@
 import { tiktokProperties } from '../conversion-content.js';
 import { assertCanonicalPurchase } from './conversion-event.validation.js';
-import { tiktokUserData } from '../matching.js';
+import { tiktokUserData, sha256 } from '../matching.js';
 import { decryptSecret } from '../../integrations/integration.utils.js';
 import type {
   BeforeConversionSend,
@@ -106,6 +106,13 @@ export async function deliverTikTokPurchase(
     );
   }
   const user = tiktokUserData(delivery.match ?? {}, delivery.clickId);
+  // Diagnostic-only fallback: a Shopify development-store test order, a transient
+  // TikTok Test Events code and a unique test event key. Live events still fail closed.
+  if (
+    delivery.isTestDelivery && delivery.testEventCode && delivery.sourceOrderId &&
+    !delivery.clickId && !user.ttp && !user.email && !user.phone &&
+    !user.external_id && !(user.ip && user.user_agent)
+  ) user.external_id = sha256(`metrico:checkout-test:${delivery.eventKey}`);
   if (
     !delivery.clickId &&
     !user.ttp &&
