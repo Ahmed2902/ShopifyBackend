@@ -1,3 +1,4 @@
+import { loadRoutingSummaries, routingKey } from './source-routing.js';
 import { createHash } from 'node:crypto';
 import { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../lib/prisma.js';
@@ -14,16 +15,17 @@ type FunnelCursor = { receivedAt: Date; id: string; destinationId: string };
 let sweepCursor: FunnelCursor | null = null;
 
 export async function enqueueFunnelEvents(limit = 200) {
-  const selectCandidates = (cursor: FunnelCursor | null) => prisma.$queryRaw<
-    Array<{
-      id: string;
-      storeId: string;
-      destinationId: string;
-      provider: 'META' | 'TIKTOK';
-      generation: Date;
-      receivedAt: Date;
-    }>
-  >(Prisma.sql`
+  const selectCandidates = (cursor: FunnelCursor | null) =>
+    prisma.$queryRaw<
+      Array<{
+        id: string;
+        storeId: string;
+        destinationId: string;
+        provider: 'META' | 'TIKTOK';
+        generation: Date;
+        receivedAt: Date;
+      }>
+    >(Prisma.sql`
     SELECT e."id", e."storeId", e."receivedAt", dest."id" AS "destinationId", dest."provider", conn."installedAt" AS "generation"
     FROM "StorefrontEvent" e
     JOIN "ShopifyConnection" conn ON conn."storeId" = e."storeId" AND conn."status" = 'ACTIVE'
@@ -48,11 +50,26 @@ export async function enqueueFunnelEvents(limit = 200) {
     candidates = await selectCandidates(null);
   }
   const last = candidates.at(-1);
-  if (last) sweepCursor = { receivedAt: last.receivedAt, id: last.id, destinationId: last.destinationId };
+  if (last)
+    sweepCursor = { receivedAt: last.receivedAt, id: last.id, destinationId: last.destinationId };
   const events = await prisma.storefrontEvent.findMany({
     where: { id: { in: candidates.map((c) => c.id) }, adSharingAllowed: true },
   });
   const byId = new Map(events.map((e) => [e.id, e]));
+  const routeInputs = candidates.flatMap((c) => {
+    const e = byId.get(c.id);
+    return e
+      ? [
+          {
+            storeId: c.storeId,
+            sourceEventId: c.id,
+            sourceGenerationAt: c.generation,
+            eventAt: e.eventAt,
+          },
+        ]
+      : [];
+  });
+  const routes = await loadRoutingSummaries(routeInputs);
   const permitted = new Map<string, boolean>();
   let enqueued = 0;
   for (const candidate of candidates) {
@@ -68,12 +85,22 @@ export async function enqueueFunnelEvents(limit = 200) {
     if (!permitted.get(key)) continue;
     const event = byId.get(candidate.id);
     if (!event) continue;
+    const routing = routes.get(
+      routingKey({
+        storeId: candidate.storeId,
+        sourceEventId: event.id,
+        sourceGenerationAt: candidate.generation,
+        eventAt: event.eventAt,
+      }),
+    );
+    if (!routing?.eligibleProviders.includes(candidate.provider)) continue;
     const result = await prisma.conversionDelivery.createMany({
       data: [
         {
           storeId: event.storeId,
           destinationId: candidate.destinationId,
           provider: candidate.provider,
+          routingEvidence: routing,
           eventKey: storefrontEventKey(event.storeId, event.eventId),
           eventName: event.eventName,
           sourceEventId: event.id,

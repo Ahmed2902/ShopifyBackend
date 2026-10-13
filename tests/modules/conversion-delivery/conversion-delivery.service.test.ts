@@ -6,6 +6,15 @@ const now = new Date('2026-09-28T12:00:00.000Z');
 
 function candidate(overrides: Record<string, unknown> = {}) {
   return {
+    routing: {
+      policy: 'OBSERVED_PAID_TOUCHES_V1',
+      eligibleProviders: ['META'],
+      touches: [],
+      lastPaidTouch: null,
+      windowDays: 30,
+      reason: 'PAID_TOUCH_FOUND',
+      ambiguousTouches: 0,
+    },
     orderId: '00000000-0000-0000-0000-000000000010',
     storeId: '00000000-0000-0000-0000-000000000001',
     shopifyOrderId: 'gid://shopify/Order/1001',
@@ -129,6 +138,38 @@ describe('ConversionDeliveryService purchase enqueue', () => {
     );
   });
 
+  it('does not broadcast a TikTok-sourced purchase to Meta or Google even with browser matching', async () => {
+    const repo = repository({
+      destinations: [
+        destination('META', 'm'),
+        destination('TIKTOK', 't'),
+        destination('GOOGLE_ADS', 'g'),
+      ],
+      candidates: [
+        candidate({
+          browserMatchAvailable: true,
+          tiktokClickId: 'tt',
+          routing: { eligibleProviders: ['TIKTOK'] },
+        }),
+      ],
+    });
+    const service = new ConversionDeliveryService(repo as never, () => now, billing() as never);
+    await service.enqueuePurchases();
+    expect(repo.enqueue).toHaveBeenCalledOnce();
+    expect(repo.enqueue.mock.calls[0]![0].provider).toBe('TIKTOK');
+  });
+  it('withholds an unknown source even when all matching and destination prerequisites exist', async () => {
+    const repo = repository({
+      destinations: [destination('META', 'm')],
+      candidates: [candidate({ browserMatchAvailable: true, routing: { eligibleProviders: [] } })],
+    });
+    await new ConversionDeliveryService(
+      repo as never,
+      () => now,
+      billing() as never,
+    ).enqueuePurchases();
+    expect(repo.enqueue).not.toHaveBeenCalled();
+  });
   it('does not count an idempotent existing delivery as newly queued', async () => {
     const repo = repository({
       destinations: [destination('META', 'meta-destination')],

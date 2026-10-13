@@ -1,3 +1,4 @@
+import type { RoutingSummary } from './source-routing.js';
 import type { MatchEvidence } from './matching.js';
 import type {
   AdvertisingProvider,
@@ -30,6 +31,7 @@ export type PurchaseCandidate = {
   sourceEventId?: string | null;
   sourceGenerationAt?: Date | null;
   browserMatchAvailable?: boolean;
+  routing?: RoutingSummary;
   orderId: string;
   storeId: string;
   shopifyOrderId: string;

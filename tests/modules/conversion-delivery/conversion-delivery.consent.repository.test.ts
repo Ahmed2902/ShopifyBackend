@@ -74,8 +74,8 @@ describeDatabase('Advertising consent for purchase sharing', () => {
           eventAt: now,
           consentState: 'GRANTED',
           metaClickId: 'meta-click',
-          googleClickId: 'google-click',
-          tiktokClickId: 'tiktok-click',
+          utmSource: 'meta',
+          utmMedium: 'paid_social',
           retentionExpiresAt: new Date(now.getTime() + 86400_000),
         },
       });
@@ -93,7 +93,7 @@ describeDatabase('Advertising consent for purchase sharing', () => {
         data: { adSharingAllowed: true },
       });
       expect(await repo.findPurchaseCandidates(10, order.id)).toMatchObject([
-        { metaClickId: 'meta-click', googleClickId: 'google-click', tiktokClickId: 'tiktok-click' },
+        { metaClickId: 'meta-click', googleClickId: null, tiktokClickId: null },
       ]);
       expect(await repo.hasAdvertisingConsent(claim)).toBe(true);
       expect(await repo.hasAdvertisingConsent({ ...claim, storeId: randomUUID() })).toBe(false);

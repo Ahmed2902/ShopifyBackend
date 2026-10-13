@@ -1,3 +1,4 @@
+import { loadRoutingSummaries, routingKey } from './source-routing.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { Prisma } from '../../generated/prisma/client.js';
@@ -51,9 +52,9 @@ export async function permittedBrowserPairs(
 ) {
   if (!eventIds.length || !destinationIds.length) return new Set<string>();
   const rows = await prisma.$queryRaw<
-    Array<{ sourceEventId: string; destinationId: string }>
+    Array<{ sourceEventId: string; destinationId: string; eventAt: Date }>
   >(Prisma.sql`
-    SELECT e."id" AS "sourceEventId", d."id" AS "destinationId"
+    SELECT e."id" AS "sourceEventId", d."id" AS "destinationId", e."eventAt"
     FROM "StorefrontEvent" e
     JOIN "ShopifyConnection" c ON c."storeId" = e."storeId" AND c."status" = 'ACTIVE'
       AND c."installedAt" = ${generation} AND e."eventAt" >= c."installedAt"
@@ -79,7 +80,18 @@ export async function permittedBrowserPairs(
         AND (latest."sessionId" = e."sessionId" OR latest."anonymousVisitorId" = e."anonymousVisitorId")
         ORDER BY latest."eventAt" DESC, latest."receivedAt" DESC, latest.id DESC LIMIT 1) = TRUE
   `);
-  return new Set(rows.map((r) => pairKey(r.sourceEventId, r.destinationId)));
+  const inputs = rows.map((r) => ({
+    storeId,
+    sourceEventId: r.sourceEventId,
+    eventAt: r.eventAt,
+    sourceGenerationAt: generation,
+  }));
+  const routes = await loadRoutingSummaries(inputs);
+  return new Set(
+    rows
+      .filter((r, i) => routes.get(routingKey(inputs[i]!))?.eligibleProviders.includes('META'))
+      .map((r) => pairKey(r.sourceEventId, r.destinationId)),
+  );
 }
 
 // The public collector credential is ingestion-only. It never authorizes customer-data reads.

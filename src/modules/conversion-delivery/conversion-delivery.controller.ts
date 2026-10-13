@@ -1,4 +1,9 @@
-import { listPurchaseTestOrders, queuePurchaseTest, purchaseTestResult } from './purchase-test.service.js';
+import { purchaseRoutingPreview } from './routing-preview.js';
+import {
+  listPurchaseTestOrders,
+  queuePurchaseTest,
+  purchaseTestResult,
+} from './purchase-test.service.js';
 import { customerOrderJourney } from './customer-journey.js';
 import { conversionSignalHealth, acquisitionAnalytics } from './signal-diagnostics.js';
 import { prisma } from '../../lib/prisma.js';
@@ -78,7 +83,17 @@ export class ConversionDeliveryController {
 
   testDestination = async (req: Request, res: Response) => {
     const id = z.string().uuid().parse(req.params.destinationId);
-    const input = z.object({ testEventCode: z.string().trim().regex(/^[A-Za-z0-9_-]+$/).max(255).optional() }).strict().parse(req.body);
+    const input = z
+      .object({
+        testEventCode: z
+          .string()
+          .trim()
+          .regex(/^[A-Za-z0-9_-]+$/)
+          .max(255)
+          .optional(),
+      })
+      .strict()
+      .parse(req.body);
     res.json(await trackingTestService.run(req.context.storeId!, id, input.testEventCode));
   };
 
@@ -87,11 +102,32 @@ export class ConversionDeliveryController {
   };
   testPurchase = async (req: Request, res: Response) => {
     const id = z.string().uuid().parse(req.params.destinationId);
-    const input = z.object({ orderId: z.string().uuid(), testEventCode: z.string().trim().regex(/^[A-Za-z0-9_-]+$/).max(255).optional() }).strict().parse(req.body);
+    const input = z
+      .object({
+        orderId: z.string().uuid(),
+        testEventCode: z
+          .string()
+          .trim()
+          .regex(/^[A-Za-z0-9_-]+$/)
+          .max(255)
+          .optional(),
+      })
+      .strict()
+      .parse(req.body);
     res.json(await queuePurchaseTest(req.context.storeId!, id, input.orderId, input.testEventCode));
   };
   testResult = async (req: Request, res: Response) => {
-    res.json(await purchaseTestResult(req.context.storeId!, z.string().uuid().parse(req.params.testId)));
+    res.json(
+      await purchaseTestResult(req.context.storeId!, z.string().uuid().parse(req.params.testId)),
+    );
+  };
+  routingPreview = async (req: Request, res: Response) => {
+    res.json(
+      await purchaseRoutingPreview(
+        req.context.storeId!,
+        z.string().uuid().parse(req.params.orderId),
+      ),
+    );
   };
   customerJourney = async (req: Request, res: Response) => {
     res.json(

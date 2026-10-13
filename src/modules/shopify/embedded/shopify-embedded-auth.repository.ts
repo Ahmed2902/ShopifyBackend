@@ -265,6 +265,7 @@ export class ShopifyEmbeddedAuthRepository {
             data: {
               status: 'DEAD',
               reasonCode: 'INSTALLATION_REVOKED',
+              routingEvidence: Prisma.DbNull,
               clickId: null,
               eventSourceUrl: null,
               attributionEventAt: null,
