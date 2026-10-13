@@ -7,6 +7,7 @@ interface RateLimitOptions {
   name: string;
   max: number;
   windowMs: number;
+  preserveStricterHeaders?: boolean;
   key?: (req: Request) => string;
   skip?: (req: Request) => boolean;
 }
@@ -116,9 +117,20 @@ export function rateLimit(options: RateLimitOptions): RequestHandler {
       const retryAfter = Math.max(1, Math.ceil(bucket.ttlMs / 1_000));
       const resetAt = Math.ceil((Date.now() + bucket.ttlMs) / 1_000);
 
-      res.setHeader('RateLimit-Limit', String(options.max));
-      res.setHeader('RateLimit-Remaining', String(Math.max(0, options.max - bucket.count)));
-      res.setHeader('RateLimit-Reset', String(resetAt));
+      const remaining = Math.max(0, options.max - bucket.count);
+      const previousRemaining = res.getHeader('RateLimit-Remaining');
+      const preservePrevious =
+        options.preserveStricterHeaders &&
+        previousRemaining !== undefined &&
+        Number.isFinite(Number(previousRemaining)) &&
+        Number(previousRemaining) <= remaining;
+      // A layered limiter must not advertise more requests than an earlier
+      // policy allows. On rejection, report the policy that actually blocked it.
+      if (!preservePrevious || bucket.count > options.max) {
+        res.setHeader('RateLimit-Limit', String(options.max));
+        res.setHeader('RateLimit-Remaining', String(remaining));
+        res.setHeader('RateLimit-Reset', String(resetAt));
+      }
 
       if (bucket.count > options.max) {
         res.setHeader('Retry-After', String(retryAfter));
