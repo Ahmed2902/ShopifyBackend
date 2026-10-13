@@ -440,5 +440,8 @@ describeDatabase('Unified Product × Ads scale path', () => {
       expect(result.productIds).toHaveLength(50);
       expect(context.queryCount).toBeLessThanOrEqual(2);
     },
+    // This is a 10,000-product database fixture, not a five-second latency SLO.
+    // Keep query-count and result assertions; allow the same budget as the scale test above.
+    15_000,
   );
 });

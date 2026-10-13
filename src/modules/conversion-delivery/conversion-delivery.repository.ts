@@ -573,7 +573,45 @@ export class ConversionDeliveryRepository {
       data: [{ ...input, eventName: 'PURCHASE', nextAttemptAt: new Date(Date.now() + 15_000) }],
       skipDuplicates: true,
     });
-    return { created: result.count > 0 };
+    if (result.count > 0 || !input.isTestDelivery) return { created: result.count > 0 };
+
+    // The live uniqueness constraint also covers development-store test orders.
+    // Re-arm ONLY a terminal, explicitly isolated test; never mutate a live delivery,
+    // or race with a test that is already queued/being processed.
+    const existing = await prisma.conversionDelivery.findUnique({
+      where: {
+        destinationId_sourceOrderId_eventName: {
+          destinationId: input.destinationId, sourceOrderId: input.sourceOrderId, eventName: 'PURCHASE',
+        },
+      },
+      select: { id: true, storeId: true, provider: true, isTestDelivery: true, status: true },
+    });
+    if (!existing || existing.storeId !== input.storeId || existing.provider !== input.provider ||
+        !existing.isTestDelivery) return { created: false };
+    const rearmed = await prisma.conversionDelivery.updateMany({
+      where: {
+        id: existing.id, storeId: input.storeId, destinationId: input.destinationId,
+        isTestDelivery: true, status: { in: ['DEAD', 'SKIPPED', 'DELIVERED'] },
+      },
+      data: {
+        ...input,
+        eventName: 'PURCHASE',
+        status: 'PENDING',
+        nextAttemptAt: new Date(Date.now() + 15_000),
+        attempts: 0,
+        createdAt: new Date(),
+        processingStartedAt: null,
+        providerRequestId: null,
+        deliveredAt: null,
+        reasonCode: null,
+        lastError: null,
+        matchCoverage: PrismaSql.DbNull,
+        contentCoverage: PrismaSql.DbNull,
+        browserDispatchedAt: null,
+        browserReasonCode: null,
+      },
+    });
+    return { created: rearmed.count > 0 };
   }
 
   async linkCustomerIdentity(claim: {

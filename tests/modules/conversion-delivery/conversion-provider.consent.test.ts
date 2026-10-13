@@ -238,6 +238,39 @@ describe('conversion provider send-time consent', () => {
     ).rejects.toHaveProperty('providerCode', 'GOOGLE_FUNNEL_UNSUPPORTED');
     expect(fetch).not.toHaveBeenCalled();
   });
+  it.each([
+    ['META', deliverMetaPurchase, 'META_CAPI_MATCH_ID_MISSING'],
+    ['TIKTOK', deliverTikTokPurchase, 'TIKTOK_MATCH_ID_MISSING'],
+  ] as const)('uses an isolated synthetic %s identifier only for explicit development checkout tests', async (provider, deliver, errorCode) => {
+    const delivery = {
+      ...claim(provider),
+      clickId: null,
+      match: { userAgent: 'Observed checkout browser' },
+      isTestDelivery: true,
+      testEventCode: 'TEST123',
+      eventKey: 'stride:event:checkout-test-unique',
+    } as DeliveryClaim;
+    await deliver(delivery, async () => undefined);
+    const body = JSON.parse(vi.mocked(fetch).mock.calls[0]![1]!.body as string);
+    const user = provider === 'META' ? body.data[0].user_data : body.data[0].user;
+    const synthetic = provider === 'META' ? user.external_id?.[0] : user.external_id;
+    expect(synthetic).toMatch(/^[0-9a-f]{64}$/);
+    expect(body.test_event_code).toBe('TEST123');
+    expect(JSON.stringify(body)).toContain('stride:event:checkout-test-unique');
+    expect(JSON.stringify(body)).toContain('49.99');
+    expect(JSON.stringify(body)).not.toContain('order-1');
+
+    vi.mocked(fetch).mockClear();
+    for (const flags of [
+      { isTestDelivery: false, testEventCode: 'TEST123' },
+      { isTestDelivery: true, testEventCode: undefined },
+      { isTestDelivery: true, testEventCode: 'TEST123', sourceOrderId: null },
+    ]) {
+      await expect(deliver({ ...delivery, ...flags } as DeliveryClaim, async () => undefined))
+        .rejects.toHaveProperty('providerCode', errorCode);
+      expect(fetch).not.toHaveBeenCalled();
+    }
+  });
 });
 
 describe('recoverable provider availability during worker preflight', () => {
