@@ -170,6 +170,21 @@ describe('ConversionDeliveryService purchase enqueue', () => {
     ).enqueuePurchases();
     expect(repo.enqueue).not.toHaveBeenCalled();
   });
+  it('does not queue Google with source tags and browser context alone', async () => {
+    const repo = repository({
+      destinations: [destination('GOOGLE_ADS', 'g')],
+      candidates: [
+        candidate({ browserMatchAvailable: true, routing: { eligibleProviders: ['GOOGLE_ADS'] } }),
+      ],
+    });
+    await new ConversionDeliveryService(
+      repo as never,
+      () => now,
+      billing() as never,
+    ).enqueuePurchases();
+    expect(repo.enqueue).not.toHaveBeenCalled();
+  });
+
   it('does not count an idempotent existing delivery as newly queued', async () => {
     const repo = repository({
       destinations: [destination('META', 'meta-destination')],

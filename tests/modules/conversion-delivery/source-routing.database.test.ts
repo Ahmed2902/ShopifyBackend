@@ -120,6 +120,7 @@ db('source-based routing against migrated PostgreSQL', () => {
       const f = await fixture();
       await f.add({
         utmSource: provider === 'META' ? 'meta' : provider === 'TIKTOK' ? 'tiktok' : 'google',
+        ...(provider === 'GOOGLE_ADS' ? { googleClickId: 'test-only-gclid-never-uploaded' } : {}),
         utmMedium: 'cpc',
       });
       const [candidate] = await f.repo.findPurchaseCandidates(1, f.order.id, false, f.store.id);
