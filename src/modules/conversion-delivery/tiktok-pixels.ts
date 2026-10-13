@@ -13,13 +13,15 @@ export async function listTikTokPixels(
       403,
       'TIKTOK_ADVERTISER_NOT_SELECTED',
     );
+  // TikTok pixel/list accepts at most 20 items per page (provider error 40002).
+  const pageSize = 20;
   const pixels: Array<{ code: string; name: string }> = [];
   for (let page = 1; page <= 100; page++) {
     const data = await api.request<{
       pixels?: Array<{ pixel_code?: string; code?: string; pixel_name?: string; name?: string }>;
       page_info?: { total_page?: number };
     }>(context, 'pixel/list', {
-      query: { advertiser_id: advertiserId, page, page_size: 100 },
+      query: { advertiser_id: advertiserId, page, page_size: pageSize },
     });
     const rows = data.pixels;
     if (!Array.isArray(rows))
@@ -39,7 +41,7 @@ export async function listTikTokPixels(
     }
     const total = data.page_info?.total_page;
     if (typeof total === 'number' && total <= page) return pixels;
-    if (rows.length < 100 && total === undefined) return pixels;
+    if (rows.length < pageSize && total === undefined) return pixels;
   }
   throw new AppError(
     'TikTok tracking destinations exceed the supported discovery limit',
