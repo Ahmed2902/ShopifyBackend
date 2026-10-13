@@ -45,6 +45,7 @@ conversionDeliveryRouter.post(
   }),
   rateLimit({
     name: 'tracking-checkout-test-destination',
+    preserveStricterHeaders: true,
     max: 3,
     windowMs: 60_000,
     key: (req) => JSON.stringify([req.context.storeId, req.params.destinationId]),
@@ -63,6 +64,7 @@ conversionDeliveryRouter.post(
   }),
   rateLimit({
     name: 'tracking-connection-test-destination',
+    preserveStricterHeaders: true,
     max: 3,
     windowMs: 60_000,
     key: (req) => JSON.stringify([req.context.storeId, req.params.destinationId]),
