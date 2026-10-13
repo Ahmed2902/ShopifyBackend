@@ -48,6 +48,7 @@ model ConversionDelivery {
   eventName           String
   sourceEventId       String?                  @db.Uuid
   sourceGenerationAt  DateTime?
+  routingEvidence     Json?
   matchCoverage       Json?
   contentCoverage     Json?
   browserDispatchedAt DateTime?

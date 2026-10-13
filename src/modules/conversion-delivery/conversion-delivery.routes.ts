@@ -11,16 +11,50 @@ const ownerOrAdmin = requireRole('OWNER', 'ADMIN');
 export const conversionDeliveryRouter = Router({ mergeParams: true });
 conversionDeliveryRouter.use(requireAuth, requireStoreMembership, requireActiveSubscription);
 
+conversionDeliveryRouter.get(
+  '/orders/:orderId/routing',
+  conversionDeliveryController.routingPreview,
+);
 conversionDeliveryRouter.get('/destinations', conversionDeliveryController.destinations);
-conversionDeliveryRouter.get('/test-orders', ownerOrAdmin,
-  rateLimit({ name: 'tracking-orders', max: 10, windowMs: 60_000, key: (req) => req.context.storeId! }), conversionDeliveryController.testOrders);
-conversionDeliveryRouter.get('/tests/:testId', ownerOrAdmin, conversionDeliveryController.testResult);
-conversionDeliveryRouter.post('/destinations/:destinationId/test-purchase', ownerOrAdmin,
-  rateLimit({ name: 'tracking-test', max: 3, windowMs: 60_000, key: (req) => req.context.storeId! }), conversionDeliveryController.testPurchase);
+conversionDeliveryRouter.get(
+  '/test-orders',
+  ownerOrAdmin,
+  rateLimit({
+    name: 'tracking-orders',
+    max: 10,
+    windowMs: 60_000,
+    key: (req) => req.context.storeId!,
+  }),
+  conversionDeliveryController.testOrders,
+);
+conversionDeliveryRouter.get(
+  '/tests/:testId',
+  ownerOrAdmin,
+  conversionDeliveryController.testResult,
+);
+conversionDeliveryRouter.post(
+  '/destinations/:destinationId/test-purchase',
+  ownerOrAdmin,
+  rateLimit({
+    name: 'tracking-test',
+    max: 3,
+    windowMs: 60_000,
+    key: (req) => req.context.storeId!,
+  }),
+  conversionDeliveryController.testPurchase,
+);
 
-conversionDeliveryRouter.post('/destinations/:destinationId/test', ownerOrAdmin,
-  rateLimit({ name: 'tracking-test', max: 3, windowMs: 60_000, key: (req) => req.context.storeId! }),
-  conversionDeliveryController.testDestination);
+conversionDeliveryRouter.post(
+  '/destinations/:destinationId/test',
+  ownerOrAdmin,
+  rateLimit({
+    name: 'tracking-test',
+    max: 3,
+    windowMs: 60_000,
+    key: (req) => req.context.storeId!,
+  }),
+  conversionDeliveryController.testDestination,
+);
 conversionDeliveryRouter.get(
   '/orders/:orderId/journey',
   conversionDeliveryController.customerJourney,

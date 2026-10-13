@@ -68,6 +68,8 @@ async function fixture(eventId = randomUUID()) {
       sessionId: randomUUID(),
       consentState: 'GRANTED',
       adSharingAllowed: true,
+      utmSource: 'meta',
+      utmMedium: 'paid_social',
       retentionExpiresAt: new Date(Date.now() + 86400_000),
     },
   });

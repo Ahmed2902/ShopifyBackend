@@ -1,4 +1,4 @@
-import type { Prisma } from '../../../generated/prisma/client.js';
+import { Prisma } from '../../../generated/prisma/client.js';
 import { prisma } from '../../../lib/prisma.js';
 
 const MAX_ATTEMPTS = 5;
@@ -223,6 +223,7 @@ export class ShopifyWebhookRepository {
         data: {
           status: 'DEAD',
           reasonCode: 'INSTALLATION_REVOKED',
+          routingEvidence: Prisma.DbNull,
           clickId: null,
           eventSourceUrl: null,
           attributionEventAt: null,

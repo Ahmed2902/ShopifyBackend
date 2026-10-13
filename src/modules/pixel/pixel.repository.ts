@@ -194,7 +194,9 @@ export class PixelRepository {
     return prisma.$transaction(async (tx) => {
       // Shared collection locks permit concurrent batches but serialize privacy/lifecycle writes.
       // Reading withdrawal markers without this barrier could persist a stale encrypted bundle.
-      const connections = await tx.$queryRaw<Array<{ status: string; installedAt: Date }>>`SELECT "status", "installedAt" FROM "ShopifyConnection" WHERE "storeId" = ${storeId}::uuid FOR SHARE`;
+      const connections = await tx.$queryRaw<
+        Array<{ status: string; installedAt: Date }>
+      >`SELECT "status", "installedAt" FROM "ShopifyConnection" WHERE "storeId" = ${storeId}::uuid FOR SHARE`;
       const connection = connections[0];
       if (connection && connection.status !== 'ACTIVE') return 0;
       const keys = [
@@ -302,6 +304,9 @@ export class PixelRepository {
       await tx.$executeRaw`DELETE FROM "StorefrontCustomerLink" l USING "StorefrontSession" s
         WHERE l."storeId" = ${storeId}::uuid AND s."storeId" = l."storeId" AND s."orderId" = l."sourceOrderId"
           AND s."startedAt" <= ${revokedBefore} AND (s."anonymousVisitorId" = ${input.anonymousVisitorId ?? null} OR s."browserSessionId" = ${input.sessionId ?? null})`;
+      await tx.$executeRaw`UPDATE "ConversionDelivery" d SET "routingEvidence" = NULL
+        FROM "StorefrontEvent" e WHERE d."storeId" = ${storeId}::uuid AND e."storeId" = d."storeId" AND e.id = d."sourceEventId"
+          AND (e."anonymousVisitorId" = ${input.anonymousVisitorId ?? null} OR e."sessionId" = ${input.sessionId ?? null})`;
       await tx.storefrontEvent.updateMany({
         where: {
           storeId,
@@ -322,6 +327,7 @@ export class PixelRepository {
   }
 
   async cleanupMatchEvidence(now: Date, limit: number) {
+    await prisma.$executeRaw`UPDATE "ConversionDelivery" SET "routingEvidence" = NULL WHERE id IN (SELECT d.id FROM "ConversionDelivery" d LEFT JOIN "StorefrontEvent" e ON e.id = d."sourceEventId" AND e."storeId" = d."storeId" WHERE d."routingEvidence" IS NOT NULL AND (e.id IS NULL OR e."retentionExpiresAt" <= ${now} OR d."eventAt" < ${new Date(now.getTime() - 30 * 86400_000)}) LIMIT ${limit})`;
     await prisma.$executeRaw`UPDATE "ConversionDelivery" SET "testCodeCiphertext" = NULL WHERE "id" IN (SELECT "id" FROM "ConversionDelivery" WHERE "testExpiresAt" <= ${now} AND "testCodeCiphertext" IS NOT NULL LIMIT ${limit})`;
     await prisma.$executeRaw`UPDATE "StorefrontEvent" SET "browserMatchCiphertext" = NULL, "browserMatchExpiresAt" = NULL WHERE "id" IN (SELECT "id" FROM "StorefrontEvent" WHERE "browserMatchExpiresAt" <= ${now} LIMIT ${limit})`;
     await prisma.$executeRaw`DELETE FROM "StorefrontCustomerLink" WHERE "sourceOrderId" IN (SELECT "sourceOrderId" FROM "StorefrontCustomerLink" WHERE "expiresAt" <= ${now} LIMIT ${limit})`;

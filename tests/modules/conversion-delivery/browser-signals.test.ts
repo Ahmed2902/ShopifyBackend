@@ -6,6 +6,11 @@ import {
   permittedBrowserPairs,
 } from '../../../src/modules/conversion-delivery/browser-signals.js';
 import { storefrontEventKey } from '../../../src/modules/conversion-delivery/funnel.repository.js';
+vi.mock('../../../src/modules/conversion-delivery/source-routing.js', () => ({
+  routingKey: (x: unknown) => JSON.stringify(x),
+  loadRoutingSummaries: async (inputs: unknown[]) =>
+    new Map(inputs.map((x) => [JSON.stringify(x), { eligibleProviders: ['META'] }])),
+}));
 const mocks = vi.hoisted(() => ({
   installation: vi.fn(),
   events: vi.fn(),
@@ -76,7 +81,9 @@ beforeEach(() => {
     },
   ]);
   mocks.connection.mockResolvedValue({ installedAt: generation });
-  mocks.consent.mockResolvedValue([{ sourceEventId: sourceId, destinationId }]);
+  mocks.consent.mockResolvedValue([
+    { sourceEventId: sourceId, destinationId, eventAt: new Date() },
+  ]);
   mocks.billing.mockResolvedValue(undefined);
   mocks.contents.mockResolvedValue(undefined);
   mocks.deliveries.mockResolvedValue([

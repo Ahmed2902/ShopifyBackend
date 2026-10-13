@@ -1,3 +1,4 @@
+import { loadRoutingSummaries, routingKey, type RoutingInput } from './source-routing.js';
 import { ConversionProviderError } from './providers/conversion-provider.error.js';
 import type {
   AdvertisingProvider,
@@ -116,8 +117,9 @@ export class ConversionDeliveryRepository {
     sourceOrderId?: string,
     testOrder = false,
     scopeStoreId?: string,
+    afterOrderId?: string,
   ): Promise<PurchaseCandidate[]> {
-    return prisma.$queryRaw<PurchaseCandidate[]>(PrismaSql.sql`
+    const candidates = await prisma.$queryRaw<PurchaseCandidate[]>(PrismaSql.sql`
       SELECT DISTINCT ON (o."id")
         identity_event."id" AS "sourceEventId",
         conn."installedAt" AS "sourceGenerationAt",
@@ -214,6 +216,7 @@ export class ConversionDeliveryRepository {
         LIMIT 1
       ) tiktok_event ON TRUE
       WHERE o."isTest" = ${testOrder}
+        ${afterOrderId ? PrismaSql.sql`AND o."id" > ${afterOrderId}::uuid` : PrismaSql.empty}
         ${scopeStoreId ? PrismaSql.sql`AND o."storeId" = ${scopeStoreId}::uuid` : PrismaSql.empty}
         ${sourceOrderId ? PrismaSql.sql`AND o."id" = ${sourceOrderId}::uuid` : PrismaSql.empty}
         AND (
@@ -227,13 +230,6 @@ export class ConversionDeliveryRepository {
         AND COALESCE(o."processedAt", o."shopifyCreatedAt") >= conn."installedAt"
         AND o."currentTotalAmount" IS NOT NULL
         AND COALESCE(o."processedAt", o."shopifyCreatedAt") >= NOW() - INTERVAL '30 days'
-        AND (
-          meta_event."metaClickId" IS NOT NULL
-          OR google_event."googleClickId" IS NOT NULL
-          OR tiktok_event."tiktokClickId" IS NOT NULL
-          OR identity_event."browserMatchCiphertext" IS NOT NULL
-          OR EXISTS (SELECT 1 FROM "ConversionDestination" dest WHERE dest."storeId" = o."storeId" AND dest."status" = 'ACTIVE' AND dest."configJson"->>'enhancedMatching' = 'true')
-        )
         ${
           sourceOrderId
             ? PrismaSql.empty
@@ -245,6 +241,22 @@ export class ConversionDeliveryRepository {
       ORDER BY o."id", s."endedAt" DESC, s."id" DESC
       LIMIT ${limit}
     `);
+    const inputs = candidates
+      .filter((c) => c.sourceEventId && c.sourceGenerationAt)
+      .map((c) => ({
+        storeId: c.storeId,
+        sourceEventId: c.sourceEventId!,
+        eventAt: c.eventAt,
+        sourceGenerationAt: c.sourceGenerationAt!,
+      }));
+    const routing = await loadRoutingSummaries(inputs);
+    return candidates.map((c) => ({
+      ...c,
+      routing:
+        c.sourceEventId && c.sourceGenerationAt
+          ? routing.get(routingKey(c as RoutingInput))
+          : undefined,
+    }));
   }
 
   async hasAdvertisingConsent(claim: {
@@ -343,7 +355,14 @@ export class ConversionDeliveryRepository {
       if (claim.eventName && claim.eventName !== 'PURCHASE' && config?.funnelEvents !== true)
         return false;
       const match = claim.match as
-        { meta?: unknown; tiktok?: unknown; google?: unknown; clientIp?: string; clientIpSource?: string } | undefined;
+        | {
+            meta?: unknown;
+            tiktok?: unknown;
+            google?: unknown;
+            clientIp?: string;
+            clientIpSource?: string;
+          }
+        | undefined;
       if (
         (claim.matchingIntent ||
           match?.meta ||
@@ -366,14 +385,47 @@ export class ConversionDeliveryRepository {
       );
       if (!privacyPermitted) return false;
       if (claim.sourceOrderId && order) {
-        const canonical = source.checkoutTokenHash && order.checkoutTokenHash &&
+        const canonical =
+          source.checkoutTokenHash &&
+          order.checkoutTokenHash &&
           source.checkoutTokenHash === order.checkoutTokenHash;
         if (!canonical) {
-          const linked = source.sessionId ? await prisma.storefrontSession.findFirst({
-            where: { storeId: claim.storeId, orderId: claim.sourceOrderId,
-              browserSessionId: source.sessionId, orderLinkStatus: 'LINKED' }, select: { id: true },
-          }) : null;
+          const linked = source.sessionId
+            ? await prisma.storefrontSession.findFirst({
+                where: {
+                  storeId: claim.storeId,
+                  orderId: claim.sourceOrderId,
+                  browserSessionId: source.sessionId,
+                  orderLinkStatus: 'LINKED',
+                },
+                select: { id: true },
+              })
+            : null;
           if (!linked) return false;
+        }
+      }
+      if (!claim.isTestDelivery && claim.sourceGenerationAt) {
+        const at = claim.sourceOrderId
+          ? await prisma.order.findFirst({
+              where: { id: claim.sourceOrderId, storeId: claim.storeId },
+              select: { processedAt: true, shopifyCreatedAt: true },
+            })
+          : null;
+        const input = {
+          storeId: claim.storeId,
+          sourceEventId: claim.sourceEventId,
+          sourceGenerationAt: claim.sourceGenerationAt,
+          eventAt: at?.processedAt ?? at?.shopifyCreatedAt ?? source.eventAt,
+        };
+        const routes = await loadRoutingSummaries([input]);
+        if (!routes.get(routingKey(input))?.eligibleProviders.includes(claim.provider)) {
+          if (claim.reportConnectionFailure)
+            throw new ConversionProviderError(
+              'No retained eligible paid touch routes this event to this channel',
+              false,
+              'SOURCE_ROUTE_BLOCKED',
+            );
+          return false;
         }
       }
       const unavailable = () => {
@@ -434,7 +486,12 @@ export class ConversionDeliveryRepository {
       )
         return unavailable();
       if (claim.clickId && claim.sourceOrderId) {
-        const candidates = await this.findPurchaseCandidates(1, claim.sourceOrderId, claim.isTestDelivery === true, claim.storeId);
+        const candidates = await this.findPurchaseCandidates(
+          1,
+          claim.sourceOrderId,
+          claim.isTestDelivery === true,
+          claim.storeId,
+        );
         if (
           !candidates.some(
             (candidate) =>
@@ -455,10 +512,16 @@ export class ConversionDeliveryRepository {
     }
     // Existing Purchase records retain their narrower exact-click consent check.
     if (!claim.clickId || !claim.sourceOrderId) return false;
-    const candidates = await this.findPurchaseCandidates(1, claim.sourceOrderId, claim.isTestDelivery === true, claim.storeId);
+    const candidates = await this.findPurchaseCandidates(
+      1,
+      claim.sourceOrderId,
+      claim.isTestDelivery === true,
+      claim.storeId,
+    );
     return candidates.some(
       (candidate) =>
         candidate.storeId === claim.storeId &&
+        (claim.isTestDelivery || candidate.routing?.eligibleProviders.includes(claim.provider)) &&
         (claim.provider === 'META'
           ? candidate.metaClickId
           : claim.provider === 'TIKTOK'
@@ -476,6 +539,7 @@ export class ConversionDeliveryRepository {
         reasonCode: 'CONSENT_BLOCKED',
         testCodeCiphertext: null,
         matchCoverage: PrismaSql.DbNull,
+        routingEvidence: PrismaSql.DbNull,
         lastError: 'Advertising consent or source attribution is no longer available',
         clickId: null,
         attributionEventAt: null,
@@ -503,6 +567,7 @@ export class ConversionDeliveryRepository {
     isTestDelivery?: boolean;
     testCodeCiphertext?: string | null;
     testExpiresAt?: Date | null;
+    routingEvidence?: PrismaSql.InputJsonValue;
   }) {
     const result = await prisma.conversionDelivery.createMany({
       data: [{ ...input, eventName: 'PURCHASE', nextAttemptAt: new Date(Date.now() + 15_000) }],
@@ -539,10 +604,16 @@ export class ConversionDeliveryRepository {
     });
   }
   pauseForMatching(id: string, nextAttemptAt: Date) {
-    return prisma.conversionDelivery.update({ where: { id }, data: {
-      status: 'RETRY', processingStartedAt: null, nextAttemptAt,
-      reasonCode: 'WAITING_FOR_MATCH', lastError: 'Waiting briefly for permitted matching information',
-    } });
+    return prisma.conversionDelivery.update({
+      where: { id },
+      data: {
+        status: 'RETRY',
+        processingStartedAt: null,
+        nextAttemptAt,
+        reasonCode: 'WAITING_FOR_MATCH',
+        lastError: 'Waiting briefly for permitted matching information',
+      },
+    });
   }
   recordCoverage(id: string, coverage: Record<string, boolean>, reasonCode: string | null = null) {
     return prisma.conversionDelivery.update({
@@ -565,7 +636,11 @@ export class ConversionDeliveryRepository {
 
   async recoverStaleClaims(cutoff: Date) {
     await prisma.conversionDelivery.updateMany({
-      where: { isTestDelivery: true, testExpiresAt: { lte: new Date() }, testCodeCiphertext: { not: null } },
+      where: {
+        isTestDelivery: true,
+        testExpiresAt: { lte: new Date() },
+        testCodeCiphertext: { not: null },
+      },
       data: { testCodeCiphertext: null },
     });
     return prisma.conversionDelivery.updateMany({
@@ -622,12 +697,22 @@ export class ConversionDeliveryRepository {
   }
 
   markValidated(id: string, providerRequestId: string | null, warningCount: number) {
-    return prisma.conversionDelivery.update({ where: { id }, data: {
-      status: 'SKIPPED', processingStartedAt: null, providerRequestId,
-      reasonCode: warningCount ? 'VALIDATION_WARNINGS' : 'VALIDATION_PASSED',
-      lastError: warningCount ? 'Google validation returned warnings. Review the conversion setup.' : null,
-      testCodeCiphertext: null, clickId: null, attributionEventAt: null, eventSourceUrl: null,
-    } });
+    return prisma.conversionDelivery.update({
+      where: { id },
+      data: {
+        status: 'SKIPPED',
+        processingStartedAt: null,
+        providerRequestId,
+        reasonCode: warningCount ? 'VALIDATION_WARNINGS' : 'VALIDATION_PASSED',
+        lastError: warningCount
+          ? 'Google validation returned warnings. Review the conversion setup.'
+          : null,
+        testCodeCiphertext: null,
+        clickId: null,
+        attributionEventAt: null,
+        eventSourceUrl: null,
+      },
+    });
   }
   markDelivered(
     id: string,
@@ -668,15 +753,23 @@ export class ConversionDeliveryRepository {
         nextAttemptAt,
         lastError: error.slice(0, 2_000),
         ...(status === 'DEAD'
-          ? { clickId: null, attributionEventAt: null, eventSourceUrl: null, testCodeCiphertext: null }
+          ? {
+              clickId: null,
+              attributionEventAt: null,
+              eventSourceUrl: null,
+              testCodeCiphertext: null,
+              routingEvidence: PrismaSql.DbNull,
+            }
           : {}),
-        reasonCode: /EVENT_EXPIRED/.test(error)
-          ? 'EVENT_EXPIRED'
-          : /MATCH_ID_MISSING/.test(error)
-            ? 'MISSING_MATCH_IDENTIFIER'
-            : status === 'DEAD'
-              ? 'PROVIDER_REJECTED'
-              : 'PROVIDER_RETRY',
+        reasonCode: /SOURCE_ROUTE_BLOCKED/.test(error)
+          ? 'SOURCE_ROUTE_BLOCKED'
+          : /EVENT_EXPIRED/.test(error)
+            ? 'EVENT_EXPIRED'
+            : /MATCH_ID_MISSING/.test(error)
+              ? 'MISSING_MATCH_IDENTIFIER'
+              : status === 'DEAD'
+                ? 'PROVIDER_REJECTED'
+                : 'PROVIDER_RETRY',
       },
     });
   }
@@ -725,6 +818,7 @@ export class ConversionDeliveryRepository {
         providerRequestId: true,
         lastError: true,
         reasonCode: true,
+        routingEvidence: true,
         createdAt: true,
         destination: { select: { id: true, externalId: true, displayName: true } },
       },

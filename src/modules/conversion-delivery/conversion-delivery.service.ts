@@ -67,6 +67,7 @@ function billingProvider(provider: AdvertisingProvider): V1AdProvider {
 }
 
 export class ConversionDeliveryService {
+  private purchaseCursor: string | undefined;
   constructor(
     private readonly repository: ConversionDeliveryRepository = new ConversionDeliveryRepository(),
     private readonly now: () => Date = () => new Date(),
@@ -124,8 +125,17 @@ export class ConversionDeliveryService {
     const bounded = Math.min(Math.max(1, Math.trunc(limit)), MAX_ENQUEUE_BATCH);
     const [destinations, candidates] = await Promise.all([
       this.repository.activeDestinations(),
-      this.repository.findPurchaseCandidates(bounded),
+      this.repository.findPurchaseCandidates(
+        bounded,
+        undefined,
+        false,
+        undefined,
+        this.purchaseCursor,
+      ),
     ]);
+
+    if (!candidates.length && this.purchaseCursor) this.purchaseCursor = undefined;
+    else if (candidates.length) this.purchaseCursor = candidates.at(-1)!.orderId;
 
     const destinationsByStore = new Map<string, typeof destinations>();
     for (const destination of destinations) {
@@ -152,12 +162,13 @@ export class ConversionDeliveryService {
     let enqueued = 0;
     for (const candidate of candidates) {
       for (const destination of destinationsByStore.get(candidate.storeId) ?? []) {
+        if (!candidate.routing?.eligibleProviders.includes(destination.provider)) continue;
         if (!(await isAllowed(candidate.storeId, destination.provider))) continue;
         const attribution = attributionFor(candidate, destination.provider);
         const config = (destination.configJson ?? {}) as ConversionDestinationConfig;
         if (
           !attribution.clickId &&
-          !candidate.browserMatchAvailable &&
+          !(destination.provider !== 'GOOGLE_ADS' && candidate.browserMatchAvailable) &&
           !(config.enhancedMatching && env.SHOPIFY_ENHANCED_MATCHING_APPROVED)
         )
           continue;
@@ -166,6 +177,7 @@ export class ConversionDeliveryService {
           storeId: candidate.storeId,
           destinationId: destination.id,
           provider: destination.provider,
+          routingEvidence: candidate.routing,
           eventKey: storefrontEventKey(candidate.storeId, `purchase:${candidate.shopifyOrderId}`),
           sourceOrderId: candidate.orderId,
           sourceEventId: candidate.sourceEventId,
@@ -233,11 +245,21 @@ export class ConversionDeliveryService {
       try {
         if (claim.isTestDelivery) {
           if (!claim.testExpiresAt || claim.testExpiresAt <= this.now())
-            throw new ConversionProviderError('Checkout test expired. Start a new test checkout.', false, 'TRACKING_TEST_EXPIRED');
+            throw new ConversionProviderError(
+              'Checkout test expired. Start a new test checkout.',
+              false,
+              'TRACKING_TEST_EXPIRED',
+            );
           await requireDevelopmentStore(claim.storeId);
-          claim.testEventCode = claim.testCodeCiphertext ? decryptSecret(claim.testCodeCiphertext) : undefined;
+          claim.testEventCode = claim.testCodeCiphertext
+            ? decryptSecret(claim.testCodeCiphertext)
+            : undefined;
           if (claim.provider !== 'GOOGLE_ADS' && !claim.testEventCode)
-            throw new ConversionProviderError('Checkout test requires a provider test code', false, 'TRACKING_TEST_CODE_REQUIRED');
+            throw new ConversionProviderError(
+              'Checkout test requires a provider test code',
+              false,
+              'TRACKING_TEST_CODE_REQUIRED',
+            );
         }
         // Avoid preparing credentials when retained permission is already absent.
         if (
@@ -312,7 +334,11 @@ export class ConversionDeliveryService {
           });
         const result = await this.deliver(claim);
         if (claim.isTestDelivery && claim.provider === 'GOOGLE_ADS') {
-          await this.repository.markValidated(claim.id, result.providerRequestId, result.validationWarningCount ?? 0);
+          await this.repository.markValidated(
+            claim.id,
+            result.providerRequestId,
+            result.validationWarningCount ?? 0,
+          );
           delivered += 1;
           continue;
         }
@@ -324,19 +350,33 @@ export class ConversionDeliveryService {
             claim.matchingReasonCode,
           );
         else await this.repository.markDelivered(claim.id, result.providerRequestId, this.now());
-        if (!claim.isTestDelivery && claim.customerIdentityKey && claim.sourceOrderId && claim.sourceGenerationAt)
+        if (
+          !claim.isTestDelivery &&
+          claim.customerIdentityKey &&
+          claim.sourceOrderId &&
+          claim.sourceGenerationAt
+        )
           await this.repository.linkCustomerIdentity(claim);
         delivered += 1;
       } catch (error) {
         // Missing evidence can be temporary while a browser pairing or checkout
         // observation is still arriving. This bounded wait does not consume API
         // retry attempts or resurrect historical failed deliveries.
-        if (error instanceof ConversionProviderError &&
-            ['META_CAPI_MATCH_ID_MISSING', 'TIKTOK_MATCH_ID_MISSING',
-             'GOOGLE_MATCH_ID_MISSING', 'META_CAPI_WEBSITE_CONTEXT_MISSING'].includes(error.providerCode ?? '') &&
-            claim.createdAt instanceof Date && this.now().getTime() < claim.createdAt.getTime() + 60_000) {
-          await this.repository.pauseForMatching(claim.id,
-            new Date(Math.min(this.now().getTime() + 15_000, claim.createdAt.getTime() + 60_000)));
+        if (
+          error instanceof ConversionProviderError &&
+          [
+            'META_CAPI_MATCH_ID_MISSING',
+            'TIKTOK_MATCH_ID_MISSING',
+            'GOOGLE_MATCH_ID_MISSING',
+            'META_CAPI_WEBSITE_CONTEXT_MISSING',
+          ].includes(error.providerCode ?? '') &&
+          claim.createdAt instanceof Date &&
+          this.now().getTime() < claim.createdAt.getTime() + 60_000
+        ) {
+          await this.repository.pauseForMatching(
+            claim.id,
+            new Date(Math.min(this.now().getTime() + 15_000, claim.createdAt.getTime() + 60_000)),
+          );
           retrying += 1;
           continue;
         }
@@ -429,7 +469,11 @@ export class ConversionDeliveryService {
       }
       if (claim.isTestDelivery) {
         if (!claim.testExpiresAt || claim.testExpiresAt <= this.now())
-          throw new ConversionProviderError('Checkout test expired', false, 'TRACKING_TEST_EXPIRED');
+          throw new ConversionProviderError(
+            'Checkout test expired',
+            false,
+            'TRACKING_TEST_EXPIRED',
+          );
         await requireDevelopmentStore(claim.storeId);
       }
       if (
@@ -440,7 +484,11 @@ export class ConversionDeliveryService {
     };
     if (claim.provider === 'META') return deliverMetaPurchase(claim, beforeSend);
     if (claim.provider === 'TIKTOK') return deliverTikTokPurchase(claim, beforeSend);
-    return deliverGooglePurchase(claim, beforeSend, claim.isTestDelivery ? { validateOnly: true } : undefined);
+    return deliverGooglePurchase(
+      claim,
+      beforeSend,
+      claim.isTestDelivery ? { validateOnly: true } : undefined,
+    );
   }
 }
 

@@ -1,5 +1,9 @@
+import { encryptSecret } from '../../../src/modules/integrations/integration.utils.js';
 import { billingService } from '../../../src/modules/billing/billing.service.js';
-import { enqueueFunnelEvents, storefrontEventKey } from '../../../src/modules/conversion-delivery/funnel.repository.js';
+import {
+  enqueueFunnelEvents,
+  storefrontEventKey,
+} from '../../../src/modules/conversion-delivery/funnel.repository.js';
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { prisma } from '../../../src/lib/prisma.js';
@@ -59,6 +63,8 @@ async function fixture() {
       anonymousVisitorId: 'same-visitor',
       consentState: 'GRANTED',
       adSharingAllowed: true,
+      utmSource: 'meta',
+      utmMedium: 'paid_social',
       browserMatchCiphertext: 'encrypted',
       browserMatchExpiresAt: new Date(now.getTime() + 3600_000),
       retentionExpiresAt: new Date(now.getTime() + 86400_000),
@@ -236,8 +242,12 @@ db('identity privacy transaction races', () => {
     const repo = new ConversionDeliveryRepository();
     await Promise.all([
       repo.linkCustomerIdentity({ ...f.claim, customerIdentityKey: 'race-customer' }),
-      new PixelRepository().withdrawAdvertisingConsent(f.store.id, { anonymousVisitorId: 'same-visitor' },
-        new Date(f.now.getTime() + 1000), new Date(Date.now() + 40 * 86400_000)),
+      new PixelRepository().withdrawAdvertisingConsent(
+        f.store.id,
+        { anonymousVisitorId: 'same-visitor' },
+        new Date(f.now.getTime() + 1000),
+        new Date(Date.now() + 40 * 86400_000),
+      ),
     ]);
     expect(await prisma.storefrontCustomerLink.count({ where: { storeId: f.store.id } })).toBe(0);
     expect(await repo.hasAdvertisingConsent(f.claim)).toBe(false);
@@ -245,8 +255,13 @@ db('identity privacy transaction races', () => {
   it('blocks prepared canonical IP when enhanced matching is disabled during processing', async () => {
     const f = await fixture();
     const repo = new ConversionDeliveryRepository();
-    await prisma.conversionDestination.update({ where: { id: f.destination.id }, data: { configJson: { enhancedMatching: false } } });
-    expect(await repo.hasAdvertisingConsent({ ...f.claim, match: { clientIp: '203.0.113.9' } })).toBe(false);
+    await prisma.conversionDestination.update({
+      where: { id: f.destination.id },
+      data: { configJson: { enhancedMatching: false } },
+    });
+    expect(
+      await repo.hasAdvertisingConsent({ ...f.claim, match: { clientIp: '203.0.113.9' } }),
+    ).toBe(false);
     expect(await repo.hasAdvertisingConsent({ ...f.claim, matchingIntent: true })).toBe(false);
   });
 });
@@ -256,77 +271,169 @@ db('collector durability privacy races', () => {
     const f = await fixture();
     const eventId = randomUUID();
     await Promise.all([
-      new PixelRepository().insertEvents(f.store.id, [{
-        eventId, eventName: 'PAGE_VIEW', eventAt: f.now, sessionId: f.event.sessionId,
-        anonymousVisitorId: 'same-visitor', consentState: 'GRANTED', adSharingAllowed: true,
-        browserMatchCiphertext: 'encrypted-late-bundle', browserMatchExpiresAt: new Date(Date.now() + 3600_000),
-        retentionExpiresAt: new Date(Date.now() + 86400_000),
-      }], new Date()),
-      new PixelRepository().withdrawAdvertisingConsent(f.store.id, { anonymousVisitorId: 'same-visitor' },
-        new Date(f.now.getTime() + 1000), new Date(Date.now() + 40 * 86400_000)),
+      new PixelRepository().insertEvents(
+        f.store.id,
+        [
+          {
+            eventId,
+            eventName: 'PAGE_VIEW',
+            eventAt: f.now,
+            sessionId: f.event.sessionId,
+            anonymousVisitorId: 'same-visitor',
+            consentState: 'GRANTED',
+            adSharingAllowed: true,
+            browserMatchCiphertext: 'encrypted-late-bundle',
+            browserMatchExpiresAt: new Date(Date.now() + 3600_000),
+            retentionExpiresAt: new Date(Date.now() + 86400_000),
+          },
+        ],
+        new Date(),
+      ),
+      new PixelRepository().withdrawAdvertisingConsent(
+        f.store.id,
+        { anonymousVisitorId: 'same-visitor' },
+        new Date(f.now.getTime() + 1000),
+        new Date(Date.now() + 40 * 86400_000),
+      ),
     ]);
-    expect(await prisma.storefrontEvent.findUnique({ where: { storeId_eventId: { storeId: f.store.id, eventId } } }))
-      .toMatchObject({ adSharingAllowed: false, browserMatchCiphertext: null });
+    expect(
+      await prisma.storefrontEvent.findUnique({
+        where: { storeId_eventId: { storeId: f.store.id, eventId } },
+      }),
+    ).toMatchObject({ adSharingAllowed: false, browserMatchCiphertext: null });
   });
 });
 
 afterEach(() => vi.restoreAllMocks());
 db('durable provider-specific funnel enqueue', () => {
-
   it('advances past lapsed tenants and revisits them after entitlement recovers', async () => {
     const denied = await funnelFixture();
     const allowed = await funnelFixture();
+    // This test isolates the single-channel scheduling guarantee from multi-channel routing.
+    await prisma.conversionDestination.updateMany({
+      where: { id: { in: [denied.tiktok.id, allowed.tiktok.id] } },
+      data: { status: 'DISABLED' },
+    });
     const oldEvent = await funnelEvent(denied, 'ADD_TO_CART');
     const newerEvent = await funnelEvent(allowed, 'ADD_TO_CART');
-    await prisma.storefrontEvent.update({ where: { id: oldEvent.id }, data: { receivedAt: new Date(Date.now() - 300_000) } });
-    await prisma.storefrontEvent.update({ where: { id: newerEvent.id }, data: { receivedAt: new Date(Date.now() - 60_000) } });
+    await prisma.storefrontEvent.update({
+      where: { id: oldEvent.id },
+      data: { receivedAt: new Date(Date.now() - 300_000) },
+    });
+    await prisma.storefrontEvent.update({
+      where: { id: newerEvent.id },
+      data: { receivedAt: new Date(Date.now() - 60_000) },
+    });
     let recovered = false;
-    vi.mocked(billingService.requireAdProviderReadOnly).mockImplementation(async storeId => {
+    vi.mocked(billingService.requireAdProviderReadOnly).mockImplementation(async (storeId) => {
       if (storeId === denied.store.id && !recovered) throw new Error('Subscription expired');
       return {} as never;
     });
     expect((await enqueueFunnelEvents(1)).enqueued).toBe(0);
     expect((await enqueueFunnelEvents(1)).enqueued).toBe(1);
-    expect(await prisma.conversionDelivery.count({ where: { storeId: allowed.store.id, sourceEventId: newerEvent.id } })).toBe(1);
+    expect(
+      await prisma.conversionDelivery.count({
+        where: { storeId: allowed.store.id, sourceEventId: newerEvent.id },
+      }),
+    ).toBe(1);
     expect(await prisma.conversionDelivery.count({ where: { storeId: denied.store.id } })).toBe(0);
     recovered = true;
     expect((await enqueueFunnelEvents(1)).enqueued).toBe(1);
-    expect(await prisma.conversionDelivery.count({ where: { storeId: denied.store.id, sourceEventId: oldEvent.id } })).toBe(1);
+    expect(
+      await prisma.conversionDelivery.count({
+        where: { storeId: denied.store.id, sourceEventId: oldEvent.id },
+      }),
+    ).toBe(1);
   });
 
   async function funnelFixture() {
     const f = await fixture();
     vi.spyOn(billingService, 'requireAdProviderReadOnly').mockResolvedValue({} as never);
-    await prisma.conversionDestination.update({ where: { id: f.destination.id }, data: { configJson: { funnelEvents: true } } });
-    const tiktok = await prisma.conversionDestination.create({ data: {
-      storeId: f.store.id, provider: 'TIKTOK', externalId: randomUUID(), configJson: { funnelEvents: true },
-    } });
+    await prisma.conversionDestination.update({
+      where: { id: f.destination.id },
+      data: { configJson: { funnelEvents: true } },
+    });
+    const tiktok = await prisma.conversionDestination.create({
+      data: {
+        storeId: f.store.id,
+        provider: 'TIKTOK',
+        externalId: randomUUID(),
+        configJson: { funnelEvents: true },
+      },
+    });
     return { ...f, tiktok };
   }
-  async function funnelEvent(f: Awaited<ReturnType<typeof funnelFixture>>, eventName: 'PAGE_VIEW' | 'ADD_TO_CART', tiktok = false) {
-    return prisma.storefrontEvent.create({ data: {
-      storeId: f.store.id, eventId: randomUUID(), eventName, eventAt: f.now,
-      sessionId: f.event.sessionId, anonymousVisitorId: 'same-visitor', consentState: 'GRANTED',
-      adSharingAllowed: true, metaClickId: 'meta-only-click', ...(tiktok ? { tiktokClickId: 'tiktok-click' } : {}),
-      retentionExpiresAt: new Date(Date.now() + 86400_000),
-    } });
+  async function funnelEvent(
+    f: Awaited<ReturnType<typeof funnelFixture>>,
+    eventName: 'PAGE_VIEW' | 'ADD_TO_CART',
+    tiktok = false,
+  ) {
+    if (tiktok)
+      await prisma.storefrontEvent.create({
+        data: {
+          storeId: f.store.id,
+          eventId: randomUUID(),
+          eventName: 'PAGE_VIEW',
+          eventAt: new Date(f.now.getTime() - 1000),
+          sessionId: f.event.sessionId,
+          anonymousVisitorId: 'same-visitor',
+          consentState: 'GRANTED',
+          adSharingAllowed: true,
+          tiktokClickId: 'tiktok-click',
+          retentionExpiresAt: new Date(Date.now() + 86400_000),
+        },
+      });
+    return prisma.storefrontEvent.create({
+      data: {
+        storeId: f.store.id,
+        eventId: randomUUID(),
+        eventName,
+        eventAt: f.now,
+        sessionId: f.event.sessionId,
+        anonymousVisitorId: 'same-visitor',
+        consentState: 'GRANTED',
+        adSharingAllowed: true,
+        browserMatchCiphertext: encryptSecret(
+          JSON.stringify({
+            clientIp: '8.8.4.4',
+            clientIpSource: 'COLLECTOR',
+            userAgent: 'Observed browser',
+          }),
+        ),
+        browserMatchExpiresAt: new Date(Date.now() + 3600_000),
+        metaClickId: 'meta-only-click',
+        utmSource: 'meta',
+        utmMedium: 'paid_social',
+        retentionExpiresAt: new Date(Date.now() + 86400_000),
+      },
+    });
   }
   it('uses matching evidence for the selected provider and never duplicates retries', async () => {
     const f = await funnelFixture();
     const event = await funnelEvent(f, 'ADD_TO_CART');
     await enqueueFunnelEvents();
     await enqueueFunnelEvents();
-    const rows = await prisma.conversionDelivery.findMany({ where: { storeId: f.store.id, sourceEventId: event.id } });
+    const rows = await prisma.conversionDelivery.findMany({
+      where: { storeId: f.store.id, sourceEventId: event.id },
+    });
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ provider: 'META', eventName: 'ADD_TO_CART',
-      sourceGenerationAt: f.generation, eventKey: storefrontEventKey(f.store.id, event.eventId),
-      sourceOrderId: null, value: null, currencyCode: null });
+    expect(rows[0]).toMatchObject({
+      provider: 'META',
+      eventName: 'ADD_TO_CART',
+      sourceGenerationAt: f.generation,
+      eventKey: storefrontEventKey(f.store.id, event.eventId),
+      sourceOrderId: null,
+      value: null,
+      currencyCode: null,
+    });
   });
   it('enqueues Meta PageView but does not invent a TikTok PageView', async () => {
     const f = await funnelFixture();
     const event = await funnelEvent(f, 'PAGE_VIEW', true);
     await enqueueFunnelEvents();
-    const rows = await prisma.conversionDelivery.findMany({ where: { storeId: f.store.id, sourceEventId: event.id } });
+    const rows = await prisma.conversionDelivery.findMany({
+      where: { storeId: f.store.id, sourceEventId: event.id },
+    });
     expect(rows).toHaveLength(1);
     expect(rows[0]!.provider).toBe('META');
   });
@@ -334,13 +441,24 @@ db('durable provider-specific funnel enqueue', () => {
     const f = await funnelFixture();
     const event = await funnelEvent(f, 'ADD_TO_CART', true);
     await enqueueFunnelEvents();
-    const rows = await prisma.conversionDelivery.findMany({ where: { storeId: f.store.id, sourceEventId: event.id } });
+    const rows = await prisma.conversionDelivery.findMany({
+      where: { storeId: f.store.id, sourceEventId: event.id },
+    });
     expect(rows).toHaveLength(2);
-    await new PixelRepository().withdrawAdvertisingConsent(f.store.id, { anonymousVisitorId: 'same-visitor' },
-      new Date(f.now.getTime() + 1000), new Date(Date.now() + 40 * 86400_000));
-    for (const row of rows) expect(await new ConversionDeliveryRepository().hasAdvertisingConsent(row)).toBe(false);
+    await new PixelRepository().withdrawAdvertisingConsent(
+      f.store.id,
+      { anonymousVisitorId: 'same-visitor' },
+      new Date(f.now.getTime() + 1000),
+      new Date(Date.now() + 40 * 86400_000),
+    );
+    for (const row of rows)
+      expect(await new ConversionDeliveryRepository().hasAdvertisingConsent(row)).toBe(false);
     await enqueueFunnelEvents();
-    expect(await prisma.conversionDelivery.count({ where: { storeId: f.store.id, sourceEventId: event.id } })).toBe(2);
+    expect(
+      await prisma.conversionDelivery.count({
+        where: { storeId: f.store.id, sourceEventId: event.id },
+      }),
+    ).toBe(2);
   });
 });
 
@@ -348,16 +466,33 @@ db('separate provider reauthorization from shopper consent', () => {
   it('reports a recoverable connection problem for retained permission, while withdrawal still wins', async () => {
     const f = await fixture();
     const repo = new ConversionDeliveryRepository();
-    await prisma.conversionDestination.update({ where: { id: f.destination.id },
-      data: { configJson: { enhancedMatching: true, authSource: 'META_CONNECTION', adAccountId: 'act-test' } } });
+    await prisma.conversionDestination.update({
+      where: { id: f.destination.id },
+      data: {
+        configJson: {
+          enhancedMatching: true,
+          authSource: 'META_CONNECTION',
+          adAccountId: 'act-test',
+        },
+      },
+    });
     vi.spyOn(prisma.metaConnection, 'findUnique').mockResolvedValue({
-      status: 'DISCONNECTED', scopes: ['ads_management'], selectedAdAccountIds: ['act-test'],
+      status: 'DISCONNECTED',
+      scopes: ['ads_management'],
+      selectedAdAccountIds: ['act-test'],
     } as never);
     expect(await repo.hasAdvertisingConsent(f.claim)).toBe(false);
-    await expect(repo.hasAdvertisingConsent({ ...f.claim, reportConnectionFailure: true }))
-      .rejects.toHaveProperty('providerCode', 'CONVERSION_CONNECTION_REAUTH_REQUIRED');
-    await new PixelRepository().withdrawAdvertisingConsent(f.store.id, { anonymousVisitorId: 'same-visitor' },
-      new Date(f.now.getTime() + 1000), new Date(Date.now() + 40 * 86400_000));
-    expect(await repo.hasAdvertisingConsent({ ...f.claim, reportConnectionFailure: true })).toBe(false);
+    await expect(
+      repo.hasAdvertisingConsent({ ...f.claim, reportConnectionFailure: true }),
+    ).rejects.toHaveProperty('providerCode', 'CONVERSION_CONNECTION_REAUTH_REQUIRED');
+    await new PixelRepository().withdrawAdvertisingConsent(
+      f.store.id,
+      { anonymousVisitorId: 'same-visitor' },
+      new Date(f.now.getTime() + 1000),
+      new Date(Date.now() + 40 * 86400_000),
+    );
+    expect(await repo.hasAdvertisingConsent({ ...f.claim, reportConnectionFailure: true })).toBe(
+      false,
+    );
   });
 });
