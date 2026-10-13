@@ -95,6 +95,8 @@ describe('tracking test request budgets', () => {
       .expect(429);
     expect(blocked.body.error.code).toBe('RATE_LIMITED');
     expect(blocked.headers['retry-after']).toBeDefined();
+    expect(blocked.headers['ratelimit-remaining']).toBe('0');
+    expect(blocked.headers['ratelimit-limit']).toBe('3');
     await request(instance)
       .post(path(storeId, 'tiktok', true))
       .expect(204);
@@ -106,10 +108,14 @@ describe('tracking test request budgets', () => {
     async (checkout) => {
       const storeId = randomUUID();
       const instance = app(storeId);
-      for (let i = 0; i < 9; i++)
-        await request(instance)
+      for (let i = 0; i < 9; i++) {
+        const response = await request(instance)
           .post(path(storeId, `destination-${i}`, checkout))
           .expect(204);
+        expect(Number(response.headers['ratelimit-remaining'])).toBe(Math.min(8 - i, 2));
+        expect(response.headers['ratelimit-limit']).toBe(i >= 6 ? '9' : '3');
+        expect(response.headers['ratelimit-reset']).toBeDefined();
+      }
       await request(instance)
         .post(path(storeId, 'another-destination', checkout))
         .expect(429);
