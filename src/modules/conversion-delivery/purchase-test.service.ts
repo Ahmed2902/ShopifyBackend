@@ -119,7 +119,7 @@ export async function queuePurchaseTest(
   });
   const delivery = await prisma.conversionDelivery.findUnique({
     where: { destinationId_sourceOrderId_eventName: { destinationId, sourceOrderId: orderId, eventName: 'PURCHASE' } },
-    select: { id: true, status: true, reasonCode: true },
+    select: { id: true, eventKey: true, status: true, reasonCode: true },
   });
   return { ...delivery, provider, testOnly: true, googleValidationOnly: provider === 'GOOGLE_ADS' };
 }
@@ -129,6 +129,7 @@ export async function purchaseTestResult(storeId: string, id: string) {
     where: { id, storeId, isTestDelivery: true },
     select: {
       id: true,
+      eventKey: true,
       provider: true,
       status: true,
       reasonCode: true,
