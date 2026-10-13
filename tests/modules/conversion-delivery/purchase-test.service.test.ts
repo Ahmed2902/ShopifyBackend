@@ -33,6 +33,22 @@ describe('development-store purchase test authorization', () => {
     expect(decryptSecret(queued.testCodeCiphertext)).toBe('TEST123'); expect(queued.testExpiresAt).toBeInstanceOf(Date);
     expect(find).toHaveBeenCalledWith(1, 'order', true, 'store');
   });
+  it('gives each explicitly requested checkout test a new event ID while keeping the same Shopify order', async () => {
+    await queuePurchaseTest('store', 'destination', 'order', 'TEST123');
+    await queuePurchaseTest('store', 'destination', 'order', 'TEST123');
+    expect(enqueue).toHaveBeenCalledTimes(2);
+    const first = enqueue.mock.calls[0]![0];
+    const second = enqueue.mock.calls[1]![0];
+    expect(first.eventKey).not.toBe(second.eventKey);
+    expect(first.sourceOrderId).toBe('order');
+    expect(second.sourceOrderId).toBe('order');
+    expect(first.shopifyOrderId).toBe(second.shopifyOrderId);
+    expect(delivery).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { destinationId_sourceOrderId_eventName: {
+        destinationId: 'destination', sourceOrderId: 'order', eventName: 'PURCHASE',
+      } },
+    }));
+  });
   it('requires Meta/TikTok test codes but lets Google queue validation only', async () => {
     await expect(queuePurchaseTest('store', 'destination', 'order')).rejects.toMatchObject({ code: 'TRACKING_TEST_CODE_REQUIRED' });
     destination.mockResolvedValue({ provider: 'GOOGLE_ADS', status: 'ACTIVE' });
