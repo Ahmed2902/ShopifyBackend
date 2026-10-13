@@ -48,6 +48,8 @@ export type PurchaseCandidate = {
 
 export type DeliveryClaim = ConversionDelivery & {
   destination: ConversionDestination;
+  // Only supplied by an explicit isolated test, never read from live destination config.
+  testEventCode?: string;
   customerIdentityKey?: string;
   matchingReasonCode?: string;
   match?: MatchEvidence;

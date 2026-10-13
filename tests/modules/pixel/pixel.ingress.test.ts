@@ -51,6 +51,7 @@ describe('Metrico Pixel ingress', () => {
         installationId,
         events: [expect.objectContaining({ eventId: 'event_001' })],
       }),
+      {},
     );
   });
 

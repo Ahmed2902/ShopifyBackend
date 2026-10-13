@@ -297,3 +297,24 @@ it.each(['not-json', 'null', '[]', '"ok"'])('does not report Google validation s
     expect(fetchMock).not.toHaveBeenCalled();
   } finally { vi.unstubAllGlobals(); }
  });
+
+describe('independent observed network matching', () => {
+  it.each(['META', 'TIKTOK'] as const)('sends %s without an SDK cookie or ad click', async provider => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ events_received: 1, fbtrace_id: 'receipt', code: 0, request_id: 'receipt' }), { status: 200 })));
+    const delivery = claim(provider);
+    delivery.clickId = null;
+    delivery.match = { userAgent: 'Observed shopper browser', clientIp: '8.8.4.4' };
+    const send = provider === 'META' ? deliverMetaPurchase : deliverTikTokPurchase;
+    await send(delivery, async () => undefined);
+    const body = JSON.parse(vi.mocked(fetch).mock.calls[0]![1]!.body as string);
+    expect(provider === 'META' ? body.data[0].user_data : body.data[0].user).toMatchObject(provider === 'META'
+      ? { client_ip_address: '8.8.4.4', client_user_agent: 'Observed shopper browser' }
+      : { ip: '8.8.4.4', user_agent: 'Observed shopper browser' });
+  });
+  it('ignores a legacy persistent Meta test code for a live purchase', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ events_received: 1 }), { status: 200 })));
+    const delivery = claim('META'); delivery.destination.configJson = { testEventCode: 'LEGACY_TEST' };
+    await deliverMetaPurchase(delivery, async () => undefined);
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0]![1]!.body as string)).not.toHaveProperty('test_event_code');
+  });
+});

@@ -90,6 +90,7 @@ export const ORDER_DETAILS_QUERY = `#graphql
     order(id: $id) {
       id
       name
+      checkoutToken
       createdAt
       processedAt
       updatedAt

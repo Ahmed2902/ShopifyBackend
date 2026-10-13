@@ -17,6 +17,7 @@ model Order {
   id                               String                  @id @default(uuid()) @db.Uuid
   storeId                          String                  @db.Uuid
   shopifyOrderId                   String
+  checkoutTokenHash                String?                 @db.VarChar(64)
   name                             String
   shopifyCreatedAt                 DateTime
   processedAt                      DateTime?

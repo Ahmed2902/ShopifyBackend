@@ -90,6 +90,7 @@ export const shopifyCustomerJourneySummarySchema = z.object({
 });
 
 export const shopifyOrderHeaderSchema = z.object({
+  checkoutToken: z.string().max(255).nullable().optional(),
   id: z.string().min(1),
   name: z.string().min(1),
   createdAt: z.string().datetime(),

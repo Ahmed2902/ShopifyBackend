@@ -32,8 +32,9 @@ export class ShopifyPrivacyRedactionRepository {
 
       const orders = await tx.order.findMany({
         where: { storeId, shopifyOrderId: { in: orderExternalIds } },
-        select: { id: true },
+        select: { id: true, checkoutTokenHash: true },
       });
+      const checkoutHashes = uniqueStrings(orders.map(order => order.checkoutTokenHash));
       const orderIds = orders.map((order) => order.id);
 
       // Conversion-delivery rows can retain click identifiers while pending/retrying. Erase them
@@ -49,7 +50,8 @@ export class ShopifyPrivacyRedactionRepository {
       });
 
       const rawOrderEvents = await tx.storefrontEvent.findMany({
-        where: { storeId, shopifyOrderExternalId: { in: orderExternalIds } },
+        where: { storeId, OR: [{ shopifyOrderExternalId: { in: orderExternalIds } },
+          ...(checkoutHashes.length ? [{ checkoutTokenHash: { in: checkoutHashes } }] : [])] },
         select: { sessionId: true },
       });
       const rawBrowserSessionIds = uniqueStrings(rawOrderEvents.map((event) => event.sessionId));
@@ -99,6 +101,7 @@ export class ShopifyPrivacyRedactionRepository {
           storeId,
           OR: [
             { shopifyOrderExternalId: { in: orderExternalIds } },
+            ...(checkoutHashes.length ? [{ checkoutTokenHash: { in: checkoutHashes } }] : []),
             ...(browserSessionIds.length > 0 ? [{ sessionId: { in: browserSessionIds } }] : []),
           ],
         },

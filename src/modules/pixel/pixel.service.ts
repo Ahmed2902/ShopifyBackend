@@ -1,3 +1,5 @@
+import type { CollectorContext } from './collector-context.js';
+import { checkoutProofHash } from '../conversion-delivery/checkout-proof.js';
 import { classifyAcquisition } from './acquisition.js';
 import { encryptSecret } from '../integrations/integration.utils.js';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -233,7 +235,7 @@ export class PixelService {
     };
   }
 
-  async ingest(batch: PixelIngestBatchInput) {
+  async ingest(batch: PixelIngestBatchInput, context: CollectorContext = {}) {
     const installation = await this.repository.findInstallationForIngress(batch.installationId);
     const acceptedStatus =
       installation?.status === 'ACTIVE' || installation?.status === 'PROVISIONING';
@@ -263,7 +265,7 @@ export class PixelService {
     const eligible = batch.events.filter((event) =>
       isStorefrontBehaviorCaptureAllowed(event.consentState),
     );
-    const normalized = eligible.map((event) => this.normalizeEvent(event, receivedAt));
+    const normalized = eligible.map((event) => this.normalizeEvent(event, receivedAt, context, installation.storeId));
     const inserted = await this.repository.insertEvents(
       installation.storeId,
       normalized,
@@ -326,7 +328,7 @@ export class PixelService {
     return { selected: ids.length, deleted };
   }
 
-  private normalizeEvent(event: StorefrontEventInput, receivedAt: Date): StoreScopedEventInput {
+  private normalizeEvent(event: StorefrontEventInput, receivedAt: Date, context: CollectorContext = {}, storeId?: string): StoreScopedEventInput {
     const eventAt = new Date(event.eventAt);
     const eventAgeMs = receivedAt.getTime() - eventAt.getTime();
     if (eventAgeMs > MAX_EVENT_PAST_SKEW_MS || eventAgeMs < -MAX_EVENT_FUTURE_SKEW_MS) {
@@ -349,8 +351,13 @@ export class PixelService {
       landingPageUrl: event.landingPageUrl,
       referrerUrl: event.referrerUrl,
     });
+    // A current network observation must not be attached to replayed old events.
+    const browserMatch = { ...event.browserMatch,
+      ...(event.browserMatch?.userAgent && context.clientIp && eventAgeMs <= 5 * 60_000
+        ? { clientIp: context.clientIp, clientIpSource: 'COLLECTOR' } : {}),
+    };
     const permittedMatch =
-      isStorefrontBehaviorCaptureAllowed(event.consentState) && eventAgeMs <= 48 * 60 * 60_000 && event.adSharingAllowed && event.browserMatch && Object.keys(event.browserMatch).length > 0;
+      isStorefrontBehaviorCaptureAllowed(event.consentState) && eventAgeMs <= 48 * 60 * 60_000 && event.adSharingAllowed && Object.keys(browserMatch).length > 0;
 
     return {
       eventId: event.eventId,
@@ -373,6 +380,7 @@ export class PixelService {
       ...(event.commerceItems ? { commerceItems: event.commerceItems } : {}),
       commerceCurrencyCode: event.commerceCurrencyCode ?? null,
       shopifyCheckoutToken: event.shopifyCheckoutToken ?? null,
+      checkoutTokenHash: storeId ? checkoutProofHash(storeId, event.shopifyCheckoutToken) : null,
       shopifyOrderExternalId: event.shopifyOrderExternalId ?? null,
       utmSource: attribution.utmSource ?? null,
       utmMedium: attribution.utmMedium ?? null,
@@ -380,7 +388,7 @@ export class PixelService {
       utmContent: attribution.utmContent ?? null,
       utmTerm: attribution.utmTerm ?? null,
       browserMatchCiphertext: permittedMatch
-        ? encryptSecret(JSON.stringify(event.browserMatch))
+        ? encryptSecret(JSON.stringify(browserMatch))
         : null,
       browserMatchExpiresAt: permittedMatch
         ? new Date(

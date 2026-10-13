@@ -1,3 +1,4 @@
+import { decryptSecret } from '../../../src/modules/integrations/integration.utils.js';
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { PixelJourneyService } from '../../../src/modules/pixel/journey/pixel-journey.service.js';
@@ -557,5 +558,27 @@ describe('PixelService', () => {
     });
     expect(repository.findExpiredEventIds).toHaveBeenCalledWith(fixedNow, 10_000);
     expect(repository.deleteEventsByIds).toHaveBeenCalledWith(['event-db-id']);
+  });
+});
+
+describe('permitted independent network matching', () => {
+  const token = 'A'.repeat(43);
+  function data(adSharingAllowed: boolean, eventAt = fixedNow.toISOString()) {
+    return pixelIngestBatchSchema.parse({ installationId, collectorToken: token, events: [{ eventId: 'event-network-001', eventName: 'PAGE_VIEW', eventAt, consentState: 'GRANTED', adSharingAllowed, browserMatch: { userAgent: 'Observed browser' } }] });
+  }
+  function ready() { return buildService({ installation: { id: installationId, storeId, status: 'ACTIVE', collectorTokenHash: tokenHash(token) } }); }
+  it('retains a real network identifier without requiring an SDK cookie', async () => {
+    const { service, repository } = ready(); await service.ingest(data(true), { clientIp: '8.8.4.4' });
+    const row = vi.mocked(repository.insertEvents).mock.calls[0]![1][0]!;
+    expect(JSON.parse(decryptSecret(row.browserMatchCiphertext as string))).toEqual({ userAgent: 'Observed browser', clientIp: '8.8.4.4', clientIpSource: 'COLLECTOR' });
+  });
+  it('does not retain matching context without advertising permission', async () => {
+    const { service, repository } = ready(); await service.ingest(data(false), { clientIp: '8.8.4.4' });
+    expect(vi.mocked(repository.insertEvents).mock.calls[0]![1][0]!.browserMatchCiphertext).toBeNull();
+  });
+  it('does not attach the current address to a delayed old event', async () => {
+    const { service, repository } = ready(); await service.ingest(data(true, new Date(fixedNow.getTime() - 6 * 60_000).toISOString()), { clientIp: '8.8.4.4' });
+    const row = vi.mocked(repository.insertEvents).mock.calls[0]![1][0]!;
+    expect(JSON.parse(decryptSecret(row.browserMatchCiphertext as string))).toEqual({ userAgent: 'Observed browser' });
   });
 });

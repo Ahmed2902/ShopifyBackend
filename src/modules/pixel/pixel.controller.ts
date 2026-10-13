@@ -1,3 +1,4 @@
+import { collectorContext } from './collector-context.js';
 import type { Request, Response } from 'express';
 import { ZodError } from 'zod';
 import {
@@ -36,7 +37,7 @@ export class PixelController {
   ingest = async (req: Request, res: Response) => {
     try {
       const input = pixelIngestBatchSchema.parse(parseCollectorBody(req.body));
-      const result = await this.service.ingest(input);
+      const result = await this.service.ingest(input, collectorContext(req));
       logger.debug(
         {
           received: result.received,

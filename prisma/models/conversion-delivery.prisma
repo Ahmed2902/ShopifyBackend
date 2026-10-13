@@ -42,6 +42,9 @@ model ConversionDelivery {
   destinationId       String                   @db.Uuid
   provider            AdvertisingProvider
   eventKey            String
+  isTestDelivery      Boolean                  @default(false)
+  testCodeCiphertext  String?                  @db.Text
+  testExpiresAt       DateTime?
   eventName           String
   sourceEventId       String?                  @db.Uuid
   sourceGenerationAt  DateTime?

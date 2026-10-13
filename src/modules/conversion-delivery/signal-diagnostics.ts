@@ -6,7 +6,7 @@ import { classifyAcquisition } from '../pixel/acquisition.js';
 const DAYS = 30;
 export async function conversionSignalHealth(storeId: string) {
   const since = new Date(Date.now() - DAYS * 86400_000);
-  const [destinations, facts, connections, commercePurchases, funnel] = await Promise.all([
+  const [destinations, facts, connections, commercePurchases, funnel, purchases] = await Promise.all([
     prisma.conversionDestination.findMany({
       where: { storeId },
       select: { id: true, provider: true, displayName: true, status: true, configJson: true },
@@ -49,7 +49,7 @@ export async function conversionSignalHealth(storeId: string) {
         COALESCE(SUM(("contentCoverage"->>'mappedItems')::int), 0) AS "mappedContentItems",
         COALESCE(SUM(("contentCoverage"->>'ambiguousItems')::int), 0) AS "ambiguousContentItems",
         COUNT(*) FILTER (WHERE "browserDispatchedAt" IS NOT NULL) AS "browserDispatched"
-      FROM "ConversionDelivery" WHERE "storeId" = ${storeId}::uuid AND "createdAt" >= ${since}
+      FROM "ConversionDelivery" WHERE "storeId" = ${storeId}::uuid AND "isTestDelivery" = FALSE AND "createdAt" >= ${since}
       GROUP BY "provider", "eventName", "status", "reasonCode", "browserReasonCode"
     `),
     prisma.store.findUnique({
@@ -99,13 +99,34 @@ export async function conversionSignalHealth(storeId: string) {
           COUNT(DISTINCT e.id) FILTER (WHERE d."matchCoverage" IS NOT NULL) AS "matchingMeasured",
           COUNT(DISTINCT e.id) FILTER (WHERE d.status = 'DELIVERED') AS acknowledged,
           COUNT(DISTINCT e.id) FILTER (WHERE d."browserDispatchedAt" IS NOT NULL) AS "browserReported"
-        FROM source e JOIN "ConversionDelivery" d ON d."sourceEventId" = e.id AND d."storeId" = ${storeId}::uuid
+        FROM source e JOIN "ConversionDelivery" d ON d."isTestDelivery" = FALSE AND d."sourceEventId" = e.id AND d."storeId" = ${storeId}::uuid
         GROUP BY d.provider, e."eventName"
       ) SELECT p.provider, c."eventName", c.collected, c.consented, c."withinDispatchWindow",
         COALESCE(d.queued, 0) AS queued, COALESCE(d."matchingMeasured", 0) AS "matchingMeasured",
         COALESCE(d.acknowledged, 0) AS acknowledged, COALESCE(d."browserReported", 0) AS "browserReported"
       FROM collected c CROSS JOIN (VALUES ('META'), ('TIKTOK'), ('GOOGLE_ADS')) p(provider)
       LEFT JOIN delivery d ON d.provider = p.provider AND d."eventName" = c."eventName"
+    `),
+    prisma.$queryRaw<Array<{ provider: string; orders: bigint; accepted: bigint; waiting: bigint; failed: bigint; notQueued: bigint }>>(Prisma.sql`
+      WITH orders AS (
+        SELECT o.id FROM "Order" o JOIN "ShopifyConnection" c ON c."storeId" = o."storeId" AND c.status = 'ACTIVE'
+        WHERE o."storeId" = ${storeId}::uuid AND NOT o."isTest" AND o."cancelledAt" IS NULL
+          AND COALESCE(o."processedAt", o."shopifyCreatedAt") >= GREATEST(${since}, c."installedAt")
+      ), states AS (
+        SELECT p.provider, o.id,
+          COALESCE(BOOL_OR(d.status = 'DELIVERED'), FALSE) AS accepted,
+          COALESCE(BOOL_OR(d.status IN ('PENDING', 'PROCESSING', 'RETRY')), FALSE) AS waiting,
+          COUNT(d.id) > 0 AS queued
+        FROM orders o CROSS JOIN (VALUES ('META'), ('TIKTOK'), ('GOOGLE_ADS')) p(provider)
+        LEFT JOIN "ConversionDelivery" d ON d."sourceOrderId" = o.id AND d."storeId" = ${storeId}::uuid
+          AND d.provider::text = p.provider AND NOT d."isTestDelivery" AND d."eventName" = 'PURCHASE'
+        GROUP BY p.provider, o.id
+      ) SELECT provider, COUNT(*) AS orders,
+        COUNT(*) FILTER (WHERE accepted) AS accepted,
+        COUNT(*) FILTER (WHERE NOT accepted AND waiting) AS waiting,
+        COUNT(*) FILTER (WHERE NOT accepted AND NOT waiting AND queued) AS failed,
+        COUNT(*) FILTER (WHERE NOT queued) AS "notQueued"
+      FROM states GROUP BY provider
     `),
   ]);
   const managedMeta = destinations.some(
@@ -124,6 +145,12 @@ export async function conversionSignalHealth(storeId: string) {
     enhancedMatchingApproved: env.SHOPIFY_ENHANCED_MATCHING_APPROVED,
     providers: ['META', 'TIKTOK', 'GOOGLE_ADS'].map((provider) => ({
       provider,
+      purchases: (() => {
+        const row = purchases.find(p => p.provider === provider);
+        return { orders: Number(row?.orders ?? 0), accepted: Number(row?.accepted ?? 0),
+          waiting: Number(row?.waiting ?? 0), failed: Number(row?.failed ?? 0), notQueued: Number(row?.notQueued ?? 0),
+          methodology: 'Non-test, non-cancelled Shopify orders from this installation in the last 30 days. Accepted means at least one destination acknowledged the purchase; it does not establish ad attribution. Not queued includes absent permission, matching, setup or purchases outside the delivery window.' };
+      })(),
       catalogs:
         provider === 'META'
           ? (connections?.metaCatalogs ?? [])
@@ -229,7 +256,7 @@ export async function conversionSignalHealth(storeId: string) {
     })),
     limitations: [
       'No official Meta EMQ integration',
-      'IP is available only from a verified canonical Shopify Purchase with explicit field approval',
+      'Browser network context is retained briefly with advertising permission; Shopify customer enrichment additionally requires approved fields and verified checkout proof',
       'Native integrations and other tracking apps do not share Metrico event IDs',
       'Funnel counts cover retained current-installation events, not unobserved or consent-denied visits; deletion and shorter raw retention can reduce available history; queue counts are unique events across destinations',
       'Browser reporting means the SDK was invoked, not that the provider received the event; the paired embed supports Meta storefront events only',

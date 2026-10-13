@@ -121,6 +121,7 @@ model StorefrontEvent {
   quantity                Int?
   commerceItems           Json?
   commerceCurrencyCode    String?                @db.VarChar(3)
+  checkoutTokenHash       String?                @db.VarChar(64)
   shopifyCheckoutToken    String?                @db.VarChar(255)
   shopifyOrderExternalId  String?                @db.VarChar(128)
   utmSource               String?                @db.VarChar(255)
@@ -154,6 +155,7 @@ model StorefrontEvent {
   @@index([storeId, sessionId, eventAt])
   @@index([storeId, sessionId, receivedAt])
   @@index([storeId, metaAdExternalId, eventAt])
+  @@index([storeId, checkoutTokenHash, eventAt], map: "StorefrontEvent_checkout_proof_idx")
   @@index([storeId, shopifyOrderExternalId])
   @@index([browserMatchExpiresAt])
   @@index([retentionExpiresAt])
