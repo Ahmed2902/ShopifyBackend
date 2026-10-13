@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { AppError } from '../../errors/app-error.js';
 import { prisma } from '../../lib/prisma.js';
 import { billingService } from '../billing/billing.service.js';
@@ -92,8 +93,9 @@ export async function queuePurchaseTest(
       : provider === 'TIKTOK'
         ? candidate.tiktokClickEventAt
         : candidate.googleClickEventAt;
-  // Stable per-order identity prevents repeated button presses from creating duplicate purchases.
-  const eventKey = storefrontEventKey(storeId, `test-purchase:${candidate.shopifyOrderId}`);
+  // Every explicit test attempt has its own provider event ID. Production purchase
+  // deduplication remains unchanged; the repository serializes one test order/destination.
+  const eventKey = storefrontEventKey(storeId, `test-purchase:${candidate.shopifyOrderId}:${randomUUID()}`);
   await repo.enqueue({
     storeId,
     destinationId,
@@ -116,7 +118,7 @@ export async function queuePurchaseTest(
     testExpiresAt: new Date(Date.now() + 60 * 60_000),
   });
   const delivery = await prisma.conversionDelivery.findUnique({
-    where: { destinationId_eventKey: { destinationId, eventKey } },
+    where: { destinationId_sourceOrderId_eventName: { destinationId, sourceOrderId: orderId, eventName: 'PURCHASE' } },
     select: { id: true, status: true, reasonCode: true },
   });
   return { ...delivery, provider, testOnly: true, googleValidationOnly: provider === 'GOOGLE_ADS' };
