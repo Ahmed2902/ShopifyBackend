@@ -1,3 +1,4 @@
+import { encryptSecret } from '../../../src/modules/integrations/integration.utils.js';
 import { billingService } from '../../../src/modules/billing/billing.service.js';
 import {
   enqueueFunnelEvents,
@@ -387,6 +388,14 @@ db('durable provider-specific funnel enqueue', () => {
         anonymousVisitorId: 'same-visitor',
         consentState: 'GRANTED',
         adSharingAllowed: true,
+        browserMatchCiphertext: encryptSecret(
+          JSON.stringify({
+            clientIp: '8.8.4.4',
+            clientIpSource: 'COLLECTOR',
+            userAgent: 'Observed browser',
+          }),
+        ),
+        browserMatchExpiresAt: new Date(Date.now() + 3600_000),
         metaClickId: 'meta-only-click',
         utmSource: 'meta',
         utmMedium: 'paid_social',
