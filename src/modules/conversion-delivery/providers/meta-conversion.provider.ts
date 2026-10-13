@@ -1,6 +1,6 @@
 import { metaCustomData } from '../conversion-content.js';
 import { assertCanonicalPurchase } from './conversion-event.validation.js';
-import { metaUserData } from '../matching.js';
+import { metaUserData, sha256 } from '../matching.js';
 import { env } from '../../../config/env.js';
 import { prisma } from '../../../lib/prisma.js';
 import { decryptSecret } from '../../integrations/integration.utils.js';
@@ -101,6 +101,16 @@ export async function deliverMetaPurchase(
     delivery.clickId,
     delivery.attributionEventAt ?? delivery.eventAt,
   );
+  // Development-store checkout diagnostics preserve the real order value/items while
+  // using an unmistakably synthetic identity ONLY when real permitted matching is absent.
+  // Never synthesize IDs for normal live deliveries or without the provider test code.
+  if (
+    delivery.isTestDelivery && delivery.testEventCode && delivery.sourceOrderId &&
+    !delivery.clickId && !userData.fbc && !userData.fbp && !userData.em &&
+    !userData.external_id && !userData.ph &&
+    !(userData.fn && userData.ln && userData.country && (userData.zp || userData.ct)) &&
+    !(userData.client_ip_address && userData.client_user_agent)
+  ) userData.external_id = [sha256(`metrico:checkout-test:${delivery.eventKey}`)];
   if (
     !delivery.clickId &&
     !userData.fbc &&
