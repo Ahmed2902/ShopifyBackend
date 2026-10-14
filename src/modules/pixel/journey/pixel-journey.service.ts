@@ -57,7 +57,7 @@ function sourceFor(event: JourneyEvent): StorefrontJourneySource {
   }
   if (event.googleClickId || event.googleBraidedClickId || event.googleWebBraidedClickId)
     return 'GOOGLE';
-  if (event.tiktokClickId) return 'TIKTOK';
+  if (event.tiktokClickId || event.tiktokCampaignExternalId || event.tiktokAdGroupExternalId || event.tiktokAdExternalId || event.tiktokCreativeExternalId) return 'TIKTOK';
   if (
     event.utmSource ||
     event.utmMedium ||
@@ -90,6 +90,11 @@ function touchSignature(event: JourneyEvent): string {
     event.metaCampaignExternalId,
     event.metaAdSetExternalId,
     event.metaAdExternalId,
+    event.tiktokCampaignExternalId,
+    event.tiktokAdGroupExternalId,
+    event.tiktokAdExternalId,
+    event.tiktokCreativeExternalId,
+
   ]);
 }
 
@@ -127,6 +132,11 @@ function buildRawTouches(events: JourneyEvent[]): SessionTouchInput[] {
       metaCampaignExternalId: event.metaCampaignExternalId,
       metaAdSetExternalId: event.metaAdSetExternalId,
       metaAdExternalId: event.metaAdExternalId,
+      tiktokCampaignExternalId: event.tiktokCampaignExternalId,
+      tiktokAdGroupExternalId: event.tiktokAdGroupExternalId,
+      tiktokAdExternalId: event.tiktokAdExternalId,
+      tiktokCreativeExternalId: event.tiktokCreativeExternalId,
+
       metaCampaignId: null,
       metaAdSetId: null,
       metaAdId: null,

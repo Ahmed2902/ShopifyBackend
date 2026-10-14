@@ -114,6 +114,15 @@ async function fixture() {
   };
 }
 db('source-based routing against migrated PostgreSQL', () => {
+  it('loads exact TikTok URL identities without UTM and respects store and withdrawal boundaries', async () => {
+    const f = await fixture();
+    await f.add({ tiktokCampaignExternalId: '22', tiktokAdGroupExternalId: '33', tiktokAdExternalId: '44', tiktokCreativeExternalId: '55' });
+    const [candidate] = await f.repo.findPurchaseCandidates(1, f.order.id, false, f.store.id);
+    expect(candidate!.routing?.eligibleProviders).toEqual(['TIKTOK']);
+    expect(candidate!.routing?.lastPaidTouch).toMatchObject({ campaign: '22', ad: '44' });
+    await new PixelRepository().withdrawAdvertisingConsent(f.store.id, { anonymousVisitorId: f.source.anonymousVisitorId! }, f.now, new Date(f.now.getTime() + 86400_000));
+    expect(await f.repo.findPurchaseCandidates(1, f.order.id, false, f.store.id)).toEqual([]);
+  });
   it.each(['META', 'TIKTOK', 'GOOGLE_ADS'] as const)(
     'queues a %s journey only to its channel despite all destinations being active',
     async (provider) => {

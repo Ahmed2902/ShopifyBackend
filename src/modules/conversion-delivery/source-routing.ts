@@ -59,6 +59,9 @@ export function summarizeRouting(
         ? 'GOOGLE_ADS'
         : null,
     ].filter(Boolean);
+    const linkProviders = [row.metaAdExternalId || row.metaAdSetExternalId || row.metaCampaignExternalId ? 'META' : null,
+      row.tiktokCampaignExternalId || row.tiktokAdGroupExternalId || row.tiktokAdExternalId || row.tiktokCreativeExternalId ? 'TIKTOK' : null].filter(Boolean);
+    const signalProviders = [...new Set([...clickProviders, ...linkProviders])];
     const c = classifyAcquisition(row);
     const declared = classifyAcquisition({
       utmSource: row.utmSource,
@@ -76,8 +79,8 @@ export function summarizeRouting(
     const provider = canonical(c.provider);
     const declaredProvider = canonical(declared.provider);
     if (
-      clickProviders.length > 1 ||
-      (clickProviders.length && declaredProvider && declaredProvider !== provider)
+      signalProviders.length > 1 ||
+      (signalProviders.length && declaredProvider && declaredProvider !== provider)
     ) {
       ambiguousTouches++;
       continue;
@@ -92,7 +95,7 @@ export function summarizeRouting(
     )
       continue;
     // Explicit organic/email labels conflict with purported paid-click evidence.
-    if (clickProviders.length && declared.paid === false) {
+    if (signalProviders.length && declared.paid === false) {
       ambiguousTouches++;
       continue;
     }
@@ -112,13 +115,18 @@ export function summarizeRouting(
           row.utmContent,
           row.metaAdExternalId,
           row.metaCampaignExternalId,
+          row.tiktokCampaignExternalId,
+          row.tiktokAdGroupExternalId,
+          row.tiktokAdExternalId,
+          row.tiktokCreativeExternalId,
+
         ]);
     const touch: PaidTouch = {
       provider,
       observedAt: new Date(time).toISOString(),
       basis: c.basis,
-      campaign: row.metaCampaignExternalId ?? row.utmCampaign ?? null,
-      ad: row.metaAdExternalId ?? row.utmContent ?? null,
+      campaign: (provider === 'TIKTOK' ? row.tiktokCampaignExternalId : row.metaCampaignExternalId) ?? row.utmCampaign ?? null,
+      ad: provider === 'TIKTOK' ? row.tiktokAdExternalId ?? null : row.metaAdExternalId ?? row.utmContent ?? null,
     };
     const prior = dedup.get(key);
     // Repeated landing context is one observed touch, not a new ad click on every page.
@@ -173,15 +181,15 @@ export async function loadRoutingSummaries(inputs: RoutingInput[]) {
     JOIN "StorefrontEvent" source ON source.id = i."sourceEventId" AND source."storeId" = i."storeId"
     LEFT JOIN LATERAL (
       SELECT MIN(e."eventAt") AS "eventAt", MIN(e."receivedAt") AS "receivedAt", e."metaClickId", e."tiktokClickId", e."googleClickId", e."googleBraidedClickId", e."googleWebBraidedClickId",
-        e."utmSource", e."utmMedium", e."utmCampaign", e."utmContent", e."metaCampaignExternalId", e."metaAdSetExternalId", e."metaAdExternalId"
+        e."utmSource", e."utmMedium", e."utmCampaign", e."utmContent", e."metaCampaignExternalId", e."metaAdSetExternalId", e."metaAdExternalId", e."tiktokCampaignExternalId", e."tiktokAdGroupExternalId", e."tiktokAdExternalId", e."tiktokCreativeExternalId"
       FROM "StorefrontEvent" e
       WHERE e."storeId" = i."storeId"
         AND (e.id = source.id OR e."sessionId" = source."sessionId" OR (source."anonymousVisitorId" IS NOT NULL AND e."anonymousVisitorId" = source."anonymousVisitorId"))
         AND e."eventAt" >= i.generation AND e."eventAt" <= i."eventAt"
         AND e."retentionExpiresAt" > NOW() AND e."adSharingAllowed" = TRUE AND e."consentState" IN ('GRANTED', 'NOT_REQUIRED')
-        AND (e."utmSource" IS NOT NULL OR e."metaClickId" IS NOT NULL OR e."tiktokClickId" IS NOT NULL OR e."googleClickId" IS NOT NULL OR e."googleBraidedClickId" IS NOT NULL OR e."googleWebBraidedClickId" IS NOT NULL OR e."metaAdExternalId" IS NOT NULL OR e."metaCampaignExternalId" IS NOT NULL)
+        AND (e."utmSource" IS NOT NULL OR e."metaClickId" IS NOT NULL OR e."tiktokClickId" IS NOT NULL OR e."googleClickId" IS NOT NULL OR e."googleBraidedClickId" IS NOT NULL OR e."googleWebBraidedClickId" IS NOT NULL OR e."metaAdExternalId" IS NOT NULL OR e."metaCampaignExternalId" IS NOT NULL OR e."tiktokCampaignExternalId" IS NOT NULL OR e."tiktokAdGroupExternalId" IS NOT NULL OR e."tiktokAdExternalId" IS NOT NULL OR e."tiktokCreativeExternalId" IS NOT NULL )
         AND NOT EXISTS (SELECT 1 FROM "StorefrontConsentWithdrawal" w WHERE w."storeId" = e."storeId" AND w."revokedBefore" >= e."eventAt" AND (w."scopeKey" = 'session:' || e."sessionId" OR w."scopeKey" = 'visitor:' || e."anonymousVisitorId"))
-      GROUP BY e."metaClickId", e."tiktokClickId", e."googleClickId", e."googleBraidedClickId", e."googleWebBraidedClickId", e."utmSource", e."utmMedium", e."utmCampaign", e."utmContent", e."metaCampaignExternalId", e."metaAdSetExternalId", e."metaAdExternalId"
+      GROUP BY e."metaClickId", e."tiktokClickId", e."googleClickId", e."googleBraidedClickId", e."googleWebBraidedClickId", e."utmSource", e."utmMedium", e."utmCampaign", e."utmContent", e."metaCampaignExternalId", e."metaAdSetExternalId", e."metaAdExternalId", e."tiktokCampaignExternalId", e."tiktokAdGroupExternalId", e."tiktokAdExternalId", e."tiktokCreativeExternalId"
       HAVING MIN(e."eventAt") >= GREATEST(i.generation, i."eventAt" - INTERVAL '30 days')
       ORDER BY MIN(e."eventAt"), MIN(e."receivedAt") LIMIT 1001
     ) t ON TRUE GROUP BY i.key`);

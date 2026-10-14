@@ -50,4 +50,9 @@ export interface StorefrontAttributionInput {
   metaCampaignExternalId?: string;
   metaAdSetExternalId?: string;
   metaAdExternalId?: string;
+  tiktokCampaignExternalId?: string;
+  tiktokAdGroupExternalId?: string;
+  tiktokAdExternalId?: string;
+  tiktokCreativeExternalId?: string;
+
 }

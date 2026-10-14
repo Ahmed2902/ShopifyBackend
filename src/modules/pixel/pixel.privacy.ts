@@ -23,6 +23,11 @@ const ATTRIBUTION_QUERY_KEYS: ReadonlyArray<[string, AttributionKey]> = [
   ['stride_meta_campaign_id', 'metaCampaignExternalId'],
   ['stride_meta_adset_id', 'metaAdSetExternalId'],
   ['stride_meta_ad_id', 'metaAdExternalId'],
+  ['metrico_tiktok_campaign_id', 'tiktokCampaignExternalId'],
+  ['metrico_tiktok_adgroup_id', 'tiktokAdGroupExternalId'],
+  ['metrico_tiktok_ad_id', 'tiktokAdExternalId'],
+  ['metrico_tiktok_creative_id', 'tiktokCreativeExternalId'],
+
 ];
 
 function truncate(value: string | null, maxLength: number): string | undefined {
