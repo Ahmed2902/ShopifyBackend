@@ -1,5 +1,6 @@
 import { BlockList, isIP } from 'node:net';
 import type { Request } from 'express';
+import { env } from '../../config/env.js';
 
 export type CollectorContext = { clientIp?: string };
 
@@ -30,7 +31,20 @@ export function publicClientIp(address: string | null | undefined) {
   return undefined;
 }
 
-export function collectorContext(req: Request): CollectorContext {
+export function collectorContext(
+  req: Request,
+  proxyMode: 'express' | 'azure-container-apps' = env.PIXEL_COLLECTOR_PROXY_MODE,
+): CollectorContext {
+  if (proxyMode === 'azure-container-apps') {
+    // Opt in only for a collector reached through ACA HTTP ingress. Azure appends
+    // its observed sender at the RIGHT end; preceding values are client supplied.
+    // https://learn.microsoft.com/azure/container-apps/ingress-overview
+    // Never fall back to an earlier value or the container's internal socket IP.
+    const forwarded = req.headers['x-forwarded-for'];
+    if (typeof forwarded !== 'string') return {};
+    const value = publicClientIp(forwarded.split(',').at(-1)?.trim());
+    return value ? { clientIp: value } : {};
+  }
   // Express resolves this using the app's configured trusted ingress chain. Never
   // pick an arbitrary X-Forwarded-For element or accept an IP from the JSON body.
   if (req.headers['x-forwarded-for'] && !req.ips?.length) return {};

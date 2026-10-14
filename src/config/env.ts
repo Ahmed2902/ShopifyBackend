@@ -112,6 +112,7 @@ const envSchema = z.object({
         .max(6),
     ),
   PIXEL_COLLECTOR_URL: z.string().url().optional(),
+  PIXEL_COLLECTOR_PROXY_MODE: z.enum(['express', 'azure-container-apps']).default('express'),
   PIXEL_RAW_EVENT_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(90),
   META_APP_ID: z.string().min(1),
   META_APP_SECRET: z.string().min(1),
