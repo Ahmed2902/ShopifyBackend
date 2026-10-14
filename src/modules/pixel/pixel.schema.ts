@@ -70,6 +70,11 @@ export const storefrontAttributionSchema = z
     metaCampaignExternalId: providerNumericIdSchema.optional(),
     metaAdSetExternalId: providerNumericIdSchema.optional(),
     metaAdExternalId: providerNumericIdSchema.optional(),
+    tiktokCampaignExternalId: providerNumericIdSchema.optional(),
+    tiktokAdGroupExternalId: providerNumericIdSchema.optional(),
+    tiktokAdExternalId: providerNumericIdSchema.optional(),
+    tiktokCreativeExternalId: providerNumericIdSchema.optional(),
+
   })
   .strict();
 

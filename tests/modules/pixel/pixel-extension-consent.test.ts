@@ -432,3 +432,15 @@ it('bridges only durable accepted storefront IDs while a consented app embed hea
   expect(bridge).not.toHaveProperty('anonymousVisitorId');
   expect(bridge.expiresAt).toBeLessThanOrEqual(Date.now() + 60000);
 });
+
+
+it('captures expanded TikTok link IDs and discards unresolved macros', async () => {
+  const extension = await pixel({ analyticsProcessingAllowed: true, marketingAllowed: true, saleOfDataAllowed: true });
+  await extension.event({ context: { document: { location: { href: 'https://store.test/?metrico_tiktok_campaign_id=22&metrico_tiktok_adgroup_id=33&metrico_tiktok_ad_id=44&metrico_tiktok_creative_id=55' } } } });
+  await extension.flush();
+  expect(JSON.parse(extension.eventRequests()[0]![1].body).events[0].attribution).toMatchObject({ tiktokCampaignExternalId: '22', tiktokAdGroupExternalId: '33', tiktokAdExternalId: '44', tiktokCreativeExternalId: '55' });
+  const unresolved = await pixel({ analyticsProcessingAllowed: true, marketingAllowed: true, saleOfDataAllowed: true });
+  await unresolved.event({ context: { document: { location: { href: 'https://store.test/?metrico_tiktok_campaign_id=__CAMPAIGN_ID__&metrico_tiktok_creative_id=__CID__' } } } });
+  await unresolved.flush();
+  expect(JSON.parse(unresolved.eventRequests()[0]![1].body).events[0].attribution ?? {}).not.toHaveProperty('tiktokCampaignExternalId');
+});

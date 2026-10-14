@@ -415,6 +415,11 @@ export class PixelService {
       metaCampaignExternalId: attribution.metaCampaignExternalId ?? null,
       metaAdSetExternalId: attribution.metaAdSetExternalId ?? null,
       metaAdExternalId: attribution.metaAdExternalId ?? null,
+      tiktokCampaignExternalId: attribution.tiktokCampaignExternalId ?? null,
+      tiktokAdGroupExternalId: attribution.tiktokAdGroupExternalId ?? null,
+      tiktokAdExternalId: attribution.tiktokAdExternalId ?? null,
+      tiktokCreativeExternalId: attribution.tiktokCreativeExternalId ?? null,
+
       retentionExpiresAt: calculatePixelRetentionExpiresAt(
         receivedAt,
         env.PIXEL_RAW_EVENT_RETENTION_DAYS,

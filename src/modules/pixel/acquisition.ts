@@ -15,6 +15,11 @@ export type AcquisitionChannel = (typeof ACQUISITION_CHANNELS)[number];
 export type AcquisitionEvidence = {
   metaClickId?: string | null;
   tiktokClickId?: string | null;
+  tiktokCampaignExternalId?: string | null;
+  tiktokAdGroupExternalId?: string | null;
+  tiktokAdExternalId?: string | null;
+  tiktokCreativeExternalId?: string | null;
+
   googleClickId?: string | null;
   googleBraidedClickId?: string | null;
   googleWebBraidedClickId?: string | null;
@@ -104,6 +109,8 @@ export function classifyAcquisition(e: AcquisitionEvidence) {
       'GOOGLE_CLICK',
       true,
     );
+  if (e.tiktokCampaignExternalId || e.tiktokAdGroupExternalId || e.tiktokAdExternalId || e.tiktokCreativeExternalId)
+    return result('PAID_SOCIAL', 'TIKTOK', 'TIKTOK_LINK_ID', true);
   if (e.metaAdExternalId || e.metaAdSetExternalId || e.metaCampaignExternalId)
     return result('PAID_SOCIAL', 'META', 'META_LINK_ID', true);
   if (source || medium || e.utmCampaign) {

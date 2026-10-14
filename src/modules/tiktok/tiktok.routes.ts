@@ -6,6 +6,8 @@ import { tiktokMappingController } from './mapping/tiktok-mapping.controller.js'
 import { tiktokController } from './tiktok.controller.js';
 import { tiktokWebhookController } from './webhook/tiktok-webhook.controller.js';
 
+import { tiktokTrackingController } from './tracking/tiktok-tracking.controller.js';
+
 const ownerOrAdmin = requireRole('OWNER', 'ADMIN');
 
 export const tiktokRouter = Router();
@@ -19,6 +21,10 @@ tiktokStoreRouter.use(requireAuth, requireStoreMembership);
 tiktokStoreRouter.get('/status', tiktokController.status);
 // Every other TikTok read/write is paid-provider access and must respect the selected channel.
 tiktokStoreRouter.use(requireAdProviderEntitlement('TIKTOK'));
+
+tiktokStoreRouter.get('/tracking/manual', ownerOrAdmin, tiktokTrackingController.manual);
+tiktokStoreRouter.get('/tracking', ownerOrAdmin, tiktokTrackingController.audit);
+tiktokStoreRouter.post('/tracking/apply', ownerOrAdmin, tiktokTrackingController.apply);
 
 tiktokStoreRouter.get('/assets', ownerOrAdmin, tiktokController.assets);
 tiktokStoreRouter.get('/campaigns', tiktokController.campaigns);

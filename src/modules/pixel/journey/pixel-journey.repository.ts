@@ -79,6 +79,11 @@ export class PixelJourneyRepository {
         metaCampaignExternalId: true,
         metaAdSetExternalId: true,
         metaAdExternalId: true,
+        tiktokCampaignExternalId: true,
+        tiktokAdGroupExternalId: true,
+        tiktokAdExternalId: true,
+        tiktokCreativeExternalId: true,
+
         retentionExpiresAt: true,
       },
     });

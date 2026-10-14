@@ -135,6 +135,10 @@ model StorefrontEvent {
   metaCampaignExternalId  String?                @db.VarChar(128)
   metaAdSetExternalId     String?                @db.VarChar(128)
   metaAdExternalId        String?                @db.VarChar(128)
+  tiktokCampaignExternalId String? @db.VarChar(128)
+  tiktokAdGroupExternalId String? @db.VarChar(128)
+  tiktokAdExternalId String? @db.VarChar(128)
+  tiktokCreativeExternalId String? @db.VarChar(128)
   browserMatchCiphertext  String?                @db.Text
   browserMatchExpiresAt   DateTime?
   googleBraidedClickId    String?                @db.VarChar(512)
@@ -253,6 +257,10 @@ model StorefrontSessionTouch {
   metaCampaignExternalId String?                    @db.VarChar(128)
   metaAdSetExternalId    String?                    @db.VarChar(128)
   metaAdExternalId       String?                    @db.VarChar(128)
+  tiktokCampaignExternalId String? @db.VarChar(128)
+  tiktokAdGroupExternalId String? @db.VarChar(128)
+  tiktokAdExternalId String? @db.VarChar(128)
+  tiktokCreativeExternalId String? @db.VarChar(128)
   metaCampaignId         String?                    @db.Uuid
   metaAdSetId            String?                    @db.Uuid
   metaAdId               String?                    @db.Uuid
