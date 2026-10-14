@@ -112,7 +112,10 @@ export async function deliverTikTokPurchase(
     delivery.isTestDelivery && delivery.testEventCode && delivery.sourceOrderId &&
     !delivery.clickId && !user.ttp && !user.email && !user.phone &&
     !user.external_id && !(user.ip && user.user_agent)
-  ) user.external_id = sha256(`metrico:checkout-test:${delivery.eventKey}`);
+  ) {
+    user.external_id = sha256(`metrico:checkout-test:${delivery.eventKey}`);
+    delivery.matchingReasonCode = 'TEST_ONLY_MATCH_IDENTIFIER';
+  }
   if (
     !delivery.clickId &&
     !user.ttp &&

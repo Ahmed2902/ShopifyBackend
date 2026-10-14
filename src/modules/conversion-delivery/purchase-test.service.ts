@@ -22,7 +22,7 @@ export async function requireDevelopmentStore(storeId: string) {
 
 export async function listPurchaseTestOrders(storeId: string) {
   await requireDevelopmentStore(storeId);
-  return prisma.order.findMany({
+  const orders = await prisma.order.findMany({
     where: {
       storeId,
       isTest: true,
@@ -33,12 +33,16 @@ export async function listPurchaseTestOrders(storeId: string) {
       id: true,
       name: true,
       shopifyCreatedAt: true,
+      processedAt: true,
       currentTotalAmount: true,
       currencyCode: true,
     },
     orderBy: { shopifyCreatedAt: 'desc' },
     take: 20,
   });
+  return orders.map(({ processedAt, ...order }) => ({
+    ...order, purchaseEventAt: processedAt ?? order.shopifyCreatedAt,
+  }));
 }
 
 export async function queuePurchaseTest(
@@ -119,7 +123,11 @@ export async function queuePurchaseTest(
   });
   const delivery = await prisma.conversionDelivery.findUnique({
     where: { destinationId_sourceOrderId_eventName: { destinationId, sourceOrderId: orderId, eventName: 'PURCHASE' } },
-    select: { id: true, eventKey: true, status: true, reasonCode: true },
+    select: {
+      id: true, eventKey: true, status: true, reasonCode: true,
+      eventAt: true, deliveredAt: true, matchCoverage: true,
+      shopifyOrderId: true, value: true, currencyCode: true,
+    },
   });
   return { ...delivery, provider, testOnly: true, googleValidationOnly: provider === 'GOOGLE_ADS' };
 }
@@ -136,6 +144,11 @@ export async function purchaseTestResult(storeId: string, id: string) {
       lastError: true,
       providerRequestId: true,
       deliveredAt: true,
+      eventAt: true,
+      matchCoverage: true,
+      shopifyOrderId: true,
+      value: true,
+      currencyCode: true,
     },
   });
   if (!row) throw new AppError('Checkout test not found.', 404, 'TRACKING_TEST_NOT_FOUND');

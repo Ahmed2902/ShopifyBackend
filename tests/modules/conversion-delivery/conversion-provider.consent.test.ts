@@ -67,6 +67,27 @@ describe('conversion provider send-time consent', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it.each([
+    ['META', deliverMetaPurchase], ['TIKTOK', deliverTikTokPurchase],
+  ] as const)('sends %s a real network-context purchase without cookies, UTMs or synthetic identity, using purchase time', async (provider, deliver) => {
+    const delivery = {
+      ...claim(provider), clickId: null,
+      attributionEventAt: new Date(now.getTime() - 3_600_000),
+      match: { clientIp: '8.8.4.4', clientIpSource: 'COLLECTOR', userAgent: 'Observed browser' },
+    } as DeliveryClaim;
+    await deliver(delivery, async () => undefined);
+    const body = JSON.parse(vi.mocked(fetch).mock.calls[0]![1]!.body as string);
+    const event = body.data[0];
+    const user = provider === 'META' ? event.user_data : event.user;
+    expect(event.event_time).toBe(Math.floor(now.getTime() / 1000));
+    expect(event.event_id).toBe(delivery.eventKey);
+    expect(user.external_id).toBeUndefined();
+    expect(user.fbp ?? user.ttp).toBeUndefined();
+    expect(user.client_ip_address ?? user.ip).toBe('8.8.4.4');
+    expect(delivery.matchingReasonCode).toBeUndefined();
+    expect(body.test_event_code).toBeUndefined();
+  });
+
+  it.each([
     ['META', deliverMetaPurchase],
     ['TIKTOK', deliverTikTokPurchase],
     ['GOOGLE_ADS', deliverGooglePurchase],
@@ -256,6 +277,7 @@ describe('conversion provider send-time consent', () => {
     const synthetic = provider === 'META' ? user.external_id?.[0] : user.external_id;
     expect(synthetic).toMatch(/^[0-9a-f]{64}$/);
     expect(body.test_event_code).toBe('TEST123');
+    expect(delivery.matchingReasonCode).toBe('TEST_ONLY_MATCH_IDENTIFIER');
     expect(JSON.stringify(body)).toContain('stride:event:checkout-test-unique');
     expect(JSON.stringify(body)).toContain('49.99');
     expect(JSON.stringify(body)).not.toContain('order-1');

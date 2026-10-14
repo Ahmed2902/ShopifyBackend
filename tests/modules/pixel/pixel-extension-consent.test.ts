@@ -6,7 +6,11 @@ async function pixel(
   privacy: Record<string, boolean>,
   storage = new Map<string, string>(),
   pauseSessionWrite = false,
+  blocked?: 'getItem' | 'setItem' | 'removeItem' | 'cookie' | 'all',
 ) {
+  function checkStorage(method: string) {
+    if (blocked === method || blocked === 'all') throw new Error('Storage access denied');
+  }
   const subscriptions = new Map<string, (event: unknown) => void>();
   let resumeSession: () => void = () => undefined;
   const sessionGate = pauseSessionWrite
@@ -47,24 +51,28 @@ async function pixel(
         },
         browser: {
           localStorage: {
-            getItem: async (key: string) => storage.get(key) ?? null,
+            getItem: async (key: string) => { checkStorage('getItem'); return storage.get(key) ?? null; },
             setItem: async (key: string, value: string) => {
+              checkStorage('setItem');
               storage.set(key, value);
             },
             removeItem: async (key: string) => {
+              checkStorage('removeItem');
               storage.delete(key);
             },
           },
           cookie: {
-            get: async (key: string) => (key === '_fbp' ? 'fb.1.1790985600000.123' : undefined),
+            get: async (key: string) => { checkStorage('cookie'); return key === '_fbp' ? 'fb.1.1790985600000.123' : undefined; },
           },
           sessionStorage: {
-            getItem: async (key: string) => storage.get(key) ?? null,
+            getItem: async (key: string) => { checkStorage('getItem'); return storage.get(key) ?? null; },
             setItem: async (key: string, value: string) => {
+              checkStorage('setItem');
               if (key === 'stride_pixel_session_id') await sessionGate;
               storage.set(key, value);
             },
             removeItem: async (key: string) => {
+              checkStorage('removeItem');
               storage.delete(key);
             },
           },
@@ -86,13 +94,14 @@ async function pixel(
     eventRequests: () =>
       fetch.mock.calls.filter((call) => JSON.parse(call[1].body).events.length > 0),
     withdrawals: () => fetch.mock.calls.filter((call) => JSON.parse(call[1].body).withdrawal),
-    event: async () => {
-      subscriptions.get('page_viewed')!({
+    event: async (overrides: Record<string, unknown> = {}) => {
+      subscriptions.get(typeof overrides.name === 'string' ? overrides.name : 'page_viewed')!({
         id: 'test-event',
         name: 'page_viewed',
         timestamp: new Date().toISOString(),
         clientId: 'visitor-test',
         context: { document: { location: { href: 'https://store.test/?fbclid=click' } } },
+        ...overrides,
       });
       // Allow the extension's serial handling and storage promises to complete.
       await new Promise<void>((resolve) => setImmediate(resolve));
@@ -152,6 +161,62 @@ describe('Pixel advertising permission from Shopify customer privacy', () => {
     extension.update({ customerPrivacy: { analyticsProcessingAllowed: false } });
     await extension.flush();
     expect(extension.eventRequests()).toHaveLength(0);
+  });
+});
+
+describe('Pixel capture with restricted browser storage', () => {
+  const allowed = { analyticsProcessingAllowed: true, marketingAllowed: true, saleOfDataAllowed: true };
+  it.each(['getItem', 'setItem', 'removeItem', 'all'] as const)(
+    'continues permitted checkout capture when %s rejects, using only Shopify identity and worker state', async (blocked) => {
+      const extension = await pixel(allowed, new Map(), false, blocked);
+      await extension.event({
+        id: 'landing-event',
+        context: { navigator: { userAgent: 'Browser' }, document: { location: { href: 'https://store.test/?ttclid=actual-click' } } },
+      });
+      await extension.event({
+        id: 'checkout-event', name: 'checkout_completed',
+        context: { navigator: { userAgent: 'Browser' }, document: { location: { href: 'https://store.test/checkouts/private' } } },
+        data: { checkout: { token: 'checkout-proof', order: { id: '123' } } },
+      });
+      await extension.flush();
+      const events = extension.eventRequests().flatMap(call => JSON.parse(call[1].body).events);
+      expect(events).toHaveLength(2);
+      expect(events[1]).toMatchObject({
+        eventName: 'CHECKOUT_COMPLETED', anonymousVisitorId: 'visitor-test',
+        sessionId: 'landing-event', shopifyCheckoutToken: 'checkout-proof',
+        shopifyOrderExternalId: 'gid://shopify/Order/123',
+        attribution: { tiktokClickId: 'actual-click' },
+        browserMatch: { userAgent: 'Browser' }, adSharingAllowed: true,
+      });
+      if (blocked === 'all' || blocked === 'getItem') expect(events[1].browserMatch.fbp).toBeUndefined();
+      await extension.event({ id: 'next-session' });
+      await extension.flush();
+      const last = JSON.parse(extension.eventRequests().at(-1)![1].body).events[0];
+      expect(last.sessionId).toBe('next-session');
+      expect(last.attribution.tiktokClickId).toBeUndefined();
+    },
+  );
+  it('captures permitted context without cookies and never creates a replacement cookie or fingerprint', async () => {
+    const extension = await pixel(allowed, new Map(), false, 'cookie');
+    await extension.event({ context: { navigator: { userAgent: 'Browser' }, document: { location: { href: 'https://store.test/' } } } });
+    await extension.flush();
+    const event = JSON.parse(extension.eventRequests()[0]![1].body).events[0];
+    expect(event.browserMatch).toEqual({ userAgent: 'Browser' });
+    expect(event.anonymousVisitorId).toBe('visitor-test');
+  });
+  it('still stops advertising and sends withdrawal when privacy-marker storage cannot be written', async () => {
+    const extension = await pixel(allowed, new Map(), false, 'all');
+    await extension.event();
+    extension.update({ customerPrivacy: { ...allowed, marketingAllowed: false } });
+    await extension.flush();
+    expect(extension.withdrawals()).toHaveLength(1);
+    const event = JSON.parse(extension.eventRequests()[0]![1].body).events[0];
+    expect(event.adSharingAllowed).toBe(false);
+    expect(event.browserMatch).toBeUndefined();
+    extension.update({ customerPrivacy: { analyticsProcessingAllowed: false } });
+    await extension.event();
+    await extension.flush();
+    expect(extension.eventRequests()).toHaveLength(1);
   });
 });
 

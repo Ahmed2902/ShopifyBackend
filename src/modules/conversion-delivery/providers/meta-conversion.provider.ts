@@ -110,7 +110,10 @@ export async function deliverMetaPurchase(
     !userData.external_id && !userData.ph &&
     !(userData.fn && userData.ln && userData.country && (userData.zp || userData.ct)) &&
     !(userData.client_ip_address && userData.client_user_agent)
-  ) userData.external_id = [sha256(`metrico:checkout-test:${delivery.eventKey}`)];
+  ) {
+    userData.external_id = [sha256(`metrico:checkout-test:${delivery.eventKey}`)];
+    delivery.matchingReasonCode = 'TEST_ONLY_MATCH_IDENTIFIER';
+  }
   if (
     !delivery.clickId &&
     !userData.fbc &&
