@@ -10,6 +10,7 @@ import {
   removeOwnedUrlParameters,
   snapshotHash,
   trackingStatus,
+  TIKTOK_NATIVE_UTMS,
 } from './tiktok-tracking.params.js';
 
 export function isSmartAd(ad: TikTokTrackingAd) {
@@ -84,10 +85,14 @@ export function trackingPlan(ad: TikTokTrackingAd, raw: unknown) {
     const hash = clean.indexOf('#');
     const base = hash < 0 ? clean : clean.slice(0, hash);
     const fragment = hash < 0 ? '' : clean.slice(hash);
+    const existing = new URL(url).searchParams;
+    const missingUtms = Object.fromEntries(Object.entries(TIKTOK_NATIVE_UTMS).filter(([key]) => !existing.has(key) && !current.some(p => p.key === key)));
+    // Use the ad's known campaign ID for automatic setup; preserve merchant labels.
+    if (Object.hasOwn(missingUtms, 'utm_id')) missingUtms.utm_id = ad.campaign.tiktokCampaignId;
     return (
       base +
       (base.includes('?') ? '&' : '?') +
-      Object.entries(desired)
+      Object.entries({ ...missingUtms, ...desired })
         .map(([k, v]) => `${k}=${v}`)
         .join('&') +
       fragment

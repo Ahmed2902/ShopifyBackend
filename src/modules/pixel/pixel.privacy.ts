@@ -104,6 +104,13 @@ export function extractStorefrontAttribution(
       if (normalized) attribution[outputKey] = normalized;
     }
 
+    // TikTok's native URL builder uses utm_id for the numeric campaign ID.
+    // Only interpret it for an explicitly TikTok-labelled URL, and keep an
+    // existing dedicated Metrico campaign identifier authoritative.
+    if (!attribution.tiktokCampaignExternalId && url.searchParams.get('utm_source')?.trim().toLowerCase() === 'tiktok') {
+      const id = url.searchParams.get('utm_id')?.trim();
+      if (id && id.length <= 128 && /^\d+$/.test(id)) attribution.tiktokCampaignExternalId = id;
+    }
     return attribution;
   } catch {
     return {};

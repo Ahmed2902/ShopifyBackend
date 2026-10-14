@@ -95,6 +95,10 @@ function safeUrl(value) {
       attribution[outputKey] = queryValue.slice(0, maxLength);
     }
 
+    if (!attribution.tiktokCampaignExternalId && parsed.searchParams.get('utm_source')?.trim().toLowerCase() === 'tiktok') {
+      const campaignId = parsed.searchParams.get('utm_id')?.trim();
+      if (campaignId && campaignId.length <= 128 && /^\d+$/.test(campaignId)) attribution.tiktokCampaignExternalId = campaignId;
+    }
     parsed.username = '';
     parsed.password = '';
     const path = decodeURIComponent(parsed.pathname);

@@ -31,7 +31,7 @@ metrico_tiktok_campaign_id=__CAMPAIGN_ID__&metrico_tiktok_adgroup_id=__AID__&met
 Upgraded Smart+ also includes `metrico_tiktok_ad_id=__ADID_V2__`. TikTok's `__CID__`
 is a creative identifier, not an upgraded Smart+ ad bundle identifier. Automatic
 setup adds the known campaign, ad group and ad IDs from the selected synced ad,
-plus the dynamic creative identifier. Existing merchant UTMs remain unchanged.
+plus the dynamic creative identifier. Existing merchant UTMs remain unchanged. New untagged destinations receive TikTok's native defaults: `utm_source=tiktok`, `utm_medium=paid`, `utm_campaign=__CAMPAIGN_NAME__` and `utm_id` set to the known campaign ID. Existing parameters in platform UTM fields are preserved as well. Numeric `utm_id` is captured as a TikTok campaign ID only when `utm_source=tiktok` and no dedicated Metrico campaign ID is present. `paid` is recognized as TikTok paid traffic. No new schema fields are required.
 Only expanded numeric identifiers are collected; literal macros are discarded.
 Observed identifiers do not prove platform attribution or customer matching.
 

@@ -444,3 +444,14 @@ it('captures expanded TikTok link IDs and discards unresolved macros', async () 
   await unresolved.flush();
   expect(JSON.parse(unresolved.eventRequests()[0]![1].body).events[0].attribution ?? {}).not.toHaveProperty('tiktokCampaignExternalId');
 });
+
+it('captures the native TikTok utm_id only for a TikTok source', async () => {
+  const extension = await pixel({ analyticsProcessingAllowed: true, marketingAllowed: true, saleOfDataAllowed: true });
+  await extension.event({ context: { document: { location: { href: 'https://store.test/?utm_source=tiktok&utm_medium=paid&utm_campaign=Winter&utm_id=22' } } } });
+  await extension.flush();
+  expect(JSON.parse(extension.eventRequests()[0]![1].body).events[0].attribution).toMatchObject({ utmSource: 'tiktok', utmMedium: 'paid', utmCampaign: 'Winter', tiktokCampaignExternalId: '22' });
+  const other = await pixel({ analyticsProcessingAllowed: true, marketingAllowed: true, saleOfDataAllowed: true });
+  await other.event({ context: { document: { location: { href: 'https://store.test/?utm_source=meta&utm_id=22' } } } });
+  await other.flush();
+  expect(JSON.parse(other.eventRequests()[0]![1].body).events[0].attribution).not.toHaveProperty('tiktokCampaignExternalId');
+});

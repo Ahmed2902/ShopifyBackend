@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { AppError } from '../../../errors/app-error.js';
 import { asRecord, asString } from '../tiktok.utils.js';
 
+export const TIKTOK_NATIVE_UTMS = { utm_source: 'tiktok', utm_medium: 'paid', utm_campaign: '__CAMPAIGN_NAME__', utm_id: '__CAMPAIGN_ID__' };
+
 export const STANDARD_PARAMETERS = {
   metrico_tiktok_campaign_id: '__CAMPAIGN_ID__',
   metrico_tiktok_adgroup_id: '__AID__',
