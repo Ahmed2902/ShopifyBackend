@@ -1,5 +1,7 @@
+import { DELIVERY_AGE_MS, DELIVERY_SAFETY_MARGIN_MS } from './delivery-policy.js';
 import { loadRoutingSummaries, routingKey, type RoutingInput } from './source-routing.js';
 import { ConversionProviderError } from './providers/conversion-provider.error.js';
+import { acquireDispatch, recordProviderOutcome } from './dispatch-control.js';
 import type {
   AdvertisingProvider,
   ConversionDeliveryStatus,
@@ -22,6 +24,17 @@ const PUBLIC_DESTINATION_SELECT = {
 } satisfies Prisma.ConversionDestinationSelect;
 
 export class ConversionDeliveryRepository {
+  acquireDispatch(storeId: string, provider: AdvertisingProvider) { return acquireDispatch(storeId, provider); }
+  recordProviderOutcome(provider: AdvertisingProvider, failed: boolean) { return recordProviderOutcome(provider, failed); }
+  pauseForDispatch(id: string, nextAttemptAt: Date, reasonCode: string) {
+    return prisma.conversionDelivery.update({ where: { id }, data: { status: 'RETRY',
+      processingStartedAt: null, nextAttemptAt, reasonCode, lastError: 'Delivery is temporarily paused' } });
+  }
+  expirePending(now: Date) {
+    return prisma.conversionDelivery.updateMany({ where: {
+      status: { in: ['PENDING', 'RETRY'] }, eventAt: { lte: new Date(now.getTime() - DELIVERY_AGE_MS.META + DELIVERY_SAFETY_MARGIN_MS) },
+    }, data: { status: 'DEAD', reasonCode: 'EVENT_EXPIRED', processingStartedAt: null, lastError: 'Delivery retention expired' } });
+  }
   listDestinations(storeId: string) {
     return prisma.conversionDestination.findMany({
       where: { storeId },
@@ -61,7 +74,7 @@ export class ConversionDeliveryRepository {
 
     const previous = existing?.configJson as Record<string, unknown> | null;
     const signalSettings = Object.fromEntries(
-      ['enhancedMatching', 'funnelEvents', 'browserEvents', 'overlapPolicy', 'catalogId']
+      ['enhancedMatching', 'funnelEvents', 'browserEvents', 'overlapPolicy', 'catalogId', 'deliveryMode']
         .filter((key) => previous?.[key] !== undefined)
         .map((key) => [key, previous![key]]),
     );
@@ -92,6 +105,7 @@ export class ConversionDeliveryRepository {
         provider: input.provider,
         externalId: input.externalId,
         ...data,
+        configJson: { ...(data.configJson as Record<string, Prisma.InputJsonValue>), deliveryMode: input.config.deliveryMode ?? 'SHADOW' },
         accessTokenCiphertext: accessTokenCiphertext ?? null,
       },
       select: PUBLIC_DESTINATION_SELECT,
@@ -127,9 +141,10 @@ export class ConversionDeliveryRepository {
         o."id" AS "orderId",
         o."storeId" AS "storeId",
         o."shopifyOrderId" AS "shopifyOrderId",
-        COALESCE(o."processedAt", o."shopifyCreatedAt") AS "eventAt",
-        o."currentTotalAmount"::text AS "value",
-        o."currencyCode" AS "currencyCode",
+        o."purchaseFacts" AS "purchaseFacts", o."sourceName" AS "sourceName", o."isB2B" AS "isB2B", CASE WHEN o."matchEvidenceExpiresAt" > NOW() THEN o."journeyTouches" ELSE NULL END AS "journeyTouches",
+        COALESCE((o."purchaseFacts"->>'eventAt')::timestamptz, o."processedAt", o."shopifyCreatedAt") AS "eventAt",
+        COALESCE(o."purchaseFacts"->>'value', o."currentTotalAmount"::text) AS "value",
+        COALESCE(o."purchaseFacts"->>'currencyCode', o."currencyCode") AS "currencyCode",
         COALESCE(identity_event."pageUrl", s."landingPageUrl", st."primaryDomainUrl", 'https://' || st."myshopifyDomain" || '/') AS "eventSourceUrl",
         meta_event."metaClickId" AS "metaClickId",
         meta_event."eventAt" AS "metaClickEventAt",
@@ -148,6 +163,7 @@ export class ConversionDeliveryRepository {
         SELECT e."id", e."sessionId", e."anonymousVisitorId", e."pageUrl", e."browserMatchCiphertext", e."browserMatchExpiresAt"
         FROM "StorefrontEvent" e WHERE e."storeId" = o."storeId" AND (
             (o."checkoutTokenHash" IS NOT NULL AND e."checkoutTokenHash" = o."checkoutTokenHash")
+            OR e.id = o."recoveryEventId"
             OR (s."id" IS NOT NULL AND e."sessionId" = s."browserSessionId")
           ) AND e."retentionExpiresAt" > NOW()
           AND e."eventAt" >= conn."installedAt" AND e."eventAt" <= COALESCE(o."processedAt", o."shopifyCreatedAt") + INTERVAL '10 minutes'
@@ -248,6 +264,7 @@ export class ConversionDeliveryRepository {
         sourceEventId: c.sourceEventId!,
         eventAt: c.eventAt,
         sourceGenerationAt: c.sourceGenerationAt!,
+        journeyTouches: c.journeyTouches ?? [],
       }));
     const routing = await loadRoutingSummaries(inputs);
     return candidates.map((c) => ({
@@ -335,7 +352,7 @@ export class ConversionDeliveryRepository {
                 isTest: claim.isTestDelivery === true,
                 cancelledAt: null,
               },
-              select: { id: true, checkoutTokenHash: true, shopifyOrderId: true },
+              select: { id: true, checkoutTokenHash: true, shopifyOrderId: true, recoveryEventId: true, sourceName: true, isB2B: true },
             })
           : Promise.resolve(null),
         claim.destinationId
@@ -352,6 +369,8 @@ export class ConversionDeliveryRepository {
       ]);
       if (!destination && claim.destinationId) return false;
       const config = destination?.configJson as Record<string, unknown> | null;
+      if (!claim.isTestDelivery && config?.deliveryMode && config.deliveryMode !== 'LIVE')
+        throw new ConversionProviderError('Sharing is paused for this destination', true, 'CONVERSION_SHARING_PAUSED');
       if (claim.eventName && claim.eventName !== 'PURCHASE' && config?.funnelEvents !== true)
         return false;
       const match = claim.match as
@@ -385,10 +404,11 @@ export class ConversionDeliveryRepository {
       );
       if (!privacyPermitted) return false;
       if (claim.sourceOrderId && order) {
+        if (order.sourceName !== 'web' || order.isB2B) return false;
         const canonical =
-          source.checkoutTokenHash &&
+          order.recoveryEventId === claim.sourceEventId || (source.checkoutTokenHash &&
           order.checkoutTokenHash &&
-          source.checkoutTokenHash === order.checkoutTokenHash;
+          source.checkoutTokenHash === order.checkoutTokenHash);
         if (!canonical) {
           const linked = source.sessionId
             ? await prisma.storefrontSession.findFirst({
@@ -408,7 +428,7 @@ export class ConversionDeliveryRepository {
         const at = claim.sourceOrderId
           ? await prisma.order.findFirst({
               where: { id: claim.sourceOrderId, storeId: claim.storeId },
-              select: { processedAt: true, shopifyCreatedAt: true },
+              select: { processedAt: true, shopifyCreatedAt: true, journeyTouches: true, matchEvidenceExpiresAt: true },
             })
           : null;
         const input = {
@@ -416,6 +436,8 @@ export class ConversionDeliveryRepository {
           sourceEventId: claim.sourceEventId,
           sourceGenerationAt: claim.sourceGenerationAt,
           eventAt: at?.processedAt ?? at?.shopifyCreatedAt ?? source.eventAt,
+          journeyTouches: at?.matchEvidenceExpiresAt && at.matchEvidenceExpiresAt > new Date() && Array.isArray(at.journeyTouches)
+            ? at.journeyTouches as unknown as RoutingInput['journeyTouches'] : [],
         };
         const routes = await loadRoutingSummaries([input]);
         if (!routes.get(routingKey(input))?.eligibleProviders.includes(claim.provider)) {
@@ -568,9 +590,13 @@ export class ConversionDeliveryRepository {
     testCodeCiphertext?: string | null;
     testExpiresAt?: Date | null;
     routingEvidence?: PrismaSql.InputJsonValue;
+    purchaseFacts?: PrismaSql.InputJsonValue;
+    skipReason?: string | null;
   }) {
+    const { skipReason, ...facts } = input;
     const result = await prisma.conversionDelivery.createMany({
-      data: [{ ...input, eventName: 'PURCHASE', nextAttemptAt: new Date(Date.now() + 15_000) }],
+      data: [{ ...facts, eventName: 'PURCHASE', nextAttemptAt: new Date(Date.now() + 15_000),
+        ...(skipReason ? { status: 'SKIPPED', reasonCode: skipReason } : {}) }],
       skipDuplicates: true,
     });
     if (result.count > 0 || !input.isTestDelivery) return { created: result.count > 0 };
@@ -702,6 +728,7 @@ export class ConversionDeliveryRepository {
         WHERE d."status" IN ('PENDING', 'RETRY')
           AND d."nextAttemptAt" <= ${now}
           AND dest."status" = 'ACTIVE'
+          AND (d."isTestDelivery" = TRUE OR COALESCE(dest."configJson"->>'deliveryMode', 'LIVE') = 'LIVE')
           AND sub."status" IN ('TRIALING', 'ACTIVE')
           AND (sub."status" = 'ACTIVE' OR (sub."provider" = 'INTERNAL' AND sub."trialEndsAt" > ${now}))
           AND (

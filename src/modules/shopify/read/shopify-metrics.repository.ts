@@ -105,6 +105,7 @@ export class ShopifyMetricsRepository {
         where: {
           storeId,
           isTest: false,
+          cancelledAt: null,
           ...demandDateWhere(from, to),
         },
       }),
@@ -112,6 +113,7 @@ export class ShopifyMetricsRepository {
         where: {
           storeId,
           isTest: false,
+          cancelledAt: null,
           ...demandDateWhere(from, to),
         },
         _sum: {
@@ -188,6 +190,7 @@ export class ShopifyMetricsRepository {
         order: {
           storeId,
           isTest: false,
+          cancelledAt: null,
           ...demandDateWhere(from, to),
         },
       },

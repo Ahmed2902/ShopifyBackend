@@ -59,7 +59,7 @@ export function createApp() {
   app.use(requestPerformanceMiddleware);
   app.use(helmet());
   app.use((req, res, next) => {
-    if (req.path === PIXEL_INGRESS_PATH || req.path === `${PIXEL_INGRESS_PATH}/browser`)
+    if (req.path === PIXEL_INGRESS_PATH || req.path === `${PIXEL_INGRESS_PATH}/browser` || req.path === `${PIXEL_INGRESS_PATH}/cart`)
       return pixelCors(req, res, next);
     return applicationCors(req, res, next);
   });

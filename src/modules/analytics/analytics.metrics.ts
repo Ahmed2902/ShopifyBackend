@@ -1,4 +1,5 @@
 import type { AnalyticsRepository } from './analytics.repository.js';
+import { lineAdjustment } from '../shopify/order/order-adjustments.js';
 
 type MetaRow = Awaited<ReturnType<AnalyticsRepository['getMetaRows']>>[number];
 type OrderRow = Awaited<ReturnType<AnalyticsRepository['getOrders']>>[number];
@@ -314,7 +315,11 @@ export function aggregateProducts(
       costCoveredUnits: 0,
       costRelevantUnits: 0,
     };
-    const refundedUnits = row.refundLines.reduce((sum, refund) => sum + refund.quantity, 0);
+    const adjusted = lineAdjustment({ quantity: row.quantity, currentQuantity: row.currentQuantity,
+      productRevenue: numeric(row.discountedTotal),
+      refundedUnits: row.refundLines.reduce((sum, refund) => sum + refund.quantity, 0),
+      refundedValue: row.refundLines.reduce((sum, refund) => sum + numeric(refund.subtotal), 0) });
+    const refundedUnits = adjusted.units;
     const restockedUnits = row.refundLines
       .filter((refund) => refund.restocked)
       .reduce((sum, refund) => sum + refund.quantity, 0);
@@ -324,7 +329,7 @@ export function aggregateProducts(
     value.soldUnits += row.quantity;
     value.refundedUnits += refundedUnits;
     value.productRevenue += numeric(row.discountedTotal);
-    value.refunds += row.refundLines.reduce((sum, refund) => sum + numeric(refund.subtotal), 0);
+    value.refunds += adjusted.value;
     value.costRelevantUnits += costRelevantUnits;
 
     if (row.variantId && costRelevantUnits > 0) {

@@ -217,6 +217,7 @@ export async function conversionSignalHealth(storeId: string) {
           id: d.id,
           name: d.displayName,
           active: d.status === 'ACTIVE',
+          deliveryMode: (d.configJson as Record<string, unknown> | null)?.deliveryMode ?? 'LIVE',
           enhancedMatching:
             env.SHOPIFY_ENHANCED_MATCHING_APPROVED &&
             (d.configJson as Record<string, unknown> | null)?.enhancedMatching === true,

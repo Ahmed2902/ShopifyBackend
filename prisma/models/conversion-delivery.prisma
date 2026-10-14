@@ -12,6 +12,20 @@ enum ConversionDeliveryStatus {
   SKIPPED
 }
 
+model ConversionDispatchBudget {
+  storeId String @db.Uuid
+  provider AdvertisingProvider
+  nextAllowedAt DateTime @default(now())
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  @@id([storeId, provider])
+}
+
+model ConversionProviderCircuit {
+  provider AdvertisingProvider @id
+  failures Int @default(0)
+  blockedUntil DateTime?
+}
+
 /// Provider-neutral server-side conversion destination. Provider-specific secrets are encrypted
 /// and never returned through read APIs. Public configuration is stored in configJson.
 model ConversionDestination {
@@ -51,6 +65,7 @@ model ConversionDelivery {
   routingEvidence     Json?
   matchCoverage       Json?
   contentCoverage     Json?
+  purchaseFacts       Json?
   browserDispatchedAt DateTime?
   browserReasonCode   String? @db.VarChar(64)
   reasonCode          String?                  @db.VarChar(64)

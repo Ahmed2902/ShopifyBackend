@@ -11,6 +11,8 @@ export const ORDER_HISTORY_BULK_QUERY = `#graphql
           cancelledAt
           cancelReason
           sourceName
+      cartToken
+      customAttributes { key value }
           test
           currencyCode
           presentmentCurrencyCode
@@ -22,6 +24,9 @@ export const ORDER_HISTORY_BULK_QUERY = `#graphql
           currentTotalDiscountsSet { ...MoneyBagFields }
           currentTotalTaxSet { ...MoneyBagFields }
           currentTotalPriceSet { ...MoneyBagFields }
+          originalTotalPriceSet { ...MoneyBagFields }
+          edited
+          purchasingEntity { __typename }
           discountCodes
           customerJourneySummary {
             customerOrderIndex
@@ -97,6 +102,8 @@ export const ORDER_DETAILS_QUERY = `#graphql
       cancelledAt
       cancelReason
       sourceName
+      cartToken
+      customAttributes { key value }
       test
       currencyCode
       presentmentCurrencyCode
@@ -108,11 +115,16 @@ export const ORDER_DETAILS_QUERY = `#graphql
       currentTotalDiscountsSet { ...MoneyBagFields }
       currentTotalTaxSet { ...MoneyBagFields }
       currentTotalPriceSet { ...MoneyBagFields }
+          originalTotalPriceSet { ...MoneyBagFields }
+          edited
+          purchasingEntity { __typename }
       discountCodes
       customerJourneySummary {
         customerOrderIndex
         daysToConversion
         ready
+        firstVisit { occurredAt landingPage referrerUrl utmParameters { source medium campaign content term } }
+        lastVisit { occurredAt landingPage referrerUrl utmParameters { source medium campaign content term } }
       }
       refunds {
         id

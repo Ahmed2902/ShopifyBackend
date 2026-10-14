@@ -1,3 +1,4 @@
+import { retryAfterMs } from '../delivery-policy.js';
 import { assertCanonicalPurchase } from './conversion-event.validation.js';
 import { AppError } from '../../../errors/app-error.js';
 import { GoogleAdsRepository } from '../../google-ads/google-ads.repository.js';
@@ -166,7 +167,7 @@ export async function deliverGooglePurchase(
       (payload.error?.code ? String(payload.error.code) : String(response.status));
     const message = `Google Data Manager rejected conversion delivery (HTTP ${response.status})`;
     const retryable = response.status === 429 || response.status >= 500;
-    throw new ConversionProviderError(message, retryable, code);
+    throw new ConversionProviderError(message, retryable, code, retryAfterMs(response.headers.get('retry-after')));
   }
   // Validation requests are not executed and need not return an ingestion receipt.
   // Keep the receipt requirement unchanged for every live delivery.

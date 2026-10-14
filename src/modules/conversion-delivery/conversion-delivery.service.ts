@@ -1,7 +1,9 @@
 import { requireDevelopmentStore } from './purchase-test.service.js';
 import { decryptSecret } from '../integrations/integration.utils.js';
 import { storefrontEventKey } from './funnel.repository.js';
-import { prepareConversionContents } from './conversion-content.js';
+import { purchaseEligibility, readPurchaseFacts, PURCHASE_POLICY } from './purchase-policy.js';
+import { deliveryDeadline, retryDelayMs, MAX_BROWSER_CLOCK_LEAD_MS } from './delivery-policy.js';
+import { freezeLegacyPurchaseFacts, prepareConversionContents } from './conversion-content.js';
 import { prisma } from '../../lib/prisma.js';
 import { env } from '../../config/env.js';
 import { enrichConversionSignal } from './signal-enrichment.service.js';
@@ -38,13 +40,7 @@ const MAX_ENQUEUE_BATCH = 1_000;
 const MAX_DELIVERY_BATCH = 100;
 const MAX_ATTEMPTS = 8;
 const CLAIM_STALE_MS = 10 * 60_000;
-const RETRY_BASE_MS = 60_000;
-const RETRY_MAX_MS = 6 * 60 * 60_000;
 const BILLING_RETRY_MS = 6 * 60 * 60_000;
-
-function retryDelayMs(attempt: number) {
-  return Math.min(RETRY_BASE_MS * 2 ** Math.min(Math.max(attempt - 1, 0), 8), RETRY_MAX_MS);
-}
 
 function attributionFor(candidate: PurchaseCandidate, provider: AdvertisingProvider) {
   if (provider === 'META') {
@@ -161,6 +157,14 @@ export class ConversionDeliveryService {
     let eligible = 0;
     let enqueued = 0;
     for (const candidate of candidates) {
+      const purchaseFacts = readPurchaseFacts(candidate.purchaseFacts);
+      const reason = purchaseEligibility({ sourceName: candidate.sourceName === undefined ? 'web' : candidate.sourceName,
+        isB2B: candidate.isB2B === true, cancelledAt: null, isTest: false,
+        checkoutLinked: Boolean(candidate.sourceEventId || candidate.sourceName === undefined),
+        installedAt: candidate.sourceGenerationAt ?? new Date(0),
+        facts: purchaseFacts ?? readPurchaseFacts({ version: 1, policy: PURCHASE_POLICY,
+          eventAt: candidate.eventAt.toISOString(), value: candidate.value, currencyCode: candidate.currencyCode,
+          items: [], truncated: false }) });
       for (const destination of destinationsByStore.get(candidate.storeId) ?? []) {
         if (!candidate.routing?.eligibleProviders.includes(destination.provider)) continue;
         if (!(await isAllowed(candidate.storeId, destination.provider))) continue;
@@ -178,6 +182,8 @@ export class ConversionDeliveryService {
           destinationId: destination.id,
           provider: destination.provider,
           routingEvidence: candidate.routing,
+          ...(purchaseFacts ? { purchaseFacts } : {}),
+          ...((reason || config.deliveryMode === 'SHADOW') ? { skipReason: reason ?? 'SHADOW_MODE' } : {}),
           eventKey: storefrontEventKey(candidate.storeId, `purchase:${candidate.shopifyOrderId}`),
           sourceOrderId: candidate.orderId,
           sourceEventId: candidate.sourceEventId,
@@ -200,10 +206,13 @@ export class ConversionDeliveryService {
   }
 
   async processDue(limit = 25) {
+    if (!env.CONVERSION_DELIVERY_ENABLED) return { claimed: 0, delivered: 0, retrying: 0, dead: 0 };
     const bounded = Math.min(Math.max(1, Math.trunc(limit)), MAX_DELIVERY_BATCH);
     const now = this.now();
+    await this.repository.expirePending?.(now);
     await this.repository.recoverStaleClaims(new Date(now.getTime() - CLAIM_STALE_MS));
     const claims: DeliveryClaim[] = await this.repository.claimDue(bounded, now);
+    await freezeLegacyPurchaseFacts(claims);
     await prepareConversionContents(claims.filter((c) => Boolean(c.sourceEventId)));
     const enrichmentCache = new Map<
       string,
@@ -261,6 +270,15 @@ export class ConversionDeliveryService {
               'TRACKING_TEST_CODE_REQUIRED',
             );
         }
+        if (claim.eventAt.getTime() > this.now().getTime() + MAX_BROWSER_CLOCK_LEAD_MS)
+          throw new ConversionProviderError('Purchase timestamp is in the future', false, 'EVENT_IN_FUTURE');
+        if (claim.eventAt > this.now()) {
+          await this.repository.pauseForDispatch(claim.id, claim.eventAt, 'EVENT_CLOCK_WAIT');
+          retrying += 1;
+          continue;
+        }
+        if (deliveryDeadline(claim.provider, claim.eventAt) <= this.now())
+          throw new ConversionProviderError('The event exceeded delivery retention', false, 'EVENT_EXPIRED');
         // Avoid preparing credentials when retained permission is already absent.
         if (
           !(await this.repository.hasAdvertisingConsent({
@@ -272,7 +290,7 @@ export class ConversionDeliveryService {
           dead += 1;
           continue;
         }
-        if (claim.eventAt.getTime() < this.now().getTime() - 7 * 86400_000) {
+        if (deliveryDeadline(claim.provider, claim.eventAt) <= this.now()) {
           throw new ConversionProviderError(
             'The event exceeded Metrico delivery retention',
             false,
@@ -333,6 +351,7 @@ export class ConversionDeliveryService {
             data: { contentCoverage: claim.contentFacts },
           });
         const result = await this.deliver(claim);
+        await this.repository.recordProviderOutcome?.(claim.provider, false).catch(() => undefined);
         if (claim.isTestDelivery && claim.provider === 'GOOGLE_ADS') {
           await this.repository.markValidated(
             claim.id,
@@ -359,6 +378,17 @@ export class ConversionDeliveryService {
           await this.repository.linkCustomerIdentity(claim);
         delivered += 1;
       } catch (error) {
+        if (error instanceof ConversionProviderError &&
+          ['PROVIDER_CIRCUIT_OPEN', 'MERCHANT_DISPATCH_LIMIT'].includes(error.providerCode ?? '')) {
+          await this.repository.pauseForDispatch(claim.id,
+            new Date(Math.min(deliveryDeadline(claim.provider, claim.eventAt).getTime(), this.now().getTime() + (error.retryAfterMs ?? 1000))),
+            error.providerCode!);
+          retrying++;
+          continue;
+        }
+        if (error instanceof ConversionProviderError && error.retryable &&
+          (/NETWORK|TIMEOUT/.test(error.providerCode ?? '') || Number(error.providerCode) >= 500 && Number(error.providerCode) <= 599))
+          await this.repository.recordProviderOutcome?.(claim.provider, true).catch(() => undefined);
         // Missing evidence can be temporary while a browser pairing or checkout
         // observation is still arriving. This bounded wait does not consume API
         // retry attempts or resurrect historical failed deliveries.
@@ -408,6 +438,7 @@ export class ConversionDeliveryService {
           error instanceof ConversionProviderError &&
           [
             'CONVERSION_CONNECTION_REAUTH_REQUIRED',
+            'CONVERSION_SHARING_PAUSED',
             'META_CAPI_CONNECTION_INACTIVE',
             'META_CAPI_PERMISSION_REQUIRED',
             'META_CAPI_REAUTH_REQUIRED',
@@ -438,7 +469,9 @@ export class ConversionDeliveryService {
         const isDead = explicitlyPermanent || attempt >= MAX_ATTEMPTS;
         const nextAttemptAt = isDead
           ? this.now()
-          : new Date(this.now().getTime() + retryDelayMs(attempt));
+          : new Date(Math.min(deliveryDeadline(claim.provider, claim.eventAt).getTime(),
+            this.now().getTime() + retryDelayMs(attempt,
+              error instanceof ConversionProviderError ? error.retryAfterMs : undefined)));
         const code =
           error instanceof ConversionProviderError && error.providerCode
             ? ` [${error.providerCode}]`
@@ -459,6 +492,8 @@ export class ConversionDeliveryService {
 
   private deliver(claim: DeliveryClaim) {
     const beforeSend = async () => {
+      if (!env.CONVERSION_DELIVERY_ENABLED)
+        throw new ConversionProviderError('Sharing is paused', true, 'CONVERSION_SHARING_PAUSED');
       try {
         await this.billing.requireAdProviderReadOnly(
           claim.storeId,
@@ -476,6 +511,7 @@ export class ConversionDeliveryService {
           );
         await requireDevelopmentStore(claim.storeId);
       }
+      await this.repository.acquireDispatch?.(claim.storeId, claim.provider);
       if (
         !(await this.repository.hasAdvertisingConsent({ ...claim, reportConnectionFailure: true }))
       ) {

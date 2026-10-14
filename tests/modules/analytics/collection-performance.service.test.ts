@@ -27,6 +27,13 @@ describe('collection performance', () => {
     expect(result.daily[0]).toMatchObject({ date: '2026-10-12', netProductRevenue: 30 });
     expect(result.topProducts[0]).toMatchObject({ product: { id: 'product-a', title: 'Tee' }, netRevenue: 30 });
   });
+  it('nets a removed item before refund and does not deduct it again after its refund', async () => {
+    const row = { ...line('returned', '2026-10-11T22:00:00Z', 40), currentQuantity: 1, refundLines: [] };
+    const h = setup([row]);
+    expect((await h.service.collectionPerformance(store, windows, 'collection-a')).current.netProductRevenue).toBe(20);
+    h.repository.getCommerceRows.mockResolvedValue([{ ...row, refundLines: [{ quantity: 1, subtotal: 20 }] }]);
+    expect((await h.service.collectionPerformance(store, windows, 'collection-a')).current.netProductRevenue).toBe(20);
+  });
   it('returns empty metrics without reading orders for an empty collection', async () => {
     const { repository, service } = setup();
     repository.getCollection.mockResolvedValue({ id: 'collection-a', title: 'Empty', products: [] });

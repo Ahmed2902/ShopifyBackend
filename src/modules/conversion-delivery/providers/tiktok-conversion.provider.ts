@@ -1,3 +1,4 @@
+import { retryAfterMs } from '../delivery-policy.js';
 import { tiktokProperties } from '../conversion-content.js';
 import { assertCanonicalPurchase } from './conversion-event.validation.js';
 import { tiktokUserData, sha256 } from '../matching.js';
@@ -187,7 +188,7 @@ export async function deliverTikTokPurchase(
     const code = payload.code !== undefined ? String(payload.code) : String(response.status);
     const message = `TikTok rejected conversion delivery (HTTP ${response.status})`;
     const retryable = response.status === 429 || response.status >= 500;
-    throw new ConversionProviderError(message, retryable, code);
+    throw new ConversionProviderError(message, retryable, code, retryAfterMs(response.headers.get('retry-after')));
   }
 
   return { providerRequestId: payload.request_id ?? null };

@@ -24,9 +24,10 @@ export async function enqueueFunnelEvents(limit = 200) {
         provider: 'META' | 'TIKTOK';
         generation: Date;
         receivedAt: Date;
+        deliveryMode: string | null;
       }>
     >(Prisma.sql`
-    SELECT e."id", e."storeId", e."receivedAt", dest."id" AS "destinationId", dest."provider", conn."installedAt" AS "generation"
+    SELECT e."id", e."storeId", e."receivedAt", dest."id" AS "destinationId", dest."provider", conn."installedAt" AS "generation", dest."configJson"->>'deliveryMode' AS "deliveryMode"
     FROM "StorefrontEvent" e
     JOIN "ShopifyConnection" conn ON conn."storeId" = e."storeId" AND conn."status" = 'ACTIVE'
     JOIN "ConversionDestination" dest ON dest."storeId" = e."storeId" AND dest."status" = 'ACTIVE'
@@ -110,6 +111,7 @@ export async function enqueueFunnelEvents(limit = 200) {
           attributionEventAt: event.eventAt,
           eventSourceUrl: event.pageUrl,
           nextAttemptAt: new Date(Math.max(Date.now(), event.receivedAt.getTime() + 15_000)),
+          ...(candidate.deliveryMode === 'SHADOW' ? { status: 'SKIPPED', reasonCode: 'SHADOW_MODE' } : {}),
         },
       ],
       skipDuplicates: true,

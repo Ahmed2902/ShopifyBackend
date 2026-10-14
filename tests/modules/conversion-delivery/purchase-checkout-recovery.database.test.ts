@@ -40,6 +40,7 @@ async function fixture() {
   const proof = checkoutProofHash(store.id, 'real-checkout-token');
   const order = await prisma.order.create({
     data: {
+      sourceName: 'web',
       storeId: store.id,
       shopifyOrderId: 'gid://shopify/Order/1001',
       name: '#1001',

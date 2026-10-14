@@ -178,6 +178,7 @@ export class CommerceAnalyticsReadRepository {
           li."productId",
           li."variantId",
           li."quantity",
+          li."currentQuantity",
           COALESCE(li."discountedTotal", 0) AS product_revenue,
           COALESCE(o."processedAt", o."shopifyCreatedAt") AS order_at,
           CASE
@@ -224,8 +225,9 @@ export class CommerceAnalyticsReadRepository {
       enriched_lines AS (
         SELECT
           scoped.*,
-          COALESCE(refunds.refunded_units, 0) AS refunded_units,
-          COALESCE(refunds.refunds, 0) AS refunds,
+          LEAST(scoped."quantity", GREATEST(COALESCE(refunds.refunded_units, 0), scoped."quantity" - scoped."currentQuantity", 0)) AS refunded_units,
+          LEAST(scoped.product_revenue, GREATEST(COALESCE(refunds.refunds, 0),
+            scoped.product_revenue * GREATEST(scoped."quantity" - scoped."currentQuantity", 0) / NULLIF(scoped."quantity", 0), 0)) AS refunds,
           GREATEST(scoped."quantity" - COALESCE(refunds.restocked_units, 0), 0) AS cost_relevant_units,
           unit_cost.amount AS unit_cost
         FROM scoped_lines scoped

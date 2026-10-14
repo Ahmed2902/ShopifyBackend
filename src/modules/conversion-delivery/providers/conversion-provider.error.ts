@@ -3,6 +3,7 @@ export class ConversionProviderError extends Error {
     message: string,
     readonly retryable: boolean,
     readonly providerCode?: string,
+    readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = 'ConversionProviderError';
@@ -17,7 +18,7 @@ export class ConversionConsentWithdrawnError extends ConversionProviderError {
 }
 
 export function providerErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
+  if (error instanceof ConversionProviderError) return error.message;
   return 'Unknown conversion provider error';
 }
 

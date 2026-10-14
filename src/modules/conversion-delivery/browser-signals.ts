@@ -1,3 +1,4 @@
+import { env } from '../../config/env.js';
 import { loadRoutingSummaries, routingKey } from './source-routing.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
@@ -66,6 +67,7 @@ export async function permittedBrowserPairs(
     JOIN "ConversionDestination" d ON d."storeId" = e."storeId" AND d.provider = 'META' AND d.status = 'ACTIVE'
       AND d."configJson"->>'browserEvents' = 'true' AND d."configJson"->>'funnelEvents' = 'true'
       AND d."configJson"->>'overlapPolicy' = 'STRIDE_EXCLUSIVE'
+      AND COALESCE(d."configJson"->>'deliveryMode', 'LIVE') = 'LIVE'
     LEFT JOIN "MetaConnection" mc ON mc."storeId" = e."storeId"
     WHERE e."storeId" = ${storeId}::uuid AND e.id IN (${Prisma.join(eventIds.map((id) => Prisma.sql`${id}::uuid`))})
       AND d.id IN (${Prisma.join(destinationIds.map((id) => Prisma.sql`${id}::uuid`))})
@@ -103,6 +105,7 @@ export async function permittedBrowserPairs(
 export async function authorizeBrowserSignals(input: z.infer<typeof browserSignalsSchema>) {
   const now = new Date();
   const empty = () => ({ dispatches: [], expiresAt: now.toISOString() });
+  if (!env.CONVERSION_DELIVERY_ENABLED) return empty();
   const installation = await prisma.pixelInstallation.findUnique({
     where: { id: input.installationId },
   });

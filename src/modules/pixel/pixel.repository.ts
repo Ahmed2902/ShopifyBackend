@@ -327,6 +327,7 @@ export class PixelRepository {
   }
 
   async cleanupMatchEvidence(now: Date, limit: number) {
+    await prisma.$executeRaw`UPDATE "Order" SET "journeyTouches" = NULL, "recoveryEventId" = NULL WHERE id IN (SELECT id FROM "Order" WHERE "matchEvidenceExpiresAt" <= ${now} AND ("journeyTouches" IS NOT NULL OR "recoveryEventId" IS NOT NULL) ORDER BY "matchEvidenceExpiresAt" LIMIT ${limit})`;
     await prisma.$executeRaw`UPDATE "ConversionDelivery" SET "routingEvidence" = NULL WHERE id IN (SELECT d.id FROM "ConversionDelivery" d LEFT JOIN "StorefrontEvent" e ON e.id = d."sourceEventId" AND e."storeId" = d."storeId" WHERE d."routingEvidence" IS NOT NULL AND (e.id IS NULL OR e."retentionExpiresAt" <= ${now} OR d."eventAt" < ${new Date(now.getTime() - 30 * 86400_000)}) LIMIT ${limit})`;
     await prisma.$executeRaw`UPDATE "ConversionDelivery" SET "testCodeCiphertext" = NULL WHERE "id" IN (SELECT "id" FROM "ConversionDelivery" WHERE "testExpiresAt" <= ${now} AND "testCodeCiphertext" IS NOT NULL LIMIT ${limit})`;
     await prisma.$executeRaw`UPDATE "StorefrontEvent" SET "browserMatchCiphertext" = NULL, "browserMatchExpiresAt" = NULL WHERE "id" IN (SELECT "id" FROM "StorefrontEvent" WHERE "browserMatchExpiresAt" <= ${now} LIMIT ${limit})`;

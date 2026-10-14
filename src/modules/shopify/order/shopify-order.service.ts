@@ -136,6 +136,19 @@ export class ShopifyOrderService {
       }
     }
 
+    // Journey readiness can change without a new order update. Retry a bounded recent cohort.
+    const pending = await this.repository.findPendingJourneyOrders?.(input.storeId) ?? [];
+    for (const order of pending) {
+      const reconciled = await this.reconcileOrder(input, order.shopifyOrderId);
+      result.ordersScanned += 1;
+      if (!reconciled.found || !reconciled.result) continue;
+      result.ordersReconciled += 1;
+      result.recordsRead += reconciled.result.recordsRead;
+      result.recordsWritten += reconciled.result.recordsWritten;
+      for (const key of ['orders', 'lineItems', 'refunds', 'refundLineItems'] as const)
+        result.breakdown[key] += reconciled.result.breakdown[key];
+    }
+
     return result;
   }
 
@@ -149,14 +162,22 @@ export class ShopifyOrderService {
     const lineItems: ShopifyImportedOrder['lineItems'] = [];
 
     while (true) {
-      const data = await this.apiService.requestAdminGraphql<ShopifyOrderQueryData>({
+      const request = {
         shop: input.shop,
         accessToken: input.accessToken,
         apiVersion: input.apiVersion,
         connectionId: input.connectionId,
         query: input.apiVersion >= '2026-07' ? ORDER_DETAILS_QUERY : ORDER_DETAILS_QUERY.replace('      checkoutToken\n', ''),
         variables: { id: orderId, first: DETAIL_PAGE_SIZE, after: cursor },
-      });
+      };
+      let data: ShopifyOrderQueryData;
+      try { data = await this.apiService.requestAdminGraphql<ShopifyOrderQueryData>(request); }
+      catch (error) {
+        if (!(error instanceof AppError) || error.code !== 'SHOPIFY_GRAPHQL_FAILED') throw error;
+        // Optional visit fields must not prevent canonical order intake when unavailable.
+        data = await this.apiService.requestAdminGraphql<ShopifyOrderQueryData>({ ...request,
+          query: request.query.replace(/\s*(?:firstVisit|lastVisit)\s*\{[^}]+\{[^}]+\}\s*\}/g, '') });
+      }
       if (!data.order) return { found: false };
 
       const parsed = shopifyOrderDetailsSchema.safeParse(data.order);

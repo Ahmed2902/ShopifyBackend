@@ -9,6 +9,7 @@ export type RoutingInput = {
   sourceEventId: string;
   eventAt: Date;
   sourceGenerationAt: Date;
+  journeyTouches?: RoutingTouch[];
 };
 export type RoutingTouch = AcquisitionEvidence & {
   eventAt: Date | string;
@@ -175,8 +176,8 @@ export async function loadRoutingSummaries(inputs: RoutingInput[]) {
     eventAt: x.eventAt.toISOString(),
     generation: x.sourceGenerationAt.toISOString(),
   }));
-  const rows = await prisma.$queryRaw<Array<{ key: string; touches: RoutingTouch[] }>>(Prisma.sql`
-    SELECT i.key, COALESCE(jsonb_agg(to_jsonb(t) - 'receivedAt' ORDER BY t."eventAt", t."receivedAt") FILTER (WHERE t."eventAt" IS NOT NULL), '[]'::jsonb) AS touches
+  const rows = await prisma.$queryRaw<Array<{ key: string; touches: RoutingTouch[]; revokedBefore: Date | null }>>(Prisma.sql`
+    SELECT i.key, (SELECT MAX(w."revokedBefore") FROM "StorefrontConsentWithdrawal" w WHERE w."storeId" = source."storeId" AND (w."scopeKey" = 'session:' || source."sessionId" OR w."scopeKey" = 'visitor:' || source."anonymousVisitorId")) AS "revokedBefore", COALESCE(jsonb_agg(to_jsonb(t) - 'receivedAt' ORDER BY t."eventAt", t."receivedAt") FILTER (WHERE t."eventAt" IS NOT NULL), '[]'::jsonb) AS touches
     FROM jsonb_to_recordset(${JSON.stringify(payload)}::jsonb) AS i(key text, "storeId" uuid, "sourceEventId" uuid, "eventAt" timestamptz, generation timestamptz)
     JOIN "StorefrontEvent" source ON source.id = i."sourceEventId" AND source."storeId" = i."storeId"
     LEFT JOIN LATERAL (
@@ -192,12 +193,13 @@ export async function loadRoutingSummaries(inputs: RoutingInput[]) {
       GROUP BY e."metaClickId", e."tiktokClickId", e."googleClickId", e."googleBraidedClickId", e."googleWebBraidedClickId", e."utmSource", e."utmMedium", e."utmCampaign", e."utmContent", e."metaCampaignExternalId", e."metaAdSetExternalId", e."metaAdExternalId", e."tiktokCampaignExternalId", e."tiktokAdGroupExternalId", e."tiktokAdExternalId", e."tiktokCreativeExternalId"
       HAVING MIN(e."eventAt") >= GREATEST(i.generation, i."eventAt" - INTERVAL '30 days')
       ORDER BY MIN(e."eventAt"), MIN(e."receivedAt") LIMIT 1001
-    ) t ON TRUE GROUP BY i.key`);
+    ) t ON TRUE GROUP BY i.key, source."storeId", source."sessionId", source."anonymousVisitorId"`);
   const byKey = new Map(rows.map((r) => [r.key, r.touches]));
+  const revoked = new Map(rows.map(r => [r.key, r.revokedBefore]));
   for (const input of unique)
     result.set(
       routingKey(input),
-      summarizeRouting(byKey.get(routingKey(input)) ?? [], input.eventAt, input.sourceGenerationAt),
+      summarizeRouting([...(byKey.get(routingKey(input)) ?? []), ...(input.journeyTouches ?? []).filter(t => !revoked.get(routingKey(input)) || new Date(t.eventAt) > new Date(revoked.get(routingKey(input))!))], input.eventAt, input.sourceGenerationAt),
     );
   return result;
 }

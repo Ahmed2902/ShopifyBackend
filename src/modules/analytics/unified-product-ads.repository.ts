@@ -250,6 +250,7 @@ export class UnifiedProductAdsRepository {
         SELECT
           line_item."id",
           line_item."productId" AS product_id,
+          line_item."quantity", line_item."currentQuantity",
           COALESCE(line_item."discountedTotal", 0) AS revenue
         FROM "OrderLineItem" line_item
         INNER JOIN "Order" orders ON orders."id" = line_item."orderId"
@@ -272,7 +273,8 @@ export class UnifiedProductAdsRepository {
         SELECT
           current_line.product_id,
           GREATEST(
-            COALESCE(SUM(current_line.revenue), 0) - COALESCE(SUM(current_refunds.refunds), 0),
+            COALESCE(SUM(current_line.revenue - LEAST(current_line.revenue, GREATEST(COALESCE(current_refunds.refunds, 0),
+              current_line.revenue * GREATEST(current_line."quantity" - current_line."currentQuantity", 0) / NULLIF(current_line."quantity", 0), 0))), 0),
             0
           ) AS net_revenue
         FROM current_lines current_line

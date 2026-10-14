@@ -10,11 +10,15 @@ import { pixelBehaviorController } from './behavior/pixel-behavior.controller.js
 import { pixelEntityDetailController } from './behavior/pixel-entity-detail.controller.js';
 import { pixelJourneyController } from './journey/pixel-journey.controller.js';
 import { pixelHealthController } from './pixel-health.controller.js';
-import { pixelController } from './pixel.controller.js';
+import { pixelController, parseCollectorBody } from './pixel.controller.js';
+import { authorizeCartRecovery, cartRecoverySchema } from '../conversion-delivery/cart-recovery.js';
 
 export const pixelPublicRouter = Router();
 pixelPublicRouter.post('/events', pixelController.ingest);
 pixelPublicRouter.post('/events/browser', pixelController.browserSignals);
+pixelPublicRouter.post('/events/cart', async (req, res) => {
+  res.json(await authorizeCartRecovery(cartRecoverySchema.parse(parseCollectorBody(req.body))));
+});
 
 export const pixelStoreRouter = Router({ mergeParams: true });
 pixelStoreRouter.use(requireAuth, requireStoreMembership);

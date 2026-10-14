@@ -423,7 +423,7 @@ register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
                   installationId,
                   collectorToken,
                   collectorUrl,
-                  eventIds: eligible.map((event) => event.eventId),
+                  eventIds: eligible.slice(-20).map((event) => event.eventId),
                 }),
               );
             }

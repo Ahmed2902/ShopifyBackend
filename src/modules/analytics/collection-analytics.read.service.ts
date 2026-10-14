@@ -95,7 +95,7 @@ export class CollectionAnalyticsReadService {
           page."id" AS collection_id,
           line."id" AS line_id,
           line."orderId" AS order_id,
-          line."quantity",
+          line."quantity", line."currentQuantity",
           COALESCE(line."discountedTotal", 0) AS product_revenue,
           CASE
             WHEN (
@@ -143,9 +143,9 @@ export class CollectionAnalyticsReadService {
           scoped.period,
           COUNT(DISTINCT scoped.order_id) AS order_count,
           COALESCE(SUM(scoped."quantity"), 0) AS sold_units,
-          COALESCE(SUM(refunds.refunded_units), 0) AS refunded_units,
+          COALESCE(SUM(LEAST(scoped."quantity", GREATEST(COALESCE(refunds.refunded_units, 0), scoped."quantity" - scoped."currentQuantity", 0))), 0) AS refunded_units,
           COALESCE(SUM(scoped.product_revenue), 0) AS product_revenue,
-          COALESCE(SUM(refunds.refunds), 0) AS refunds
+          COALESCE(SUM(LEAST(scoped.product_revenue, GREATEST(COALESCE(refunds.refunds, 0), scoped.product_revenue * GREATEST(scoped."quantity" - scoped."currentQuantity", 0) / NULLIF(scoped."quantity", 0), 0))), 0) AS refunds
         FROM scoped_lines scoped
         LEFT JOIN refund_totals refunds ON refunds.line_id = scoped.line_id
         GROUP BY scoped.collection_id, scoped.period

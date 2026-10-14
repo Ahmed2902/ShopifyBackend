@@ -10,7 +10,7 @@ import { logger } from '../../lib/logger.js';
 import { pixelDebugBatchSchema, pixelIngestBatchSchema } from './pixel.schema.js';
 import { pixelService, type PixelService } from './pixel.service.js';
 
-function parseCollectorBody(body: unknown): unknown {
+export function parseCollectorBody(body: unknown): unknown {
   if (typeof body !== 'string') return body;
   try {
     return JSON.parse(body) as unknown;

@@ -12,6 +12,8 @@
   let sdk;
   let ownedFbq;
   let sdkScript;
+  let lastCartWriteAt = 0;
+  let lastCartToken;
   const initialized = new Set();
   const submitted = new Set();
   function permissionsGranted() {
@@ -42,7 +44,7 @@
       )
         return false;
       const allowed =
-        /^(?:utm_(?:source|medium|campaign|content|term)|fbclid|gclid|gbraid|wbraid|ttclid|stride_meta_(?:campaign|adset|ad)_id)$/;
+        /^(?:utm_(?:source|medium|campaign|content|term|id)|fbclid|gclid|gbraid|wbraid|ttclid|stride_meta_(?:campaign|adset|ad)_id|metrico_tiktok_(?:campaign|adgroup|ad|creative)_id)$/;
       for (const [name, value] of url.searchParams) {
         if (name === 'variant' && /^\d+$/.test(value)) continue;
         if (
@@ -78,6 +80,8 @@
     revision++;
     clearBridge();
     if (!permissionsGranted()) {
+      void fetch('/cart/update.js', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ attributes: { _metrico_touch: '' } }) }).catch(() => {});
       revokedOnPage = true;
       if (window.__strideOwnsMetaSdk && ownedFbq) {
         ownedFbq('consent', 'revoke');
@@ -291,6 +295,7 @@
           await authorize(batch, undefined, 'BROWSER_CONTEXT_BLOCKED');
           continue;
         }
+        await persistCartReceipt(batch, epoch).catch(() => {});
         let receipt = await authorize(batch);
         if (!receipt.dispatches?.length || !permitted() || epoch !== revision) continue;
         if (!safePageContext()) {
@@ -359,6 +364,30 @@
       busy = false;
       if (active) setTimeout(() => void tick(), 500);
     }
+  }
+  async function persistCartReceipt(batch, epoch) {
+    if (!permitted() || epoch !== revision) return;
+    const endpoint = new URL(batch.collectorUrl);
+    if (!/(^|\.)metrico\.live$/.test(endpoint.hostname) && endpoint.hostname !== 'localhost') return;
+    if (endpoint.protocol !== 'https:' && endpoint.hostname !== 'localhost') return;
+    endpoint.pathname = endpoint.pathname.replace(/\/$/, '') + '/cart';
+    endpoint.search = '';
+    const cartResponse = await fetch('/cart.js', { credentials: 'same-origin' });
+    if (!cartResponse.ok) return;
+    const cart = await cartResponse.json();
+    if (!permitted() || epoch !== revision || typeof cart.token !== 'string') return;
+    if (cart.attributes?._metrico_touch && cart.token === lastCartToken && Date.now() - lastCartWriteAt < 60000) return;
+    const response = await fetch(endpoint.toString(), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ installationId: batch.installationId, collectorToken: batch.collectorToken,
+        eventIds: batch.eventIds.slice(-20), cartToken: cart.token }) });
+    if (!response.ok || !permitted() || epoch !== revision) return;
+    const result = await response.json();
+    if (typeof result.receipt !== 'string' || result.receipt === cart.attributes?._metrico_touch ||
+      !permitted() || epoch !== revision) return;
+    await fetch('/cart/update.js', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ attributes: { _metrico_touch: result.receipt } }) });
+    lastCartWriteAt = Date.now();
+    lastCartToken = cart.token;
   }
   if (window.Shopify?.loadFeatures)
     window.Shopify.loadFeatures([{ name: 'consent-tracking-api', version: '0.1' }], (error) => {
