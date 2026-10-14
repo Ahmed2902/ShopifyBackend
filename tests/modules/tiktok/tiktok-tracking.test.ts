@@ -6,11 +6,8 @@ import {
 import { TikTokTrackingService } from '../../../src/modules/tiktok/tracking/tiktok-tracking.service.js';
 import type { TikTokApiService } from '../../../src/modules/tiktok/shared/tiktok-api.service.js';
 import type { TikTokAuthService } from '../../../src/modules/tiktok/shared/tiktok-auth.service.js';
-import type {
-  TikTokTrackingRepository} from '../../../src/modules/tiktok/tracking/tiktok-tracking.repository.js';
-import {
-  type TikTokTrackingAd,
-} from '../../../src/modules/tiktok/tracking/tiktok-tracking.repository.js';
+import type { TikTokTrackingRepository } from '../../../src/modules/tiktok/tracking/tiktok-tracking.repository.js';
+import { type TikTokTrackingAd } from '../../../src/modules/tiktok/tracking/tiktok-tracking.repository.js';
 import { tiktokTrackingApplySchema } from '../../../src/modules/tiktok/tracking/tiktok-tracking.schema.js';
 import type { TikTokApiContext } from '../../../src/modules/tiktok/tiktok.types.js';
 const context = {
@@ -271,4 +268,14 @@ it('withholds conflicting TikTok link IDs and Meta or organic evidence', () => {
         .eligibleProviders,
     ).toEqual([]);
   }
+});
+
+it('audits normalized Smart+ URL lists retained by hierarchy sync', () => {
+  const smartRaw = {
+    smart_plus_ad_id: '44',
+    campaign_id: '22',
+    adgroup_id: '33',
+    landing_page_url_list: ['https://shop.example/a'],
+  };
+  expect(trackingPlan({ ...ad, rawJson: smartRaw } as TikTokTrackingAd, smartRaw).smart).toBe(true);
 });

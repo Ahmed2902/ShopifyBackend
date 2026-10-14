@@ -42,6 +42,7 @@ export function trackingPlan(ad: TikTokTrackingAd, raw: unknown) {
   const configuration = asRecord(r.ad_configuration);
   const originalUrls = smart
     ? (Array.isArray(r.landing_page_url_list) ? r.landing_page_url_list : []).map((v) => {
+        if (typeof v === 'string') return cleanUrl(v);
         const item = asRecord(v);
         if (Object.keys(item).some((k) => k !== 'landing_page_url'))
           throw new AppError(
