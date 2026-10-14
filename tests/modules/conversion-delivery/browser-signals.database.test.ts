@@ -78,6 +78,44 @@ async function fixture(eventId = randomUUID()) {
   return { store, installation, destination, event, generation, input };
 }
 database('browser/server sharing against migrated PostgreSQL', () => {
+  it('does not let clock lead bypass withdrawal or a new installation generation', async () => {
+    const f = await fixture();
+    await prisma.storefrontEvent.update({ where: { id: f.event.id }, data: { eventAt: new Date(Date.now() + 3000) } });
+    expect((await authorizeBrowserSignals(f.input)).dispatches).toHaveLength(1);
+    await new PixelRepository().withdrawAdvertisingConsent(f.store.id, { anonymousVisitorId: f.event.anonymousVisitorId! }, new Date(), new Date(Date.now() + 86400_000));
+    await prisma.storefrontEvent.update({ where: { id: f.event.id }, data: { adSharingAllowed: true } });
+    expect((await authorizeBrowserSignals(f.input)).dispatches).toEqual([]);
+    const other = await fixture();
+    await prisma.storefrontEvent.update({ where: { id: other.event.id }, data: { eventAt: new Date(Date.now() + 3000) } });
+    await prisma.shopifyConnection.update({ where: { storeId: other.store.id }, data: { installedAt: new Date() } });
+    expect((await authorizeBrowserSignals(other.input)).dispatches).toEqual([]);
+  });
+  it('allows a small browser clock lead without allowing stale receipts or far-future events', async () => {
+    const f = await fixture();
+    await prisma.storefrontEvent.update({
+      where: { id: f.event.id },
+      data: { eventAt: new Date(Date.now() + 3000) },
+    });
+    const response = await authorizeBrowserSignals(f.input);
+    expect(response.dispatches).toHaveLength(1);
+    expect((await authorizeBrowserSignals(f.input)).dispatches[0]!.eventId).toBe(
+      response.dispatches[0]!.eventId,
+    );
+    await prisma.storefrontEvent.update({
+      where: { id: f.event.id },
+      data: { eventAt: new Date(Date.now() + 30000) },
+    });
+    expect((await authorizeBrowserSignals(f.input)).dispatches).toEqual([]);
+    await prisma.storefrontEvent.update({
+      where: { id: f.event.id },
+      data: { eventAt: new Date(Date.now() + 3000), receivedAt: new Date(Date.now() - 61000) },
+    });
+    expect(
+      (await permittedBrowserPairs(f.store.id, f.generation, [f.event.id], [f.destination.id]))
+        .size,
+    ).toBe(0);
+    expect((await authorizeBrowserSignals(f.input)).dispatches).toEqual([]);
+  });
   it('keeps IDs stable across retries, isolates stores, stores an actual SDK cookie encrypted and reports SDK invocation', async () => {
     const first = await fixture();
     const other = await fixture(first.event.eventId);

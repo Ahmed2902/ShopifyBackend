@@ -39,6 +39,8 @@ export const META_BROWSER_NAMES: Record<string, string> = {
   PRODUCT_VIEW: 'ViewContent',
   ADD_TO_CART: 'AddToCart',
 };
+// Browser clocks can lead collector clocks slightly. Receipt time remains server-owned.
+const MAX_BROWSER_CLOCK_LEAD_MS = 5_000;
 const pairKey = (eventId: string, destinationId: string) =>
   JSON.stringify([eventId, destinationId]);
 
@@ -58,6 +60,7 @@ export async function permittedBrowserPairs(
     FROM "StorefrontEvent" e
     JOIN "ShopifyConnection" c ON c."storeId" = e."storeId" AND c."status" = 'ACTIVE'
       AND c."installedAt" = ${generation} AND e."eventAt" >= c."installedAt"
+      AND e."receivedAt" >= c."installedAt"
       AND 'read_customer_events' = ANY(c.scopes)
     JOIN "PixelInstallation" pi ON pi."storeId" = e."storeId" AND pi.status = 'ACTIVE'
     JOIN "ConversionDestination" d ON d."storeId" = e."storeId" AND d.provider = 'META' AND d.status = 'ACTIVE'
@@ -67,7 +70,9 @@ export async function permittedBrowserPairs(
     WHERE e."storeId" = ${storeId}::uuid AND e.id IN (${Prisma.join(eventIds.map((id) => Prisma.sql`${id}::uuid`))})
       AND d.id IN (${Prisma.join(destinationIds.map((id) => Prisma.sql`${id}::uuid`))})
       AND e."eventName" IN ('PAGE_VIEW', 'PRODUCT_VIEW', 'ADD_TO_CART')
-      AND e."eventAt" BETWEEN NOW() - INTERVAL '60 seconds' AND NOW() AND e."retentionExpiresAt" > NOW()
+      AND e."eventAt" BETWEEN NOW() - INTERVAL '60 seconds' AND NOW() + INTERVAL '5 seconds'
+      AND e."receivedAt" BETWEEN NOW() - INTERVAL '60 seconds' AND NOW()
+      AND e."retentionExpiresAt" > NOW()
       AND e."adSharingAllowed" AND e."consentState" IN ('GRANTED', 'NOT_REQUIRED')
       AND (mc.id IS NULL OR mc.status = 'ACTIVE')
       AND (d."configJson"->>'authSource' IS DISTINCT FROM 'META_CONNECTION' OR
@@ -75,7 +80,7 @@ export async function permittedBrowserPairs(
           AND (mc."tokenExpiresAt" IS NULL OR mc."tokenExpiresAt" > NOW())
           AND d."configJson"->>'adAccountId' = ANY(mc."selectedAdAccountIds")))
       AND NOT EXISTS (SELECT 1 FROM "StorefrontConsentWithdrawal" w WHERE w."storeId" = e."storeId"
-        AND w."revokedBefore" >= e."eventAt" AND (w."scopeKey" = 'session:' || e."sessionId" OR w."scopeKey" = 'visitor:' || e."anonymousVisitorId"))
+        AND w."revokedBefore" >= LEAST(e."eventAt", e."receivedAt") AND (w."scopeKey" = 'session:' || e."sessionId" OR w."scopeKey" = 'visitor:' || e."anonymousVisitorId"))
       AND (SELECT latest."adSharingAllowed" FROM "StorefrontEvent" latest WHERE latest."storeId" = e."storeId"
         AND (latest."sessionId" = e."sessionId" OR latest."anonymousVisitorId" = e."anonymousVisitorId")
         ORDER BY latest."eventAt" DESC, latest."receivedAt" DESC, latest.id DESC LIMIT 1) = TRUE
@@ -123,8 +128,11 @@ export async function authorizeBrowserSignals(input: z.infer<typeof browserSigna
         eventId: { in: input.eventIds },
         eventName: { in: ['PAGE_VIEW', 'PRODUCT_VIEW', 'ADD_TO_CART'] },
         adSharingAllowed: true,
-        eventAt: { gte: new Date(now.getTime() - 60_000), lte: now },
-        receivedAt: { gte: new Date(now.getTime() - 60_000) },
+        eventAt: {
+          gte: new Date(now.getTime() - 60_000),
+          lte: new Date(now.getTime() + MAX_BROWSER_CLOCK_LEAD_MS),
+        },
+        receivedAt: { gte: new Date(now.getTime() - 60_000), lte: now },
         retentionExpiresAt: { gt: now },
       },
     }),
