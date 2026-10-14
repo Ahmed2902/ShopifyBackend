@@ -1,8 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import type { Request } from 'express';
+import express from 'express';
+import request from 'supertest';
 import { collectorContext } from '../../../src/modules/pixel/collector-context.js';
 
 describe('collector network evidence', () => {
+  it('uses only the Azure-appended address even when Express cannot trust its socket hop', async () => {
+    const app = express();
+    app.set('trust proxy', false);
+    app.get('/', (req, res) => res.json(collectorContext(req, 'azure-container-apps')));
+    const response = await request(app).get('/').set('X-Forwarded-For', '1.1.1.1, 8.8.4.4');
+    expect(response.body).toEqual({ clientIp: '8.8.4.4' });
+  });
+  it.each([
+    undefined, '', '1.1.1.1,', '1.1.1.1, bad', '1.1.1.1, 10.0.0.1',
+    '1.1.1.1, 100.64.0.1', '1.1.1.1, 2001:db8::1',
+  ])('does not substitute client-controlled values for an unusable Azure address: %s', forwarded => {
+    expect(collectorContext({
+      ip: '1.1.1.1', ips: ['1.1.1.1'], headers: { 'x-forwarded-for': forwarded },
+    } as unknown as Request, 'azure-container-apps')).toEqual({});
+  });
+  it('accepts the rightmost Azure public IPv6 address with whitespace', () => {
+    expect(collectorContext({ headers: { 'x-forwarded-for': '1.1.1.1, 2606:4700:4700::1111 ' } } as Request,
+      'azure-container-apps')).toEqual({ clientIp: '2606:4700:4700::1111' });
+  });
   it('uses the Express-resolved trusted chain, never the first forwarded header value', () => {
     expect(collectorContext({ ip: '8.8.4.4', ips: ['8.8.4.4'], headers: { 'x-forwarded-for': '1.1.1.1, 8.8.4.4' } } as unknown as Request)).toEqual({ clientIp: '8.8.4.4' });
   });

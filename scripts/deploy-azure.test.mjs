@@ -121,6 +121,7 @@ for (const service of ['backend', 'frontend']) {
     assert.equal(args[args.indexOf('--image') + 1], h.config.image);
     assert.equal(args[args.indexOf('--container-name') + 1], service);
     assert.ok(args.includes(`SENTRY_RELEASE=${service}-${sha}`));
+    assert.equal(args.includes('PIXEL_COLLECTOR_PROXY_MODE=azure-container-apps'), service === 'backend');
     assert.ok(
       !args.some((value) => /replace-env|remove-env|secret|registry-password|command/.test(value)),
     );

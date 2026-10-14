@@ -171,6 +171,9 @@ export async function deployAzure(
       config.suffix,
       '--set-env-vars',
       `SENTRY_RELEASE=${config.service}-${config.sha}`,
+      ...(config.service === 'backend'
+        ? ['PIXEL_COLLECTOR_PROXY_MODE=azure-container-apps']
+        : []),
       '--no-wait',
     ],
     true,
