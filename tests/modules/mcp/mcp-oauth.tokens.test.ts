@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { McpOAuthService } from '../../../src/modules/mcp/mcp-oauth.service.js';
-import { mcpResource, pkceChallenge } from '../../../src/modules/mcp/mcp-oauth.utils.js';
+import { mcpResource, pkceChallenge, verifyMcpAccessToken } from '../../../src/modules/mcp/mcp-oauth.utils.js';
 
 const merchantId = '11111111-1111-4111-8111-111111111111';
 const storeId = '22222222-2222-4222-8222-222222222222';
@@ -46,6 +46,32 @@ function repository() {
 }
 
 describe('McpOAuthService tokens', () => {
+  it('renews a read-only grant after access-token expiry without requiring offline_access or increasing scopes', async () => {
+    vi.useFakeTimers();
+    try {
+      const repo = repository();
+      const code = authorizationCode({ scopes: ['mcp:read'] });
+      repo.findAuthorizationCode.mockResolvedValue(code);
+      repo.consumeAuthorizationCode.mockResolvedValue(code);
+      const service = new McpOAuthService(repo as never);
+      const issued = await service.exchangeAuthorizationCode({
+        code: 'code', clientId, redirectUri, codeVerifier: verifier,
+      });
+      expect(issued.scope).toBe('mcp:read');
+      expect(issued.refresh_token).toEqual(expect.any(String));
+      const grant = repo.createRefreshToken.mock.calls[0]![0];
+      repo.findRefreshToken.mockResolvedValue({ ...grant, id: 'refresh-row', revokedAt: null });
+      repo.rotateRefreshToken.mockResolvedValue({ ...grant, id: 'replacement-row' });
+      vi.advanceTimersByTime(901_000);
+      await expect(verifyMcpAccessToken(issued.access_token)).rejects.toMatchObject({ code: 'MCP_UNAUTHORIZED' });
+      const renewed = await service.refresh({ refreshToken: issued.refresh_token!, clientId });
+      expect(renewed.scope).toBe('mcp:read');
+      expect(renewed.refresh_token).not.toBe(issued.refresh_token);
+      await expect(verifyMcpAccessToken(renewed.access_token)).resolves.toMatchObject({
+        userId: merchantId, storeId, clientId, scopes: ['mcp:read'],
+      });
+    } finally { vi.useRealTimers(); }
+  });
   it('validates PKCE and current store access before atomically consuming a one-time authorization code', async () => {
     const repo = repository();
     const service = new McpOAuthService(repo as never);

@@ -458,15 +458,16 @@ export class McpOAuthService {
     resource: string;
   }) {
     const accessToken = await issueMcpAccessToken(input);
-    let refreshToken: string | undefined;
-    if (input.scopes.includes(MCP_OFFLINE_SCOPE)) {
-      refreshToken = opaqueToken();
-      await this.repository.createRefreshToken({
-        tokenHash: tokenHash(refreshToken),
-        ...input,
-        expiresAt: new Date(Date.now() + MCP_REFRESH_TOKEN_TTL_MS),
-      });
-    }
+    // This is OAuth, not OpenID Connect: a refresh grant can renew mcp:read
+    // without requesting an additional offline_access scope. Generic clients
+    // often request only the challenged read scope and otherwise disconnect
+    // when the 15-minute access token expires. Preserve the approved scopes.
+    const refreshToken = opaqueToken();
+    await this.repository.createRefreshToken({
+      tokenHash: tokenHash(refreshToken),
+      ...input,
+      expiresAt: new Date(Date.now() + MCP_REFRESH_TOKEN_TTL_MS),
+    });
     return this.tokenResponse(accessToken, refreshToken, input.scopes);
   }
 

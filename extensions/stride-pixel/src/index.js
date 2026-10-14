@@ -212,6 +212,23 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Storage is an optional continuity aid. Browser privacy settings must not
+// prevent registration or drop permitted events. Session/landing state also
+// lives in this worker; no replacement fingerprint or persistent ID is created.
+function optionalStorage(storage) {
+  return {
+    async getItem(key) {
+      try { return await storage?.getItem(key); } catch { return null; }
+    },
+    async setItem(key, value) {
+      try { await storage?.setItem(key, value); } catch { /* Worker state remains usable. */ }
+    },
+    async removeItem(key) {
+      try { await storage?.removeItem(key); } catch { /* Worker state is cleared separately. */ }
+    },
+  };
+}
+
 register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
   const collectorUrl = typeof settings.collectorUrl === 'string' ? settings.collectorUrl : '';
   const installationId = typeof settings.installationId === 'string' ? settings.installationId : '';
@@ -219,11 +236,13 @@ register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
 
   if (!collectorUrl || !installationId || !collectorToken) return;
 
+  const sessionStorage = optionalStorage(browser.sessionStorage);
+  const localStorage = optionalStorage(browser.localStorage);
   let privacy = init.customerPrivacy;
   let privacyRevision = 0;
-  let sessionId = await browser.sessionStorage.getItem(SESSION_KEY);
+  let sessionId = await sessionStorage.getItem(SESSION_KEY);
   let lastActivityAtMs = 0;
-  const storedLastActivity = await browser.sessionStorage.getItem(SESSION_LAST_ACTIVITY_KEY);
+  const storedLastActivity = await sessionStorage.getItem(SESSION_LAST_ACTIVITY_KEY);
   if (storedLastActivity) {
     const parsedLastActivity = Number(storedLastActivity);
     if (Number.isFinite(parsedLastActivity) && parsedLastActivity > 0) {
@@ -232,7 +251,7 @@ register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
   }
 
   let landing = null;
-  const storedLanding = await browser.sessionStorage.getItem(LANDING_KEY);
+  const storedLanding = await sessionStorage.getItem(LANDING_KEY);
   if (storedLanding) {
     try {
       landing = JSON.parse(storedLanding);
@@ -245,18 +264,23 @@ register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
   let flushTimer = null;
   let flushing = false;
   let inFlightBatch = null;
-  let lastVisitorId = await browser.sessionStorage.getItem(PRIVACY_VISITOR_KEY);
-  let lastSessionId = (await browser.sessionStorage.getItem(PRIVACY_SESSION_KEY)) || sessionId;
+  let lastVisitorId = await sessionStorage.getItem(PRIVACY_VISITOR_KEY);
+  let lastSessionId = (await sessionStorage.getItem(PRIVACY_SESSION_KEY)) || sessionId;
   let handling = Promise.resolve();
 
   let withdrawalSending = false;
   const withdrawalStorageKey = WITHDRAWAL_KEY + installationId;
   const cookieCutoffKey = 'stride_pixel_cookie_cutoff_' + installationId;
-  let cookieCutoff = Number(await browser.localStorage.getItem(cookieCutoffKey)) || 0;
+  let cookieCutoff = Date.now();
+  try {
+    cookieCutoff = Number(await browser.localStorage.getItem(cookieCutoffKey)) || 0;
+  } catch {
+    // Without the retained withdrawal boundary, do not reuse old matching cookies.
+  }
   let pendingWithdrawals = [];
   let withdrawalStorageWrites = Promise.resolve();
   try {
-    const stored = JSON.parse((await browser.localStorage.getItem(withdrawalStorageKey)) || 'null');
+    const stored = JSON.parse((await localStorage.getItem(withdrawalStorageKey)) || 'null');
     pendingWithdrawals = Array.isArray(stored) ? stored : stored ? [stored] : [];
   } catch {
     /* No retained marker. */
@@ -266,11 +290,11 @@ register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
       .catch(() => undefined)
       .then(async () => {
         if (pendingWithdrawals.length)
-          await browser.localStorage.setItem(
+          await localStorage.setItem(
             withdrawalStorageKey,
             JSON.stringify(pendingWithdrawals),
           );
-        else await browser.localStorage.removeItem(withdrawalStorageKey);
+        else await localStorage.removeItem(withdrawalStorageKey);
       });
     return withdrawalStorageWrites.catch(() => undefined);
   }
@@ -308,7 +332,7 @@ register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
   if (pendingWithdrawals.length) void retryWithdrawal();
   if (!adSharingAllowed()) {
     landing = null;
-    await browser.sessionStorage.removeItem(LANDING_KEY);
+    await sessionStorage.removeItem(LANDING_KEY);
   }
 
   customerPrivacy.subscribe('visitorConsentCollected', (event) => {
@@ -325,10 +349,10 @@ register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
     if (!adSharingAllowed()) {
       landing = null;
       cookieCutoff = Date.now();
-      void browser.localStorage
+      void localStorage
         .setItem(cookieCutoffKey, String(cookieCutoff))
         .catch(() => undefined);
-      void browser.sessionStorage.removeItem(LANDING_KEY).catch(() => undefined);
+      void sessionStorage.removeItem(LANDING_KEY).catch(() => undefined);
     }
     if (!adSharingAllowed() && (lastVisitorId || lastSessionId)) {
       // A privacy operation, not an analytics event. It must reach the collector even when
@@ -369,7 +393,7 @@ register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
           const revision = privacyRevision;
           try {
             const heartbeat = Number(
-              await browser.sessionStorage.getItem('stride_browser_heartbeat_v1'),
+              await sessionStorage.getItem('stride_browser_heartbeat_v1'),
             );
             const eligible = events.filter(
               (event) =>
@@ -383,7 +407,7 @@ register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
               !pendingWithdrawals.length &&
               revision === privacyRevision
             ) {
-              await browser.sessionStorage.setItem(
+              await sessionStorage.setItem(
                 'stride_browser_batch_v1_' + eligible[0].eventId,
                 JSON.stringify({
                   expiresAt: Date.now() + 60000,
@@ -450,9 +474,9 @@ register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
     landing = null;
     lastActivityAtMs = 0;
     await Promise.all([
-      browser.sessionStorage.setItem(SESSION_KEY, sessionId),
-      browser.sessionStorage.setItem(LANDING_KEY, ''),
-      browser.sessionStorage.setItem(SESSION_LAST_ACTIVITY_KEY, ''),
+      sessionStorage.setItem(SESSION_KEY, sessionId),
+      sessionStorage.setItem(LANDING_KEY, ''),
+      sessionStorage.setItem(SESSION_LAST_ACTIVITY_KEY, ''),
     ]);
   }
 
@@ -461,9 +485,9 @@ register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
     landing = null;
     lastActivityAtMs = 0;
     await Promise.all([
-      browser.sessionStorage.removeItem(SESSION_KEY),
-      browser.sessionStorage.removeItem(LANDING_KEY),
-      browser.sessionStorage.removeItem(SESSION_LAST_ACTIVITY_KEY),
+      sessionStorage.removeItem(SESSION_KEY),
+      sessionStorage.removeItem(LANDING_KEY),
+      sessionStorage.removeItem(SESSION_LAST_ACTIVITY_KEY),
     ]);
   }
 
@@ -481,7 +505,7 @@ register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
     }
 
     lastActivityAtMs = Math.max(lastActivityAtMs, eventAtMs);
-    await browser.sessionStorage.setItem(SESSION_LAST_ACTIVITY_KEY, String(lastActivityAtMs));
+    await sessionStorage.setItem(SESSION_LAST_ACTIVITY_KEY, String(lastActivityAtMs));
   }
 
   async function handle(event) {
@@ -501,16 +525,16 @@ register(async ({ analytics, browser, customerPrivacy, init, settings }) => {
     lastSessionId = sessionId;
     await Promise.all([
       ...(lastVisitorId
-        ? [browser.sessionStorage.setItem(PRIVACY_VISITOR_KEY, lastVisitorId)]
+        ? [sessionStorage.setItem(PRIVACY_VISITOR_KEY, lastVisitorId)]
         : []),
-      browser.sessionStorage.setItem(PRIVACY_SESSION_KEY, lastSessionId),
+      sessionStorage.setItem(PRIVACY_SESSION_KEY, lastSessionId),
     ]);
     if (revision !== privacyRevision || !privacy?.analyticsProcessingAllowed) return;
 
     const current = safeUrl(event.context?.document?.location?.href);
     if (!landing || hasAttribution(current.attribution)) {
       landing = current;
-      await browser.sessionStorage.setItem(LANDING_KEY, JSON.stringify(landing));
+      await sessionStorage.setItem(LANDING_KEY, JSON.stringify(landing));
     }
     const referrer = safeUrl(event.context?.document?.referrer);
     if (revision !== privacyRevision || !privacy?.analyticsProcessingAllowed) return;

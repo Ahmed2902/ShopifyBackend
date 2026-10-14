@@ -56,6 +56,7 @@ describe('requireMcpAuth', () => {
     await requireMcpAuth(req as never, res as never, next);
 
     expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.setHeader).toHaveBeenCalledWith('WWW-Authenticate', expect.not.stringContaining('error='));
     expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
     expect(res.setHeader).toHaveBeenCalledWith(
       'WWW-Authenticate',
@@ -73,6 +74,7 @@ describe('requireMcpAuth', () => {
     await requireMcpAuth(req as never, res as never, next);
 
     expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.setHeader).toHaveBeenCalledWith('WWW-Authenticate', expect.stringContaining('error="invalid_token"'));
     expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -95,7 +97,8 @@ describe('requireMcpAuth', () => {
 
     await requireMcpAuth(req as never, res as never, next);
 
-    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.setHeader).toHaveBeenCalledWith('WWW-Authenticate', expect.stringContaining('error="insufficient_scope"'));
     expect(mocks.hasStoreAccess).not.toHaveBeenCalled();
     expect(next).not.toHaveBeenCalled();
   });
@@ -124,5 +127,20 @@ describe('requireMcpAuth', () => {
     expect(req.context).toMatchObject({ userId: 'user-a', storeId: 'store-a', role: 'OWNER' });
     expect(req.context.storeId).not.toBe('store-b');
     expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a temporary membership database failure retryable without invalidating authentication', async () => {
+    mocks.hasStoreAccess.mockRejectedValueOnce(new Error('database unavailable'));
+    const req = request('Bearer token');
+    const res = response();
+    const next = vi.fn();
+    await requireMcpAuth(req as never, res as never, next);
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.setHeader).toHaveBeenCalledWith('Retry-After', '5');
+    expect(res.setHeader).not.toHaveBeenCalledWith('WWW-Authenticate', expect.anything());
+    expect(req.context).toEqual({});
+    expect(next).not.toHaveBeenCalled();
+    await requireMcpAuth(req as never, response() as never, next);
+    expect(next).toHaveBeenCalledOnce();
   });
 });
