@@ -1,4 +1,5 @@
 import { prisma } from '../../../lib/prisma.js';
+import { lineAdjustment } from '../order/order-adjustments.js';
 import type {
   ShopifyProductSalesQuery,
   ShopifySummaryQuery,
@@ -240,12 +241,12 @@ export class ShopifyMetricsRepository {
 
     for (const row of rows) {
       const variantKey = row.variantId ?? `${row.sku ?? ''}:${row.variantTitle ?? ''}`;
-      const refundedUnits = row.refundLines.reduce((sum, refund) => sum + refund.quantity, 0);
-      const refundedSales = row.refundLines.reduce(
-        (sum, refund) => sum + Number(refund.subtotal ?? 0),
-        0,
-      );
       const grossSales = Number(row.discountedTotal ?? 0);
+      const adjustment = lineAdjustment({ quantity: row.quantity, currentQuantity: row.currentQuantity,
+        productRevenue: grossSales, refundedUnits: row.refundLines.reduce((sum, refund) => sum + refund.quantity, 0),
+        refundedValue: row.refundLines.reduce((sum, refund) => sum + Number(refund.subtotal ?? 0), 0) });
+      const refundedUnits = adjustment.units;
+      const refundedSales = adjustment.value;
       const existingVariant = variants.get(variantKey) ?? {
         variantId: row.variantId,
         variantTitle: row.variantTitle,

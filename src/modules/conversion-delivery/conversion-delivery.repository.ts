@@ -251,7 +251,8 @@ export class ConversionDeliveryRepository {
             ? PrismaSql.empty
             : PrismaSql.sql`AND EXISTS (
           SELECT 1 FROM "ConversionDestination" dest WHERE dest."storeId" = o."storeId" AND dest."status" = 'ACTIVE'
-            AND NOT EXISTS (SELECT 1 FROM "ConversionDelivery" d WHERE d."destinationId" = dest."id" AND d."sourceOrderId" = o."id" AND d."eventName" = 'PURCHASE')
+            AND NOT EXISTS (SELECT 1 FROM "ConversionDelivery" d WHERE d."destinationId" = dest."id" AND d."sourceOrderId" = o."id" AND d."eventName" = 'PURCHASE'
+              AND NOT (d."status" = 'SKIPPED' AND d."reasonCode" = 'PURCHASE_FACTS_UNAVAILABLE'))
         )`
         }
       ORDER BY o."id", s."endedAt" DESC, s."id" DESC
@@ -350,9 +351,8 @@ export class ConversionDeliveryRepository {
                 id: claim.sourceOrderId,
                 storeId: claim.storeId,
                 isTest: claim.isTestDelivery === true,
-                cancelledAt: null,
               },
-              select: { id: true, checkoutTokenHash: true, shopifyOrderId: true, recoveryEventId: true, sourceName: true, isB2B: true },
+              select: { id: true, checkoutTokenHash: true, shopifyOrderId: true, recoveryEventId: true, sourceName: true, isB2B: true, cancelledAt: true },
             })
           : Promise.resolve(null),
         claim.destinationId
@@ -391,6 +391,11 @@ export class ConversionDeliveryRepository {
         config?.enhancedMatching !== true
       )
         return false;
+      if (order?.cancelledAt) {
+        if (claim.reportConnectionFailure)
+          throw new ConversionProviderError('Shopify order was cancelled before dispatch', false, 'ORDER_CANCELLED');
+        return false;
+      }
       const privacyPermitted = Boolean(
         connection?.status === 'ACTIVE' &&
         connection.scopes.includes('read_customer_events') &&
@@ -599,7 +604,21 @@ export class ConversionDeliveryRepository {
         ...(skipReason ? { status: 'SKIPPED', reasonCode: skipReason } : {}) }],
       skipDuplicates: true,
     });
-    if (result.count > 0 || !input.isTestDelivery) return { created: result.count > 0 };
+    if (result.count > 0) return { created: true };
+    if (!input.isTestDelivery) {
+      // A pre-upgrade order can await canonical reconciliation. No purchase was sent;
+      // promote only that specific exclusion after facts become available, never a terminal send.
+      if (input.purchaseFacts && (!skipReason || skipReason === 'SHADOW_MODE')) {
+        const ready = await prisma.conversionDelivery.updateMany({ where: {
+          storeId: input.storeId, destinationId: input.destinationId, sourceOrderId: input.sourceOrderId,
+          eventName: 'PURCHASE', isTestDelivery: false, status: 'SKIPPED', reasonCode: 'PURCHASE_FACTS_UNAVAILABLE',
+          attempts: 0, providerRequestId: null, deliveredAt: null,
+        }, data: { ...facts, status: skipReason ? 'SKIPPED' : 'PENDING', reasonCode: skipReason ?? null,
+          nextAttemptAt: new Date(Date.now() + 15_000) } });
+        return { created: ready.count > 0 };
+      }
+      return { created: false };
+    }
 
     // The live uniqueness constraint also covers development-store test orders.
     // Re-arm ONLY a terminal, explicitly isolated test; never mutate a live delivery,
@@ -620,7 +639,7 @@ export class ConversionDeliveryRepository {
         isTestDelivery: true, status: { in: ['DEAD', 'SKIPPED', 'DELIVERED'] },
       },
       data: {
-        ...input,
+        ...facts,
         eventName: 'PURCHASE',
         status: 'PENDING',
         nextAttemptAt: new Date(Date.now() + 15_000),

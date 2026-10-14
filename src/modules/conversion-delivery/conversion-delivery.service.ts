@@ -162,9 +162,9 @@ export class ConversionDeliveryService {
         isB2B: candidate.isB2B === true, cancelledAt: null, isTest: false,
         checkoutLinked: Boolean(candidate.sourceEventId || candidate.sourceName === undefined),
         installedAt: candidate.sourceGenerationAt ?? new Date(0),
-        facts: purchaseFacts ?? readPurchaseFacts({ version: 1, policy: PURCHASE_POLICY,
+        facts: purchaseFacts ?? (candidate.purchaseFacts === undefined ? readPurchaseFacts({ version: 1, policy: PURCHASE_POLICY,
           eventAt: candidate.eventAt.toISOString(), value: candidate.value, currencyCode: candidate.currencyCode,
-          items: [], truncated: false }) });
+          items: [], truncated: false }) : null) });
       for (const destination of destinationsByStore.get(candidate.storeId) ?? []) {
         if (!candidate.routing?.eligibleProviders.includes(destination.provider)) continue;
         if (!(await isAllowed(candidate.storeId, destination.provider))) continue;
@@ -176,7 +176,7 @@ export class ConversionDeliveryService {
           !(config.enhancedMatching && env.SHOPIFY_ENHANCED_MATCHING_APPROVED)
         )
           continue;
-        eligible += 1;
+        if (!reason) eligible += 1;
         const result = await this.repository.enqueue({
           storeId: candidate.storeId,
           destinationId: destination.id,

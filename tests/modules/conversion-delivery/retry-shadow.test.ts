@@ -41,6 +41,15 @@ describe('logical delivery recovery', () => {
     await h.service.processDue(); expect(h.repo.pauseForDispatch).toHaveBeenCalledOnce();
     expect(h.repo.markFailed).not.toHaveBeenCalled(); expect(h.repo.markDelivered).not.toHaveBeenCalled();
   });
+  it('waits for canonical facts instead of booking a legacy order from its edited current total', async () => {
+    const h = harness();
+    h.repo.findPurchaseCandidates.mockResolvedValue([{ storeId: 'store', orderId: 'order', shopifyOrderId: h.claim.shopifyOrderId, eventAt: now,
+      sourceName: 'web', sourceEventId: 'source', purchaseFacts: null, value: '20', currencyCode: 'USD',
+      metaClickId: 'click', routing: { eligibleProviders: ['META'] } }] as never);
+    const result = await h.service.enqueuePurchases();
+    expect(result.eligible).toBe(0);
+    expect(h.repo.enqueue.mock.calls[0]![0]).toMatchObject({ skipReason: 'PURCHASE_FACTS_UNAVAILABLE' });
+  });
   it('waits out a small clock lead without changing the purchase timestamp or consuming an attempt', async () => {
     const h = harness(); h.claim.eventAt = new Date(now.getTime() + 2000);
     await h.service.processDue();

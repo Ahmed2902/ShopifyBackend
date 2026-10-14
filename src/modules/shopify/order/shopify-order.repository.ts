@@ -22,7 +22,8 @@ function asJson(value: unknown): Prisma.InputJsonValue {
 export class ShopifyOrderRepository {
   findPendingJourneyOrders(storeId: string) {
     return prisma.order.findMany({ where: { storeId, sourceName: 'web', isTest: false, cancelledAt: null,
-      customerJourneyReady: false, shopifyCreatedAt: { gte: new Date(Date.now() - 3 * 86400_000) },
+      OR: [{ customerJourneyReady: false }, { purchaseFacts: { equals: Prisma.DbNull } }],
+      shopifyCreatedAt: { gte: new Date(Date.now() - 3 * 86400_000) },
       updatedAt: { lte: new Date(Date.now() - 15 * 60_000) } },
       select: { shopifyOrderId: true }, orderBy: { updatedAt: 'asc' }, take: 50 });
   }

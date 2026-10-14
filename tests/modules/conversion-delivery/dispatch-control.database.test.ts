@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { prisma } from '../../../src/lib/prisma.js';
 import { acquireDispatch } from '../../../src/modules/conversion-delivery/dispatch-control.js';
+import { freezeLegacyPurchaseFacts } from '../../../src/modules/conversion-delivery/conversion-content.js';
+import type { DeliveryClaim } from '../../../src/modules/conversion-delivery/conversion-delivery.types.js';
 import { ShopifyOrderRepository } from '../../../src/modules/shopify/order/shopify-order.repository.js';
 
 const database = process.env.RUN_DB_TESTS === 'true' ? describe : describe.skip;
@@ -27,6 +29,20 @@ database('durable dispatch and purchase snapshots', () => {
     expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
     expect(results.filter(r => r.status === 'rejected')).toHaveLength(19);
     await expect(acquireDispatch(s.id, 'TIKTOK')).resolves.toBeUndefined();
+  });
+  it('upgrades old queued facts once without inventing a basket or changing their logical identity', async () => {
+    const s = await store();
+    const destination = await prisma.conversionDestination.create({ data: { storeId: s.id, provider: 'META', externalId: randomUUID() } });
+    const row = await prisma.conversionDelivery.create({ data: { storeId: s.id, destinationId: destination.id, provider: 'META',
+      eventKey: 'historical-order', eventAt: new Date(), value: '100', currencyCode: 'USD' }, include: { destination: true } });
+    const claim = row as DeliveryClaim;
+    await freezeLegacyPurchaseFacts([claim]);
+    const before = await prisma.conversionDelivery.findUniqueOrThrow({ where: { id: row.id } });
+    expect(before.purchaseFacts).toMatchObject({ value: '100', items: [], truncated: true });
+    await freezeLegacyPurchaseFacts([{ ...claim, purchaseFacts: null, value: new (await import('../../../src/generated/prisma/client.js')).Prisma.Decimal('20') }]);
+    const after = await prisma.conversionDelivery.findUniqueOrThrow({ where: { id: row.id } });
+    expect(after.purchaseFacts).toEqual(before.purchaseFacts); expect(after.eventKey).toBe(row.eventKey);
+    expect(after.eventAt).toEqual(row.eventAt); expect(after.value?.toString()).toBe('100');
   });
   it('keeps purchase facts stable after an edit, cancellation and repeated reconciliation', async () => {
     const s = await store();
