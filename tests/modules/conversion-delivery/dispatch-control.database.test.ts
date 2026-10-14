@@ -34,7 +34,7 @@ database('durable dispatch and purchase snapshots', () => {
     const s = await store();
     const destination = await prisma.conversionDestination.create({ data: { storeId: s.id, provider: 'META', externalId: randomUUID() } });
     const row = await prisma.conversionDelivery.create({ data: { storeId: s.id, destinationId: destination.id, provider: 'META',
-      eventKey: 'historical-order', eventAt: new Date(), value: '100', currencyCode: 'USD' }, include: { destination: true } });
+      eventName: 'PURCHASE', eventKey: 'historical-order', eventAt: new Date(), value: '100', currencyCode: 'USD' }, include: { destination: true } });
     const claim = row as DeliveryClaim;
     await freezeLegacyPurchaseFacts([claim]);
     const before = await prisma.conversionDelivery.findUniqueOrThrow({ where: { id: row.id } });
