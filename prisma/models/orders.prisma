@@ -18,6 +18,11 @@ model Order {
   storeId                          String                  @db.Uuid
   shopifyOrderId                   String
   checkoutTokenHash                String?                 @db.VarChar(64)
+  purchaseFacts                    Json?
+  isB2B                            Boolean                 @default(false)
+  recoveryEventId                  String?                 @db.Uuid
+  journeyTouches                   Json?
+  matchEvidenceExpiresAt           DateTime?
   name                             String
   shopifyCreatedAt                 DateTime
   processedAt                      DateTime?
@@ -56,6 +61,7 @@ model Order {
   @@index([storeId, sourceName, shopifyCreatedAt])
   @@index([storeId, customerOrderIndex, shopifyCreatedAt])
   @@index([storeId, cancelledAt])
+  @@index([matchEvidenceExpiresAt])
 }
 
 model ShopifyOrderRedaction {

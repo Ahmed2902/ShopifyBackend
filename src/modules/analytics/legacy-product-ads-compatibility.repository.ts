@@ -38,6 +38,7 @@ export class LegacyProductAdsCompatibilityRepository {
           END AS period,
           line_item."id" AS line_item_id,
           line_item."productId" AS product_id,
+          line_item."quantity", line_item."currentQuantity",
           COALESCE(line_item."discountedTotal", 0) AS revenue
         FROM "OrderLineItem" line_item
         INNER JOIN "Order" orders ON orders."id" = line_item."orderId"
@@ -68,7 +69,8 @@ export class LegacyProductAdsCompatibilityRepository {
           scoped.period,
           scoped.product_id,
           GREATEST(
-            COALESCE(SUM(scoped.revenue), 0) - COALESCE(SUM(refunds.refunds), 0),
+            COALESCE(SUM(scoped.revenue - LEAST(scoped.revenue, GREATEST(COALESCE(refunds.refunds, 0),
+              scoped.revenue * GREATEST(scoped."quantity" - scoped."currentQuantity", 0) / NULLIF(scoped."quantity", 0), 0))), 0),
             0
           ) AS net_product_revenue
         FROM scoped_lines scoped

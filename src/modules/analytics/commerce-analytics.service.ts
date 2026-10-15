@@ -1,3 +1,4 @@
+import { lineAdjustment } from '../shopify/order/order-adjustments.js';
 import { AppError } from '../../errors/app-error.js';
 import { storeDate } from '../intelligence/intelligence.dates.js';
 import {
@@ -51,9 +52,13 @@ function lineMetrics(rows: CommerceRow[], currency: string): LineMetrics {
     if (row.order.currencyCode !== currency) continue;
     orders.add(row.order.id);
     soldUnits += row.quantity;
-    refundedUnits += row.refundLines.reduce((sum, refund) => sum + refund.quantity, 0);
+    const adjustment = lineAdjustment({ quantity: row.quantity, currentQuantity: row.currentQuantity ?? row.quantity,
+      productRevenue: numeric(row.discountedTotal),
+      refundedUnits: row.refundLines.reduce((sum, refund) => sum + refund.quantity, 0),
+      refundedValue: row.refundLines.reduce((sum, refund) => sum + numeric(refund.subtotal), 0) });
+    refundedUnits += adjustment.units;
     productRevenue += numeric(row.discountedTotal);
-    refunds += row.refundLines.reduce((sum, refund) => sum + numeric(refund.subtotal), 0);
+    refunds += adjustment.value;
   }
 
   return {

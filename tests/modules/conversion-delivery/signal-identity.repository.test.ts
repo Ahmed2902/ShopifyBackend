@@ -45,6 +45,7 @@ async function fixture() {
   });
   const order = await prisma.order.create({
     data: {
+      sourceName: 'web',
       storeId: store.id,
       shopifyOrderId: `gid://shopify/Order/${Date.now()}`,
       name: '#1',

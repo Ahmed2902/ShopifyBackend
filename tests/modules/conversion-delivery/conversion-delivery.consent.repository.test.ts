@@ -42,6 +42,7 @@ describeDatabase('Advertising consent for purchase sharing', () => {
       });
       const order = await prisma.order.create({
         data: {
+          sourceName: 'web',
           storeId: store.id,
           shopifyOrderId: unique,
           name: '#1',

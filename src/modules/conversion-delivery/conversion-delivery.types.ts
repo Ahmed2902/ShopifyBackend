@@ -1,4 +1,4 @@
-import type { RoutingSummary } from './source-routing.js';
+import type { RoutingSummary, RoutingTouch } from './source-routing.js';
 import type { MatchEvidence } from './matching.js';
 import type {
   AdvertisingProvider,
@@ -13,6 +13,7 @@ export type ConversionAuthSource =
   'META_CONNECTION' | 'GOOGLE_ADS_CONNECTION' | 'TIKTOK_CONNECTION';
 
 export type ConversionDestinationConfig = {
+  deliveryMode?: 'LIVE' | 'SHADOW' | 'PAUSED';
   enhancedMatching?: boolean;
   funnelEvents?: boolean;
   browserEvents?: boolean;
@@ -28,6 +29,10 @@ export type ConversionDestinationConfig = {
 };
 
 export type PurchaseCandidate = {
+  purchaseFacts?: unknown;
+  sourceName?: string | null;
+  isB2B?: boolean;
+  journeyTouches?: RoutingTouch[];
   sourceEventId?: string | null;
   sourceGenerationAt?: Date | null;
   browserMatchAvailable?: boolean;

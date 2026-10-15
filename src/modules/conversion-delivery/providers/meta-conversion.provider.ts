@@ -1,3 +1,4 @@
+import { retryAfterMs } from '../delivery-policy.js';
 import { metaCustomData } from '../conversion-content.js';
 import { assertCanonicalPurchase } from './conversion-event.validation.js';
 import { metaUserData, sha256 } from '../matching.js';
@@ -192,7 +193,7 @@ export async function deliverMetaPurchase(
       response.status >= 500 ||
       payload.error?.is_transient === true ||
       payload.error?.code === 190;
-    throw new ConversionProviderError(message, retryable, code);
+    throw new ConversionProviderError(message, retryable, code, retryAfterMs(response.headers.get('retry-after')));
   }
   if ((payload.events_received ?? 0) < 1) {
     throw new ConversionProviderError(

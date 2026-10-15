@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
 import { Prisma } from '../../generated/prisma/client.js';
+import { PURCHASE_POLICY, readPurchaseFacts } from './purchase-policy.js';
 import type { ConversionDestinationConfig, DeliveryClaim } from './conversion-delivery.types.js';
 
 type ObservedItem = { variantExternalId: string; quantity?: number; itemPrice?: number };
@@ -8,6 +9,28 @@ type Mapping = {
   catalogItem: { retailerId: string | null; catalog: { id: string; storeId: string } };
 };
 const MAX_ITEMS = 100;
+
+// Existing deliveries already own their purchase clock and money. Do not reconstruct an
+// historical basket from today's edited lines. Upgrade once without changing the event ID.
+export async function freezeLegacyPurchaseFacts(claims: DeliveryClaim[]) {
+  const rows = claims.filter(c => c.purchaseFacts === null && (c.eventName ?? 'PURCHASE') === 'PURCHASE')
+    .flatMap(c => {
+      const facts = readPurchaseFacts({ version: 1, policy: PURCHASE_POLICY,
+        eventAt: c.eventAt.toISOString(), value: String(c.value), currencyCode: c.currencyCode,
+        items: [], truncated: true });
+      return facts ? [{ id: c.id, storeId: c.storeId, facts }] : [];
+    });
+  if (!rows.length) return;
+  await prisma.$executeRaw`
+    UPDATE "ConversionDelivery" d SET "purchaseFacts" = i.facts
+    FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS i(id uuid, "storeId" uuid, facts jsonb)
+    WHERE d.id = i.id AND d."storeId" = i."storeId" AND d."purchaseFacts" IS NULL`;
+  const frozen = await prisma.conversionDelivery.findMany({
+    where: { OR: rows.map(r => ({ id: r.id, storeId: r.storeId })) }, select: { id: true, purchaseFacts: true },
+  });
+  const byId = new Map(frozen.map(d => [d.id, d.purchaseFacts]));
+  for (const claim of claims) if (byId.has(claim.id)) claim.purchaseFacts = byId.get(claim.id)!;
+}
 
 export function resolveContentItems(items: ObservedItem[], mappings: Mapping[]) {
   const identifiers = new Map<string, Set<string>>();
@@ -95,6 +118,9 @@ export async function prepareConversionContents(claims: DeliveryClaim[]) {
   const eventsById = new Map(events.map((event) => [event.id, event]));
   const readItems = (c: DeliveryClaim): ObservedItem[] => {
     if ((c.eventName ?? 'PURCHASE') === 'PURCHASE') {
+      const frozen = readPurchaseFacts(c.purchaseFacts);
+      if (frozen) return frozen.items.map(i => ({ variantExternalId: i.variantExternalId,
+        quantity: i.quantity, ...(i.itemPrice !== undefined ? { itemPrice: Number(i.itemPrice) } : {}) }));
       const sourceOrder = c.sourceOrderId ? ordersById.get(c.sourceOrderId) : undefined;
       const order = sourceOrder?.storeId === c.storeId ? sourceOrder : undefined;
       return (order?.lineItems ?? []).flatMap((line) => {
@@ -198,6 +224,7 @@ export async function prepareConversionContents(claims: DeliveryClaim[]) {
     const catalogId = (c.destination.configJson as ConversionDestinationConfig | null)?.catalogId;
     const mappings = mappingsByCatalog.get(keyFor(c.provider, c.storeId, catalogId)) ?? [];
     Object.assign(c, resolveContentItems(itemsByClaim.get(c.id) ?? [], mappings));
+    if (readPurchaseFacts(c.purchaseFacts)?.truncated && c.contentFacts) c.contentFacts.truncated = true;
   }
 }
 

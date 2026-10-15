@@ -44,12 +44,14 @@ async function fixture() {
   const proof = checkoutProofHash(store.id, unique);
   const order = await prisma.order.create({
     data: {
+      sourceName: 'web', displayFinancialStatus: 'PENDING', displayFulfillmentStatus: 'UNFULFILLED',
       storeId: store.id,
       shopifyOrderId: unique,
       name: '#100',
       shopifyCreatedAt: now,
       currencyCode: 'USD',
       currentTotalAmount: '20',
+      purchaseFacts: { version: 1, policy: 'COMPLETED_SHOPIFY_CHECKOUT_V1', eventAt: now.toISOString(), value: '20', currencyCode: 'USD', items: [], truncated: false },
       checkoutTokenHash: proof,
     },
   });
@@ -114,6 +116,30 @@ async function fixture() {
   };
 }
 db('source-based routing against migrated PostgreSQL', () => {
+  it('uses permitted canonical journey evidence on enqueue and retry, then removes it on withdrawal or expiry', async () => {
+    const f = await fixture();
+    await prisma.order.update({ where: { id: f.order.id }, data: {
+      journeyTouches: [{ eventAt: new Date(f.now.getTime() - 60000).toISOString(), utmSource: 'tiktok', utmMedium: 'paid', tiktokCampaignExternalId: '22' }],
+      matchEvidenceExpiresAt: new Date(f.now.getTime() + 3600000) } });
+    const [candidate] = await f.repo.findPurchaseCandidates(10, f.order.id);
+    expect(candidate?.routing?.eligibleProviders).toEqual(['TIKTOK']);
+    const claim = { sourceOrderId: f.order.id, sourceEventId: f.source.id, sourceGenerationAt: f.connection.installedAt,
+      storeId: f.store.id, provider: 'TIKTOK' as const, destinationId: f.destinations[1]!.id };
+    expect(await f.repo.hasAdvertisingConsent(claim)).toBe(true);
+    await new PixelRepository().withdrawAdvertisingConsent(f.store.id, { anonymousVisitorId: f.source.anonymousVisitorId! }, f.now, new Date(f.now.getTime() + 86400000));
+    expect(await f.repo.hasAdvertisingConsent(claim)).toBe(false);
+    await prisma.order.update({ where: { id: f.order.id }, data: { matchEvidenceExpiresAt: new Date(f.now.getTime() - 1) } });
+    await new PixelRepository().cleanupMatchEvidence(f.now, 100);
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: f.order.id } })).journeyTouches).toBeNull();
+  });
+  it('blocks a cancellation before dispatch with its order reason rather than reporting lost consent', async () => {
+    const f = await fixture(); await f.add({ tiktokClickId: 'cancelled-test-click' });
+    await prisma.order.update({ where: { id: f.order.id }, data: { cancelledAt: f.now } });
+    const claim = { sourceOrderId: f.order.id, sourceEventId: f.source.id, sourceGenerationAt: f.connection.installedAt,
+      storeId: f.store.id, provider: 'TIKTOK' as const, destinationId: f.destinations[1]!.id };
+    expect(await f.repo.hasAdvertisingConsent(claim)).toBe(false);
+    await expect(f.repo.hasAdvertisingConsent({ ...claim, reportConnectionFailure: true })).rejects.toHaveProperty('providerCode', 'ORDER_CANCELLED');
+  });
   it('loads exact TikTok URL identities without UTM and respects store and withdrawal boundaries', async () => {
     const f = await fixture();
     await f.add({ tiktokCampaignExternalId: '22', tiktokAdGroupExternalId: '33', tiktokAdExternalId: '44', tiktokCreativeExternalId: '55' });
@@ -144,9 +170,9 @@ db('source-based routing against migrated PostgreSQL', () => {
       expect(
         await prisma.conversionDelivery.findMany({
           where: { storeId: f.store.id },
-          select: { provider: true },
+          select: { provider: true, status: true },
         }),
-      ).toEqual([{ provider }]);
+      ).toEqual([{ provider, status: 'PENDING' }]);
       const claim = {
         sourceOrderId: f.order.id,
         storeId: f.store.id,

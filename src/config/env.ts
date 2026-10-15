@@ -4,6 +4,7 @@ import { assertShopifyProductionConfig } from './shopify-production.js';
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  CONVERSION_DELIVERY_ENABLED: z.enum(['true', 'false']).default('true').transform(v => v === 'true'),
   LEGACY_MERCHANT_AUTH_ENABLED: z
     .enum(['true', 'false'])
     .default('false')

@@ -1,5 +1,8 @@
 import { checkoutProofHash } from '../../conversion-delivery/checkout-proof.js';
-import type { Prisma } from '../../../generated/prisma/client.js';
+import { canonicalPurchaseFacts } from '../../conversion-delivery/purchase-policy.js';
+import { verifyCartReceipt } from '../../conversion-delivery/cart-recovery.js';
+import { extractStorefrontAttribution, sanitizeAttributionValue, sanitizeStorefrontUrl } from '../../pixel/pixel.privacy.js';
+import { Prisma } from '../../../generated/prisma/client.js';
 import { prisma } from '../../../lib/prisma.js';
 import type { ShopifyOrderLineItem, ShopifyRefund } from './shopify-order.schema.js';
 import type { PersistedShopifyOrder, ShopifyImportedOrder } from './shopify-order.types.js';
@@ -17,6 +20,13 @@ function asJson(value: unknown): Prisma.InputJsonValue {
 }
 
 export class ShopifyOrderRepository {
+  findPendingJourneyOrders(storeId: string) {
+    return prisma.order.findMany({ where: { storeId, sourceName: 'web', isTest: false, cancelledAt: null,
+      OR: [{ customerJourneyReady: false }, { purchaseFacts: { equals: Prisma.DbNull } }],
+      shopifyCreatedAt: { gte: new Date(Date.now() - 3 * 86400_000) },
+      updatedAt: { lte: new Date(Date.now() - 15 * 60_000) } },
+      select: { shopifyOrderId: true }, orderBy: { updatedAt: 'asc' }, take: 50 });
+  }
   async upsertOrderWithLineItems(
     storeId: string,
     order: ShopifyImportedOrder,
@@ -32,6 +42,11 @@ export class ShopifyOrderRepository {
         select: { id: true },
       });
       if (redaction) return null;
+      const receipt = verifyCartReceipt(order.customAttributes?.find(a => a.key === '_metrico_touch')?.value,
+        storeId, order.cartToken);
+      const connection = receipt ? await tx.shopifyConnection.findUnique({ where: { storeId }, select: { status: true, installedAt: true } }) : null;
+      const recoveryEventId = receipt && connection?.status === 'ACTIVE' && connection.installedAt.toISOString() === receipt.generation
+        ? receipt.eventId : undefined;
 
       const savedOrder = await tx.order.upsert({
         where: {
@@ -43,9 +58,18 @@ export class ShopifyOrderRepository {
         create: {
           storeId,
           ...this.orderData(storeId, order),
+          ...(recoveryEventId ? { recoveryEventId } : {}),
+          ...(canonicalPurchaseFacts(order) ? { purchaseFacts: asJson(canonicalPurchaseFacts(order)) } : {}),
         },
-        update: this.orderData(storeId, order),
+        update: { ...this.orderData(storeId, order), ...(recoveryEventId ? { recoveryEventId } : {}) },
         select: { id: true },
+      });
+
+      // Upgrade existing orders once. A later reconcile never changes frozen facts.
+      const facts = canonicalPurchaseFacts(order);
+      if (facts) await tx.order.updateMany({
+        where: { id: savedOrder.id, storeId, purchaseFacts: { equals: Prisma.DbNull } },
+        data: { purchaseFacts: asJson(facts) },
       });
 
       const productIds = this.uniqueIds(order.lineItems, (line) => line.product?.id);
@@ -197,6 +221,8 @@ export class ShopifyOrderRepository {
 
   private orderData(storeId: string, order: ShopifyImportedOrder) {
     const journey = order.customerJourneySummary;
+    const evidenceExpiry = new Date(new Date(order.processedAt ?? order.createdAt).getTime() + 30 * 86400_000);
+    const retainEvidence = evidenceExpiry > new Date();
     return {
       shopifyOrderId: order.id,
       ...(order.checkoutToken !== undefined ? { checkoutTokenHash: checkoutProofHash(storeId, order.checkoutToken) } : {}),
@@ -207,6 +233,7 @@ export class ShopifyOrderRepository {
       cancelledAt: optionalDate(order.cancelledAt),
       cancelReason: order.cancelReason ?? null,
       sourceName: order.sourceName ?? null,
+      isB2B: order.purchasingEntity?.__typename === 'PurchasingCompany',
       isTest: order.test,
       currencyCode: order.currencyCode,
       presentmentCurrencyCode: order.presentmentCurrencyCode ?? null,
@@ -222,7 +249,17 @@ export class ShopifyOrderRepository {
       customerOrderIndex: journey?.customerOrderIndex ?? null,
       daysToConversion: journey?.daysToConversion ?? null,
       customerJourneyReady: journey?.ready ?? null,
-      rawJson: asJson(Object.fromEntries(Object.entries(order).filter(([key]) => key !== "checkoutToken"))),
+      matchEvidenceExpiresAt: evidenceExpiry,
+      ...(!retainEvidence ? { journeyTouches: Prisma.DbNull, recoveryEventId: null } : journey?.ready ? { journeyTouches: asJson([journey.firstVisit, journey.lastVisit].flatMap(v => {
+        if (!v) return [];
+        const u = v.utmParameters;
+        const landing = extractStorefrontAttribution(v.landingPage);
+        return [{ eventAt: v.occurredAt, ...landing,
+          utmSource: sanitizeAttributionValue(u?.source) ?? landing.utmSource, utmMedium: sanitizeAttributionValue(u?.medium) ?? landing.utmMedium,
+          utmCampaign: sanitizeAttributionValue(u?.campaign) ?? landing.utmCampaign, utmContent: sanitizeAttributionValue(u?.content) ?? landing.utmContent,
+          landingPageUrl: sanitizeStorefrontUrl(v.landingPage), referrerUrl: sanitizeStorefrontUrl(v.referrerUrl) }];
+      })) } : {}),
+      rawJson: asJson(Object.fromEntries(Object.entries(order).filter(([key]) => !['checkoutToken', 'cartToken', 'customAttributes', 'customerJourneySummary'].includes(key)))),
     };
   }
 

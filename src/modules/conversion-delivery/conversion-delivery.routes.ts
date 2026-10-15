@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { deliveryHealth } from './dispatch-control.js';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireRole, requireStoreMembership } from '../../middleware/store.middleware.js';
 import { requireActiveSubscription } from '../billing/billing.middleware.js';
@@ -76,6 +77,9 @@ conversionDeliveryRouter.get(
   conversionDeliveryController.customerJourney,
 );
 conversionDeliveryRouter.get('/signal-health', conversionDeliveryController.signalHealth);
+conversionDeliveryRouter.get('/delivery-health', ownerOrAdmin, async (req, res) => {
+  res.json(await deliveryHealth(req.context.storeId!));
+});
 conversionDeliveryRouter.get('/acquisition', conversionDeliveryController.acquisition);
 conversionDeliveryRouter.patch(
   '/destinations/:destinationId/signals',

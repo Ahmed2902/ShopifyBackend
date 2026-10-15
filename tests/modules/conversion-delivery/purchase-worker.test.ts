@@ -4,7 +4,7 @@ vi.mock('../../../src/modules/conversion-delivery/providers/meta-conversion.prov
 vi.mock('../../../src/modules/conversion-delivery/providers/google-conversion.provider.js', () => ({ deliverGooglePurchase: google }));
 vi.mock('../../../src/modules/conversion-delivery/signal-enrichment.service.js', () => ({ enrichConversionSignal: enrich }));
 vi.mock('../../../src/modules/conversion-delivery/purchase-test.service.js', () => ({ requireDevelopmentStore: dev }));
-vi.mock('../../../src/modules/conversion-delivery/conversion-content.js', () => ({ prepareConversionContents: vi.fn() }));
+vi.mock('../../../src/modules/conversion-delivery/conversion-content.js', () => ({ freezeLegacyPurchaseFacts: vi.fn(), prepareConversionContents: vi.fn() }));
 import { ConversionDeliveryService } from '../../../src/modules/conversion-delivery/conversion-delivery.service.js';
 import { ConversionProviderError } from '../../../src/modules/conversion-delivery/providers/conversion-provider.error.js';
 import { encryptSecret } from '../../../src/modules/integrations/integration.utils.js';

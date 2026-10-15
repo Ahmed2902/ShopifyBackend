@@ -149,6 +149,7 @@ export class ConversionDeliveryController {
         browserEvents: z.boolean().optional(),
         overlapPolicy: z.enum(['UNCONFIRMED', 'OTHER_TRACKER', 'STRIDE_EXCLUSIVE']).optional(),
         catalogId: z.string().uuid().nullable().optional(),
+        deliveryMode: z.enum(['LIVE', 'SHADOW', 'PAUSED']).optional(),
       })
       .strict()
       .parse(req.body);
@@ -219,6 +220,11 @@ export class ConversionDeliveryController {
       data: {
         configJson: { ...((dest.configJson as Record<string, unknown>) ?? {}), ...input } as never,
       },
+    });
+    if (input.deliveryMode === 'LIVE') await prisma.conversionDelivery.updateMany({
+      where: { storeId: req.context.storeId!, destinationId: id, status: 'SKIPPED', reasonCode: 'SHADOW_MODE',
+        isTestDelivery: false, eventAt: { gte: new Date(Date.now() - 7 * 86400_000 + 5 * 60_000) } },
+      data: { status: 'PENDING', reasonCode: null, nextAttemptAt: new Date() },
     });
     res.json({ updated: true });
   };

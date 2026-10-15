@@ -181,6 +181,7 @@ model StoreSubscription {
 }
 
 model Store {
+  conversionDispatchBudgets ConversionDispatchBudget[]
   signalIdentityKey            StoreSignalIdentityKey?
   signalCustomerLinks          StorefrontCustomerLink[]
   id                           String                    @id @default(uuid()) @db.Uuid

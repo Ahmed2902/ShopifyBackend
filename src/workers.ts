@@ -1,4 +1,5 @@
 import { enqueueFunnelEvents } from './modules/conversion-delivery/funnel.repository.js';
+import { reportDeliveryAlerts } from './modules/conversion-delivery/dispatch-control.js';
 import { logger } from './lib/logger.js';
 import { PollingWorker } from './lib/polling-worker.js';
 import { advertisingReconciliationService } from './modules/advertising/reconciliation/advertising-reconciliation.service.js';
@@ -107,6 +108,7 @@ const conversionDeliveryWorker = new PollingWorker(
   2_000,
   async () => {
     const result = await conversionDeliveryService.processDue(25);
+    await reportDeliveryAlerts();
     if (result.claimed > 0) {
       logger.info(result, 'Processed server-side conversion delivery batch');
     }
