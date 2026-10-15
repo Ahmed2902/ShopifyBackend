@@ -118,6 +118,8 @@ export function classifyAcquisition(e: AcquisitionEvidence) {
       return result('EMAIL', provider, 'UTM', false);
     if (['affiliate', 'affiliates', 'partner'].includes(medium ?? ''))
       return result('AFFILIATE', provider, 'UTM', null);
+    if (medium === 'paid' && provider === 'TIKTOK')
+      return result('PAID_SOCIAL', provider, 'UTM', true);
     if (['paid_social', 'paidsocial', 'social_paid'].includes(medium ?? ''))
       return result('PAID_SOCIAL', provider, 'UTM', true);
     if (['paid_search', 'sem', 'ppc'].includes(medium ?? ''))

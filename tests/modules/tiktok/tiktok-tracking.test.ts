@@ -279,3 +279,24 @@ it('audits normalized Smart+ URL lists retained by hierarchy sync', () => {
   };
   expect(trackingPlan({ ...ad, rawJson: smartRaw } as TikTokTrackingAd, smartRaw).smart).toBe(true);
 });
+
+it('supports TikTok native paid UTM labels and captures numeric campaign ID', () => {
+  const a = extractStorefrontAttribution('https://shop.example/?utm_source=tiktok&utm_medium=paid&utm_campaign=Winter&utm_id=22');
+  expect(a).toMatchObject({ utmSource: 'tiktok', utmMedium: 'paid', utmCampaign: 'Winter', tiktokCampaignExternalId: '22' });
+  const now = new Date('2026-10-14T08:00:00Z');
+  expect(summarizeRouting([{ utmSource: 'tiktok', utmMedium: 'paid', eventAt: now }], now, new Date('2026-10-01')).eligibleProviders).toEqual(['TIKTOK']);
+  expect(extractStorefrontAttribution('https://shop.example/?utm_source=meta&utm_id=22')).not.toHaveProperty('tiktokCampaignExternalId');
+  expect(extractStorefrontAttribution('https://shop.example/?utm_source=tiktok&utm_id=__CAMPAIGN_ID__')).not.toHaveProperty('tiktokCampaignExternalId');
+  expect(extractStorefrontAttribution('https://shop.example/?utm_source=tiktok&utm_id=22&metrico_tiktok_campaign_id=99').tiktokCampaignExternalId).toBe('99');
+});
+it('adds missing native TikTok UTMs and preserves platform-managed campaign labels', () => {
+  const plan = trackingPlan(ad, { ...raw, landing_page_url: 'https://shop.example/a' });
+  const next = new URL(plan.nextUrls[0]!);
+  expect(next.searchParams.get('utm_source')).toBe('tiktok');
+  expect(next.searchParams.get('utm_medium')).toBe('paid');
+  expect(next.searchParams.get('utm_id')).toBe('22');
+  expect(next.searchParams.has('utm_campaign')).toBe(false); // already present in TikTok utm_params
+  expect(plan.currentParameters).toEqual(raw.utm_params);
+  const plain = trackingPlan(ad, { ...raw, landing_page_url: 'https://shop.example/a', utm_params: [] });
+  expect(new URL(plain.nextUrls[0]!).searchParams.get('utm_campaign')).toBe('__CAMPAIGN_NAME__');
+});
