@@ -128,6 +128,15 @@ afterEach(async () => {
 });
 
 describeDatabase('ShopifyMetricsRepository', () => {
+  it('excludes cancelled orders and their refunds from the same summary', async () => {
+    const data = await fixture();
+    await prisma.order.updateMany({ where: { storeId: data.store.id, isTest: false },
+      data: { cancelledAt: new Date('2026-08-12T00:00:00Z') } });
+    const summary = await new ShopifyMetricsRepository().getSummary(data.store.id, {
+      from: '2026-08-01T00:00:00.000Z', to: '2026-08-20T00:00:00.000Z', lowStockBelow: 5,
+    });
+    expect(summary.commerce).toMatchObject({ orders: 0, totalSales: '0', refunds: 0, refundedAmount: '0' });
+  });
   it('summarizes catalog, inventory and non-test commerce state', async () => {
     const data = await fixture();
     const repository = new ShopifyMetricsRepository();

@@ -31,6 +31,11 @@ describe('completed checkout policy', () => {
   });
 });
 describe('return and refund reporting', () => {
+  it('combines an independent removal and refund using Shopify currentQuantity', () => {
+    // Two ordered, one removed, then the remaining unit refunded: currentQuantity is zero.
+    expect(lineAdjustment({ quantity: 2, currentQuantity: 0, productRevenue: 100,
+      refundedUnits: 1, refundedValue: 50 })).toEqual({ units: 2, value: 100 });
+  });
   it('deducts a removal once, including when a later refund describes the same units', () => {
     const base = { quantity: 4, currentQuantity: 2, productRevenue: 100, refundedUnits: 0, refundedValue: 0 };
     expect(lineAdjustment(base)).toEqual({ units: 2, value: 50 });

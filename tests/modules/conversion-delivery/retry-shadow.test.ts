@@ -62,4 +62,17 @@ describe('logical delivery recovery', () => {
     try { expect(await h.service.processDue()).toMatchObject({ claimed: 0 }); expect(h.repo.claimDue).not.toHaveBeenCalled(); }
     finally { env.CONVERSION_DELIVERY_ENABLED = previous; }
   });
+  it('keeps a mid-flight sharing pause due immediately and resumes the same conversion', async () => {
+    const h = harness();
+    h.repo.hasAdvertisingConsent.mockResolvedValueOnce(true).mockRejectedValueOnce(
+      new ConversionProviderError('Sharing paused after claiming', true, 'CONVERSION_SHARING_PAUSED'));
+    await h.service.processDue();
+    expect(h.repo.pauseForDispatch).toHaveBeenCalledWith('delivery', now, 'CONVERSION_SHARING_PAUSED');
+    expect(h.repo.markFailed).not.toHaveBeenCalled();
+    expect(h.repo.markDelivered).not.toHaveBeenCalled();
+    await h.service.processDue();
+    expect(h.repo.markDelivered).toHaveBeenCalledOnce();
+    expect(h.claim.eventKey).toBe('same-order-key');
+    expect(h.claim.attempts).toBe(0);
+  });
 });

@@ -378,6 +378,13 @@ export class ConversionDeliveryService {
           await this.repository.linkCustomerIdentity(claim);
         delivered += 1;
       } catch (error) {
+        if (error instanceof ConversionProviderError && error.providerCode === 'CONVERSION_SHARING_PAUSED') {
+          // Claiming is gated by the deployment switch and current destination mode.
+          // Keep this due now so resuming sharing does not inherit credential backoff.
+          await this.repository.pauseForDispatch(claim.id, this.now(), 'CONVERSION_SHARING_PAUSED');
+          retrying += 1;
+          continue;
+        }
         if (error instanceof ConversionProviderError &&
           ['PROVIDER_CIRCUIT_OPEN', 'MERCHANT_DISPATCH_LIMIT'].includes(error.providerCode ?? '')) {
           await this.repository.pauseForDispatch(claim.id,
@@ -438,7 +445,6 @@ export class ConversionDeliveryService {
           error instanceof ConversionProviderError &&
           [
             'CONVERSION_CONNECTION_REAUTH_REQUIRED',
-            'CONVERSION_SHARING_PAUSED',
             'META_CAPI_CONNECTION_INACTIVE',
             'META_CAPI_PERMISSION_REQUIRED',
             'META_CAPI_REAUTH_REQUIRED',

@@ -1,5 +1,7 @@
 // Shopify current totals already include returns; never subtract the same refund again.
-// Product totals include removed/refunded units. Reconcile quantity and money together.
+// Shopify currentQuantity excludes BOTH removed and refunded units, including independent
+// removals and refunds. quantity - currentQuantity already combines them; adding refund
+// units would deduct them twice. See Admin GraphQL LineItem.currentQuantity.
 export function lineAdjustment(input: { quantity: number; currentQuantity: number;
   productRevenue: number; refundedUnits: number; refundedValue: number }) {
   const removed = Math.max(0, input.quantity - input.currentQuantity);

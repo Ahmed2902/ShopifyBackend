@@ -128,6 +128,7 @@ export class ShopifyMetricsRepository {
           order: {
             storeId,
             isTest: false,
+            cancelledAt: null,
             ...demandDateWhere(from, to),
           },
         },
