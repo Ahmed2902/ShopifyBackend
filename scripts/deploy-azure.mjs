@@ -149,7 +149,12 @@ export async function deployAzure(
   const base = ['--name', config.app, '--resource-group', config.group];
   const show = () => azure(['containerapp', 'show', ...base, '--query', appQuery]);
   const existing = await show();
-  const container = validateApp(existing, config);
+  // The combined process runs durable jobs as well as HTTP. Apply its required
+  // fixed replica count with the image update rather than relying on portal defaults.
+  const deploymentApp = config.service === 'backend'
+    ? { ...existing, scale: { ...existing.scale, minReplicas: 1, maxReplicas: 1 } }
+    : existing;
+  const container = validateApp(deploymentApp, config);
   // Recheck after Azure reads, immediately before the only resource mutation.
   if ((await latestMain()) !== config.sha) {
     log('Skipping outdated release; main advanced during preflight.');
@@ -169,6 +174,7 @@ export async function deployAzure(
       config.image,
       '--revision-suffix',
       config.suffix,
+      ...(config.service === 'backend' ? ['--min-replicas', '1', '--max-replicas', '1'] : []),
       '--set-env-vars',
       `SENTRY_RELEASE=${config.service}-${config.sha}`,
       ...(config.service === 'backend'
@@ -206,6 +212,7 @@ export async function deployAzure(
       revision.provisioning === 'Provisioned' &&
       revision.containers?.some((item) => item.name === container && item.image === config.image)
     ) {
+      validateApp(state, config);
       if (await healthyHttp(`https://${state.fqdn}${config.path}`, config.status)) {
         log(`Deployment succeeded: ${config.revision} is healthy and serving the published image.`);
         return {

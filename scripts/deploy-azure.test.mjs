@@ -76,6 +76,10 @@ function harness(config = deploymentConfig(environment()), options = {}) {
       if (mutation) {
         mutations.push(args);
         updated = true;
+        if (!options.ignoreScaleUpdate && args.includes('--min-replicas')) {
+          initial.scale = { minReplicas: Number(args[args.indexOf('--min-replicas') + 1]),
+            maxReplicas: Number(args[args.indexOf('--max-replicas') + 1]) };
+        }
         return null;
       }
       if (args[1] === 'show') {
@@ -122,6 +126,8 @@ for (const service of ['backend', 'frontend']) {
     assert.equal(args[args.indexOf('--container-name') + 1], service);
     assert.ok(args.includes(`SENTRY_RELEASE=${service}-${sha}`));
     assert.equal(args.includes('PIXEL_COLLECTOR_PROXY_MODE=azure-container-apps'), service === 'backend');
+    assert.equal(args.includes('--min-replicas'), service === 'backend');
+    assert.equal(args.includes('--max-replicas'), service === 'backend');
     assert.ok(
       !args.some((value) => /replace-env|remove-env|secret|registry-password|command/.test(value)),
     );
@@ -207,12 +213,6 @@ for (const [label, configure] of [
     },
   ],
   [
-    'multiple backend replicas',
-    (value) => {
-      value.scale.maxReplicas = 2;
-    },
-  ],
-  [
     'missing private registry',
     (value) => {
       value.registries = [];
@@ -225,6 +225,20 @@ for (const [label, configure] of [
     assert.equal(h.mutations.length, 0);
   });
 }
+test('enforces one backend replica in the same mutation as the image rollout', async () => {
+  const h = harness(undefined, { configure(value) { value.scale = { minReplicas: 0, maxReplicas: 10 }; } });
+  await deployAzure(h.config, h.dependencies);
+  assert.equal(h.mutations.length, 1);
+  const args = h.mutations[0];
+  assert.equal(args[args.indexOf('--min-replicas') + 1], '1');
+  assert.equal(args[args.indexOf('--max-replicas') + 1], '1');
+});
+test('does not declare success if Azure did not apply the required replica count', async () => {
+  const h = harness(undefined, { ignoreScaleUpdate: true,
+    configure(value) { value.scale = { minReplicas: 0, maxReplicas: 10 }; } });
+  await assert.rejects(deployAzure(h.config, h.dependencies), /minimum and maximum replicas of one/);
+  assert.equal(h.httpCalls.length, 0);
+});
 for (const options of [
   { oldReady: true },
   { noRevision: true },
