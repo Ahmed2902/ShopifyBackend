@@ -63,7 +63,7 @@ export class TikTokRepository {
   }
 
   markConnectionReauthRequired(id: string) {
-    return prisma.tikTokConnection.update({ where: { id }, data: { status: 'REAUTH_REQUIRED' } });
+    return prisma.tikTokConnection.updateMany({ where: { id, status: 'ACTIVE' }, data: { status: 'REAUTH_REQUIRED' } });
   }
 
   configureAssets(connectionId: string, businessCenterId: string | null, advertiserIds: string[]) {

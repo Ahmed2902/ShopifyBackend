@@ -79,8 +79,8 @@ export class MetaRepository {
   }
 
   markConnectionReauthRequired(connectionId: string) {
-    return prisma.metaConnection.update({
-      where: { id: connectionId },
+    return prisma.metaConnection.updateMany({
+      where: { id: connectionId, status: 'ACTIVE' },
       data: { status: 'REAUTH_REQUIRED' },
     });
   }

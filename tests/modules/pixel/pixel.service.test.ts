@@ -23,6 +23,8 @@ function buildService(input?: {
   const installation = input?.installation === undefined ? null : input.installation;
 
   const repository = {
+    beginDisconnect: vi.fn().mockResolvedValue(undefined),
+    finishDisconnect: vi.fn().mockResolvedValue(undefined),
     cleanupMatchEvidence: vi.fn().mockResolvedValue(undefined),
     findInstallationByStoreId: vi.fn().mockResolvedValue(installation),
     findInstallationForProvisioning: vi.fn().mockResolvedValue(installation),
@@ -61,6 +63,7 @@ function buildService(input?: {
   } as unknown as PixelRepository;
 
   const shopifyProvisioner = {
+    remove: vi.fn().mockResolvedValue(undefined),
     upsert: vi.fn().mockResolvedValue({ id: 'gid://shopify/WebPixel/1' }),
   } as unknown as ShopifyPixelProvisioner;
 
@@ -581,4 +584,17 @@ describe('permitted independent network matching', () => {
     const row = vi.mocked(repository.insertEvents).mock.calls[0]![1][0]!;
     expect(JSON.parse(decryptSecret(row.browserMatchCiphertext as string))).toEqual({ userAgent: 'Observed browser' });
   });
+});
+
+it.each([false, true])('disables pixel collection before Shopify removal, including provider failure=%s', async (failure) => {
+  const { service, repository, shopifyProvisioner } = buildService({ installation: { id: installationId, storeId, status: 'DISABLED' } });
+  vi.mocked(shopifyProvisioner.remove).mockImplementation(async () => {
+    expect(repository.beginDisconnect).toHaveBeenCalledWith(storeId, expect.stringMatching(/^[a-f0-9]{64}$/));
+    expect(repository.finishDisconnect).not.toHaveBeenCalled();
+    if (failure) throw new Error('Shopify unavailable');
+  });
+  const result = await service.disconnectShopifyPixel(storeId);
+  expect(result.status).toBe('DISABLED');
+  expect(result.remotePixelRemoved).toBe(!failure);
+  expect(repository.finishDisconnect).toHaveBeenCalledWith(storeId, vi.mocked(repository.beginDisconnect).mock.calls[0]?.[1], !failure);
 });

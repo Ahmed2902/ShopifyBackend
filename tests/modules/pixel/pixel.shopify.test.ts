@@ -241,3 +241,26 @@ describe('ShopifyPixelProvisioner', () => {
     });
   });
 });
+
+it('deletes only the app web pixel returned by Shopify and never uninstalls the store app', async () => {
+  const { apiService, provisioner } = buildProvisioner();
+  vi.mocked(apiService.requestAdminGraphql)
+    .mockResolvedValueOnce({ webPixel: { id: 'gid://shopify/WebPixel/42', settings: {} } })
+    .mockResolvedValueOnce({ webPixelDelete: { deletedWebPixelId: 'gid://shopify/WebPixel/42', userErrors: [] } });
+  await provisioner.remove(storeId);
+  expect(apiService.requestAdminGraphql).toHaveBeenLastCalledWith(expect.objectContaining({
+    query: expect.stringContaining('webPixelDelete'), variables: { id: 'gid://shopify/WebPixel/42' },
+  }));
+});
+it('treats an already absent app pixel as successfully removed', async () => {
+  const { apiService, provisioner } = buildProvisioner();
+  await provisioner.remove(storeId);
+  expect(apiService.requestAdminGraphql).toHaveBeenCalledTimes(1);
+});
+it('rejects Shopify pixel deletion user errors', async () => {
+  const { apiService, provisioner } = buildProvisioner();
+  vi.mocked(apiService.requestAdminGraphql)
+    .mockResolvedValueOnce({ webPixel: { id: 'gid://shopify/WebPixel/42', settings: {} } })
+    .mockResolvedValueOnce({ webPixelDelete: { deletedWebPixelId: null, userErrors: [{ message: 'Denied' }] } });
+  await expect(provisioner.remove(storeId)).rejects.toMatchObject({ code: 'SHOPIFY_PIXEL_DELETE_FAILED' });
+});

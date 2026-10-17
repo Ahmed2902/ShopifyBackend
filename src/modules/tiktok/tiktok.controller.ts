@@ -1,3 +1,4 @@
+import { disconnectAdvertisingProvider } from '../integrations/provider-disconnect.service.js';
 import type { Request, Response } from 'express';
 import { AppError } from '../../errors/app-error.js';
 import { withProviderReturnShop } from '../integrations/provider-return.js';
@@ -68,6 +69,10 @@ export class TikTokController {
       const code = error instanceof AppError ? error.code : 'TIKTOK_OAUTH_FAILED';
       res.redirect(303, await withProviderReturnShop(buildTikTokErrorRedirect(context.storeId, code), context.storeId));
     }
+  };
+
+  disconnect = async (req: Request, res: Response) => {
+    res.status(200).json(await disconnectAdvertisingProvider(req.context.storeId!, 'TIKTOK'));
   };
 
   status = async (req: Request, res: Response) => {

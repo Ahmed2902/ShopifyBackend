@@ -25,6 +25,7 @@ pixelStoreRouter.use(requireAuth, requireStoreMembership);
 
 // Installation/operational status stays visible for recovery even after a subscription expires.
 pixelStoreRouter.get('/status', pixelController.status);
+pixelStoreRouter.post('/disconnect', requireRole('OWNER', 'ADMIN'), pixelController.disconnect);
 pixelStoreRouter.get('/health', requireRole('OWNER', 'ADMIN'), pixelHealthController.read);
 
 pixelStoreRouter.use(requireActiveSubscription);

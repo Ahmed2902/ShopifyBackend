@@ -16,6 +16,8 @@ metaStoreRouter.use(requireAuth, requireStoreMembership);
 
 // Keep status readable after a trial expires or when Essentials selected TikTok.
 metaStoreRouter.get('/status', metaController.status);
+// Disconnect stays available when paid access expires.
+metaStoreRouter.post('/disconnect', ownerOrAdmin, metaController.disconnect);
 // Every other Meta read/write is paid-provider access and must respect the selected channel.
 metaStoreRouter.use(requireAdProviderEntitlement('META'));
 

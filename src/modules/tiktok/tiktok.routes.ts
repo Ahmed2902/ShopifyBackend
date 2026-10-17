@@ -19,6 +19,8 @@ tiktokStoreRouter.use(requireAuth, requireStoreMembership);
 
 // Status remains readable after access expires or when Essentials selected Meta.
 tiktokStoreRouter.get('/status', tiktokController.status);
+// Disconnect stays available when paid access expires.
+tiktokStoreRouter.post('/disconnect', ownerOrAdmin, tiktokController.disconnect);
 // Every other TikTok read/write is paid-provider access and must respect the selected channel.
 tiktokStoreRouter.use(requireAdProviderEntitlement('TIKTOK'));
 
