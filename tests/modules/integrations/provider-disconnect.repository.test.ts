@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { prisma } from '../../../src/lib/prisma.js';
 import { disconnectAdvertisingProvider } from '../../../src/modules/integrations/provider-disconnect.service.js';
 import { ConversionDeliveryRepository } from '../../../src/modules/conversion-delivery/conversion-delivery.repository.js';
+import { MetaRepository } from '../../../src/modules/meta/meta.repository.js';
+import { TikTokRepository } from '../../../src/modules/tiktok/tiktok.repository.js';
 import { PixelRepository } from '../../../src/modules/pixel/pixel.repository.js';
 vi.mock('../../../src/lib/store-decision-cache.js', () => ({
   invalidateStoreDecisionCaches: vi.fn(),
@@ -42,11 +44,11 @@ async function fixture() {
       apiVersion: 'v1.3',
     },
   });
-  const now = new Date();
+  const now = new Date(Date.now() + 86400_000);
   await prisma.storeSubscription.create({
     data: {
       storeId: store.id,
-      planKey: 'GROWTH',
+      selectedPlan: 'PRO',
       provider: 'INTERNAL',
       status: 'TRIALING',
       trialStartedAt: now,
@@ -104,6 +106,15 @@ database('Disconnect persistence and dispatch guards', () => {
         provider === 'META'
           ? await prisma.metaConnection.findUniqueOrThrow({ where: { storeId: own.id } })
           : await prisma.tikTokConnection.findUniqueOrThrow({ where: { storeId: own.id } });
+      // A late failure from a request started before disconnect cannot revive the login.
+      if (provider === 'META')
+        await new MetaRepository().markConnectionReauthRequired(connection.id);
+      else await new TikTokRepository().markConnectionReauthRequired(connection.id);
+      const current =
+        provider === 'META'
+          ? await prisma.metaConnection.findUniqueOrThrow({ where: { storeId: own.id } })
+          : await prisma.tikTokConnection.findUniqueOrThrow({ where: { storeId: own.id } });
+      expect(current.status).toBe('DISCONNECTED');
       expect(connection.status).toBe('DISCONNECTED');
       expect(connection.accessTokenCiphertext).toBe('');
       const destinations = await prisma.conversionDestination.findMany({
@@ -120,7 +131,10 @@ database('Disconnect persistence and dispatch guards', () => {
           ),
       ).toBe(true);
       expect(await prisma.conversionDelivery.count({ where: { storeId: own.id } })).toBe(2);
-      const claims = await new ConversionDeliveryRepository().claimDue(100, new Date());
+      const claims = await new ConversionDeliveryRepository().claimDue(
+        100,
+        new Date(Date.now() + 86400_001),
+      );
       expect(
         claims.filter((row) => row.storeId === own.id).map((row) => row.provider),
       ).not.toContain(provider);
