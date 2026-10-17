@@ -114,10 +114,46 @@ export class ShopifyPixelProvisioner {
     this.authService = authService ?? new ShopifyAuthService(repository, this.apiService);
   }
 
-  async inspect(storeId: string): Promise<{ id: string; settings: Record<string, unknown> | null } | null> {
+  async inspect(
+    storeId: string,
+  ): Promise<{ id: string; settings: Record<string, unknown> | null } | null> {
     const { context } = await this.resolveContext(storeId);
     const webPixel = await this.findRemoteWebPixel(context);
-    return webPixel ? { id: webPixel.id, settings: normalizePixelSettings(webPixel.settings) } : null;
+    return webPixel
+      ? { id: webPixel.id, settings: normalizePixelSettings(webPixel.settings) }
+      : null;
+  }
+
+  async remove(storeId: string): Promise<void> {
+    const { context } = await this.resolveContext(storeId);
+    const current = await this.findRemoteWebPixel(context);
+    if (!current) return;
+    const response = await this.apiService.requestAdminGraphql<unknown>({
+      ...context,
+      query: `mutation MetricoWebPixelDelete($id: ID!) {
+        webPixelDelete(id: $id) { deletedWebPixelId userErrors { field message code } }
+      }`,
+      variables: { id: current.id },
+    });
+    const parsed = z
+      .object({
+        webPixelDelete: z.object({
+          deletedWebPixelId: z.string().nullable(),
+          userErrors: z.array(webPixelUserErrorSchema),
+        }),
+      })
+      .safeParse(response);
+    if (
+      !parsed.success ||
+      parsed.data.webPixelDelete.userErrors.length ||
+      parsed.data.webPixelDelete.deletedWebPixelId !== current.id
+    ) {
+      throw new AppError(
+        'Shopify could not remove the app pixel',
+        502,
+        'SHOPIFY_PIXEL_DELETE_FAILED',
+      );
+    }
   }
 
   async upsert(input: {

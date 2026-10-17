@@ -24,6 +24,7 @@ vi.mock('../../../src/modules/pixel/pixel.controller.js', () => ({
     ingest: noop,
     browserSignals: noop,
     status: noop,
+    disconnect: noop,
     install,
     debugValidate,
   },
@@ -85,6 +86,7 @@ beforeEach(() => {
 
 describe('production pixel route authorization', () => {
   it.each([
+    ['/disconnect', noop],
     ['/install', install],
     ['/debug/validate', debugValidate],
   ] as const)('blocks MEMBER from the real POST %s route before the controller runs', async (path, handler) => {

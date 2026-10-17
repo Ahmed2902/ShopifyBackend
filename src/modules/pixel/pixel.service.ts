@@ -70,6 +70,21 @@ export class PixelService {
     private readonly journeyService: PixelJourneyService = pixelJourneyService,
   ) {}
 
+  async disconnectShopifyPixel(storeId: string) {
+    const operationHash = randomBytes(32).toString('hex');
+    await this.repository.beginDisconnect(storeId, operationHash);
+    let removed = false;
+    try {
+      await this.shopifyProvisioner.remove(storeId);
+      removed = true;
+    } catch {
+      // Collection stays disabled even if Shopify is unavailable. Report committed state
+      // with a cleanup warning, rather than suggesting the disconnect was rolled back.
+    }
+    await this.repository.finishDisconnect(storeId, operationHash, removed);
+    return { ...(await this.getStatus(storeId)), remotePixelRemoved: removed };
+  }
+
   async installShopifyPixel(storeId: string) {
     const collectorUrl = this.getCollectorUrl();
     let existing = await this.repository.findInstallationForProvisioning(storeId);

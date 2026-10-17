@@ -58,6 +58,10 @@ export class PixelController {
     res.status(200).json(await this.service.getStatus(req.context.storeId!));
   };
 
+  disconnect = async (req: Request, res: Response) => {
+    res.status(200).json(await this.service.disconnectShopifyPixel(req.context.storeId!));
+  };
+
   install = async (req: Request, res: Response) => {
     res.status(200).json(await this.service.installShopifyPixel(req.context.storeId!));
   };

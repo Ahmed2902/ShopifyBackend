@@ -41,6 +41,34 @@ export class PixelRepository {
     });
   }
 
+  async beginDisconnect(storeId: string, operationHash: string) {
+    // Block new installs during remote removal; supersede older install finalizers.
+    // DISABLED rejects collection even when the old public token still matches.
+    await prisma.pixelInstallation.updateMany({
+      where: { storeId },
+      data: {
+        status: 'DISABLED',
+        pendingCollectorTokenHash: operationHash,
+        pendingCollectorTokenPrefix: null,
+        lastError: null,
+      },
+    });
+  }
+
+  async finishDisconnect(storeId: string, operationHash: string, removed: boolean) {
+    await prisma.pixelInstallation.updateMany({
+      where: { storeId, status: 'DISABLED', pendingCollectorTokenHash: operationHash },
+      data: {
+        pendingCollectorTokenHash: null,
+        pendingCollectorTokenPrefix: null,
+        ...(removed ? { shopifyWebPixelId: null } : {}),
+        lastError: removed
+          ? null
+          : 'Tracking is disabled in Metrico. Shopify pixel removal failed; retry disconnect or remove the app pixel in Shopify Customer events.',
+      },
+    });
+  }
+
   findInstallationForIngress(id: string) {
     return prisma.pixelInstallation.findUnique({
       where: { id },
